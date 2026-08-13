@@ -1,0 +1,22 @@
+{
+  "name": "@uw/playground",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "调试台：可视化布局盒、逐帧排版",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@uw/core": "workspace:*",
+    "@uw/fonts": "workspace:*",
+    "@uw/layout": "workspace:*",
+    "@uw/render-dom": "workspace:*"
+  },
+  "devDependencies": {
+    "vite": "^8.2.1"
+  }
+}

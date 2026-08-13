@@ -1,0 +1,17 @@
+{
+  "name": "@uw/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "单位、几何、错误、事件、日志、类型",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "tsdown": "^0.22.14"
+  }
+}

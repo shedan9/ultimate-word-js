@@ -1,0 +1,18 @@
+{
+  "name": "@uw/fidelity",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "保真度真值流水线：Word COM 导出 PDF → pdf.js 抽坐标 → *.truth.json",
+  "scripts": {
+    "truth": "node src/cli.ts",
+    "truth:force": "node src/cli.ts --force",
+    "typecheck": "tsc --noEmit",
+    "spike": "node src/spike-lineheight.ts"
+  },
+  "dependencies": {
+    "@uw/core": "workspace:*",
+    "@uw/fonts": "workspace:*",
+    "pdfjs-dist": "^6.2.108"
+  }
+}

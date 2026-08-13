@@ -1,0 +1,7 @@
+packages:
+  - 'packages/*'
+  - 'apps/*'
+
+# pnpm 11 起，构建脚本要逐个显式放行（设置也从 package.json 的 "pnpm" 字段搬到了这里）
+allowBuilds:
+  esbuild: true

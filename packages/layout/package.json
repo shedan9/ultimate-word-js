@@ -1,0 +1,22 @@
+{
+  "name": "@uw/layout",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "布局引擎：测量/断行/段落/表格/分页/域",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@uw/core": "workspace:*",
+    "@uw/model": "workspace:*",
+    "@uw/fonts": "workspace:*"
+  },
+  "devDependencies": {
+    "tsdown": "^0.22.14"
+  }
+}

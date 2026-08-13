@@ -1,0 +1,494 @@
+{
+  "source": "spike-lineheight-01.docx",
+  "generator": {
+    "tool": "@uw/fidelity",
+    "formatVersion": 1,
+    "pdfjs": "6.2.108",
+    "word": "16.0",
+    "wordBuild": "16.0.20228"
+  },
+  "unit": "pt",
+  "origin": "top-left",
+  "pageCount": 1,
+  "fonts": {
+    "FangSong": {
+      "name": "FangSong",
+      "ascent": 0.859,
+      "descent": -0.141,
+      "vertical": false
+    },
+    "KaiTi": {
+      "name": "KaiTi",
+      "ascent": 0.859,
+      "descent": -0.141,
+      "vertical": false
+    },
+    "SimHei": {
+      "name": "SimHei",
+      "ascent": 0.859,
+      "descent": -0.141,
+      "vertical": false
+    },
+    "SimSun": {
+      "name": "SimSun",
+      "ascent": 0.859,
+      "descent": -0.141,
+      "vertical": false
+    },
+    "TimesNewRomanPSMT": {
+      "name": "TimesNewRomanPSMT",
+      "ascent": 0.891,
+      "descent": -0.216,
+      "vertical": false
+    }
+  },
+  "wordPageCount": 1,
+  "sections": [
+    {
+      "pageWidth": 595.3,
+      "pageHeight": 841.9,
+      "topMargin": 70.85,
+      "bottomMargin": 70.85,
+      "leftMargin": 70.85,
+      "rightMargin": 70.85,
+      "headerDist": 42.55,
+      "footerDist": 49.6,
+      "gutter": 0,
+      "orientation": 0,
+      "lineNumbers": false
+    }
+  ],
+  "pages": [
+    {
+      "index": 0,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 86.9,
+          "w": 447.662,
+          "size": 15.96,
+          "font": "FangSong",
+          "text": "仿宋三号：这一段刻意写得足够长，长到必须折成三行以上，这"
+        },
+        {
+          "x": 70.824,
+          "y": 107.66,
+          "w": 447.662,
+          "size": 15.96,
+          "font": "FangSong",
+          "text": "样才能量出稳定的基线间距。排版引擎的第一课是行高，不是断"
+        },
+        {
+          "x": 70.824,
+          "y": 128.42,
+          "w": 447.662,
+          "size": 15.96,
+          "font": "FangSong",
+          "text": "行；行高算错，后面所有的页码、目录、脚注都会跟着错，而且"
+        },
+        {
+          "x": 70.824,
+          "y": 149.18,
+          "w": 143.863,
+          "size": 15.96,
+          "font": "FangSong",
+          "text": "错得没有规律可循。"
+        },
+        {
+          "x": 70.824,
+          "y": 165.98,
+          "w": 444,
+          "size": 12,
+          "font": "SimSun",
+          "text": "宋体小四：同样要写得足够长以便折行。宋体是公文与书籍正文最常见的字体，它的"
+        },
+        {
+          "x": 70.824,
+          "y": 181.46,
+          "w": 24.708,
+          "size": 12,
+          "font": "TimesNewRomanPSMT",
+          "text": "OS/2"
+        },
+        {
+          "x": 95.532,
+          "y": 181.46,
+          "w": 6.008,
+          "size": 12,
+          "font": "TimesNewRomanPSMT",
+          "text": " "
+        },
+        {
+          "x": 101.54,
+          "y": 181.46,
+          "w": 24,
+          "size": 12,
+          "font": "SimSun",
+          "text": "表里"
+        },
+        {
+          "x": 125.54,
+          "y": 181.46,
+          "w": 6,
+          "size": 12,
+          "font": "SimSun",
+          "text": " "
+        },
+        {
+          "x": 131.54,
+          "y": 181.46,
+          "w": 64.164,
+          "size": 12,
+          "font": "TimesNewRomanPSMT",
+          "text": "usWinAscent"
+        },
+        {
+          "x": 195.704,
+          "y": 181.46,
+          "w": 6.066,
+          "size": 12,
+          "font": "TimesNewRomanPSMT",
+          "text": " "
+        },
+        {
+          "x": 201.77,
+          "y": 181.46,
+          "w": 12,
+          "size": 12,
+          "font": "SimSun",
+          "text": "与"
+        },
+        {
+          "x": 213.77,
+          "y": 181.46,
+          "w": 6,
+          "size": 12,
+          "font": "SimSun",
+          "text": " "
+        },
+        {
+          "x": 219.77,
+          "y": 181.46,
+          "w": 69.336,
+          "size": 12,
+          "font": "TimesNewRomanPSMT",
+          "text": "usWinDescent"
+        },
+        {
+          "x": 289.106,
+          "y": 181.46,
+          "w": 6.024,
+          "size": 12,
+          "font": "TimesNewRomanPSMT",
+          "text": " "
+        },
+        {
+          "x": 295.13,
+          "y": 181.46,
+          "w": 96.108,
+          "size": 12,
+          "font": "SimSun",
+          "text": "的和通常大于一个"
+        },
+        {
+          "x": 391.238,
+          "y": 181.46,
+          "w": 6.032,
+          "size": 12,
+          "font": "SimSun",
+          "text": " "
+        },
+        {
+          "x": 397.27,
+          "y": 181.46,
+          "w": 14.616,
+          "size": 12,
+          "font": "TimesNewRomanPSMT",
+          "text": "em"
+        },
+        {
+          "x": 411.91,
+          "y": 181.46,
+          "w": 108,
+          "size": 12,
+          "font": "SimSun",
+          "text": "，所以单倍行距的行"
+        },
+        {
+          "x": 70.824,
+          "y": 197.06,
+          "w": 120,
+          "size": 12,
+          "font": "SimSun",
+          "text": "高会比字号大出一截。"
+        },
+        {
+          "x": 70.824,
+          "y": 222.74,
+          "w": 439.815,
+          "size": 21.96,
+          "font": "SimHei",
+          "text": "黑体二号：标题字体也要验，因为标题往往是"
+        },
+        {
+          "x": 70.824,
+          "y": 251.3,
+          "w": 439.815,
+          "size": 21.96,
+          "font": "SimHei",
+          "text": "页面上行高最大的一行，它决定了标题下方正"
+        },
+        {
+          "x": 70.824,
+          "y": 279.77,
+          "w": 439.815,
+          "size": 21.96,
+          "font": "SimHei",
+          "text": "文的起始基线位置。这一段同样要长到折行。"
+        },
+        {
+          "x": 70.824,
+          "y": 300.17,
+          "w": 447.89,
+          "size": 14.04,
+          "font": "KaiTi",
+          "text": "楷体四号：楷体常用于公文中的引用与批示部分，度量与仿宋不同，需要"
+        },
+        {
+          "x": 70.824,
+          "y": 318.41,
+          "w": 433.976,
+          "size": 14.04,
+          "font": "KaiTi",
+          "text": "单独验证。这一段也要写到足够长，长到折行为止，否则量不出基线间"
+        },
+        {
+          "x": 70.824,
+          "y": 336.53,
+          "w": 28.08,
+          "size": 14.04,
+          "font": "KaiTi",
+          "text": "距。"
+        },
+        {
+          "x": 70.824,
+          "y": 351.77,
+          "w": 442.716,
+          "size": 12,
+          "font": "TimesNewRomanPSMT",
+          "text": "Latin control paragraph set in Times New Roman at twelve points. It has to run long enough"
+        },
+        {
+          "x": 70.824,
+          "y": 365.57,
+          "w": 413.1,
+          "size": 12,
+          "font": "TimesNewRomanPSMT",
+          "text": "to wrap onto several lines, so that the baseline pitch can be measured against the OS/2"
+        },
+        {
+          "x": 70.824,
+          "y": 379.37,
+          "w": 441.064,
+          "size": 12,
+          "font": "TimesNewRomanPSMT",
+          "text": "winAscent plus winDescent prediction without any CJK glyph interfering with the line box."
+        }
+      ],
+      "lines": [
+        {
+          "y": 86.9,
+          "x": 70.824,
+          "xEnd": 518.486,
+          "text": "仿宋三号：这一段刻意写得足够长，长到必须折成三行以上，这",
+          "first": "仿",
+          "last": "这",
+          "items": [
+            0
+          ]
+        },
+        {
+          "y": 107.66,
+          "x": 70.824,
+          "xEnd": 518.486,
+          "text": "样才能量出稳定的基线间距。排版引擎的第一课是行高，不是断",
+          "first": "样",
+          "last": "断",
+          "items": [
+            1
+          ]
+        },
+        {
+          "y": 128.42,
+          "x": 70.824,
+          "xEnd": 518.486,
+          "text": "行；行高算错，后面所有的页码、目录、脚注都会跟着错，而且",
+          "first": "行",
+          "last": "且",
+          "items": [
+            2
+          ]
+        },
+        {
+          "y": 149.18,
+          "x": 70.824,
+          "xEnd": 214.687,
+          "text": "错得没有规律可循。",
+          "first": "错",
+          "last": "。",
+          "items": [
+            3
+          ]
+        },
+        {
+          "y": 165.98,
+          "x": 70.824,
+          "xEnd": 514.824,
+          "text": "宋体小四：同样要写得足够长以便折行。宋体是公文与书籍正文最常见的字体，它的",
+          "first": "宋",
+          "last": "的",
+          "items": [
+            4
+          ]
+        },
+        {
+          "y": 181.46,
+          "x": 70.824,
+          "xEnd": 519.91,
+          "text": "OS/2 表里 usWinAscent 与 usWinDescent 的和通常大于一个 em，所以单倍行距的行",
+          "first": "O",
+          "last": "行",
+          "items": [
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18
+          ]
+        },
+        {
+          "y": 197.06,
+          "x": 70.824,
+          "xEnd": 190.824,
+          "text": "高会比字号大出一截。",
+          "first": "高",
+          "last": "。",
+          "items": [
+            19
+          ]
+        },
+        {
+          "y": 222.74,
+          "x": 70.824,
+          "xEnd": 510.639,
+          "text": "黑体二号：标题字体也要验，因为标题往往是",
+          "first": "黑",
+          "last": "是",
+          "items": [
+            20
+          ]
+        },
+        {
+          "y": 251.3,
+          "x": 70.824,
+          "xEnd": 510.639,
+          "text": "页面上行高最大的一行，它决定了标题下方正",
+          "first": "页",
+          "last": "正",
+          "items": [
+            21
+          ]
+        },
+        {
+          "y": 279.77,
+          "x": 70.824,
+          "xEnd": 510.639,
+          "text": "文的起始基线位置。这一段同样要长到折行。",
+          "first": "文",
+          "last": "。",
+          "items": [
+            22
+          ]
+        },
+        {
+          "y": 300.17,
+          "x": 70.824,
+          "xEnd": 518.714,
+          "text": "楷体四号：楷体常用于公文中的引用与批示部分，度量与仿宋不同，需要",
+          "first": "楷",
+          "last": "要",
+          "items": [
+            23
+          ]
+        },
+        {
+          "y": 318.41,
+          "x": 70.824,
+          "xEnd": 504.8,
+          "text": "单独验证。这一段也要写到足够长，长到折行为止，否则量不出基线间",
+          "first": "单",
+          "last": "间",
+          "items": [
+            24
+          ]
+        },
+        {
+          "y": 336.53,
+          "x": 70.824,
+          "xEnd": 98.904,
+          "text": "距。",
+          "first": "距",
+          "last": "。",
+          "items": [
+            25
+          ]
+        },
+        {
+          "y": 351.77,
+          "x": 70.824,
+          "xEnd": 513.54,
+          "text": "Latin control paragraph set in Times New Roman at twelve points. It has to run long enough",
+          "first": "L",
+          "last": "h",
+          "items": [
+            26
+          ]
+        },
+        {
+          "y": 365.57,
+          "x": 70.824,
+          "xEnd": 483.924,
+          "text": "to wrap onto several lines, so that the baseline pitch can be measured against the OS/2",
+          "first": "t",
+          "last": "2",
+          "items": [
+            27
+          ]
+        },
+        {
+          "y": 379.37,
+          "x": 70.824,
+          "xEnd": 511.888,
+          "text": "winAscent plus winDescent prediction without any CJK glyph interfering with the line box.",
+          "first": "w",
+          "last": ".",
+          "items": [
+            28
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+# deps
+node_modules/
+.pnpm-store/
+
+# build
+dist/
+build/
+*.tsbuildinfo
+
+# task/test caches
+.turbo/
+coverage/
+.vitest/
+
+# fidelity intermediates —— 真值 JSON 要提交，PDF 与截图不提交
+apps/fidelity/out/
+*.truth.pdf
+*.actual.json
+
+# editor / os
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+Thumbs.db
+Desktop.ini
+*~
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# env
+.env
+.env.*
+!.env.example
+
+# 字体源文件（授权原因不入库；度量包 JSON 入库）
+assets/fonts-src/

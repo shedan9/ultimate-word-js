@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // 这个 app 直接用 node 跑 .ts（Node 24 原生类型剥离），
+    // 所以解析规则要跟 Node 一致，不能用 bundler
+    "module": "NodeNext",
+    "moduleResolution": "nodenext",
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"]
+}

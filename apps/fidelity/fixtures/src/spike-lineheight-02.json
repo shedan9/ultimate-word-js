@@ -1,0 +1,47 @@
+{
+  "name": "spike-lineheight-02",
+  "note": "Phase 0 穿刺第二组：换用 unitsPerEm=2048 的现代字体（微软雅黑 1.3198 em、等线 1.0420 em、Arial 1.1499 em），用来判定 Word 的单倍行距到底是「跟着字体度量走」还是「中日韩一律 1.3 倍」。第一组里 SimSun/仿宋/黑体/楷体 的 unitsPerEm 都是 256，win 度量恰好等于 1.0 em，但实测行高是 1.30 em —— 必须用度量差异明显的字体才能把两种假设分开。",
+  "page": {
+    "widthMm": 210,
+    "heightMm": 297,
+    "marginMm": { "top": 25, "bottom": 25, "left": 25, "right": 25 }
+  },
+  "paragraphs": [
+    {
+      "text": "微软雅黑小四：这一段要写得足够长，长到至少折成三行，才能量出稳定的基线间距。微软雅黑的 usWinAscent 与 usWinDescent 之和是 1.3198 em，与中日韩固定 1.3 倍的假设只差百分之二，因此需要足够多的行数来分辨。",
+      "fontEA": "微软雅黑",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "bold": false,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "等线小四：等线的 usWinAscent 与 usWinDescent 之和只有 1.0420 em，比中日韩固定 1.3 倍小了将近三成，是分辨两种假设最有力的样本。这一段同样要写到足够长，长到折成三行以上为止。",
+      "fontEA": "等线",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "bold": false,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "Arial control paragraph at twelve points, long enough to wrap onto three lines. Arial reports a win span of 1.1074 em and an hhea line gap of 87 units, so the GDI external leading rule predicts a single line height of 1.1499 em, distinctly different from the Times New Roman paragraph in the first spike.",
+      "fontEA": "宋体",
+      "fontLatin": "Arial",
+      "sizePt": 12,
+      "bold": false,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    }
+  ]
+}

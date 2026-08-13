@@ -1,0 +1,24 @@
+{
+  "name": "@uw/fonts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "字体表解析、度量、替换表、缓存",
+  "exports": {
+    ".": "./src/index.ts",
+    "./node": "./src/load-node.ts"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@uw/core": "workspace:*",
+    "fontkit": "^2.0.4"
+  },
+  "devDependencies": {
+    "@types/fontkit": "^2.0.9",
+    "tsdown": "^0.22.14"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "@uw/ooxml",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "OPC(zip) + XML → 原始 OOXML 树",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@uw/core": "workspace:*",
+    "fflate": "^0.8.3",
+    "fast-xml-parser": "^5.10.1"
+  },
+  "devDependencies": {
+    "tsdown": "^0.22.14"
+  }
+}

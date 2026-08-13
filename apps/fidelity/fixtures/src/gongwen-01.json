@@ -1,0 +1,96 @@
+{
+  "name": "gongwen-01",
+  "note": "GB/T 9704 版式的最小公文样本：二号标题 + 三号仿宋正文 + 每页 22 行行网格；正文含中英数混排与常见标点，用于验证行网格吸附、避头尾、中西文自动间距。",
+  "page": {
+    "widthMm": 210,
+    "heightMm": 297,
+    "marginMm": { "top": 37, "bottom": 35, "left": 28, "right": 26 },
+    "grid": { "linesPage": 22 }
+  },
+  "paragraphs": [
+    {
+      "text": "关于进一步加强文档排版引擎保真度验证工作的通知",
+      "fontEA": "黑体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 22,
+      "bold": false,
+      "align": "center",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 24,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "各有关单位：",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 16,
+      "bold": false,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "为落实排版引擎的保真度要求，现将有关事项通知如下。自 2026 年起，所有版式输出均须以 Word 导出的 PDF 坐标为准，误差不得超过 0.5 pt；涉及 CJK 与 Latin 混排的段落，应逐字符判定其所属脚本桶（ascii / hAnsi / eastAsia / cs），不得整段套用同一款字体。",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 16,
+      "bold": false,
+      "align": "justify",
+      "firstLineChars": 2,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "行网格是公文保真的第一要务：每页二十二行、每行二十八字的版心约束，要求段落基线严格吸附到 linePitch 的整数倍位置上。行首不得出现「，。、；：？！》」』）】…—」等标点，行尾不得出现「《「『（【」等标点；确需处理时，先尝试标点挤压（按 0.5 em 压缩全角标点），压不下再把前一字符推入下一行。中西文之间自动插入 1/8 em 间隙（autoSpaceDE / autoSpaceDN 默认开启），这一项不做，中英混排的行长就永远对不上。",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 16,
+      "bold": false,
+      "align": "justify",
+      "firstLineChars": 2,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "特此通知。",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 16,
+      "bold": false,
+      "align": "justify",
+      "firstLineChars": 2,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 24,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "排版引擎项目组",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 16,
+      "bold": false,
+      "align": "right",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "2026 年 8 月 13 日",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 16,
+      "bold": false,
+      "align": "right",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    }
+  ]
+}

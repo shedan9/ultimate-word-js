@@ -1,0 +1,21 @@
+{
+  "name": "@uw/model",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "文档模型 + 样式级联 + 编号 + 变更事务",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@uw/core": "workspace:*",
+    "@uw/ooxml": "workspace:*"
+  },
+  "devDependencies": {
+    "tsdown": "^0.22.14"
+  }
+}

@@ -1,0 +1,44 @@
+/**
+ * Node 侧字体加载 —— 只给保真度实验、度量包抽取这类离线工具用。
+ * 浏览器侧走字节流（内嵌字体 / 用户注册的 webfont / 度量包 JSON），不碰这个文件。
+ */
+// fontkit 2.x 的 ESM 入口只有具名导出，没有 default
+import { openSync } from 'fontkit';
+import type { FontkitFont, RawFontMetrics } from './metrics.ts';
+import { readRawMetrics } from './metrics.ts';
+
+/** Windows 系统字体目录 —— 抽度量包与真值实验的字体来源 */
+export const WINDOWS_FONT_DIR = 'C:/Windows/Fonts';
+
+/**
+ * 打开字体文件；`.ttc` 字体集需要用 postscriptName 指定其中一款
+ * （如 simsun.ttc 里同时有 SimSun 与 NSimSun）。
+ */
+export function openFont(filePath: string, postscriptName?: string): FontkitFont {
+  const opened = openSync(filePath, postscriptName as string) as unknown;
+  const collection = opened as { fonts?: FontkitFont[]; getFont?: (n: string) => FontkitFont | null };
+  if (Array.isArray(collection.fonts)) {
+    if (postscriptName && typeof collection.getFont === 'function') {
+      const picked = collection.getFont(postscriptName);
+      if (!picked) throw new Error(`${filePath} 里没有 ${postscriptName}`);
+      return picked;
+    }
+    const first = collection.fonts[0];
+    if (!first) throw new Error(`${filePath} 是空的字体集`);
+    return first;
+  }
+  return opened as FontkitFont;
+}
+
+/**
+ * 该字体是否覆盖东亚文字 —— 决定行高走不走 1.3 系数。
+ * 直接查 cmap 有没有 U+4E00「一」，比读 OS/2 的 codePageRange 可靠（老字体常填错）。
+ */
+export function hasEastAsianCoverage(font: FontkitFont): boolean {
+  const f = font as { hasGlyphForCodePoint?: (cp: number) => boolean };
+  return typeof f.hasGlyphForCodePoint === 'function' && f.hasGlyphForCodePoint(0x4e00);
+}
+
+export function readMetricsFromFile(filePath: string, postscriptName?: string): RawFontMetrics {
+  return readRawMetrics(openFont(filePath, postscriptName));
+}

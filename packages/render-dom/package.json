@@ -1,0 +1,21 @@
+{
+  "name": "@uw/render-dom",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "绝对定位 DOM 渲染器",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@uw/core": "workspace:*",
+    "@uw/layout": "workspace:*"
+  },
+  "devDependencies": {
+    "tsdown": "^0.22.14"
+  }
+}

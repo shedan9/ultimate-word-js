@@ -1,0 +1,71 @@
+{
+  "name": "spike-lineheight-01",
+  "note": "Phase 0 穿刺专用：**不开行网格**（page.grid 缺省），单倍行距，每段一款字体一个字号。没有网格吸附，连续两行的基线差就直接等于「单倍行距行高」，可以拿来单独验证 OS/2 usWinAscent+usWinDescent 这条算法。最后一段是纯拉丁文，用来对照西文字体的度量来源。",
+  "page": {
+    "widthMm": 210,
+    "heightMm": 297,
+    "marginMm": { "top": 25, "bottom": 25, "left": 25, "right": 25 }
+  },
+  "paragraphs": [
+    {
+      "text": "仿宋三号：这一段刻意写得足够长，长到必须折成三行以上，这样才能量出稳定的基线间距。排版引擎的第一课是行高，不是断行；行高算错，后面所有的页码、目录、脚注都会跟着错，而且错得没有规律可循。",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 16,
+      "bold": false,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "宋体小四：同样要写得足够长以便折行。宋体是公文与书籍正文最常见的字体，它的 OS/2 表里 usWinAscent 与 usWinDescent 的和通常大于一个 em，所以单倍行距的行高会比字号大出一截。",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "bold": false,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "黑体二号：标题字体也要验，因为标题往往是页面上行高最大的一行，它决定了标题下方正文的起始基线位置。这一段同样要长到折行。",
+      "fontEA": "黑体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 22,
+      "bold": false,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "楷体四号：楷体常用于公文中的引用与批示部分，度量与仿宋不同，需要单独验证。这一段也要写到足够长，长到折行为止，否则量不出基线间距。",
+      "fontEA": "楷体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 14,
+      "bold": false,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "Latin control paragraph set in Times New Roman at twelve points. It has to run long enough to wrap onto several lines, so that the baseline pitch can be measured against the OS/2 winAscent plus winDescent prediction without any CJK glyph interfering with the line box.",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "bold": false,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    }
+  ]
+}
