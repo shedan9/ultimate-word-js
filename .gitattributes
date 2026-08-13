@@ -1,5 +1,10 @@
 * text=auto eol=lf
+
+# .ps1 按 Windows 惯例检出成 CRLF（仓库里仍存 LF）。
+# pwsh 7 与 Windows PowerShell 5.1 读 LF 都没问题，这条纯粹是惯例，不是必需；
+# 但既然写了就得让工作区与之一致，否则每次 git add 都会警告行尾要被改写。
 *.ps1 text eol=crlf
+
 *.docx binary
 *.pdf binary
 *.ttf binary

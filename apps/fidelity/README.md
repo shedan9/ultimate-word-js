@@ -54,7 +54,13 @@ node src/extract-truth.ts out/gongwen-01.pdf   # 只抽某个已有 PDF，结果
 
 ## 环境要求
 
-Windows + 已安装 Word（走 COM）。`pwsh` 优先，没有则回落 Windows PowerShell 5.1。
+Windows + 已安装 Word（走 COM）。
+
+脚本走 `pwsh` 优先、Windows PowerShell 5.1 回落两条路，**两条都验过**：
+开发机是 pwsh 7.6.4（日常跑的就是它），5.1（5.1.26100）跑同一个 spec 产出的真值与
+入库版本逐行文本一致、基线差 0.000pt。所以 `.ps1` 里不用 PS7 专属语法，
+中文也一律留在 UTF-8 的 spec JSON 里由 `[System.IO.File]::ReadAllText` 显式读，
+不依赖主机默认编码 —— 这样两个版本的行为才是一样的。
 
 ## 已知坑（踩过的）
 
