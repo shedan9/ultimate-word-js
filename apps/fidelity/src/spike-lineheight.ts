@@ -16,7 +16,10 @@ import { fileURLToPath } from 'node:url';
 import { ptToTwips, twipsToPt } from '@uw/core';
 import { lineMetrics, readRawMetrics } from '@uw/fonts';
 import { hasEastAsianCoverage, openFont, WINDOWS_FONT_DIR } from '@uw/fonts/node';
+import { assertWindows } from './platform.ts';
 import type { TruthPage, WordTruth } from './truth-types.ts';
+
+assertWindows({ tool: 'Phase 0 行高穿刺', needs: '要读 C:/Windows/Fonts 下的真实字体表' });
 
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_FIXTURES = ['spike-lineheight-01', 'spike-lineheight-02'];

@@ -18,6 +18,7 @@ import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractTruth } from './extract-truth.ts';
+import { assertWindows } from './platform.ts';
 import { runScript } from './run-powershell.ts';
 import type { WordMeta } from './truth-types.ts';
 
@@ -26,6 +27,8 @@ const FIXTURES = path.join(APP_ROOT, 'fixtures');
 const SPECS = path.join(FIXTURES, 'src');
 const OUT = path.join(APP_ROOT, 'out');
 const SCRIPTS = path.join(APP_ROOT, 'scripts');
+
+assertWindows({ tool: '真值流水线', needs: '导出 PDF 要调 Word 的 COM 接口' });
 
 const args = process.argv.slice(2);
 const force = args.includes('--force');
