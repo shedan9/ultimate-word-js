@@ -94,7 +94,7 @@ Word 的单倍行距**不是** CSS `line-height: normal`。Word 用字体 `OS/2`
 
 #### ✅ Phase 0 穿刺已测定的行高公式（2026-08-13）
 
-实测样本见 `apps/fidelity/fixtures/spike-lineheight-01|02`，验证脚本 `apps/fidelity/src/spike-lineheight.ts`，
+实测样本见 `apps/fidelity/fixtures/spike-lineheight-01|02`，验证脚本 `../apps/fidelity/src/spike-lineheight.ts`，
 实现在 `@uw/fonts` 的 `lineMetrics()`。**按脚本分两条路**：
 
 | 行的内容 | 单倍行距行高 |
@@ -472,10 +472,10 @@ CI 上无 Word，所以真值 PDF 与抽取结果**提交进仓库**（`fixtures
 
 1. ~~工具链~~ ✅ fnm 1.39 + Node 24.19.0 + npm 11.17 + pnpm 11.21（corepack）。
    fnm 初始化已追加到 `$PROFILE`；`--use-on-cd` 会读项目里的 `.node-version`
-2. ~~`git init` + `.gitignore` + `.node-version` + `packageManager`~~ ✅
-3. ~~monorepo 骨架：`core` / `ooxml` / `model` / `fonts` / `layout` / `render-dom` + `apps/playground`~~ ✅
+2. ~~`git init` + `../.gitignore` + `.node-version` + `packageManager`~~ ✅
+3. ~~monorepo 骨架：`core` / `ooxml` / `model` / `fonts` / `layout` / `render-dom` + `../apps/playground`~~ ✅
    （`core/units.ts` 与 `fonts/metrics.ts` 已是真实实现，其余是占位）
-4. ~~`apps/fidelity`：PowerShell 导出 PDF → pdf.js 抽坐标 → JSON 真值~~ ✅ 见 `apps/fidelity/README.md`
+4. ~~`../apps/fidelity`：PowerShell 导出 PDF → pdf.js 抽坐标 → JSON 真值~~ ✅ 见 `../apps/fidelity/README.md`
 5. ~~Phase 0 穿刺：验证行高算法误差 < 1pt~~ ✅ 0.132pt，结论写进 §2.1
 
 接下来（按顺序）：
@@ -485,6 +485,6 @@ CI 上无 Word，所以真值 PDF 与抽取结果**提交进仓库**（`fixtures
 7. **CI**（GitHub Actions）：`typecheck` + `test` + `biome check`。真值不在 CI 生成，只读仓库里的 `*.truth.json`
 8. **Phase 1 开工**：`@uw/ooxml` 的 OPC 容器 + part 索引 → `@uw/model` 的样式级联。
    起手就用 `fixtures/gongwen-01.docx`（已入库）当解析目标
-9. 语料库扩容：把真实公文丢进 `apps/fidelity/fixtures/`，每修一个 bug 加一个文档
+9. 语料库扩容：把真实公文丢进 `../apps/fidelity/fixtures`，每修一个 bug 加一个文档
 
 第 6 步优先于任何布局代码 —— 与第 4 步同理，没测准的东西不要拿来当地基。

@@ -8,7 +8,7 @@
 |---|---|
 | [架构设计](./docs/architecture.md) | 代码怎么切、数据怎么流、坐标怎么管 |
 | [API 设计](./docs/api.md) | 对外长什么样、为什么这样设计 |
-| [开发计划](./DEVELOPMENT-PLAN.md) | 做什么、什么顺序、每阶段的完成判据 |
+| [开发计划](docs/DEVELOPMENT-PLAN.md) | 做什么、什么顺序、每阶段的完成判据 |
 
 ## 当前进度
 

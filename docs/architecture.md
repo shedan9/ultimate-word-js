@@ -1,6 +1,6 @@
 # 架构设计
 
-> 配套文档：[开发计划](../DEVELOPMENT-PLAN.md)（做什么、什么顺序）· [API 设计](./api.md)（对外长什么样）
+> 配套文档：[开发计划](DEVELOPMENT-PLAN.md)（做什么、什么顺序）· [API 设计](./api.md)（对外长什么样）
 >
 > 本文只回答一个问题：**为了让「自己算排版」这件事在工程上站得住，代码该怎么切。**
 
@@ -286,7 +286,7 @@ flowchart TB
 | 含东亚文字 | `(usWinAscent + usWinDescent) × 1.3 × 字号 / unitsPerEm`，**不加**外部行距 |
 | 纯拉丁文字 | `(usWinAscent + usWinDescent + GDI 外部行距) × 字号 / unitsPerEm` |
 
-13 个样本最大误差 0.132pt。完整推导与两个陷阱见 [开发计划 §2.1](../DEVELOPMENT-PLAN.md)。
+13 个样本最大误差 0.132pt。完整推导与两个陷阱见 [开发计划 §2.1](DEVELOPMENT-PLAN.md)。
 
 **仍未决**：那 30% 额外行距在基线上下如何分配——它决定行内基线的确切位置，
 现在一律记进 `lineGap`，只保证行高总量正确。这是 Phase 2 之前必须补的一次穿刺。
