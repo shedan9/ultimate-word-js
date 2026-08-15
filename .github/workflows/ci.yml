@@ -1,0 +1,40 @@
+# CI 只做「消费真值」这一半。
+#
+# 真值的**生成**绑死 Windows（Word COM 导出 PDF + C:/Windows/Fonts），CI 上没有 Word，
+# 所以这里永远不跑 `pnpm truth` —— 仓库里的 fixtures/*.truth.json 就是真值本身，
+# 测试只读它。新增 fixture 要回 Windows 重新生成后提交。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# 同一分支上新的推送取消旧的跑，别排队浪费额度
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # 必须在 setup-node 之前 —— setup-node 的 cache: pnpm 要先找得到 pnpm
+      # 版本不写死在这里，由 package.json 的 packageManager 字段决定，避免两处漂移
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint（Biome）
+        run: pnpm lint
+
+      # typecheck 与 test 走 turbo，与本地 `pnpm turbo run typecheck test` 完全同一条命令
+      - name: Typecheck + Test
+        run: pnpm turbo run typecheck test

@@ -7,8 +7,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 自研布局引擎的 Word（OOXML）在线预览 / 编辑库，定位是**中文公文 / 周报 / 报告类文档的高保真引擎**。
 保真度由自己算的排版决定，**不依赖浏览器排版** —— 所以「用 CSS 让它看起来差不多」永远不是正确答案。
 
-当前进度：Phase 0（地基 + 行高穿刺）已完成。`@uw/core` 的单位系统与 `@uw/fonts` 的行高规则是真实实现，
-`@uw/ooxml` / `@uw/model` / `@uw/layout` / `@uw/render-dom` 还是占位文件（Phase 1–2 填充）。
+当前进度：Phase 0 已完成（地基 + 行高穿刺 + CI），Phase 1 进行中。
+真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/fonts`（行高规则）、`@uw/ooxml`（OPC 容器 + XML 树）。
+`@uw/model` / `@uw/layout` / `@uw/render-dom` 还是占位文件。
+
+**卡在 Windows 的一件事**：东亚行高里那 30% 额外行距在基线上下如何分配，需要「首行基线到版心顶」
+的穿刺来定（要 Word COM）。它挡 Phase 2 的行盒，但**不挡** Phase 1 的解析与样式级联。
 
 三份必读文档，动手前按需查：
 

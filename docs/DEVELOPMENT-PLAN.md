@@ -346,13 +346,14 @@ await view.toPNG(3);     // 第 3 页
 
 每个阶段都以**可演示的产物**结束。业余时间推进，不设日期，只设完成判据（DoD）。
 
-### Phase 0 — 地基与验证性穿刺 ✅（CI 除外）
-- ~~pnpm + Turborepo + tsdown + Vitest + Biome 骨架~~ ✅；CI 尚未搭
+### Phase 0 — 地基与验证性穿刺 ✅
+- ~~pnpm + Turborepo + tsdown + Vitest + Biome 骨架~~ ✅；~~CI~~ ✅ `.github/workflows/ci.yml`
 - ~~**穿刺实验**：手写一个 5 段中文文档，用自己算的字体度量排一页，与 Word 导出 PDF 的实际坐标逐行比对~~ ✅
 - **DoD**：~~证明「读 OS/2 表算行高」能把单页行基线误差压到 < 1pt~~ ✅ 实测最大误差 **0.132 pt**（见 §2.1）
 
-### Phase 1 — OOXML 解析 + 文档模型 + 样式级联
-- OPC 容器（fflate）、关系解析、part 索引
+### Phase 1 — OOXML 解析 + 文档模型 + 样式级联 🚧
+- ~~OPC 容器（fflate）、关系解析、part 索引~~ ✅ `@uw/ooxml`：解包 + 内容类型 + 关系 +
+  保序 XML 纯数据树 + 反向序列化。`gongwen-01.docx` 全部 11 个部件语义 round-trip 通过
 - `document.xml` / `styles.xml` / `numbering.xml` / `settings.xml` / `theme1.xml` / `fontTable.xml`
 - 样式级联：`docDefaults → styles.xml(basedOn 链，含循环检测) → 表格条件格式 → 编号 → 直接格式`
 - 属性解析成**扁平化的 `ResolvedRunProps` / `ResolvedParaProps`**，布局层不再碰 XML
@@ -480,11 +481,13 @@ CI 上无 Word，所以真值 PDF 与抽取结果**提交进仓库**（`fixtures
 
 接下来（按顺序）：
 
-6. **补基线位置穿刺** —— 定下东亚行高里那 30% 额外行距在基线上下如何分配（§2.1 未决项）。
-   做法：量「首行基线到版心顶」的距离，与 ascent 预测对比。这个不定，Phase 2 的行盒就摆不准
-7. **CI**（GitHub Actions）：`typecheck` + `test` + `biome check`。真值不在 CI 生成，只读仓库里的 `*.truth.json`
-8. **Phase 1 开工**：`@uw/ooxml` 的 OPC 容器 + part 索引 → `@uw/model` 的样式级联。
+6. **补基线位置穿刺** ⏸ **卡在 Windows** —— 定下东亚行高里那 30% 额外行距在基线上下如何分配（§2.1 未决项）。
+   做法：量「首行基线到版心顶」的距离，与 ascent 预测对比。这个不定，Phase 2 的行盒就摆不准。
+   要 Word COM + `C:/Windows/Fonts`，Mac / Linux 上会被 `platform.ts` 以退出码 2 拦下
+7. ~~**CI**（GitHub Actions）：`typecheck` + `test` + `biome check`~~ ✅ 真值不在 CI 生成，只读仓库里的 `*.truth.json`
+8. **Phase 1 开工** 🚧：~~`@uw/ooxml` 的 OPC 容器 + part 索引~~ ✅ → 下一步 `@uw/model` 的样式级联。
    起手就用 `fixtures/gongwen-01.docx`（已入库）当解析目标
 9. 语料库扩容：把真实公文丢进 `../apps/fidelity/fixtures`，每修一个 bug 加一个文档
 
-第 6 步优先于任何布局代码 —— 与第 4 步同理，没测准的东西不要拿来当地基。
+第 6 步优先于任何**布局**代码 —— 与第 4 步同理，没测准的东西不要拿来当地基。
+但它不挡 Phase 1：解析与样式级联跟基线位置无关，可以在非 Windows 机器上一直做到 Phase 2 门口。
