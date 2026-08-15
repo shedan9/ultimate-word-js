@@ -26,6 +26,7 @@ import type {
   ResolvedParaProps,
   ResolvedRunProps,
   RunProps,
+  TabStop,
 } from './props.ts';
 import type { DocumentSettings } from './settings.ts';
 import type { StyleSheet } from './styles.ts';
@@ -185,6 +186,23 @@ interface ParaAccum {
   indent: Indent;
   spacing: ParagraphSpacing;
   numbering: NumberingRef;
+  /** 制表位按 `pos` 索引：同一个位置只能有一个，后来的层覆盖前面的 */
+  tabs: Map<number, TabStop>;
+}
+
+/**
+ * 制表位的合并 —— 它不像别的属性那样「整块替换」，而是**逐个位置**合并：
+ * 样式定了 1440 处一个右对齐制表位，段落又定了 720 处一个左对齐的，两个都在。
+ *
+ * `w:val="clear"` 是唯一的删除手段：它把继承来的、位于同一 `pos` 的那个删掉，
+ * 自己不留下任何东西。漏了这一条，Word 里被清掉的制表位会在我们这儿复活，
+ * 那一行的文字会停在错误的横坐标上。
+ */
+function applyTabs(acc: ParaAccum, tabs: readonly TabStop[]): void {
+  for (const t of tabs) {
+    if (t.alignment === 'clear') acc.tabs.delete(t.pos);
+    else acc.tabs.set(t.pos, { ...t });
+  }
 }
 
 function applyParaLevel(acc: ParaAccum, level: ParaProps): void {
@@ -204,6 +222,7 @@ function applyParaLevel(acc: ParaAccum, level: ParaProps): void {
   if (level.indent !== undefined) Object.assign(acc.indent, definedOnly(level.indent));
   if (level.spacing !== undefined) Object.assign(acc.spacing, definedOnly(level.spacing));
   if (level.numbering !== undefined) Object.assign(acc.numbering, definedOnly(level.numbering));
+  if (level.tabs !== undefined) applyTabs(acc, level.tabs);
 }
 
 /** `Object.assign` 会把显式的 undefined 也拷过去，先滤掉 */
@@ -222,7 +241,7 @@ function paragraphStyleId(ctx: CascadeContext, direct: ParaProps | undefined): s
 
 export function resolveParaProps(ctx: CascadeContext, direct: ParaProps | undefined): ResolvedParaProps {
   const styleId = paragraphStyleId(ctx, direct);
-  const acc: ParaAccum = { props: {}, indent: {}, spacing: {}, numbering: {} };
+  const acc: ParaAccum = { props: {}, indent: {}, spacing: {}, numbering: {}, tabs: new Map() };
 
   applyParaLevel(acc, ctx.styles.defaults.paraProps);
   for (const s of ctx.styles.chainOf(styleId)) applyParaLevel(acc, s.paraProps);
@@ -233,6 +252,8 @@ export function resolveParaProps(ctx: CascadeContext, direct: ParaProps | undefi
     styleId,
     justification: p.justification ?? ('left' as Justification),
     indent: { ...ZERO_INDENT, ...definedOnly(acc.indent) },
+    // 布局层要按 x 递增找「下一个制表位」，在这里排好省得每行再排一次
+    tabs: [...acc.tabs.values()].sort((a, b) => a.pos - b.pos),
     spacing: {
       before: acc.spacing.before ?? 0,
       after: acc.spacing.after ?? 0,

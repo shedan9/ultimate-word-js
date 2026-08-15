@@ -8,7 +8,7 @@
  */
 import { halfPtToTwips } from '@uw/core';
 import type { XmlElement } from '@uw/ooxml';
-import { attr, child } from '@uw/ooxml';
+import { attr, child, children } from '@uw/ooxml';
 import type {
   Indent,
   Justification,
@@ -19,12 +19,15 @@ import type {
   RunFonts,
   RunFontThemes,
   RunProps,
+  TabStop,
 } from './props.ts';
 import { attrInt, attrOnOff, enumVal, intVal, onOff, put, valOf } from './xml-values.ts';
 
 const VERT_ALIGNS = ['baseline', 'superscript', 'subscript'] as const;
 const LINE_RULES = ['auto', 'exact', 'atLeast'] as const;
 const HINTS = ['default', 'eastAsia', 'cs'] as const;
+const TAB_ALIGNMENTS = ['left', 'center', 'right', 'decimal', 'bar', 'clear'] as const;
+const TAB_LEADERS = ['none', 'dot', 'hyphen', 'underscore', 'heavy', 'middleDot'] as const;
 
 /**
  * `w:jc` 的取值。`start` / `end` 是较新的写法，等价于 left / right ——
@@ -143,6 +146,23 @@ export function parseParaProps(pPr: XmlElement | undefined): ParaProps {
     if (Object.keys(spacing).length > 0) out.spacing = spacing;
   }
 
+  const tabsEl = child(pPr, 'w:tabs');
+  if (tabsEl !== undefined) {
+    const tabs: TabStop[] = [];
+    for (const t of children(tabsEl, 'w:tab')) {
+      const pos = attrInt(t, 'w:pos');
+      // w:pos 缺席的制表位没有意义（对齐到哪儿？），Word 也不写这种；跳过而不是当 0
+      if (pos === undefined) continue;
+      tabs.push({
+        pos,
+        // `start` / `end` 同 w:jc，是 left / right 的新名字
+        alignment: parseTabAlignment(attr(t, 'w:val')) ?? 'left',
+        leader: enumVal(attr(t, 'w:leader'), TAB_LEADERS) ?? 'none',
+      });
+    }
+    if (tabs.length > 0) out.tabs = tabs;
+  }
+
   const numPr = child(pPr, 'w:numPr');
   if (numPr !== undefined) {
     const numbering: NumberingRef = {};
@@ -156,6 +176,14 @@ export function parseParaProps(pPr: XmlElement | undefined): ParaProps {
   if (markRPr !== undefined) out.markRunProps = parseRunProps(markRPr);
 
   return out;
+}
+
+function parseTabAlignment(v: string | undefined): TabStop['alignment'] | undefined {
+  if (v === 'start') return 'left';
+  if (v === 'end') return 'right';
+  // `num` 是编号专用的左对齐制表位，排版行为与 left 一致，直接归并
+  if (v === 'num') return 'left';
+  return enumVal(v, TAB_ALIGNMENTS);
 }
 
 function halfPt(v: number | undefined): number | undefined {

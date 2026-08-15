@@ -192,3 +192,80 @@ describe('numbering.xml', () => {
     expect(parseNumbering(undefined, createDiagnosticSink())).toEqual({ abstract: {}, instances: {} });
   });
 });
+
+describe('numbering.xml 的 w:numStyleLink 那一跳', () => {
+  /** abstractNum 1 自己没有 w:lvl，定义在编号样式「ListNum」指向的 num 2 上 */
+  const XML = `<w:numbering>
+      <w:abstractNum w:abstractNumId="1"><w:numStyleLink w:val="ListNum"/></w:abstractNum>
+      <w:abstractNum w:abstractNumId="2">
+        <w:styleLink w:val="ListNum"/>
+        <w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl>
+      </w:abstractNum>
+      <w:num w:numId="1"><w:abstractNumId w:val="1"/></w:num>
+      <w:num w:numId="2"><w:abstractNumId w:val="2"/></w:num>
+    </w:numbering>`;
+
+  /** 只提供 numberingLevel 真正要的那点样式信息 */
+  function styleLookup(map: Record<string, number>) {
+    return {
+      byId: (id: string) => {
+        const numId = map[id];
+        return numId === undefined ? undefined : { paraProps: { numbering: { numId } } };
+      },
+    };
+  }
+
+  const n = () => parseNumbering(parseXml(XML), createDiagnosticSink());
+
+  it('跟着跳到编号样式指向的另一个 num —— 不跳的话多级列表整个查不到定义', () => {
+    expect(numberingLevel(n(), 1, 0, styleLookup({ ListNum: 2 }))?.lvlText).toBe('%1.');
+  });
+
+  it('没传 styles 时不跳，退化成老行为', () => {
+    expect(numberingLevel(n(), 1, 0)).toBeUndefined();
+  });
+
+  it('成环时停下来返回 undefined，不无限跳', () => {
+    // ListNum 指回 num 1，也就是指回 abstractNum 1 自己
+    expect(numberingLevel(n(), 1, 0, styleLookup({ ListNum: 1 }))).toBeUndefined();
+  });
+
+  it('本地有 w:lvl 时以本地为准，不跳', () => {
+    const xml = XML.replace(
+      '<w:numStyleLink w:val="ListNum"/>',
+      '<w:numStyleLink w:val="ListNum"/><w:lvl w:ilvl="0"><w:lvlText w:val="本地"/></w:lvl>',
+    );
+    const parsed = parseNumbering(parseXml(xml), createDiagnosticSink());
+    expect(numberingLevel(parsed, 1, 0, styleLookup({ ListNum: 2 }))?.lvlText).toBe('本地');
+  });
+
+  it('编号样式的 numId=0 是「取消编号」，不当成第 0 号去查', () => {
+    expect(numberingLevel(n(), 1, 0, styleLookup({ ListNum: 0 }))).toBeUndefined();
+  });
+});
+
+describe('settings.xml 的禁则字符集覆盖', () => {
+  const parse = (xml: string) => parseSettings(parseXml(`<w:settings>${xml}</w:settings>`));
+
+  it('收下文档自定义的首禁则 / 尾禁则', () => {
+    const s = parse(`
+      <w:noLineBreaksAfter w:lang="zh-CN" w:val="（「【"/>
+      <w:noLineBreaksBefore w:lang="zh-CN" w:val="，。）"/>
+    `);
+    expect(s.noLineBreaksAfter).toBe('（「【');
+    expect(s.noLineBreaksBefore).toBe('，。）');
+  });
+
+  it('多语言的多条合并去重 —— 判定只问「属不属于禁则集」', () => {
+    const s = parse(`
+      <w:noLineBreaksBefore w:lang="zh-CN" w:val="，。"/>
+      <w:noLineBreaksBefore w:lang="ja-JP" w:val="。、"/>
+    `);
+    expect([...s.noLineBreaksBefore].sort()).toEqual(['、', '。', '，']);
+  });
+
+  it('没写时是空串，布局层据此用内建禁则集', () => {
+    expect(DEFAULT_SETTINGS.noLineBreaksAfter).toBe('');
+    expect(parse('').noLineBreaksBefore).toBe('');
+  });
+});

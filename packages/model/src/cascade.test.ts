@@ -182,3 +182,42 @@ describe('basedOn 成环', () => {
     expect(sink.list().map((d) => d.code)).toContain('style-missing');
   });
 });
+
+describe('制表位', () => {
+  const ctx = ctxFrom(`
+    <w:style w:type="paragraph" w:default="1" w:styleId="Normal">
+      <w:name w:val="Normal"/>
+      <w:pPr><w:tabs>
+        <w:tab w:val="left" w:pos="720"/>
+        <w:tab w:val="right" w:pos="8306" w:leader="dot"/>
+      </w:tabs></w:pPr>
+    </w:style>
+  `);
+
+  it('样式与直接格式的制表位逐个合并，不是整块替换', () => {
+    const p = resolveParaProps(ctx, pPr('<w:tabs><w:tab w:val="center" w:pos="4153"/></w:tabs>'));
+    expect(p.tabs.map((t) => t.pos)).toEqual([720, 4153, 8306]); // 按 pos 升序
+    expect(p.tabs[1]?.alignment).toBe('center');
+  });
+
+  it('同一个 pos 上后来者覆盖', () => {
+    const p = resolveParaProps(ctx, pPr('<w:tabs><w:tab w:val="decimal" w:pos="720"/></w:tabs>'));
+    expect(p.tabs.filter((t) => t.pos === 720)).toHaveLength(1);
+    expect(p.tabs[0]?.alignment).toBe('decimal');
+  });
+
+  it('w:val="clear" 删掉继承来的那个，自己不留下任何东西', () => {
+    const p = resolveParaProps(ctx, pPr('<w:tabs><w:tab w:val="clear" w:pos="720"/></w:tabs>'));
+    expect(p.tabs.map((t) => t.pos)).toEqual([8306]);
+    // clear 只在级联时有意义，结果里不该再出现
+    expect(p.tabs.some((t) => t.alignment === 'clear')).toBe(false);
+  });
+
+  it('前导符原样保留 —— 目录那排点靠它', () => {
+    expect(resolveParaProps(ctx, pPr('')).tabs[1]?.leader).toBe('dot');
+  });
+
+  it('没有制表位时是空数组，布局层据此只走 defaultTabStop', () => {
+    expect(resolveParaProps(ctxFrom(''), pPr('')).tabs).toEqual([]);
+  });
+});

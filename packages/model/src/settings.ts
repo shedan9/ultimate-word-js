@@ -61,6 +61,20 @@ export interface DocumentSettings {
    */
   compatibilityMode: number;
   /**
+   * `w:noLineBreaksAfter` —— 文档自定义的**尾禁则**字符集：这些字符之后不许断行，
+   * 也就是「不能出现在行尾」的那批（`（「『【《` 之类）。
+   *
+   * 空串表示文件里没写，布局层用内建集合。写了就**整个替换**内建集合而不是追加 ——
+   * 用户在 Word 里改禁则字符集时，界面上就是一个可编辑的完整列表。
+   *
+   * 规范允许按 `w:lang` 写多条（日文一套、中文一套）。这里把所有语言的合并成一串：
+   * 判定只需要「这个字属不属于禁则集」，而一份文档不会同时按两套语言排版；
+   * 真要分语言得先有能验证差异的真值样本，现在没有。
+   */
+  noLineBreaksAfter: string;
+  /** `w:noLineBreaksBefore` —— **首禁则**：这些字符之前不许断行（`，。、）」` 等） */
+  noLineBreaksBefore: string;
+  /**
    * `w:compat` 底下所有开关，原样收着（元素名 → 是否开启）。
    *
    * 与排版真正相关、Phase 2 之后会来查的几个：
@@ -86,6 +100,8 @@ export const DEFAULT_SETTINGS: DocumentSettings = {
   hyphenationZone: 360,
   consecutiveHyphenLimit: 0,
   doNotHyphenateCaps: false,
+  noLineBreaksAfter: '',
+  noLineBreaksBefore: '',
   compatibilityMode: 0,
   compat: {},
 };
@@ -108,6 +124,8 @@ export function parseSettings(doc: XmlDocument | undefined): DocumentSettings {
     hyphenationZone: intVal(root, 'w:hyphenationZone') ?? d.hyphenationZone,
     consecutiveHyphenLimit: intVal(root, 'w:consecutiveHyphenLimit') ?? d.consecutiveHyphenLimit,
     doNotHyphenateCaps: onOff(root, 'w:doNotHyphenateCaps') ?? d.doNotHyphenateCaps,
+    noLineBreaksAfter: mergeKinsoku(root, 'w:noLineBreaksAfter'),
+    noLineBreaksBefore: mergeKinsoku(root, 'w:noLineBreaksBefore'),
     compatibilityMode: compatSettingInt(compatEl, 'compatibilityMode') ?? d.compatibilityMode,
     compat: parseCompat(compatEl),
   };
@@ -115,6 +133,20 @@ export function parseSettings(doc: XmlDocument | undefined): DocumentSettings {
 
 function valOfRoot(root: XmlElement, name: string): string | undefined {
   return attrOf(child(root, name), 'w:val');
+}
+
+/**
+ * 把各语言的禁则字符集合并成一串并去重。
+ *
+ * 按码点去重而不是按 UTF-16 码元：禁则集里理论上可以出现补充平面的字符，
+ * 按码元切会把代理对拆成两个半个字符，之后所有比较都不会再命中。
+ */
+function mergeKinsoku(root: XmlElement, name: string): string {
+  const seen = new Set<string>();
+  for (const el of children(root, name)) {
+    for (const ch of attr(el, 'w:val') ?? '') seen.add(ch);
+  }
+  return [...seen].join('');
 }
 
 function parseThemeFontLang(el: XmlElement | undefined): ThemeFontLang {

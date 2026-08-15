@@ -177,25 +177,72 @@ function parseOverrides(num: XmlElement): Record<number, LevelOverride> {
  * 而这一段想去掉时，Word 写的就是 `<w:numId w:val="0"/>`。当成正常编号去查会
  * 给本该没编号的段落加上编号。
  */
-export function numberingLevel(n: Numbering, numId: number, ilvl: number): NumberingLevel | undefined {
+export function numberingLevel(
+  n: Numbering,
+  numId: number,
+  ilvl: number,
+  styles?: StyleLookup,
+): NumberingLevel | undefined {
   if (numId === 0) return undefined;
   const instance = n.instances[numId];
   if (instance === undefined) return undefined;
 
   const override = instance.overrides[ilvl];
-  const base = override?.level ?? n.abstract[instance.abstractNumId]?.levels[ilvl];
+  const base = override?.level ?? resolveAbstractLevel(n, instance.abstractNumId, ilvl, styles);
   if (base === undefined) return undefined;
   // startOverride 只改起始值，其余照旧
   return override?.start === undefined ? base : { ...base, start: override.start };
 }
 
-// ── 写明的洞：w:numStyleLink ──────────────────────────────────────────────────
+/**
+ * `numberingLevel` 需要的样式查询能力，**只要这一点点**。
+ *
+ * 故意不收 `StyleSheet`：那样 numbering.ts 就依赖了整个样式表，而这里真正要的
+ * 只是「按 id 拿到样式的 numPr」。窄接口也让测试不必造一整份样式表。
+ */
+export interface StyleLookup {
+  byId(id: string): { paraProps: ParaProps } | undefined;
+}
+
+/**
+ * 解 `w:abstractNum` 上的级别定义，**跟上 `w:numStyleLink` 那一跳**。
+ *
+ * 一个 abstractNum 可以一条 `w:lvl` 都没有，只写 `<w:numStyleLink w:val="列表编号"/>`：
+ * 真正的定义在那个编号样式的 `w:pPr/w:numPr/w:numId` 指向的**另一个** num 上
+ * （那边的 abstractNum 通常写着反向的 `w:styleLink`）。不跟这一跳，多级列表
+ * 会整个查不到级别定义 —— 表现是编号消失，而不是报错。
+ *
+ * 环是真实存在的风险（A 的 numStyleLink 指向的样式又绕回 A），所以带 seen 集合，
+ * 与 `styles.ts/chainOf` 同一套路。`styles` 没传时不跳，退化成老行为。
+ */
+function resolveAbstractLevel(
+  n: Numbering,
+  abstractNumId: number,
+  ilvl: number,
+  styles: StyleLookup | undefined,
+): NumberingLevel | undefined {
+  const seen = new Set<number>();
+  let id: number | undefined = abstractNumId;
+  while (id !== undefined && !seen.has(id)) {
+    seen.add(id);
+    const abstract: AbstractNumbering | undefined = n.abstract[id];
+    if (abstract === undefined) return undefined;
+    const level = abstract.levels[ilvl];
+    // 有自己的定义就用自己的：numStyleLink 与 w:lvl 并存时，按规范以本地定义为准
+    if (level !== undefined) return level;
+    if (abstract.numStyleLink === undefined || styles === undefined) return undefined;
+
+    const linked: number | undefined = styles.byId(abstract.numStyleLink)?.paraProps.numbering?.numId;
+    // numId=0 在这里同样是「没有编号」，不是第 0 号
+    if (linked === undefined || linked === 0) return undefined;
+    id = n.instances[linked]?.abstractNumId;
+  }
+  return undefined;
+}
+
+// ── 仍未做的：编号的**消费** ─────────────────────────────────────────────────
 //
-// 一个 abstractNum 可以只写 `<w:numStyleLink w:val="某编号样式"/>` 而没有任何 w:lvl，
-// 真正的级别定义在那个样式的 `w:pPr/w:numPr/w:numId` 指向的**另一个** num 上。
-// 也就是说完整的解引用要多跳一次，而且可能成环。
-//
-// 这里**没有**跟这一跳：Phase 1 不消费编号，跳了也没人用；而要跳就必须一并处理环检测，
-// 那些代码现在无法被任何测试覆盖。Phase 5 接编号时，入口就是 `numberingLevel`：
-// base 为 undefined 且 abstract 有 numStyleLink 时，去 styles 里找同名样式再跳一次，
-// 带上和 `styles.ts/chainOf` 一样的 seen 集合防环。
+// 解引用（含 numStyleLink 那一跳）到此为止都通了，但编号本身还没有接进级联：
+// 每级自带的 pPr / rPr 要插在段落样式之后、直接格式之前（cascade.ts 的洞 1），
+// 计数器要按文档顺序累计并按 w:lvlRestart 归零，编号文字要按 w:lvlText 拼。
+// 那些都是 Phase 5 的活，且**依赖布局顺序之外的文档顺序**，与这里的纯解析不是一回事。

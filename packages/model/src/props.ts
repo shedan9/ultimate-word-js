@@ -160,6 +160,22 @@ export interface ParagraphSpacing {
   afterAutospacing?: boolean;
 }
 
+/**
+ * 一个制表位（`w:tabs/w:tab`）。
+ *
+ * `pos` 的原点是**版心左边**（不含左缩进），这一点和 `w:ind` 不同 —— 记错的话
+ * 公文里靠制表位对齐的「签发人」一栏会整体偏掉一个缩进量。
+ *
+ * `clear` 不是一种对齐方式，而是「把继承来的、位于 `pos` 的那个制表位删掉」，
+ * 只在级联时有意义；级联结果里不会再出现（见 cascade.ts 的 applyTabs）。
+ */
+export interface TabStop {
+  pos: Twips;
+  alignment: 'left' | 'center' | 'right' | 'decimal' | 'bar' | 'clear';
+  /** 前导符（目录里那排点就是它）。渲染要用，排版上不影响坐标 */
+  leader: 'none' | 'dot' | 'hyphen' | 'underscore' | 'heavy' | 'middleDot';
+}
+
 /** `w:numPr`：列表编号引用。Phase 5 才真正消费 */
 export interface NumberingRef {
   numId?: number;
@@ -172,6 +188,8 @@ export interface ParaProps {
   justification?: Justification;
   indent?: Indent;
   spacing?: ParagraphSpacing;
+  /** 本层声明的制表位。级联是**逐个合并**的，不是整块替换，见 cascade.ts */
+  tabs?: TabStop[];
   keepNext?: boolean;
   keepLines?: boolean;
   pageBreakBefore?: boolean;
@@ -199,6 +217,8 @@ export interface ResolvedParaProps {
   justification: Justification;
   indent: Required<Indent>;
   spacing: Required<Omit<ParagraphSpacing, 'lineRule'>> & { lineRule: LineRule };
+  /** 显式制表位，按 `pos` 升序、已去掉 `clear`。空数组表示只走 `defaultTabStop` */
+  tabs: TabStop[];
   keepNext: boolean;
   keepLines: boolean;
   pageBreakBefore: boolean;
