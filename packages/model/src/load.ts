@@ -9,6 +9,9 @@ import type { DiagnosticSink } from '@uw/core';
 import type { OpcPackage } from '@uw/ooxml';
 import { RelType } from '@uw/ooxml';
 import type { CascadeContext } from './cascade.ts';
+import type { Body, ResolvedBody } from './nodes.ts';
+import { parseBody } from './parse-body.ts';
+import { resolveBody } from './resolve-body.ts';
 import { parseStyles } from './styles.ts';
 import { EMPTY_THEME, parseTheme } from './theme.ts';
 
@@ -27,4 +30,25 @@ export function loadCascadeContext(pkg: OpcPackage, diagnostics: DiagnosticSink)
     styles: parseStyles(stylesPart === undefined ? undefined : pkg.xml(stylesPart), diagnostics),
     theme: themePart === undefined ? EMPTY_THEME : parseTheme(pkg.xml(themePart)),
   };
+}
+
+/**
+ * 一份 docx 解析完的样子 —— Phase 1 的产出，也是 `@uw/layout` 的输入来源。
+ *
+ * 三样东西都留着，因为用途不同：
+ * - `body` 是**可编辑**的那棵树（直接格式），编辑期改它
+ * - `resolved` 是**给布局**的那棵（级联完、纯数据），编辑后重算
+ * - `cascade` 是重算所需的上下文，**不可结构化克隆**，不许过 Worker 边界
+ */
+export interface LoadedDocument {
+  cascade: CascadeContext;
+  body: Body;
+  resolved: ResolvedBody;
+}
+
+export function loadDocument(pkg: OpcPackage, diagnostics: DiagnosticSink): LoadedDocument {
+  const cascade = loadCascadeContext(pkg, diagnostics);
+  const partName = pkg.mainDocumentPartName();
+  const body = parseBody(pkg.xml(partName), diagnostics, partName);
+  return { cascade, body, resolved: resolveBody(cascade, body) };
 }

@@ -11,7 +11,9 @@ import { child, children, OpcPackage } from '@uw/ooxml';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { CascadeContext } from './cascade.ts';
 import { resolveParaProps, resolveRunProps } from './cascade.ts';
-import { loadCascadeContext } from './load.ts';
+import type { LoadedDocument } from './load.ts';
+import { loadCascadeContext, loadDocument } from './load.ts';
+import { paragraphText, walkParagraphs } from './nodes.ts';
 import { parseParaProps, parseRunProps } from './parse-props.ts';
 import { resolveThemeFont } from './theme.ts';
 
@@ -19,12 +21,14 @@ const FIXTURE = new URL('../../../apps/fidelity/fixtures/gongwen-01.docx', impor
 
 let pkg: OpcPackage;
 let ctx: CascadeContext;
+let doc: LoadedDocument;
 let paragraphs: XmlElement[];
 const sink = createDiagnosticSink();
 
 beforeAll(() => {
   pkg = OpcPackage.open(new Uint8Array(readFileSync(FIXTURE)));
   ctx = loadCascadeContext(pkg, sink);
+  doc = loadDocument(pkg, sink);
   const body = child(pkg.xml(pkg.mainDocumentPartName()).root, 'w:body');
   paragraphs = body === undefined ? [] : children(body, 'w:p');
 });
@@ -132,6 +136,63 @@ describe('正文段落抽查', () => {
   });
 
   it('整个流程一条诊断都不产生 —— 这份文档我们全认识', () => {
+    expect(sink.list()).toEqual([]);
+  });
+});
+
+describe('正文节点树（loadDocument 全链路）', () => {
+  it('一节，A4 纵向，页边距与行网格与文件里写的一致', () => {
+    const s = doc.body.sections[0];
+    expect(doc.body.sections).toHaveLength(1);
+    expect(s?.props.page).toEqual({ width: 11906, height: 16838, orientation: 'portrait' });
+    // <w:pgMar w:top="2098" w:right="1474" w:bottom="1984" w:left="1587" w:header="851" w:footer="992" w:gutter="0"/>
+    expect(s?.props.margin).toEqual({
+      top: 2098,
+      right: 1474,
+      bottom: 1984,
+      left: 1587,
+      header: 851,
+      footer: 992,
+      gutter: 0,
+    });
+    // <w:docGrid w:type="lines" w:linePitch="579"/> —— 579 twips = 28.95pt，公文的每页行数由它定
+    expect(s?.props.docGrid).toEqual({ type: 'lines', linePitch: 579, charSpace: 0 });
+    // <w:cols w:space="425"/> 没写 w:num，就是单栏
+    expect(s?.props.columns).toBe(1);
+  });
+
+  it('7 个段落，文字与 XML 里的一字不差（跨 run 的中英混排也要接得上）', () => {
+    const texts = [...walkParagraphs(doc.body)].map(paragraphText);
+    expect(texts).toHaveLength(7);
+    expect(texts[0]).toBe('关于进一步加强文档排版引擎保真度验证工作的通知');
+    expect(texts[1]).toBe('各有关单位：');
+    // 这一段被 Word 切成 15 个 run（每遇中英切换就断一次），拼回来必须严丝合缝
+    expect(texts[2]).toContain('自 2026 年起，所有版式输出均须以 Word 导出的 PDF 坐标为准');
+    expect(texts[6]).toBe('2026 年 8 月 13 日');
+  });
+
+  it('resolved 树与可编辑树同形：id、顺序、层级都一一对应', () => {
+    const src = [...walkParagraphs(doc.body)];
+    const out = [...walkParagraphs(doc.resolved)];
+    expect(out.map((p) => p.id)).toEqual(src.map((p) => p.id));
+    expect(out.map((p) => p.runs.map((r) => r.id))).toEqual(src.map((p) => p.runs.map((r) => r.id)));
+    expect(out.map(paragraphText)).toEqual(src.map(paragraphText));
+  });
+
+  it('resolved 树上的属性就是级联结果 —— 标题段黑体二号居中', () => {
+    const p = [...walkParagraphs(doc.resolved)][0];
+    expect(p?.props.justification).toBe('center');
+    expect(p?.runs[0]?.props.fonts.eastAsia).toBe('黑体');
+    expect(twipsToPt(p?.runs[0]?.props.size ?? 0)).toBe(22);
+    // 正文段落没写 snapToGrid，Word 默认是开的 —— 公文的行网格靠它生效
+    expect(p?.props.snapToGrid).toBe(true);
+  });
+
+  it('resolved 树整棵可结构化克隆 —— Worker 边界的门票（原则 1.1）', () => {
+    expect(structuredClone(doc.resolved)).toEqual(doc.resolved);
+  });
+
+  it('解析整份文档仍然一条诊断都不产生', () => {
     expect(sink.list()).toEqual([]);
   });
 });

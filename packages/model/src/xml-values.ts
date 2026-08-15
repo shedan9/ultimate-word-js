@@ -35,8 +35,13 @@ export function intVal(parent: XmlElement, name: string): number | undefined {
   return toInt(valOf(parent, name));
 }
 
-export function attrInt(el: XmlElement, name: string): number | undefined {
-  return toInt(attr(el, name));
+/** 容忍元素缺席的属性取值 —— `w:pgSz` 这类「整个元素可能不在」的场合到处都是 */
+export function attrOf(el: XmlElement | undefined, name: string): string | undefined {
+  return el === undefined ? undefined : attr(el, name);
+}
+
+export function attrInt(el: XmlElement | undefined, name: string): number | undefined {
+  return toInt(attrOf(el, name));
 }
 
 export function toInt(v: string | undefined): number | undefined {

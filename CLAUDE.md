@@ -9,8 +9,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 当前进度：Phase 0 已完成（地基 + 行高穿刺 + CI），Phase 1 进行中。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/fonts`（行高规则）、`@uw/ooxml`（OPC 容器 + XML 树）、
-`@uw/model`（样式级联 + 主题字体）。`@uw/layout` / `@uw/render-dom` 还是占位文件。
-Phase 1 剩下的：`document.xml` 正文节点树、`numbering.xml`、`settings.xml`、`fontTable.xml`。
+`@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节）。`@uw/layout` / `@uw/render-dom` 还是占位文件。
+Phase 1 剩下的：`numbering.xml`、`settings.xml`、`fontTable.xml`。
+
+一份 docx 的入口是 `loadDocument(pkg, sink)`（`packages/model/src/load.ts`），产出三样：
+`body`（直接格式，可编辑）、`resolved`（级联完的纯数据，给布局）、`cascade`（上下文，**不可**过 Worker 边界）。
+`resolveBody()` 那一步就是 Worker 边界 —— `StyleSheet` 带方法，级联必须在过界前做完。
 
 **卡在 Windows 的一件事**：东亚行高里那 30% 额外行距在基线上下如何分配，需要「首行基线到版心顶」
 的穿刺来定（要 Word COM）。它挡 Phase 2 的行盒，但**不挡** Phase 1 的解析与样式级联。

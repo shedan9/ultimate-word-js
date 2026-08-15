@@ -354,7 +354,16 @@ await view.toPNG(3);     // 第 3 页
 ### Phase 1 — OOXML 解析 + 文档模型 + 样式级联 🚧
 - ~~OPC 容器（fflate）、关系解析、part 索引~~ ✅ `@uw/ooxml`：解包 + 内容类型 + 关系 +
   保序 XML 纯数据树 + 反向序列化。`gongwen-01.docx` 全部 11 个部件语义 round-trip 通过
-- ~~`styles.xml` / `theme1.xml`~~ ✅ · `document.xml` 正文节点树 / `numbering.xml` / `settings.xml` / `fontTable.xml` 待做
+- ~~`styles.xml` / `theme1.xml`~~ ✅ · ~~`document.xml` 正文节点树~~ ✅ · `numbering.xml` / `settings.xml` / `fontTable.xml` 待做
+- ~~正文节点树：段落 / run / run 内片段 / 表格结构 / 分节~~ ✅ `@uw/model/parse-body.ts`
+  - 透明容器（`w:hyperlink` / `w:ins` / `w:sdt` / `w:smartTag` / `w:fldSimple`）一律**压平**成
+    扁平 run 列表，超链接压成 run 上的标记 —— 断行算法不必递归下钻
+  - 未知元素记 `Diagnostic` 后跳过，**同名只报一次**；书签 / 拼写标记 / 批注范围不算未知
+  - `w:lastRenderedPageBreak` **绝不采信** —— 采信它等于让 Word 替我们排版
+  - 分节归一化成「一节 = 属性 + 它管辖的块」，`w:docGrid` 的 `linePitch` 收全（公文命门）
+  - 表格只建**结构** + `gridSpan` / `vMerge`，表格属性 Phase 4；跳过表格等于静默丢字
+- ~~`resolveBody()`：直接格式树 → 级联完的纯数据树~~ ✅ 这一步就是 **Worker 边界**
+  （`StyleSheet` 带方法不可结构化克隆，所以级联必须在过界前做完）
 - ~~样式级联：`docDefaults → styles.xml(basedOn 链，含循环检测) → 直接格式`~~ ✅ `@uw/model/cascade.ts`
   - 两个**写明的洞**：编号那一层（`numbering.xml` 每级自带 pPr/rPr）留到 Phase 5；
     toggle 属性（b / i / caps…）在样式层之间的 XOR 语义（§17.7.3）按「后者覆盖」处理 ——
