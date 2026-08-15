@@ -385,7 +385,13 @@ await view.toPNG(3);     // 第 3 页
 - **DoD**：任意公文 docx 能 dump 出完整的解析后属性树，与 Word「显示格式」面板抽查一致
 
 ### Phase 2 — 度量 + 段落布局 + 单页 DOM 渲染
-- `@uw/fonts`：fontkit 解析、度量缓存（两级：字体级 Map + 全局 LRU）、替换表
+- ~~`@uw/fonts`：脚本分桶、fontkit 解析、度量包、注册表（三级降级）、替换表、
+  度量缓存（两级：字体级 Map + 行度量 LRU）、`TextMeasurer` 接口~~ ✅ 见 `script.ts` / `registry.ts` / `measurer.ts`
+  - `bucketOf()` 的歧义字符集直接取 Unicode **EastAsianWidth = Ambiguous** ——
+    `w:hint` 要回答的正是「这份文档算不算东亚环境」，与该属性的定义完全同构
+  - `FontRun` 按「同字体 **且** 同脚本」切段：字体名相同也不跨 latin/eastAsia 边界合并，
+    否则中西文 1/8 em 间距没有边界可加
+  - 度量包 = Worker 传输格式（架构 §9），格式与消费跨平台，**抽取绑 Windows 字体**
 - 断行：UAX#14 基础 + 中文禁则 + 标点挤压 + 中西文间距
 - 段落布局：对齐（含分散对齐）、缩进（含字符单位）、行距（单倍/固定值/最小值/多倍）、段前段后、制表位（左/中/右/小数点/前导符）
 - 行网格 `docGrid` 吸附
@@ -513,6 +519,9 @@ CI 上无 Word，所以真值 PDF 与抽取结果**提交进仓库**（`fixtures
 8. ~~**Phase 1**：`@uw/ooxml` 的 OPC 容器 + part 索引 → `@uw/model` 的样式级联 → 正文节点树 →
    settings / fontTable / numbering~~ ✅ 全程以 `fixtures/gongwen-01.docx` 为解析目标，零诊断
 9. 语料库扩容：把真实公文丢进 `../apps/fidelity/fixtures`，每修一个 bug 加一个文档
+10. ~~**Phase 2 的字体侧**：脚本分桶 + 注册表 + 度量包 + `TextMeasurer`~~ ✅ 全部与基线位置无关，
+    不受第 6 步阻塞。度量包的**抽取**要 Windows 字体，格式与消费跨平台
 
 第 6 步优先于任何**布局**代码 —— 与第 4 步同理，没测准的东西不要拿来当地基。
-但它不挡 Phase 1：解析与样式级联跟基线位置无关，可以在非 Windows 机器上一直做到 Phase 2 门口。
+但它不挡 Phase 1，也不挡 Phase 2 的字体侧：解析、样式级联、分桶、度量跟基线位置无关，
+在非 Windows 机器上可以一直做到**行盒装配**的门口。真正停在第 6 步的是行盒与其之后的一切。

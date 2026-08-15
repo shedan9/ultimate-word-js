@@ -6,6 +6,10 @@
 import { openSync } from 'fontkit';
 import type { FontkitFont, RawFontMetrics } from './metrics.ts';
 import { readRawMetrics } from './metrics.ts';
+import type { BuildPackOptions, MetricsPack } from './metrics-pack.ts';
+import { buildMetricsPack } from './metrics-pack.ts';
+import type { FontSource } from './registry.ts';
+import { fontkitSource } from './registry.ts';
 
 /** Windows 系统字体目录 —— 抽度量包与真值实验的字体来源 */
 export const WINDOWS_FONT_DIR = 'C:/Windows/Fonts';
@@ -41,4 +45,25 @@ export function hasEastAsianCoverage(font: FontkitFont): boolean {
 
 export function readMetricsFromFile(filePath: string, postscriptName?: string): RawFontMetrics {
   return readRawMetrics(openFont(filePath, postscriptName));
+}
+
+/** 字体文件 → 降级链第 ①级的 `FontSource`，可直接 `registry.register()` */
+export function fileSource(filePath: string, postscriptName?: string): FontSource {
+  const font = openFont(filePath, postscriptName);
+  return fontkitSource(font, readRawMetrics(font));
+}
+
+/**
+ * 字体文件 → 度量包。
+ *
+ * **必须在 Windows 上、对着 `C:/Windows/Fonts` 里的那一份跑** —— 包的意义是把 Word 用的
+ * 那份度量搬到别的平台去，抽 macOS 上的同名字体等于把误差固化进随库分发的文件里。
+ */
+export function buildPackFromFile(
+  filePath: string,
+  postscriptName?: string,
+  opts: BuildPackOptions = {},
+): MetricsPack {
+  const font = openFont(filePath, postscriptName);
+  return buildMetricsPack(font, readRawMetrics(font), opts);
 }

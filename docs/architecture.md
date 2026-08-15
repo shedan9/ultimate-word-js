@@ -204,7 +204,7 @@ flowchart BT
 | 包 | 状态 |
 |---|---|
 | `@uw/core` | 🟢 `units.ts` · `errors.ts`（`UwError`）· `diagnostics.ts`（`Diagnostic` / `DiagnosticSink`） |
-| `@uw/fonts` | 🟢 行高规则可用（Phase 0 实测标定）· 🟡 分桶 / 缓存待建 |
+| `@uw/fonts` | 🟢 行高规则（Phase 0 实测标定）· 脚本分桶 · 度量包 · 注册表（三级降级）· `TextMeasurer` + 两级缓存 |
 | `@uw/ooxml` | 🟢 OPC 解包 · 内容类型 · 关系 · 保序 XML 纯数据树 + 反向序列化 |
 | `@uw/model` | 🟢 样式级联 · 主题字体 · 正文节点树 · 分节 · 设置 · 字体表 · 编号定义（只解析）· 🟡 编号消费 / 表格属性待建 |
 | `@uw/layout` `@uw/render-dom` | ⚪ 占位，Phase 2 |

@@ -187,4 +187,7 @@ export interface FontkitFont {
   unitsPerEm: number;
   hhea?: unknown;
   'OS/2'?: unknown;
+  /** cmap 查询与字形推进宽度。度量包抽取与 ①级度量都靠这两个 */
+  hasGlyphForCodePoint?: (cp: number) => boolean;
+  glyphForCodePoint?: (cp: number) => { advanceWidth?: number } | null;
 }

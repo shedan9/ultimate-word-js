@@ -7,10 +7,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 自研布局引擎的 Word（OOXML）在线预览 / 编辑库，定位是**中文公文 / 周报 / 报告类文档的高保真引擎**。
 保真度由自己算的排版决定，**不依赖浏览器排版** —— 所以「用 CSS 让它看起来差不多」永远不是正确答案。
 
-当前进度：Phase 0 已完成（地基 + 行高穿刺 + CI），Phase 1 的**解析链已完整**。
-真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/fonts`（行高规则）、`@uw/ooxml`（OPC 容器 + XML 树）、
-`@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 编号定义）。
-`@uw/layout` / `@uw/render-dom` 还是占位文件。**Phase 1 的解析部分已经齐了**，下一步是 Phase 2。
+当前进度：Phase 0 已完成（地基 + 行高穿刺 + CI），Phase 1 的**解析链已完整**，Phase 2 的**字体侧已完整**。
+真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、
+`@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 编号定义）、
+`@uw/fonts`（行高规则 + 脚本分桶 + 度量包 + 注册表 + `TextMeasurer`）。
+`@uw/layout` / `@uw/render-dom` 还是占位文件。下一步是 Phase 2 的**排版**部分，但它卡在下面那个穿刺。
 
 一份 docx 的入口是 `loadDocument(pkg, sink)`（`packages/model/src/load.ts`），产出
 `body`（直接格式，可编辑）、`resolved`（级联完的纯数据，给布局）、`cascade`（上下文，**不可**过 Worker 边界）、
@@ -18,7 +19,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 部件一律**按关系类型找**（`RelType.*`），不按 `word/styles.xml` 这种路径惯例猜。
 
 **卡在 Windows 的一件事**：东亚行高里那 30% 额外行距在基线上下如何分配，需要「首行基线到版心顶」
-的穿刺来定（要 Word COM）。它挡 Phase 2 的行盒，但**不挡** Phase 1 的解析与样式级联。
+的穿刺来定（要 Word COM）。它挡的是 Phase 2 的**行盒装配及其之后的一切**，
+**不挡**解析、样式级联、脚本分桶、度量 —— 这些在 Mac 上都能做完，也确实做完了。
+
+`@uw/fonts` 的用法：`FontRegistry` 收字体（`fontkitSource` 一级 / `metricsPackSource` 二级），
+`createTextMeasurer(registry, { candidates, diagnostics })` 产出给 layout 注入的 `TextMeasurer`。
+`candidates` 那个回调就是把 model 的 `fontNameCandidates()` 接进来的地方 —— fonts **不认识** model，
+依赖方向不许反过来。文字先过 `splitFontRuns(text, fonts)` 切成「同字体同脚本」的段，再逐段量。
 
 级联里两个**写明的洞**（别以为已经做了）：编号那一层（Phase 5，`numbering.xml` 已解析、只差接进级联）、
 以及 toggle 属性在样式层之间的 XOR 语义（§17.7.3，现按「后者覆盖」处理）。
@@ -115,8 +122,12 @@ pnpm --filter @uw/fidelity spike     # Phase 0 行高穿刺
 
 那个 1.3 是乘在**字体度量**上，不是「1.3 × 字号」；只测宋体家族（unitsPerEm=256、win 跨度恰好 1.0em）两种假设分不开。
 
-**未决（阻塞 Phase 2）**：东亚那 30% 额外行距在基线上下如何分配 —— 决定行内基线的确切位置，
+**未决（阻塞 Phase 2 的行盒）**：东亚那 30% 额外行距在基线上下如何分配 —— 决定行内基线的确切位置，
 现在一律记进 `lineGap`，只保证行高总量正确。**写行盒布局代码之前必须先补「首行基线到版心顶」的穿刺。**
+
+行高之外还有一处未标定：`splitFontRuns()` 的歧义字符集取的是 Unicode **EastAsianWidth = Ambiguous**
+（`w:hint` 要回答的正是「这份文档算不算东亚环境」，两者同构），但 Word 的实际边界有没有偏差没有真值验证过。
+上 Windows 时顺手做一份「① ※ ℃ Ⅰ 在 hint=eastAsia / default 下各占多宽」的样本就能钉死。
 
 另一个反复咬人的点：中文版 Word 的 Normal 模板**默认开着行网格**（linePitch 312 twips = 15.6pt），
 基线会被吸到网格上、把字体度量差异整个盖掉。做度量实验必须显式关网格（`PageSetup.LayoutMode = wdLayoutModeDefault`）。
