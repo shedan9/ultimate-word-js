@@ -354,9 +354,15 @@ await view.toPNG(3);     // 第 3 页
 ### Phase 1 — OOXML 解析 + 文档模型 + 样式级联 🚧
 - ~~OPC 容器（fflate）、关系解析、part 索引~~ ✅ `@uw/ooxml`：解包 + 内容类型 + 关系 +
   保序 XML 纯数据树 + 反向序列化。`gongwen-01.docx` 全部 11 个部件语义 round-trip 通过
-- `document.xml` / `styles.xml` / `numbering.xml` / `settings.xml` / `theme1.xml` / `fontTable.xml`
-- 样式级联：`docDefaults → styles.xml(basedOn 链，含循环检测) → 表格条件格式 → 编号 → 直接格式`
-- 属性解析成**扁平化的 `ResolvedRunProps` / `ResolvedParaProps`**，布局层不再碰 XML
+- ~~`styles.xml` / `theme1.xml`~~ ✅ · `document.xml` 正文节点树 / `numbering.xml` / `settings.xml` / `fontTable.xml` 待做
+- ~~样式级联：`docDefaults → styles.xml(basedOn 链，含循环检测) → 直接格式`~~ ✅ `@uw/model/cascade.ts`
+  - 两个**写明的洞**：编号那一层（`numbering.xml` 每级自带 pPr/rPr）留到 Phase 5；
+    toggle 属性（b / i / caps…）在样式层之间的 XOR 语义（§17.7.3）按「后者覆盖」处理 ——
+    没有 Word 真值样本能验证 XOR 的边界，照规范硬写一个测不了的实现比留个洞更危险
+  - 表格条件格式那一层的位置也还空着，Phase 4 再接
+- ~~属性解析成**扁平化的 `ResolvedRunProps` / `ResolvedParaProps`**，布局层不再碰 XML~~ ✅
+  单位在解析处就转 twips；两个**故意不转**的：`w:line`（刻度取决于 `w:lineRule`）与
+  `w:*Chars`（1/100 字符，字号级联后才知道实际宽度）
 - **DoD**：任意公文 docx 能 dump 出完整的解析后属性树，与 Word「显示格式」面板抽查一致
 
 ### Phase 2 — 度量 + 段落布局 + 单页 DOM 渲染

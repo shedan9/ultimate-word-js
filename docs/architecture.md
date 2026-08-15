@@ -206,7 +206,7 @@ flowchart BT
 | `@uw/core` | 🟢 `units.ts` · `errors.ts`（`UwError`）· `diagnostics.ts`（`Diagnostic` / `DiagnosticSink`） |
 | `@uw/fonts` | 🟢 行高规则可用（Phase 0 实测标定）· 🟡 分桶 / 缓存待建 |
 | `@uw/ooxml` | 🟢 OPC 解包 · 内容类型 · 关系 · 保序 XML 纯数据树 + 反向序列化 |
-| `@uw/model` | ⚪ 占位，Phase 1 下一步 |
+| `@uw/model` | 🟢 样式级联（docDefaults → basedOn 链 → 直接格式）· 主题字体 · 🟡 正文节点树 / 编号待建 |
 | `@uw/layout` `@uw/render-dom` | ⚪ 占位，Phase 2 |
 | `@uw/render-canvas` `@uw/view` `@uw/editor` `@uw/serialize` `ultimate-word` `@uw/react` | ⚪ 未创建 |
 
