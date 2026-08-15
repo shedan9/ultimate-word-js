@@ -89,6 +89,9 @@ importers:
         specifier: workspace:*
         version: link:../model
     devDependencies:
+      '@uw/ooxml':
+        specifier: workspace:*
+        version: link:../ooxml
       tsdown:
         specifier: ^0.22.14
         version: 0.22.14(typescript@7.0.2)

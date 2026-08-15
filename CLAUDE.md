@@ -7,20 +7,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 自研布局引擎的 Word（OOXML）在线预览 / 编辑库，定位是**中文公文 / 周报 / 报告类文档的高保真引擎**。
 保真度由自己算的排版决定，**不依赖浏览器排版** —— 所以「用 CSS 让它看起来差不多」永远不是正确答案。
 
-当前进度：Phase 0 已完成（地基 + 行高穿刺 + CI），Phase 1 的**解析链已完整**，Phase 2 的**字体侧已完整**。
+当前进度：Phase 0 已完成（地基 + 行高穿刺 + CI），Phase 1 的**解析链已完整**，
+Phase 2 已排到**行盒的门口** —— 水平方向（断行 + 行内几何）与行高总量都做完了，就差基线。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、
-`@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 编号定义）、
-`@uw/fonts`（行高规则 + 脚本分桶 + 度量包 + 注册表 + `TextMeasurer`）。
-`@uw/layout` / `@uw/render-dom` 还是占位文件。下一步是 Phase 2 的**排版**部分，但它卡在下面那个穿刺。
+`@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 编号定义 + 制表位）、
+`@uw/fonts`（行高规则 + 脚本分桶 + 度量包 + 注册表 + `TextMeasurer`）、
+`@uw/layout`（item 流 + 断行 + 缩进 / 对齐 / 制表位 + 行高与网格吸附）。
+`@uw/render-dom` 仍是占位 —— 没有 y 画不了，等下面那个穿刺。
 
 一份 docx 的入口是 `loadDocument(pkg, sink)`（`packages/model/src/load.ts`），产出
 `body`（直接格式，可编辑）、`resolved`（级联完的纯数据，给布局）、`cascade`（上下文，**不可**过 Worker 边界）、
 `fonts`、`numbering`。`resolveBody()` 那一步就是 Worker 边界 —— `StyleSheet` 带方法，级联必须在过界前做完。
 部件一律**按关系类型找**（`RelType.*`），不按 `word/styles.xml` 这种路径惯例猜。
 
-**卡在 Windows 的一件事**：东亚行高里那 30% 额外行距在基线上下如何分配，需要「首行基线到版心顶」
-的穿刺来定（要 Word COM）。它挡的是 Phase 2 的**行盒装配及其之后的一切**，
-**不挡**解析、样式级联、脚本分桶、度量 —— 这些在 Mac 上都能做完，也确实做完了。
+**卡在 Windows 的两件事**：
+① 东亚行高里那 30% 额外行距在基线上下如何分配，需要「首行基线到版心顶」的穿刺来定（要 Word COM）——
+它挡的是**行盒装配及其之后的一切**（基线、y、分页、DOM 渲染）；
+② A/C 类中文字体的**度量包抽取**（要 `C:/Windows/Fonts`）—— 没有它，Mac 上只能走三级降级的
+第③级等宽近似，于是**坐标级真值断言（L2–L4）跑不了**，断行算法的正确性目前只由合成字体的单测保证。
+**不挡**解析、样式级联、分桶、度量、断行、行内几何 —— 这些在 Mac 上都能做完，也确实做完了。
+
+`@uw/layout` 的用法：`layoutParagraph(resolvedParagraph, { measurer, contentWidth, settings, docGrid })`
+→ `ParagraphLayout`（每行的 x / 逐字 x / 行高 / 渲染片段，**没有 y**）。
+未标定的常数一律集中在 `packages/layout/src/uncalibrated.ts`，每条都写了「拿什么样本能钉死」——
+布局里出现别处的魔法数字视为 bug，散落的数字会被后人当成实测结论。
 
 `@uw/fonts` 的用法：`FontRegistry` 收字体（`fontkitSource` 一级 / `metricsPackSource` 二级；
 字节走 `@uw/fonts/decode` 的 `fontSourceFromBytes()`，文件走 `@uw/fonts/node` 的 `fileSource()`
@@ -31,7 +41,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 级联里两个**写明的洞**（别以为已经做了）：编号那一层（Phase 5，`numbering.xml` 已解析、只差接进级联）、
 以及 toggle 属性在样式层之间的 XOR 语义（§17.7.3，现按「后者覆盖」处理）。
-都在 `cascade.ts` 末尾有注释说明补的办法。第三个洞在 `numbering.ts` 末尾：`w:numStyleLink` 那一跳没跟。
+都在 `cascade.ts` 末尾有注释说明补的办法。（`w:numStyleLink` 那一跳已经补上了，
+带环检测，入口是 `numberingLevel(n, numId, ilvl, styles)` 的第四个参数。）
 
 字体名有个坑：中文版 Word 写的是「黑体」「等线」这种本地化名，磁盘上的字体叫 `SimHei` / `DengXian`。
 桥在 `fontTable.xml` 的 `w:altName`，查找顺序用 `fontNameCandidates()`，别只按一个名字查。

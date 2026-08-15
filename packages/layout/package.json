@@ -9,7 +9,8 @@
   },
   "scripts": {
     "build": "tsdown",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@uw/core": "workspace:*",
@@ -17,6 +18,7 @@
     "@uw/fonts": "workspace:*"
   },
   "devDependencies": {
+    "@uw/ooxml": "workspace:*",
     "tsdown": "^0.22.14"
   }
 }
