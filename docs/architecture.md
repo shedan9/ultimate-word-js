@@ -297,12 +297,34 @@ flowchart TB
 ```
 ① 真实字体文件（fontkit 解析 OS/2 · hmtx · cmap）        ← 与 Word 一致
 ② 度量包 JSON（离线从 Windows 字体抽的纯度量，1–2 KB/字体） ← 与 Word 一致
-③ canvas.measureText                                    ← 近似，仅未知字体
+③ 兜底近似                                              ← 仅未知字体，页数可能对不上
 ```
+
+①② 已实现：`FontRegistry` + `FontSource`（`fontkitSource` / `metricsPackSource`），
+`status()` 报 `file` / `metrics` / `fallback` / `missing` 四态。
 
 关键认识：**跨平台需要的只是度量，不是字形**。非 Windows 平台用替代字体**渲染**、
 用真实度量**排版**，断行点与页数就和 Word 完全一致，只是字形外观不同。
 这比想办法凑齐字体授权现实得多。
+
+#### 写明的洞：级别③ 归谁
+
+本文档早先版本把级别③ 写成 `canvas.measureText`，**那和原则 1.2 冲突**：
+canvas 是 DOM API，而 `@uw/fonts` 在虚线框内的无 DOM 区，调不到它。
+
+现在 `measurer.ts` 里的级别③ 是**等宽近似**（东亚全角、其余半角，形状照宋体家族），
+只保证版面不崩，不保证与 Word 一致，每命中一款就记一条 `font-missing` 诊断。
+这是权宜之计 —— 等宽假设的误差随文本长度累积，一段长英文能偏出好几个字符宽。
+
+三条出路，Phase 3 渲染层落地后再定，**不要现在摆接口**：
+
+| 方案 | 代价 |
+|---|---|
+| 把 `measureText` 做成注入的 `FallbackMeasurer` | fonts 保持无 DOM；但异步字体加载会让度量在首帧不稳 |
+| 级别③ 整个上移到渲染层，layout 只认 ①② | 分层最干净；但 layout 拿不到宽度时无法产出 `LayoutResult` |
+| 随库带一份「常见中文字体」的度量包，把③ 压缩成极少数情况 | 最治本；体积换确定性，A/B/C/D 分级见开发计划 §2.1 |
+
+倾向第三条 —— 它把问题从「近似得准不准」变成「有没有覆盖到」，后者可测。
 
 ---
 

@@ -6,6 +6,7 @@
   "description": "字体表解析、度量、替换表、缓存",
   "exports": {
     ".": "./src/index.ts",
+    "./decode": "./src/decode.ts",
     "./node": "./src/load-node.ts"
   },
   "scripts": {

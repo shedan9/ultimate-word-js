@@ -11,6 +11,9 @@
  * fontkit 在 `fontkitSource()` 那一层就被挡住了。这样注册表本身没有 DOM、没有 fs、
  * 也没有 fontkit 依赖，可以整个搬进 Worker，将来换 Rust/WASM 也只换 source 的实现。
  *
+ * 从字节注册字体走 `@uw/fonts/decode` 的 `fontSourceFromBytes()`，从文件走 `@uw/fonts/node`
+ * 的 `fileSource()` —— 分成子路径就是为了让只带度量包的部署不必把 fontkit 打进去。
+ *
  * 为什么是**全局单例式的注册表**而不是每份文档传一遍：字体解析和度量缓存是纯开销，
  * 同一个页面开十份公文没有理由解析十次宋体（API 设计 §4）。
  */
@@ -88,7 +91,7 @@ export class FontRegistry {
   }
 
   /** 注册度量包，字体名取包里的 `family`（那是文档里会出现的名字） */
-  registerPack(pack: MetricsPack): void {
+  registerMetrics(pack: MetricsPack): void {
     this.register(pack.family, metricsPackSource(pack));
   }
 

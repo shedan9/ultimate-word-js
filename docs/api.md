@@ -113,9 +113,17 @@ UltimateWord.fonts.register('FangSong', await fetch('/fonts/simfang.ttf').then(r
 UltimateWord.fonts.registerMetrics(await fetch('/metrics/fangsong.json').then(r => r.json()));
 UltimateWord.fonts.substitute({ '仿宋_GB2312': 'Noto Serif CJK SC' });
 
-// ③ 什么都没有：measureText 近似，页数可能对不上
+// ③ 什么都没有：等宽近似，页数可能对不上
 UltimateWord.fonts.status('方正小标宋简体'); // → 'fallback'
 ```
+
+> **级别③ 现在是等宽近似，不是 `canvas.measureText`**：canvas 是 DOM API，
+> 而 `@uw/fonts` 在无 DOM 区（架构原则 1.2），调不到它。这个洞的三条出路见
+> [架构 §5.2](./architecture.md#52-度量的三级降级)，Phase 3 再定归属。
+>
+> 门面的 `register(family, data)` 由 `@uw/fonts/decode` 的 `fontSourceFromBytes()` 实现，
+> `registerMetrics(pack)` 对应 `FontRegistry.registerMetrics()`。分成子路径是为了让
+> 只带度量包的部署不必把 fontkit 打进去。
 
 > **为什么是全局注册表而不是每个文档传一遍**：字体解析和度量缓存是纯开销，
 > 同一个页面开十份公文没有理由解析十次宋体。`LoadOptions.fonts` 仍可做**每文档覆盖**，

@@ -4,6 +4,7 @@
  */
 // fontkit 2.x 的 ESM 入口只有具名导出，没有 default
 import { openSync } from 'fontkit';
+import { unwrapFont } from './decode.ts';
 import type { FontkitFont, RawFontMetrics } from './metrics.ts';
 import { readRawMetrics } from './metrics.ts';
 import type { BuildPackOptions, MetricsPack } from './metrics-pack.ts';
@@ -19,19 +20,7 @@ export const WINDOWS_FONT_DIR = 'C:/Windows/Fonts';
  * （如 simsun.ttc 里同时有 SimSun 与 NSimSun）。
  */
 export function openFont(filePath: string, postscriptName?: string): FontkitFont {
-  const opened = openSync(filePath, postscriptName as string) as unknown;
-  const collection = opened as { fonts?: FontkitFont[]; getFont?: (n: string) => FontkitFont | null };
-  if (Array.isArray(collection.fonts)) {
-    if (postscriptName && typeof collection.getFont === 'function') {
-      const picked = collection.getFont(postscriptName);
-      if (!picked) throw new Error(`${filePath} 里没有 ${postscriptName}`);
-      return picked;
-    }
-    const first = collection.fonts[0];
-    if (!first) throw new Error(`${filePath} 是空的字体集`);
-    return first;
-  }
-  return opened as FontkitFont;
+  return unwrapFont(openSync(filePath, postscriptName as string), postscriptName, filePath);
 }
 
 /**

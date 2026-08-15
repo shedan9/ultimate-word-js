@@ -73,7 +73,7 @@ describe('注册表的三级降级', () => {
   function registry(): FontRegistry {
     const r = new FontRegistry();
     r.register('SimHei', fontkitSource(fakeFont, songMetrics));
-    r.registerPack(pack());
+    r.registerMetrics(pack());
     return r;
   }
 
