@@ -27,6 +27,7 @@ import type {
   ResolvedRunProps,
   RunProps,
 } from './props.ts';
+import type { DocumentSettings } from './settings.ts';
 import type { StyleSheet } from './styles.ts';
 import type { Theme } from './theme.ts';
 import { resolveThemeFont } from './theme.ts';
@@ -34,6 +35,12 @@ import { resolveThemeFont } from './theme.ts';
 export interface CascadeContext {
   styles: StyleSheet;
   theme: Theme;
+  /**
+   * `settings.xml`。级联只用到 `themeFontLang.eastAsia` 一项，但**这一项非有不可**：
+   * 主题里 `a:ea` 是空串时，东亚字体要按语言回退到 `a:font script="..."`，
+   * 而语言的来源就是这里。缺了它只能硬编码 zh-CN，日文文档会拿到简体中文字体。
+   */
+  settings: DocumentSettings;
 }
 
 /**
@@ -103,9 +110,11 @@ function applyRunLevel(acc: RunAccum, level: RunProps): void {
   if (level.fonts?.hint !== undefined) acc.hint = level.fonts.hint;
 }
 
-function finishRun(acc: RunAccum, theme: Theme): ResolvedRunProps {
+function finishRun(acc: RunAccum, theme: Theme, settings: DocumentSettings): ResolvedRunProps {
   const p = acc.props;
-  const lang = p.langEastAsia ?? 'zh-CN';
+  // 优先级：run 自己的 w:lang w:eastAsia → 文档的 themeFontLang → 兜底 zh-CN。
+  // 兜底值只在文件两处都没写时生效，此时按这个库的定位（中文公文）猜简体中文
+  const lang = p.langEastAsia ?? emptyToUndefined(settings.themeFontLang.eastAsia) ?? 'zh-CN';
   const fontOf = (slot: FontSlot | undefined): string => {
     if (slot === undefined) return '';
     return slot.kind === 'name' ? slot.value : resolveThemeFont(theme, slot.value, lang);
@@ -162,7 +171,11 @@ export function resolveRunProps(
   for (const s of ctx.styles.chainOf(direct?.styleId)) applyRunLevel(acc, s.runProps);
   if (direct !== undefined) applyRunLevel(acc, direct);
 
-  return finishRun(acc, ctx.theme);
+  return finishRun(acc, ctx.theme, ctx.settings);
+}
+
+function emptyToUndefined(s: string): string | undefined {
+  return s === '' ? undefined : s;
 }
 
 // ── 段落属性 ──────────────────────────────────────────────────────────────────

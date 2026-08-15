@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 import type { CascadeContext } from './cascade.ts';
 import { resolveParaProps, resolveRunProps } from './cascade.ts';
 import { parseParaProps, parseRunProps } from './parse-props.ts';
+import { DEFAULT_SETTINGS } from './settings.ts';
 import { parseStyles } from './styles.ts';
 import { EMPTY_THEME } from './theme.ts';
 
@@ -20,7 +21,7 @@ const W_NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/m
 function ctxFrom(stylesXml: string): CascadeContext {
   const sink = createDiagnosticSink();
   const doc = parseXml(`<w:styles ${W_NS}>${stylesXml}</w:styles>`);
-  return { styles: parseStyles(doc, sink), theme: EMPTY_THEME };
+  return { styles: parseStyles(doc, sink), theme: EMPTY_THEME, settings: DEFAULT_SETTINGS };
 }
 
 const pPr = (xml: string) => parseParaProps(parseXml(`<w:pPr ${W_NS}>${xml}</w:pPr>`).root);
@@ -156,7 +157,11 @@ describe('basedOn 成环', () => {
       <w:style w:type="paragraph" w:styleId="A"><w:name w:val="A"/><w:basedOn w:val="B"/><w:pPr><w:jc w:val="center"/></w:pPr></w:style>
       <w:style w:type="paragraph" w:styleId="B"><w:name w:val="B"/><w:basedOn w:val="A"/></w:style>
     </w:styles>`);
-    const ctx: CascadeContext = { styles: parseStyles(doc, sink), theme: EMPTY_THEME };
+    const ctx: CascadeContext = {
+      styles: parseStyles(doc, sink),
+      theme: EMPTY_THEME,
+      settings: DEFAULT_SETTINGS,
+    };
 
     const p = resolveParaProps(ctx, pPr('<w:pStyle w:val="A"/>'));
     expect(p.justification).toBe('center');
@@ -168,7 +173,11 @@ describe('basedOn 成环', () => {
     const doc = parseXml(`<w:styles ${W_NS}>
       <w:style w:type="paragraph" w:styleId="A"><w:name w:val="A"/><w:basedOn w:val="没这个"/><w:pPr><w:jc w:val="right"/></w:pPr></w:style>
     </w:styles>`);
-    const ctx: CascadeContext = { styles: parseStyles(doc, sink), theme: EMPTY_THEME };
+    const ctx: CascadeContext = {
+      styles: parseStyles(doc, sink),
+      theme: EMPTY_THEME,
+      settings: DEFAULT_SETTINGS,
+    };
     expect(resolveParaProps(ctx, pPr('<w:pStyle w:val="A"/>')).justification).toBe('right');
     expect(sink.list().map((d) => d.code)).toContain('style-missing');
   });

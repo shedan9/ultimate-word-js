@@ -15,6 +15,8 @@ import type { LoadedDocument } from './load.ts';
 import { loadCascadeContext, loadDocument } from './load.ts';
 import { paragraphText, walkParagraphs } from './nodes.ts';
 import { parseParaProps, parseRunProps } from './parse-props.ts';
+import { DEFAULT_SETTINGS } from './settings.ts';
+import { parseStyles } from './styles.ts';
 import { resolveThemeFont } from './theme.ts';
 
 const FIXTURE = new URL('../../../apps/fidelity/fixtures/gongwen-01.docx', import.meta.url);
@@ -190,6 +192,40 @@ describe('正文节点树（loadDocument 全链路）', () => {
 
   it('resolved 树整棵可结构化克隆 —— Worker 边界的门票（原则 1.1）', () => {
     expect(structuredClone(doc.resolved)).toEqual(doc.resolved);
+  });
+
+  it('字体表与设置跟着 loadDocument 一起出来', () => {
+    // 「黑体」→ SimHei：非中文系统上查字体全靠这一步
+    expect(doc.fonts.byName.黑体?.altName).toBe('SimHei');
+    expect(doc.cascade.settings.defaultTabStop).toBe(420);
+    // 这份文档没有 numbering.xml
+    expect(doc.numbering).toEqual({ abstract: {}, instances: {} });
+  });
+
+  it('themeFontLang 驱动主题东亚字体的回退；run 自己的 w:lang 优先级更高', () => {
+    // 这份文档主题里 <a:ea typeface=""/> 是空的，东亚字体靠 script 回退，选哪个 script
+    // 由 themeFontLang.eastAsia 决定。用空样式表隔离出这一条线：
+    const langCtx = (eastAsia: string): CascadeContext => ({
+      styles: parseStyles(undefined, createDiagnosticSink()),
+      theme: doc.cascade.theme,
+      settings: { ...DEFAULT_SETTINGS, themeFontLang: { latin: '', eastAsia, bidi: '' } },
+    });
+    const themeRef = { fontThemes: { eastAsia: 'minorEastAsia' } };
+    expect(resolveRunProps(langCtx('ja-JP'), undefined, themeRef).fonts.eastAsia).toBe('游明朝');
+    expect(resolveRunProps(langCtx('zh-TW'), undefined, themeRef).fonts.eastAsia).toBe('新細明體');
+    // 两边都没写时兜底 zh-CN —— 这个库的定位是中文公文
+    expect(resolveRunProps(langCtx(''), undefined, themeRef).fonts.eastAsia).toBe('等线');
+
+    // 而这份文档的 docDefaults 里写了 <w:lang w:eastAsia="zh-CN"/>，run 级的语言压过文档级设置：
+    // 把 themeFontLang 改成日文也不该动摇它
+    const ja: CascadeContext = {
+      ...doc.cascade,
+      settings: {
+        ...doc.cascade.settings,
+        themeFontLang: { latin: 'en-US', eastAsia: 'ja-JP', bidi: '' },
+      },
+    };
+    expect(resolveRunProps(ja, undefined, undefined).fonts.eastAsia).toBe('等线');
   });
 
   it('解析整份文档仍然一条诊断都不产生', () => {

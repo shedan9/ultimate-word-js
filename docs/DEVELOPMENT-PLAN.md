@@ -351,10 +351,11 @@ await view.toPNG(3);     // 第 3 页
 - ~~**穿刺实验**：手写一个 5 段中文文档，用自己算的字体度量排一页，与 Word 导出 PDF 的实际坐标逐行比对~~ ✅
 - **DoD**：~~证明「读 OS/2 表算行高」能把单页行基线误差压到 < 1pt~~ ✅ 实测最大误差 **0.132 pt**（见 §2.1）
 
-### Phase 1 — OOXML 解析 + 文档模型 + 样式级联 🚧
+### Phase 1 — OOXML 解析 + 文档模型 + 样式级联 ✅（解析链完整；编号的消费留到 Phase 5）
 - ~~OPC 容器（fflate）、关系解析、part 索引~~ ✅ `@uw/ooxml`：解包 + 内容类型 + 关系 +
   保序 XML 纯数据树 + 反向序列化。`gongwen-01.docx` 全部 11 个部件语义 round-trip 通过
-- ~~`styles.xml` / `theme1.xml`~~ ✅ · ~~`document.xml` 正文节点树~~ ✅ · `numbering.xml` / `settings.xml` / `fontTable.xml` 待做
+- ~~`styles.xml` / `theme1.xml` / `document.xml` 正文节点树 / `numbering.xml` / `settings.xml` / `fontTable.xml`~~ ✅
+  —— 部件一律**按关系类型找**，不按 `word/styles.xml` 这种路径惯例猜
 - ~~正文节点树：段落 / run / run 内片段 / 表格结构 / 分节~~ ✅ `@uw/model/parse-body.ts`
   - 透明容器（`w:hyperlink` / `w:ins` / `w:sdt` / `w:smartTag` / `w:fldSimple`）一律**压平**成
     扁平 run 列表，超链接压成 run 上的标记 —— 断行算法不必递归下钻
@@ -364,6 +365,15 @@ await view.toPNG(3);     // 第 3 页
   - 表格只建**结构** + `gridSpan` / `vMerge`，表格属性 Phase 4；跳过表格等于静默丢字
 - ~~`resolveBody()`：直接格式树 → 级联完的纯数据树~~ ✅ 这一步就是 **Worker 边界**
   （`StyleSheet` 带方法不可结构化克隆，所以级联必须在过界前做完）
+- ~~`fontTable.xml`~~ ✅ `w:altName` 是本地化字体名（「黑体」）到英文名（`SimHei`）的**唯一桥梁**，
+  不读它非中文系统上一款中文字体都查不到；panose / charset / family / pitch 留给 Phase 2 的字体回退
+- ~~`settings.xml`~~ ✅ 三样直接决定坐标的：`defaultTabStop`（规范默认 720，中文模板才是 420）、
+  `characterSpacingControl`（标点挤压，影响断行位置）、`themeFontLang.eastAsia`
+  （主题东亚字体回退按哪个 script；已接进级联，优先级低于 run 自己的 `w:lang`）。
+  `w:compat` 开关原样收进字典，Phase 2 之后来查
+- ~~`numbering.xml`~~ ✅ 只解析不消费。`numId → abstractNumId → lvl` 两层间接 + `lvlOverride`，
+  `numId=0` 是「取消编号」不是第 0 号。**写明的洞**：`w:numStyleLink` 那一跳没跟（要连环检测一起做，
+  现在无法被测试覆盖），入口在 `numberingLevel`
 - ~~样式级联：`docDefaults → styles.xml(basedOn 链，含循环检测) → 直接格式`~~ ✅ `@uw/model/cascade.ts`
   - 两个**写明的洞**：编号那一层（`numbering.xml` 每级自带 pPr/rPr）留到 Phase 5；
     toggle 属性（b / i / caps…）在样式层之间的 XOR 语义（§17.7.3）按「后者覆盖」处理 ——
@@ -500,8 +510,8 @@ CI 上无 Word，所以真值 PDF 与抽取结果**提交进仓库**（`fixtures
    做法：量「首行基线到版心顶」的距离，与 ascent 预测对比。这个不定，Phase 2 的行盒就摆不准。
    要 Word COM + `C:/Windows/Fonts`，Mac / Linux 上会被 `platform.ts` 以退出码 2 拦下
 7. ~~**CI**（GitHub Actions）：`typecheck` + `test` + `biome check`~~ ✅ 真值不在 CI 生成，只读仓库里的 `*.truth.json`
-8. **Phase 1 开工** 🚧：~~`@uw/ooxml` 的 OPC 容器 + part 索引~~ ✅ → 下一步 `@uw/model` 的样式级联。
-   起手就用 `fixtures/gongwen-01.docx`（已入库）当解析目标
+8. ~~**Phase 1**：`@uw/ooxml` 的 OPC 容器 + part 索引 → `@uw/model` 的样式级联 → 正文节点树 →
+   settings / fontTable / numbering~~ ✅ 全程以 `fixtures/gongwen-01.docx` 为解析目标，零诊断
 9. 语料库扩容：把真实公文丢进 `../apps/fidelity/fixtures`，每修一个 bug 加一个文档
 
 第 6 步优先于任何**布局**代码 —— 与第 4 步同理，没测准的东西不要拿来当地基。
