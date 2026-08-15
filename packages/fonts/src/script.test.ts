@@ -11,11 +11,18 @@ import { bucketFont, bucketOf, hasEastAsianText, isEastAsianCodePoint, splitFont
 
 const cp = (s: string): number => s.codePointAt(0) as number;
 
-/** 公文里最典型的一套：正文仿宋、西文 Times New Roman、hint 指向东亚 */
+/**
+ * 公文里最典型的一套：正文仿宋、西文 Times New Roman、hint 指向东亚。
+ * 字体名跟着 `fixtures/gongwen-01.docx` 走 —— 那份真公文写的是「仿宋」。
+ *
+ * 别顺手改成 `仿宋_GB2312`：GB/T 9704 里确实常见，但它与「仿宋」是**两款字体、度量不同**，
+ * 且在首批支持清单的「暂不支持」一栏（开发计划 §2.1）。测试 fixture 用未支持的字体名，
+ * 会让后来者以为我们有它的度量。
+ */
 const gongwen: ScriptFonts = {
   ascii: 'Times New Roman',
   hAnsi: 'Times New Roman',
-  eastAsia: '仿宋_GB2312',
+  eastAsia: '仿宋',
   cs: 'Times New Roman',
   hint: 'eastAsia',
 };
@@ -97,9 +104,9 @@ describe('切段', () => {
     const runs = splitFontRuns('2024年1月', gongwen);
     expect(runs).toEqual([
       { start: 0, end: 4, font: 'Times New Roman', script: 'latin' },
-      { start: 4, end: 5, font: '仿宋_GB2312', script: 'eastAsia' },
+      { start: 4, end: 5, font: '仿宋', script: 'eastAsia' },
       { start: 5, end: 6, font: 'Times New Roman', script: 'latin' },
-      { start: 6, end: 7, font: '仿宋_GB2312', script: 'eastAsia' },
+      { start: 6, end: 7, font: '仿宋', script: 'eastAsia' },
     ]);
   });
 
@@ -125,14 +132,14 @@ describe('切段', () => {
     const text = `${String.fromCodePoint(0x20000)}A`;
     const runs = splitFontRuns(text, gongwen);
     expect(runs).toEqual([
-      { start: 0, end: 2, font: '仿宋_GB2312', script: 'eastAsia' },
+      { start: 0, end: 2, font: '仿宋', script: 'eastAsia' },
       { start: 2, end: 3, font: 'Times New Roman', script: 'latin' },
     ]);
     expect(text.slice(0, 2)).toBe(String.fromCodePoint(0x20000));
   });
 
   it('hint 改变切段结果 —— ① 跟着换字体', () => {
-    expect(splitFontRuns('①', gongwen)[0]?.font).toBe('仿宋_GB2312');
+    expect(splitFontRuns('①', gongwen)[0]?.font).toBe('仿宋');
     expect(splitFontRuns('①', { ...gongwen, hint: 'default' })[0]?.font).toBe('Times New Roman');
   });
 

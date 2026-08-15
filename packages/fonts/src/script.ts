@@ -5,7 +5,7 @@
  *
  * ```xml
  * <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"
- *           w:eastAsia="仿宋_GB2312" w:cs="Times New Roman" w:hint="eastAsia"/>
+ *           w:eastAsia="仿宋" w:cs="Times New Roman" w:hint="eastAsia"/>
  * ```
  *
  * 引擎必须**逐字符**判断它属于哪个桶，再取对应字体的度量 ——「汉字用仿宋、数字英文用
