@@ -46,6 +46,8 @@ export function loadCascadeContext(pkg: OpcPackage, diagnostics: DiagnosticSink)
     theme: theme === undefined ? EMPTY_THEME : parseTheme(theme),
     // settings.xml 缺席不发诊断：它的每一项都有规范默认值，缺了不影响正确性
     settings: parseSettings(settings),
+    // 编号级自带的缩进要参与段落级联，所以 numbering.xml 属于级联上下文的一部分
+    numbering: parseNumbering(partXml(pkg, RelType.NUMBERING), diagnostics),
   };
 }
 
@@ -64,7 +66,10 @@ export interface LoadedDocument {
   resolved: ResolvedBody;
   /** 字体表：本地化字体名 →`altName` 的桥，`@uw/fonts` 查字体要它 */
   fonts: FontTable;
-  /** 编号定义。Phase 1 只解析不消费，见 numbering.ts */
+  /**
+   * 编号定义。段落上算好的编号在 `resolved` 里（`ResolvedParaProps.numbering.label`），
+   * 这份原始定义留给编辑期（改编号、加一级）与回写。
+   */
   numbering: Numbering;
 }
 
@@ -77,6 +82,7 @@ export function loadDocument(pkg: OpcPackage, diagnostics: DiagnosticSink): Load
     body,
     resolved: resolveBody(cascade, body),
     fonts: parseFontTable(partXml(pkg, RelType.FONT_TABLE)),
-    numbering: parseNumbering(partXml(pkg, RelType.NUMBERING), diagnostics),
+    // 不重新解析一遍：同一份定义解析两次会让 numbering.xml 的诊断也报两次
+    numbering: cascade.numbering,
   };
 }

@@ -209,6 +209,7 @@ describe('正文节点树（loadDocument 全链路）', () => {
       styles: parseStyles(undefined, createDiagnosticSink()),
       theme: doc.cascade.theme,
       settings: { ...DEFAULT_SETTINGS, themeFontLang: { latin: '', eastAsia, bidi: '' } },
+      numbering: doc.cascade.numbering,
     });
     const themeRef = { fontThemes: { eastAsia: 'minorEastAsia' } };
     expect(resolveRunProps(langCtx('ja-JP'), undefined, themeRef).fonts.eastAsia).toBe('游明朝');

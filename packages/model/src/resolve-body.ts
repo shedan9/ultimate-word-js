@@ -23,30 +23,48 @@ import type {
   TableNode,
   TableRowNode,
 } from './nodes.ts';
+import type { NumberingCounters } from './numbering-counter.ts';
+import { createNumberingCounters } from './numbering-counter.ts';
 import type { ParaProps, ResolvedParaProps, ResolvedRunProps, RunProps } from './props.ts';
 
+/**
+ * 一趟级联的全部状态。
+ *
+ * `counters` 是**有状态**的那一半：编号「第几」只有按文档顺序走一遍才知道。
+ * 它在这里创建、随遍历往下传，因此一次 `resolveBody` 就是一份干净的计数 ——
+ * 同一份文档重解析两次结果相同（原则：级联结果是派生量，不许跨调用残留）。
+ */
+interface Pass {
+  ctx: CascadeContext;
+  counters: NumberingCounters;
+}
+
 export function resolveBody(ctx: CascadeContext, body: Body): ResolvedBody {
+  const pass: Pass = { ctx, counters: createNumberingCounters(ctx.numbering, ctx.styles) };
   return {
     sections: body.sections.map((s): ResolvedSection => {
       // 节属性本来就是解析完的纯数据，直接带过来；克隆是为了断开与可编辑树的共享，
       // 否则编辑那边改一个页边距，已经发给 Worker 的这棵树会跟着变（或者反过来）
-      return { id: s.id, props: structuredClone(s.props), blocks: s.blocks.map((b) => block(ctx, b)) };
+      return { id: s.id, props: structuredClone(s.props), blocks: s.blocks.map((b) => block(pass, b)) };
     }),
   };
 }
 
-function block(ctx: CascadeContext, b: Block): ResolvedBlock {
-  return b.kind === 'paragraph' ? paragraph(ctx, b) : table(ctx, b);
+function block(pass: Pass, b: Block): ResolvedBlock {
+  return b.kind === 'paragraph' ? paragraph(pass, b) : table(pass, b);
 }
 
-function paragraph(ctx: CascadeContext, p: ParagraphNode<ParaProps, RunProps>): ResolvedParagraph {
+function paragraph(pass: Pass, p: ParagraphNode<ParaProps, RunProps>): ResolvedParagraph {
+  const ctx = pass.ctx;
   // 段落的直接 pPr 要同时喂给字符级联 —— 段落样式链上的 rPr 是字符属性的一层，
-  // 而 ResolvedParaProps 里已经没有「段落样式 id 之外的原始信息」了
-  const props: ResolvedParaProps = resolveParaProps(ctx, p.props);
+  // 而 ResolvedParaProps 里已经没有「段落样式 id 之外的原始信息」了。
+  // 计数器一段只能推进一次，所以整棵树里只有这一处传它
+  const props: ResolvedParaProps = resolveParaProps(ctx, p.props, pass.counters);
   return {
     kind: 'paragraph',
     id: p.id,
     props,
+    // 正文 run 不吃编号的 rPr（那份只作用于编号文字，见 cascade.ts 文件头第 3 条）
     runs: p.runs.map((r): ResolvedRun => {
       const rp: ResolvedRunProps = resolveRunProps(ctx, p.props, r.props);
       const out: ResolvedRun = { kind: 'run', id: r.id, props: rp, content: structuredClone(r.content) };
@@ -56,8 +74,12 @@ function paragraph(ctx: CascadeContext, p: ParagraphNode<ParaProps, RunProps>): 
   };
 }
 
+/**
+ * 表格里的段落**参与同一条编号计数**：Word 里表格单元格中的列表和正文里的列表
+ * 共用一个编号实例时是连着数的。所以这里递归下去的是同一个 `pass`，不是新建一个。
+ */
 function table(
-  ctx: CascadeContext,
+  pass: Pass,
   t: TableNode<ParaProps, RunProps>,
 ): TableNode<ResolvedParaProps, ResolvedRunProps> {
   return {
@@ -73,7 +95,7 @@ function table(
             id: c.id,
             gridSpan: c.gridSpan,
             vMerge: c.vMerge,
-            blocks: c.blocks.map((b) => block(ctx, b)),
+            blocks: c.blocks.map((b) => block(pass, b)),
           };
         }),
       };

@@ -10,6 +10,7 @@ import { parseXml } from '@uw/ooxml';
 import { describe, expect, it } from 'vitest';
 import type { CascadeContext } from './cascade.ts';
 import { resolveParaProps, resolveRunProps } from './cascade.ts';
+import { EMPTY_NUMBERING } from './numbering.ts';
 import { parseParaProps, parseRunProps } from './parse-props.ts';
 import { DEFAULT_SETTINGS } from './settings.ts';
 import { parseStyles } from './styles.ts';
@@ -21,7 +22,12 @@ const W_NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/m
 function ctxFrom(stylesXml: string): CascadeContext {
   const sink = createDiagnosticSink();
   const doc = parseXml(`<w:styles ${W_NS}>${stylesXml}</w:styles>`);
-  return { styles: parseStyles(doc, sink), theme: EMPTY_THEME, settings: DEFAULT_SETTINGS };
+  return {
+    styles: parseStyles(doc, sink),
+    theme: EMPTY_THEME,
+    settings: DEFAULT_SETTINGS,
+    numbering: EMPTY_NUMBERING,
+  };
 }
 
 const pPr = (xml: string) => parseParaProps(parseXml(`<w:pPr ${W_NS}>${xml}</w:pPr>`).root);
@@ -161,6 +167,7 @@ describe('basedOn 成环', () => {
       styles: parseStyles(doc, sink),
       theme: EMPTY_THEME,
       settings: DEFAULT_SETTINGS,
+      numbering: EMPTY_NUMBERING,
     };
 
     const p = resolveParaProps(ctx, pPr('<w:pStyle w:val="A"/>'));
@@ -177,6 +184,7 @@ describe('basedOn 成环', () => {
       styles: parseStyles(doc, sink),
       theme: EMPTY_THEME,
       settings: DEFAULT_SETTINGS,
+      numbering: EMPTY_NUMBERING,
     };
     expect(resolveParaProps(ctx, pPr('<w:pStyle w:val="A"/>')).justification).toBe('right');
     expect(sink.list().map((d) => d.code)).toContain('style-missing');

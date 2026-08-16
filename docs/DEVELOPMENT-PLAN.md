@@ -371,12 +371,14 @@ await view.toPNG(3);     // 第 3 页
   `characterSpacingControl`（标点挤压，影响断行位置）、`themeFontLang.eastAsia`
   （主题东亚字体回退按哪个 script；已接进级联，优先级低于 run 自己的 `w:lang`）。
   `w:compat` 开关原样收进字典，Phase 2 之后来查
-- ~~`numbering.xml`~~ ✅ 只解析不消费。`numId → abstractNumId → lvl` 两层间接 + `lvlOverride`，
-  `numId=0` 是「取消编号」不是第 0 号。**写明的洞**：`w:numStyleLink` 那一跳没跟（要连环检测一起做，
-  现在无法被测试覆盖），入口在 `numberingLevel`
+- ~~`numbering.xml`~~ ✅ 解析 + 消费都通了。`numId → abstractNumId → lvl` 两层间接 + `lvlOverride`，
+  `numId=0` 是「取消编号」不是第 0 号；`w:numStyleLink` 那一跳带环检测已补。
+  消费那半见 Phase 5 那一条：计数器（`numbering-counter.ts`）+ 编号文字（`number-format.ts`）
+  + 编号层接进级联
 - ~~样式级联：`docDefaults → styles.xml(basedOn 链，含循环检测) → 直接格式`~~ ✅ `@uw/model/cascade.ts`
-  - 两个**写明的洞**：编号那一层（`numbering.xml` 每级自带 pPr/rPr）留到 Phase 5；
-    toggle 属性（b / i / caps…）在样式层之间的 XOR 语义（§17.7.3）按「后者覆盖」处理 ——
+  - 编号那一层已经接上：`w:lvl/w:pPr`（缩进）铺到**整个段落**、排在段落样式之后直接格式之前；
+    `w:lvl/w:rPr`（§17.9.24）只作用于**编号文字**，铺到正文上就会出现「整段变 Symbol」
+  - 仍然**写明的洞**：toggle 属性（b / i / caps…）在样式层之间的 XOR 语义（§17.7.3）按「后者覆盖」处理 ——
     没有 Word 真值样本能验证 XOR 的边界，照规范硬写一个测不了的实现比留个洞更危险
   - 表格条件格式那一层的位置也还空着，Phase 4 再接
 - ~~属性解析成**扁平化的 `ResolvedRunProps` / `ResolvedParaProps`**，布局层不再碰 XML~~ ✅
@@ -426,7 +428,17 @@ await view.toPNG(3);     // 第 3 页
 - **DoD**：公文常见的「发文单位 / 签发人」表头表格、以及三线表，能正确跨页
 
 ### Phase 5 — 列表编号 + 域 + 图片
-- `numbering.xml`：多级列表、`numFmt`（含 `chineseCounting` / `chineseCountingThousand`）、`lvlText`、重启规则
+- ~~`numbering.xml`：多级列表、`numFmt`（含 `chineseCounting` / `chineseCountingThousand`）、`lvlText`、重启规则~~ ✅
+  - `@uw/model`：`number-format.ts`（计数值 → 文字，认不出的 numFmt 降级 decimal）+
+    `numbering-counter.ts`（按文档顺序推进，计数按 **numId** 分家、`w:lvlRestart` 收窄归零范围、
+    跳级取 start 但不推进）+ 编号层接进级联，结果落在 `ResolvedParaProps.numbering.label`
+  - `@uw/layout`：编号作为首行前缀进 item 流，`w:suff` 的制表位认「左缩进」这个**隐含停靠点**
+    （悬挂缩进的正文就落在那儿）。编号不能作行首、不参与两端对齐拉伸、`numbering` 标记让
+    命中测试与可选文本层跳过它
+  - **没做**：`w:lvlJc`（编号自身的对齐）在布局里被忽略，只带在数据上 —— 「右对齐的编号
+    到底以哪条线为准」没有 Word 真值，照规范猜一个测不了的实现不如留个洞（原则 1.5）。
+    中文数字读法与 `chineseCounting` / `chineseCountingThousand` 的分岔同理，见
+    `number-format.ts` 文件头列的三条未标定项
 - 域：TOC（含收敛）、SEQ、STYLEREF、DATE、HYPERLINK
 - 图片：inline 为主，anchor 只做「上下型环绕」，其余环绕类型退化为 inline（明确写进非目标）
 - **DoD**：带自动目录的报告，目录页码正确且跳转可用
@@ -535,9 +547,13 @@ CI 上无 Word，所以真值 PDF 与抽取结果**提交进仓库**（`fixtures
 11. ~~**Phase 2 的水平侧**：断行（禁则 / 挤压 / 悬挂）+ 缩进 + 对齐 + 制表位 + 行高总量~~ ✅
     `@uw/layout` 已经排到**行盒的门口**：`layoutParagraph()` 产出每行的 x、逐字 x、行高，
     就是没有 y。真实公文 `gongwen-01.docx` 走完整条链的冒烟测试在 `layout/src/fixture.test.ts`
-12. **上 Windows 之后按这个顺序补**：① 基线穿刺（第 6 步，解锁行盒与分页）
+12. ~~**Phase 5 的编号**：计数器 + 编号文字 + 编号层接进级联 + 编号进首行几何~~ ✅
+    与基线无关，Mac 上能做完。剩下的编号真值样本并进第 13 步
+13. **上 Windows 之后按这个顺序补**：① 基线穿刺（第 6 步，解锁行盒与分页）
     ② A/C 类字体的度量包抽取（解锁 L2/L3/L4 的真值断言 —— 现在 Mac 上只能走等宽近似）
     ③ `uncalibrated.ts` 里那几个常数的样本（挤压比例、1/8 em、上下标字号、禁则集边界）
+    ④ 编号的三个样本：`w:lvlJc="right"` 的编号以哪条线对齐、编号宽过悬挂缩进时正文落在哪、
+    `chineseCounting` 与 `chineseCountingThousand` 在 105 / 1005 上各显示什么
 
 第 6 步优先于任何**布局**代码 —— 与第 4 步同理，没测准的东西不要拿来当地基。
 但它不挡 Phase 1，也不挡 Phase 2 的字体侧：解析、样式级联、分桶、度量跟基线位置无关，

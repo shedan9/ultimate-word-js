@@ -4,23 +4,29 @@
  * 顺序（ECMA-376 §17.7.2，后面的覆盖前面的）：
  *
  * ```
- * 段落属性： docDefaults.pPr → 段落样式链(祖先→自己) → [编号 pPr] → 直接 pPr
- * 字符属性： docDefaults.rPr → 段落样式链.rPr      → [编号 rPr] → 字符样式链.rPr → 直接 rPr
+ * 段落属性： docDefaults.pPr → 段落样式链(祖先→自己) → 编号 pPr → 直接 pPr
+ * 字符属性： docDefaults.rPr → 段落样式链.rPr        → 字符样式链.rPr → 直接 rPr
+ * 编号文字： docDefaults.rPr → 段落样式链.rPr        → 编号 rPr → 段落标记的 rPr
  * ```
  *
- * 两处容易错的地方：
+ * 三处容易错的地方：
  * 1. **段落样式也带字符属性**，且它排在字符样式**前面**。漏了这一层，
  *    「标题 1 是 24 号字」就没了
  * 2. **合并是逐属性的，不是整块替换**。样式设了 `w:ind w:left`，直接格式设了
  *    `w:ind w:firstLine`，结果两个都在。整块替换会把左缩进吃掉
- *
- * 方括号里的编号那层是 Phase 5 的洞，见文件末尾。
+ * 3. **编号的 pPr 与 rPr 作用域不同**：`w:lvl/w:pPr`（缩进、制表位）作用于**整个段落**，
+ *    而 `w:lvl/w:rPr`（§17.9.24）只作用于**编号文字本身**。把编号的 rPr 也铺到正文上，
+ *    是「项目符号用 Symbol 字体 → 整段正文都变成 Symbol」这类错误的来源
  */
 import { halfPtToTwips } from '@uw/core';
+import type { Numbering, NumberingLevel } from './numbering.ts';
+import { numberingLevel } from './numbering.ts';
+import type { NumberedParagraph, NumberingCounters } from './numbering-counter.ts';
 import type {
   Indent,
   Justification,
   NumberingRef,
+  NumberLabel,
   ParagraphSpacing,
   ParaProps,
   ResolvedParaProps,
@@ -39,9 +45,14 @@ export interface CascadeContext {
   /**
    * `settings.xml`。级联只用到 `themeFontLang.eastAsia` 一项，但**这一项非有不可**：
    * 主题里 `a:ea` 是空串时，东亚字体要按语言回退到 `a:font script="..."`，
-   * 而语言的来源就是这里。缺了它只能硬编码 zh-CN，日文文档会拿到简体中文字体。
+   * 而语言的来源就是这里。缺了它只能硬编码 zh-CN，非中文文档会拿到简体中文字体。
    */
   settings: DocumentSettings;
+  /**
+   * `numbering.xml`。编号那一级自带 pPr（几乎总有缩进）要插进段落级联，
+   * 所以它是级联的**输入**，不是解析出来放着看的旁支。缺席时给 `EMPTY_NUMBERING`。
+   */
+  numbering: Numbering;
 }
 
 /**
@@ -158,16 +169,21 @@ function finishRun(acc: RunAccum, theme: Theme, settings: DocumentSettings): Res
  *
  * `paraProps` 传的是**段落的直接属性**（用来找段落样式），不是解析后的 —— 因为
  * 段落样式链上的 rPr 要参与字符级联，而那是解析后的 ParaProps 里已经丢掉的信息。
+ *
+ * `numberingRunProps` **只有算编号文字时才传**：`w:lvl/w:rPr` 的作用域是编号本身，
+ * 不是段落正文（见文件头第 3 条）。给正文 run 传它等于让整段跟着项目符号变字体。
  */
 export function resolveRunProps(
   ctx: CascadeContext,
   paraProps: ParaProps | undefined,
   direct: RunProps | undefined,
+  numberingRunProps?: RunProps,
 ): ResolvedRunProps {
   const acc: RunAccum = { props: {}, slots: {}, hint: undefined };
 
   applyRunLevel(acc, ctx.styles.defaults.runProps);
   for (const s of ctx.styles.chainOf(paragraphStyleId(ctx, paraProps))) applyRunLevel(acc, s.runProps);
+  if (numberingRunProps !== undefined) applyRunLevel(acc, numberingRunProps);
   // 字符样式链排在段落样式之后 —— 字符样式是「更局部」的那一个
   for (const s of ctx.styles.chainOf(direct?.styleId)) applyRunLevel(acc, s.runProps);
   if (direct !== undefined) applyRunLevel(acc, direct);
@@ -239,12 +255,45 @@ function paragraphStyleId(ctx: CascadeContext, direct: ParaProps | undefined): s
   return direct?.styleId ?? ctx.styles.defaultParagraphStyleId();
 }
 
-export function resolveParaProps(ctx: CascadeContext, direct: ParaProps | undefined): ResolvedParaProps {
-  const styleId = paragraphStyleId(ctx, direct);
-  const acc: ParaAccum = { props: {}, indent: {}, spacing: {}, numbering: {}, tabs: new Map() };
+/**
+ * 编号级自带的 pPr 要**去掉三样**再往段落上铺。
+ *
+ * - `w:pStyle`：`w:lvl/w:pStyle` 是**反向**关系（「用了这个样式的段落自动获得本编号」），
+ *   不是「本段改用这个样式」。照搬会让所有带编号的段落被换成列表样式
+ * - `w:numPr`：编号级里再指一个编号就成了自指，级联会绕回来
+ * - 段落标记的 rPr：编号文字的字符属性走 `w:lvl/w:rPr` 那条路，不是这条
+ */
+function numberingParaLayer(p: ParaProps): ParaProps {
+  const layer: ParaProps = { ...p };
+  delete layer.styleId;
+  delete layer.numbering;
+  delete layer.markRunProps;
+  return layer;
+}
 
+/**
+ * 段落属性级联。
+ *
+ * `counters` **有副作用**：传了它就会推进编号计数器，因此每个段落只能调一次、
+ * 且必须按文档顺序调 —— 实际只有 `resolveBody()` 该传。不传时编号级的 pPr
+ * （缩进那些）照样生效，只是没有 `label`：编号是「第几」要靠前文才知道。
+ */
+export function resolveParaProps(
+  ctx: CascadeContext,
+  direct: ParaProps | undefined,
+  counters?: NumberingCounters,
+): ResolvedParaProps {
+  const styleId = paragraphStyleId(ctx, direct);
+  const chain = ctx.styles.chainOf(styleId);
+  // 先只把 numPr 那一项级联出来：编号级的 pPr 要插进下面这条链，而它插在哪一级
+  // 又取决于这条链算出来的 numId —— 鸡生蛋只能拆成两步。这一步很便宜（只读一个字段）
+  const ref = numberingRefOf(ctx, chain, direct);
+  const numbered = numberingOf(ctx, ref, counters);
+
+  const acc: ParaAccum = { props: {}, indent: {}, spacing: {}, numbering: {}, tabs: new Map() };
   applyParaLevel(acc, ctx.styles.defaults.paraProps);
-  for (const s of ctx.styles.chainOf(styleId)) applyParaLevel(acc, s.paraProps);
+  for (const s of chain) applyParaLevel(acc, s.paraProps);
+  if (numbered !== undefined) applyParaLevel(acc, numberingParaLayer(numbered.level.paraProps));
   if (direct !== undefined) applyParaLevel(acc, direct);
 
   const p = acc.props;
@@ -274,19 +323,77 @@ export function resolveParaProps(ctx: CascadeContext, direct: ParaProps | undefi
     autoSpaceDN: p.autoSpaceDN ?? true,
     overflowPunct: p.overflowPunct ?? true,
     outlineLevel: p.outlineLevel ?? 9, // 9 = 正文，不进目录
-    numbering: { numId: acc.numbering.numId ?? 0, level: acc.numbering.level ?? 0 },
+    numbering: {
+      ...ref,
+      // 编号级的 pPr 里如果又写了 numPr（不合法但见过），上面已经剥掉，所以这里
+      // 用的是 ref 而不是 acc.numbering —— 两者只在那种畸形文件上才不同
+      // 没有计数器时只有级定义没有「第几」，那就不给 label —— 与其填一个
+      // 空文字的假编号，不如让下游一眼看出「这次级联没跑编号」
+      ...(numbered !== undefined && 'text' in numbered ? { label: labelOf(ctx, direct, numbered) } : {}),
+    },
     // 段落标记的字符属性走同一条字符级联，最后再叠自己那份
     markRunProps: resolveRunProps(ctx, direct, direct?.markRunProps),
   };
 }
 
-// ── 两个已知的洞（写下来免得以为已经做了）────────────────────────────────────
+/** 只级联 `w:numPr` 这一项。缺席时 numId=0，也就是「没有编号」 */
+function numberingRefOf(
+  ctx: CascadeContext,
+  chain: readonly { paraProps: ParaProps }[],
+  direct: ParaProps | undefined,
+): { numId: number; level: number } {
+  const ref: NumberingRef = {};
+  const apply = (p: ParaProps): void => {
+    if (p.numbering !== undefined) Object.assign(ref, definedOnly(p.numbering));
+  };
+  apply(ctx.styles.defaults.paraProps);
+  for (const s of chain) apply(s.paraProps);
+  if (direct !== undefined) apply(direct);
+  return { numId: ref.numId ?? 0, level: ref.level ?? 0 };
+}
+
+/**
+ * 取本段的编号级定义（有计数器时顺便把「第几」算出来）。
+ *
+ * 两条路都必须能拿到 `level`：缩进是编号级给的，与「第几」无关 ——
+ * 只有计数器在场时才有 `text`，没有计数器的段落也不该丢掉悬挂缩进。
+ */
+function numberingOf(
+  ctx: CascadeContext,
+  ref: { numId: number; level: number },
+  counters: NumberingCounters | undefined,
+): NumberedParagraph | { level: NumberingLevel } | undefined {
+  if (ref.numId === 0) return undefined;
+  if (counters !== undefined) return counters.advance(ref.numId, ref.level);
+  const level = numberingLevel(ctx.numbering, ref.numId, ref.level, ctx.styles);
+  return level === undefined ? undefined : { level };
+}
+
+/**
+ * 编号文字自己的字符属性。
+ *
+ * 层序：docDefaults → 段落样式链 → `w:lvl/w:rPr` → 段落标记的 rPr。
+ * 段落标记排在最后是因为它是**用户直接改的那个**（在 Word 里选中 ¶ 调字号，
+ * 编号跟着变大，这是所有人都用过的行为），而 `w:lvl/w:rPr` 来自模板。
+ */
+function labelOf(
+  ctx: CascadeContext,
+  direct: ParaProps | undefined,
+  numbered: NumberedParagraph,
+): NumberLabel {
+  const level = numbered.level;
+  return {
+    text: numbered.text,
+    value: numbered.value,
+    suffix: level.suffix,
+    justification: level.justification,
+    runProps: resolveRunProps(ctx, direct, direct?.markRunProps, level.runProps),
+  };
+}
+
+// ── 仍然存在的洞（写下来免得以为已经做了）──────────────────────────────────
 //
-// 1. **编号那一层没接**。`w:numPr` 指向的 `numbering.xml` 里，每个级别自带 pPr / rPr
-//    （常见的是缩进与项目符号字体），它排在段落样式之后、直接格式之前。
-//    Phase 5 做编号时补，接口位置就是 applyParaLevel / applyRunLevel 之间。
-//
-// 2. **toggle 属性按「后者覆盖」处理，没做 XOR**。规范（§17.7.3）说 b / i / caps /
+// 1. **toggle 属性按「后者覆盖」处理，没做 XOR**。规范（§17.7.3）说 b / i / caps /
 //    strike / vanish 这类开关属性在**样式层之间**是异或的：祖先开、后代再开 = 关。
 //    这里一律按覆盖处理。差异只在「两级以上样式重复设同一个开关」时才显现，
 //    真实公文里罕见；更重要的是**没有 Word 真值样本能验证 XOR 的确切边界**，

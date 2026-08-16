@@ -13,6 +13,7 @@ import type { LineMetrics, TextMeasurer } from '@uw/fonts';
 import { isEastAsianCodePoint } from '@uw/fonts';
 import type {
   DocGrid,
+  NumberLabel,
   ResolvedParagraph,
   ResolvedParaProps,
   ResolvedRun,
@@ -111,6 +112,14 @@ export function paraProps(over: Partial<ResolvedParaProps> = {}): ResolvedParaPr
     markRunProps: runProps(),
     ...over,
   };
+}
+
+/**
+ * 一个算好的列表编号。真实来源是 `@uw/model` 的级联（`resolveParaProps` + 计数器），
+ * 布局层只吃结果 —— 这里直接造结果，免得布局测试被样式表与 numbering.xml 绑住。
+ */
+export function numberLabel(text: string, over: Partial<NumberLabel> = {}): NumberLabel {
+  return { text, value: 1, suffix: 'tab', justification: 'left', runProps: runProps(), ...over };
 }
 
 let seq = 0;

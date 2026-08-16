@@ -9,15 +9,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 当前进度：Phase 0 已完成（地基 + 行高穿刺 + CI），Phase 1 的**解析链已完整**，
 Phase 2 已排到**行盒的门口** —— 水平方向（断行 + 行内几何）与行高总量都做完了，就差基线。
+Phase 5 的**列表编号**也已经从 `numbering.xml` 一路通到首行几何（它不依赖基线，所以能先做）。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、
-`@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 编号定义 + 制表位）、
+`@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 制表位 + **编号（解析 + 计数器 + 编号文字 + 接进级联）**）、
 `@uw/fonts`（行高规则 + 脚本分桶 + 度量包 + 注册表 + `TextMeasurer`）、
-`@uw/layout`（item 流 + 断行 + 缩进 / 对齐 / 制表位 + 行高与网格吸附）。
+`@uw/layout`（item 流 + 断行 + 缩进 / 对齐 / 制表位 / 列表编号 + 行高与网格吸附）。
 `@uw/render-dom` 仍是占位 —— 没有 y 画不了，等下面那个穿刺。
 
 一份 docx 的入口是 `loadDocument(pkg, sink)`（`packages/model/src/load.ts`），产出
 `body`（直接格式，可编辑）、`resolved`（级联完的纯数据，给布局）、`cascade`（上下文，**不可**过 Worker 边界）、
-`fonts`、`numbering`。`resolveBody()` 那一步就是 Worker 边界 —— `StyleSheet` 带方法，级联必须在过界前做完。
+`fonts`、`numbering`。`resolveBody()` 那一步就是 Worker 边界 —— `StyleSheet` 带方法，级联必须在过界前做完；
+它同时是**编号计数器**跑的地方（编号「第几」只有按文档顺序走一遍才知道），结果落在
+`ResolvedParaProps.numbering.label`（编号文字 + 它自己的字符属性 + `w:suff`）。
 部件一律**按关系类型找**（`RelType.*`），不按 `word/styles.xml` 这种路径惯例猜。
 
 **卡在 Windows 的两件事**：
@@ -39,10 +42,14 @@ Phase 2 已排到**行盒的门口** —— 水平方向（断行 + 行内几何
 `candidates` 那个回调就是把 model 的 `fontNameCandidates()` 接进来的地方 —— fonts **不认识** model，
 依赖方向不许反过来。文字先过 `splitFontRuns(text, fonts)` 切成「同字体同脚本」的段，再逐段量。
 
-级联里两个**写明的洞**（别以为已经做了）：编号那一层（Phase 5，`numbering.xml` 已解析、只差接进级联）、
-以及 toggle 属性在样式层之间的 XOR 语义（§17.7.3，现按「后者覆盖」处理）。
-都在 `cascade.ts` 末尾有注释说明补的办法。（`w:numStyleLink` 那一跳已经补上了，
-带环检测，入口是 `numberingLevel(n, numId, ilvl, styles)` 的第四个参数。）
+级联里**写明的洞**（别以为已经做了）：toggle 属性在样式层之间的 XOR 语义（§17.7.3，现按「后者覆盖」处理），
+`cascade.ts` 末尾有注释说明补的办法。
+
+编号那一层已经接上，三处容易搞反：
+① `w:lvl/w:pPr`（缩进）铺到**整个段落**，`w:lvl/w:rPr` 只作用于**编号文字**（铺到正文上会「整段变 Symbol」）；
+② 计数按 **numId** 分家而不是 abstractNumId —— 「重新开始编号」正是靠两个 num 指同一个 abstractNum 实现的；
+③ 布局里编号是一段**没有 run 的 item**（`numbering: true` 标记），命中测试与可选文本层必须跳过它。
+未做：`w:lvlJc`（编号自身对齐）只带在数据上、布局忽略；中文读法的几处未标定见 `number-format.ts` 文件头。
 
 字体名有个坑：中文版 Word 写的是「黑体」「等线」这种本地化名，磁盘上的字体叫 `SimHei` / `DengXian`。
 桥在 `fontTable.xml` 的 `w:altName`，查找顺序用 `fontNameCandidates()`，别只按一个名字查。
@@ -138,9 +145,11 @@ pnpm --filter @uw/fidelity spike     # Phase 0 行高穿刺
 **未决（阻塞 Phase 2 的行盒）**：东亚那 30% 额外行距在基线上下如何分配 —— 决定行内基线的确切位置，
 现在一律记进 `lineGap`，只保证行高总量正确。**写行盒布局代码之前必须先补「首行基线到版心顶」的穿刺。**
 
-行高之外还有一处未标定：`splitFontRuns()` 的歧义字符集取的是 Unicode **EastAsianWidth = Ambiguous**
-（`w:hint` 要回答的正是「这份文档算不算东亚环境」，两者同构），但 Word 的实际边界有没有偏差没有真值验证过。
+行高之外还有两处未标定。一是 `splitFontRuns()` 的歧义字符集取的是 Unicode **EastAsianWidth = Ambiguous**
+（`w:hint` 要回答的正是「这份文档算不算东亚环境」，两者同构），但 Word 的实际边界有没有偏差没有真值验证过 ——
 上 Windows 时顺手做一份「① ※ ℃ Ⅰ 在 hint=eastAsia / default 下各占多宽」的样本就能钉死。
+二是编号的三个样本：`w:lvlJc="right"` 的编号以哪条线对齐、编号宽过悬挂缩进时正文落在哪、
+`chineseCounting` 与 `chineseCountingThousand` 在 105 / 1005 上各显示什么。
 
 另一个反复咬人的点：中文版 Word 的 Normal 模板**默认开着行网格**（linePitch 312 twips = 15.6pt），
 基线会被吸到网格上、把字体度量差异整个盖掉。做度量实验必须显式关网格（`PageSetup.LayoutMode = wdLayoutModeDefault`）。

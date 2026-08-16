@@ -176,10 +176,30 @@ export interface TabStop {
   leader: 'none' | 'dot' | 'hyphen' | 'underscore' | 'heavy' | 'middleDot';
 }
 
-/** `w:numPr`：列表编号引用。Phase 5 才真正消费 */
+/** `w:numPr`：列表编号引用 */
 export interface NumberingRef {
   numId?: number;
   level?: number;
+}
+
+/**
+ * 一个段落最终显示出来的编号，计数器跑完才有。
+ *
+ * 它**不是**段落的一个 run：编号文字不在 `document.xml` 里，改不了、选不中、
+ * 复制不出来，字符属性也另有来源（`w:lvl/w:rPr`，不是正文那份）。放在段落属性上
+ * 而不是伪造一个 run，正是为了让编辑期不会误把它当成可编辑内容。
+ */
+export interface NumberLabel {
+  /** 展开后的编号文字。`numFmt=none` 时是空串（**仍然占位**，不等于没有编号） */
+  text: string;
+  /** 本段在本级的计数值。交叉引用要的是这个数 */
+  value: number;
+  /** 编号与正文之间的分隔。缺省是制表位，不是空格 */
+  suffix: 'tab' | 'space' | 'nothing';
+  /** 编号自己在编号区里的对齐（`w:lvlJc`），右对齐用于「 9.」「10.」对齐个位 */
+  justification: Justification;
+  /** 编号文字自己的字符属性：项目符号的字体就在这儿（Symbol / Wingdings） */
+  runProps: ResolvedRunProps;
 }
 
 export interface ParaProps {
@@ -224,7 +244,11 @@ export interface ResolvedParaProps {
   pageBreakBefore: boolean;
   widowControl: boolean;
   outlineLevel: number;
-  numbering: { numId: number; level: number };
+  /**
+   * 编号引用与算好的编号。`label` 只在**按文档顺序**级联（`resolveBody`）时才有 ——
+   * 单独调 `resolveParaProps` 拿不到计数器，那时只有 numId / level。
+   */
+  numbering: { numId: number; level: number; label?: NumberLabel };
   snapToGrid: boolean;
   autoSpaceDE: boolean;
   autoSpaceDN: boolean;

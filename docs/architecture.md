@@ -206,8 +206,8 @@ flowchart BT
 | `@uw/core` | 🟢 `units.ts` · `errors.ts`（`UwError`）· `diagnostics.ts`（`Diagnostic` / `DiagnosticSink`） |
 | `@uw/fonts` | 🟢 行高规则（Phase 0 实测标定）· 脚本分桶 · 度量包 · 注册表（三级降级）· `TextMeasurer` + 两级缓存 |
 | `@uw/ooxml` | 🟢 OPC 解包 · 内容类型 · 关系 · 保序 XML 纯数据树 + 反向序列化 |
-| `@uw/model` | 🟢 样式级联 · 主题字体 · 正文节点树 · 分节 · 设置 · 字体表 · 编号定义（只解析）· 🟡 编号消费 / 表格属性待建 |
-| `@uw/layout` | 🟢 断行（禁则 / 挤压 / 悬挂）· 缩进（含字符单位）· 对齐 · 制表位 · 行高总量 + 网格吸附 · ⏸ **行盒与分页卡在基线穿刺**（见 §5.1） |
+| `@uw/model` | 🟢 样式级联（含编号层）· 主题字体 · 正文节点树 · 分节 · 设置 · 字体表 · 编号（解析 + 计数器 + 编号文字）· 🟡 表格属性待建 |
+| `@uw/layout` | 🟢 断行（禁则 / 挤压 / 悬挂）· 缩进（含字符单位）· 对齐 · 制表位 · 列表编号 · 行高总量 + 网格吸附 · ⏸ **行盒与分页卡在基线穿刺**（见 §5.1） |
 | `@uw/render-dom` | ⚪ 占位 —— 没有 y 画不了，等行盒 |
 | `@uw/render-canvas` `@uw/view` `@uw/editor` `@uw/serialize` `ultimate-word` `@uw/react` | ⚪ 未创建 |
 

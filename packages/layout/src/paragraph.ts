@@ -9,7 +9,7 @@ import type { Twips } from '@uw/core';
 import type { TextMeasurer } from '@uw/fonts';
 import type { DocGrid, DocumentSettings, ResolvedParagraph, ResolvedParaProps } from '@uw/model';
 import type { KinsokuSets } from './break-class.ts';
-import { kinsokuFrom } from './break-class.ts';
+import { isNumberingItem, kinsokuFrom } from './break-class.ts';
 import { buildItems } from './items.ts';
 import { lineHeight } from './line-height.ts';
 import type { BrokenLine, LineBreakContext } from './linebreak.ts';
@@ -44,6 +44,8 @@ export function layoutParagraph(p: ResolvedParagraph, opts: LayoutParagraphOptio
     defaultTabStop: opts.settings.defaultTabStop,
     compressPunctuation: opts.settings.characterSpacingControl !== 'doNotCompress',
     overflowPunct: p.props.overflowPunct,
+    // 编号后的制表位停在正文的左边缘（也就是悬挂缩进落脚处），见 linebreak.ts
+    numberingTabStop: geom.left,
   };
 
   const broken = breakLines(items, ctx);
@@ -119,9 +121,15 @@ function indentGeometry(
   };
 }
 
+/**
+ * 「一个字符」有多宽 —— 取段落里**第一个正文字符**的字号。
+ *
+ * 跳过编号文字：项目符号常常是 Symbol 字体的另一个字号，拿它当尺子会让整段的
+ * 「首行缩进 2 字符」按错误的字号折算。段落里一个正文字符都没有时取段落标记的字号。
+ */
 function charUnit(p: ResolvedParagraph, items: readonly LayoutItem[]): Twips {
   for (const item of items) {
-    if (item.kind === 'char') return item.fontSize * CHAR_UNIT_EM;
+    if (item.kind === 'char' && !isNumberingItem(item)) return item.fontSize * CHAR_UNIT_EM;
   }
   return p.props.markRunProps.size * CHAR_UNIT_EM;
 }
@@ -202,6 +210,8 @@ function justify(
   for (let k = 0; k < xs.length - 1; k++) {
     const item = items[line.start + k];
     if (item === undefined || item.kind === 'break') continue;
+    // 编号内部不张开：Word 两端对齐拉的是正文，编号与它后面那个制表位纹丝不动
+    if (isNumberingItem(item)) continue;
     if (item.kind === 'char' && item.space) spaces.push(k);
     gaps.push(k);
   }
@@ -266,6 +276,8 @@ function fragmentsOf(
         x,
         width: item.width,
         glyphX: [x],
+        // 编号自成片段（runId 不同，天然分开），标出来让渲染层别把它算进可选文本
+        ...(item.numbering === true ? { numbering: true as const } : {}),
       };
       out.push(current);
     } else {

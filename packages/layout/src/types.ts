@@ -18,7 +18,10 @@ import type { NodeId } from '@uw/model';
 export interface CharItem {
   kind: 'char';
   runId: NodeId;
-  /** 在 `run.content` 里的下标 + 该片段内的 UTF-16 偏移，命中测试与 `DocPosition` 反查靠它 */
+  /**
+   * 在 `run.content` 里的下标 + 该片段内的 UTF-16 偏移，命中测试与 `DocPosition` 反查靠它。
+   * 编号文字（`numbering`）没有这个位置，两项都是 -1。
+   */
   contentIndex: number;
   offset: number;
   /** 实际参与度量与渲染的码点（`w:caps` 的大写化已经做掉） */
@@ -41,6 +44,11 @@ export interface CharItem {
   softHyphen?: true;
   /** `w:noBreakHyphen`：画成连字符但**不许**在此断行 */
   noBreak?: true;
+  /**
+   * 列表编号的文字。**它不在 document.xml 里** —— 选不中、删不掉、复制不出来，
+   * 命中测试与 `DocPosition` 反查必须跳过它，两端对齐也不许在它内部张开。
+   */
+  numbering?: true;
 }
 
 export interface TabItem {
@@ -49,6 +57,11 @@ export interface TabItem {
   contentIndex: number;
   /** 前导符由命中的制表位决定，断行时才知道 */
   fontSize: Twips;
+  /**
+   * 编号与正文之间那个制表位（`w:suff="tab"`）。它比普通制表位多一个**隐含停靠点**：
+   * 段落左缩进（悬挂缩进落脚的地方），见 linebreak.ts 的 `tabAdvance`。
+   */
+  numbering?: true;
 }
 
 export interface BreakItem {
@@ -95,6 +108,11 @@ export interface LineFragment {
   width: Twips;
   /** 每个**码点**一个 x，与 `text` 的码点序一一对应 */
   glyphX: Twips[];
+  /**
+   * 列表编号。渲染层照画，但**可选文本层不要收它**（复制出来会多出一串「一、」），
+   * `runId` 也不指向任何真实节点，见 `CharItem.numbering`。
+   */
+  numbering?: true;
 }
 
 export interface LineLayout {

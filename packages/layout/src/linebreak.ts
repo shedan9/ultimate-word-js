@@ -32,6 +32,18 @@ export interface LineBreakContext {
   compressPunctuation: boolean;
   /** `w:overflowPunct`，默认开 */
   overflowPunct: boolean;
+  /**
+   * 编号后那个制表位（`w:suff="tab"`）的**隐含停靠点**：段落左缩进的绝对位置。
+   *
+   * 带编号的段落几乎都是「悬挂缩进」：编号从 `left - hanging` 开始，正文从 `left` 开始，
+   * 中间靠这个制表位跨过去 —— 而 `left` 通常并不在 `w:tabs` 里，也不是
+   * `defaultTabStop` 的整数倍。不认这个隐含停靠点，正文会停到 720 twips 的整数倍上，
+   * 整段左缩进全错。编号已经超过 `left` 时照常往后找下一个停靠点。
+   *
+   * ⚠️ 「超过之后落到哪」没有真值：这里按「继续走正常的制表位规则」处理，
+   * Word 也可能是「紧跟一个空格」。样本：把编号写长到超过悬挂缩进，看正文起点。
+   */
+  numberingTabStop?: Twips;
 }
 
 /** 一个被命中的制表位，前导符与对齐后处理都要它 */
@@ -108,7 +120,7 @@ export function breakLines(items: readonly LayoutItem[], ctx: LineBreakContext):
 
     const gap = i === start ? 0 : gapOf(item);
     let width = widthOf(item, x + gap, ctx, lineIndex);
-    if (item.kind === 'tab') recordTab(tabs, i, x + gap, ctx, lineIndex);
+    if (item.kind === 'tab') recordTab(tabs, i, x + gap, ctx, lineIndex, item.numbering === true);
 
     if (x + gap + width <= avail || i === start) {
       // 一个 item 比整行还宽时也必须收下（否则死循环），让它溢出去
@@ -157,13 +169,22 @@ function gapOf(item: LayoutItem): Twips {
 }
 
 function widthOf(item: LayoutItem, x: Twips, ctx: LineBreakContext, lineIndex: number): Twips {
-  if (item.kind === 'tab') return tabAdvance(ctx.lineLeft(lineIndex) + x, ctx).width;
+  if (item.kind === 'tab') {
+    return tabAdvance(ctx.lineLeft(lineIndex) + x, ctx, item.numbering === true).width;
+  }
   if (item.kind === 'break') return 0;
   return item.width;
 }
 
-function recordTab(out: TabHit[], index: number, x: Twips, ctx: LineBreakContext, lineIndex: number): void {
-  const hit = tabAdvance(ctx.lineLeft(lineIndex) + x, ctx);
+function recordTab(
+  out: TabHit[],
+  index: number,
+  x: Twips,
+  ctx: LineBreakContext,
+  lineIndex: number,
+  numbering: boolean,
+): void {
+  const hit = tabAdvance(ctx.lineLeft(lineIndex) + x, ctx, numbering);
   out.push({ index, alignment: hit.alignment, leader: hit.leader, pos: hit.pos });
 }
 
@@ -176,7 +197,14 @@ function recordTab(out: TabHit[], index: number, x: Twips, ctx: LineBreakContext
 function tabAdvance(
   absolute: Twips,
   ctx: LineBreakContext,
+  numbering = false,
 ): { width: Twips; alignment: TabStop['alignment']; leader: TabStop['leader']; pos: Twips } {
+  // 编号后的制表位先看那个隐含停靠点（段落左缩进），它优先于显式制表位 ——
+  // 悬挂缩进的正文就落在那儿，见 LineBreakContext.numberingTabStop
+  const implicit = ctx.numberingTabStop;
+  if (numbering && implicit !== undefined && implicit > absolute) {
+    return { width: implicit - absolute, alignment: 'left', leader: 'none', pos: implicit };
+  }
   for (const t of ctx.tabs) {
     if (t.alignment === 'bar' || t.alignment === 'clear') continue;
     if (t.pos > absolute)

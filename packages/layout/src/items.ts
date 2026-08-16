@@ -11,7 +11,7 @@
 import type { Twips } from '@uw/core';
 import type { TextMeasurer } from '@uw/fonts';
 import { splitFontRuns } from '@uw/fonts';
-import type { ResolvedParagraph, ResolvedRun, ResolvedRunProps } from '@uw/model';
+import type { NodeId, ResolvedParagraph, ResolvedRun, ResolvedRunProps } from '@uw/model';
 import type { KinsokuSets } from './break-class.ts';
 import { isCompressiblePunct, isSpaceCp, kinsokuOf } from './break-class.ts';
 import type { CharItem, LayoutItem } from './types.ts';
@@ -36,12 +36,57 @@ export interface BuildItemsOptions {
  */
 export function buildItems(p: ResolvedParagraph, opts: BuildItemsOptions): LayoutItem[] {
   const out: LayoutItem[] = [];
+  appendNumbering(out, p, opts);
   for (const run of p.runs) {
     if (run.props.hidden) continue;
     appendRun(out, run, opts);
   }
   applyAutoSpace(out, p.props.autoSpaceDE, p.props.autoSpaceDN);
   return out;
+}
+
+/**
+ * 列表编号：排在段落最前面的一段**没有 run 的文字**。
+ *
+ * 三件事值得写下来：
+ *
+ * 1. **编号只能待在首行**，且不能在它内部断开 —— 这一条不在这里做，而是让
+ *    `canBreakBetween` 拒绝在编号 item 之前断（编号 item 永远不能作为行首）。
+ *    在断行算法里少一条特例，比在这儿造一个「不可分组」的概念便宜
+ * 2. **编号文字为空（`w:numFmt="none"`）时，分隔符照留**。空编号的列表就是靠
+ *    「不显示编号但仍走一个制表位」把正文顶到左缩进上的；省掉它，那种段落的首行
+ *    会整体左移一个悬挂缩进
+ * 3. `runId` 拼的是段落 id，**在模型树里查不到**。命中测试要靠 `numbering` 标记
+ *    跳过这些 item，不要试图按这个 id 反查节点
+ */
+function appendNumbering(out: LayoutItem[], p: ResolvedParagraph, opts: BuildItemsOptions): void {
+  const label = p.props.numbering.label;
+  if (label === undefined) return;
+
+  const runId = numberingRunId(p.id);
+  const props = label.runProps;
+  const size = effectiveSize(props);
+  const start = out.length;
+  appendText(out, runId, props, -1, label.text, label.text, size, opts);
+
+  if (label.suffix === 'tab') {
+    out.push({ kind: 'tab', runId, contentIndex: -1, fontSize: size, numbering: true });
+  } else if (label.suffix === 'space') {
+    out.push(single(runId, props, -1, 0x20, fontFor(props, 0x20, opts), size, opts));
+  }
+  for (let i = start; i < out.length; i++) {
+    const item = out[i] as LayoutItem;
+    if (item.kind !== 'char' && item.kind !== 'tab') continue;
+    item.numbering = true;
+    // 编号文字在文档里没有位置，`offset` 那个「片段内 UTF-16 偏移」是编号串自己的
+    // 下标，拿去反查节点只会指到别处 —— 抹平成 -1，让误用一眼可见
+    if (item.kind === 'char') item.offset = -1;
+  }
+}
+
+/** 编号 item 的 runId：段落 id 加个后缀，只为让「同一段的编号」自成一个渲染片段 */
+export function numberingRunId(paragraphId: NodeId): NodeId {
+  return `${paragraphId}#num`;
 }
 
 function appendRun(out: LayoutItem[], run: ResolvedRun, opts: BuildItemsOptions): void {
@@ -51,7 +96,7 @@ function appendRun(out: LayoutItem[], run: ResolvedRun, opts: BuildItemsOptions)
     const c = run.content[ci] as (typeof run.content)[number];
     switch (c.kind) {
       case 'text':
-        appendText(out, run, ci, transformCase(c.text, props), c.text, size, opts);
+        appendText(out, run.id, props, ci, transformCase(c.text, props), c.text, size, opts);
         break;
       case 'tab':
         out.push({ kind: 'tab', runId: run.id, contentIndex: ci, fontSize: size });
@@ -65,18 +110,18 @@ function appendRun(out: LayoutItem[], run: ResolvedRun, opts: BuildItemsOptions)
         // FontSource 那一层的事，布局层猜这个只会猜错
         const cp = c.char.codePointAt(0);
         if (cp === undefined) break;
-        out.push(single(run, ci, cp, c.font, size, opts));
+        out.push(single(run.id, props, ci, cp, c.font, size, opts));
         break;
       }
       case 'noBreakHyphen': {
-        const item = single(run, ci, 0x2011, fontFor(props, 0x2011, opts), size, opts);
+        const item = single(run.id, props, ci, 0x2011, fontFor(props, 0x2011, opts), size, opts);
         item.noBreak = true;
         out.push(item);
         break;
       }
       case 'softHyphen': {
         // 平时宽度为 0：软连字符只有在此处断行时才显出来，参与排版的是那个「可断」的性质
-        const item = single(run, ci, 0x00ad, fontFor(props, 0x2d, opts), size, opts);
+        const item = single(run.id, props, ci, 0x00ad, fontFor(props, 0x2d, opts), size, opts);
         item.softHyphen = true;
         item.width = 0;
         out.push(item);
@@ -99,9 +144,14 @@ function appendRun(out: LayoutItem[], run: ResolvedRun, opts: BuildItemsOptions)
   }
 }
 
+/**
+ * 一段文字 → 逐字 item。收 `runId` + 属性而不是收整个 run，是因为**编号文字没有 run**：
+ * 它不在 document.xml 里，字符属性另有来源（`w:lvl/w:rPr`），但度量与分桶完全一样。
+ */
 function appendText(
   out: LayoutItem[],
-  run: ResolvedRun,
+  runId: NodeId,
+  props: ResolvedRunProps,
   contentIndex: number,
   text: string,
   original: string,
@@ -109,7 +159,6 @@ function appendText(
   opts: BuildItemsOptions,
 ): void {
   if (text === '') return;
-  const props = run.props;
   const defaultFont = opts.defaultFont ?? '';
   // 小型大写里同一段文字有两个字号（原本的小写字母用缩小的大写字形），批量度量的
   // 前提「一段一个字号」不成立，只能逐字问。它在公文语料里几乎不出现，慢一点无所谓
@@ -140,7 +189,8 @@ function appendText(
     for (let k = 0; k < cps.length; k++) {
       out.push(
         charItem(
-          run,
+          runId,
+          props,
           contentIndex,
           offsets[k] as number,
           cps[k] as number,
@@ -165,7 +215,8 @@ function wasLower(original: string, index: number): boolean {
 
 /** `advance` 传的是**未经 run 属性调整**的字形推进宽度，缩放与字间距在这里统一叠 */
 function charItem(
-  run: ResolvedRun,
+  runId: NodeId,
+  props: ResolvedRunProps,
   contentIndex: number,
   offset: number,
   cp: number,
@@ -177,14 +228,14 @@ function charItem(
 ): CharItem {
   return {
     kind: 'char',
-    runId: run.id,
+    runId,
     contentIndex,
     offset,
     cp,
     font,
     fontSize,
     script,
-    width: scaledWidth(advance, run.props),
+    width: scaledWidth(advance, props),
     gapBefore: 0,
     space: isSpaceCp(cp),
     kinsoku: kinsokuOf(cp, kinsoku),
@@ -194,7 +245,8 @@ function charItem(
 
 /** 零散的单个字符（符号、连字符）：不走 `splitFontRuns`，单独问一次度量器 */
 function single(
-  run: ResolvedRun,
+  runId: NodeId,
+  props: ResolvedRunProps,
   contentIndex: number,
   cp: number,
   font: string,
@@ -203,7 +255,8 @@ function single(
 ): CharItem {
   const f = font === '' ? (opts.defaultFont ?? '') : font;
   return charItem(
-    run,
+    runId,
+    props,
     contentIndex,
     0,
     cp,

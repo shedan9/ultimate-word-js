@@ -70,6 +70,11 @@ export function kinsokuFrom(settings: {
   };
 }
 
+/** 列表编号的 item（编号文字与它后面那个分隔符），见 types.ts 的 `CharItem.numbering` */
+export function isNumberingItem(item: LayoutItem): boolean {
+  return (item.kind === 'char' || item.kind === 'tab') && item.numbering === true;
+}
+
 export function kinsokuOf(cp: number, sets: KinsokuSets = DEFAULT_KINSOKU): 'none' | 'noStart' | 'noEnd' {
   if (sets.noStart.has(cp)) return 'noStart';
   if (sets.noEnd.has(cp)) return 'noEnd';
@@ -100,6 +105,9 @@ export function canBreakBetween(prev: LayoutItem | undefined, next: LayoutItem):
   if (prev === undefined) return false;
   // 硬换行由 linebreak.ts 直接处理，不走这里
   if (prev.kind === 'break' || next.kind === 'break') return false;
+  // 列表编号永远不能作为行首 —— 这一条同时管住「编号内部不许断」与「编号必须留在首行」：
+  // 编号 item 全在段落最前面，它们既然不能开新行，就只能整体待在第 0 行
+  if (isNumberingItem(next)) return false;
 
   if (prev.kind === 'char') {
     if (prev.noBreak === true) return false; // w:noBreakHyphen
