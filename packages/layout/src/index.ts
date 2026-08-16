@@ -23,5 +23,6 @@ export * from './line-height.ts';
 export * from './linebreak.ts';
 export * from './paragraph.ts';
 export * from './table.ts';
+export * from './table-borders.ts';
 export * from './types.ts';
 export * from './uncalibrated.ts';

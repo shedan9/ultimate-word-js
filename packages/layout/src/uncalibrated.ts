@@ -5,8 +5,10 @@
  * 并写清楚「拿什么样本能把它钉死」。散落在各处的魔法数字会被后人当成实测结论，
  * 那比留一个洞危险得多 —— metrics.ts 里的 1.3 之所以可信，正因为它旁边贴着 13 个样本的误差表。
  *
- * 这些值影响的都是**宽度**，也就是断行位置。它们不阻塞行盒装配（那个卡在基线穿刺），
+ * 大部分值影响的是**宽度**，也就是断行位置。它们不阻塞行盒装配（那个卡在基线穿刺），
  * 但要把 L2（断行点一致）压到零差异，得先在 Windows 上把它们各自的样本做一遍。
+ * 末尾的 `BORDER_STYLE_RANK` 是个例外：它影响的是**画哪条线**，不改坐标，
+ * 但同样是拍脑袋来的，所以一并关在这里。
  */
 import type { Twips } from '@uw/core';
 
@@ -56,4 +58,50 @@ export const CHAR_UNIT_EM = 1.0;
 /** 把「em 的倍数」换成 twips。字号本身就是 twips，所以是一次乘法 */
 export function em(fontSize: Twips, ratio: number): Twips {
   return fontSize * ratio;
+}
+
+/**
+ * 边框冲突里「线宽一样时谁赢」的样式权重（大的赢）。
+ *
+ * 依据是 CSS 2.1 §17.6.2 的 collapsing borders：`double > solid > dashed > dotted`。
+ * 拿它当 Word 的规则用是**类比**，不是实测 —— ECMA-376 只说 `w:tcBorders` 覆盖
+ * `w:tblBorders`（§17.4.39），相邻两格谁赢一个字没提，而 Word 的表格边框行为
+ * 整体上就是 collapsing 模型的变体。
+ *
+ * 认不出的 `w:val` 落到 `single` 那一档：实文件里的生僻线型（`dashDotStroked`
+ * `thickThinMediumGap` …）都是实线的花样，退成点线会让它凭空输掉。
+ *
+ * 钉死办法：一张 2×2 的表，四条内部边分别让上下两格写不同的 `w:val`（宽度写成一样），
+ * 导出 PDF 看画出来的是哪一种。一份样本能同时钉死这张表和下面的平局方向。
+ */
+const BORDER_STYLE_RANK: Record<string, number> = {
+  // 多线型：视觉最重
+  double: 3,
+  triple: 3,
+  doubleWave: 3,
+  thickThinSmallGap: 3,
+  thinThickSmallGap: 3,
+  thickThinMediumGap: 3,
+  thinThickMediumGap: 3,
+  thickThinLargeGap: 3,
+  thinThickLargeGap: 3,
+  thinThickThinSmallGap: 3,
+  thinThickThinMediumGap: 3,
+  thinThickThinLargeGap: 3,
+  // 实线
+  single: 2,
+  thick: 2,
+  wave: 2,
+  // 虚线族
+  dashed: 1,
+  dashSmallGap: 1,
+  dotDash: 1,
+  dotDotDash: 1,
+  dashDotStroked: 1,
+  // 点线最轻
+  dotted: 0,
+};
+
+export function borderStyleRank(style: string): number {
+  return BORDER_STYLE_RANK[style] ?? BORDER_STYLE_RANK.single ?? 2;
 }

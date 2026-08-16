@@ -21,7 +21,9 @@
  * - `w:tblCellSpacing`（单元格间距）**不消费**，几何按 0 算。它会同时改变整表宽度与
  *   每格的 x，猜一个测不了的实现不如留个洞（原则 1.5）。真实公文里几乎不用
  * - `w:tblW` 与 `w:tblGrid` 之和冲突时以 grid 为准，没有真值验证过 Word 到底听谁的
- * - 边框宽度不吃可用宽（Word 把边框画在格线上，不缩文字区）—— 同样没有真值
+ * - 边框宽度不吃可用宽（Word 把边框画在格线上，不缩文字区）—— 同样没有真值。
+ *   **画哪条线**已经解出来了（`table-borders.ts` 的冲突解析，挂在 `CellLayout.borders`），
+ *   它不改任何坐标，所以不受基线穿刺阻塞
  */
 import type { Twips } from '@uw/core';
 import type {
@@ -34,6 +36,8 @@ import type {
 } from '@uw/model';
 import type { LayoutParagraphOptions } from './paragraph.ts';
 import { layoutParagraph } from './paragraph.ts';
+import type { CellBorderLayout } from './table-borders.ts';
+import { borderRowsOf, resolveTableBorders } from './table-borders.ts';
 import type { ParagraphLayout } from './types.ts';
 
 /** 格内的块：段落排成行，嵌套表格递归下去 */
@@ -57,6 +61,11 @@ export interface CellLayout {
   paddingRight: Twips;
   /** `continue` 的格子渲染层不画内容、也不参与行高 —— 上面那个 `restart` 撑着它 */
   vMerge: 'none' | 'restart' | 'continue';
+  /**
+   * 冲突解析完的四条边（见 table-borders.ts）。相邻两格共享的那条线在两边都会
+   * 出现且**解析结果相同**，渲染层画两遍是幂等的 —— 需要去重时按格线位置归并即可。
+   */
+  borders: CellBorderLayout;
   blocks: BlockLayout[];
   /**
    * 格内内容的高度**总量**（段前后间距 + 各行行高）。
@@ -113,11 +122,14 @@ export function layoutTable(t: ResolvedTable, opts: LayoutTableOptions): TableLa
   const columns = columnWidths(t, opts.availWidth);
   const width = columns.reduce((a, b) => a + b, 0);
 
-  const rows = t.rows.map((r): RowLayout => {
+  // 边框与几何互不影响（线不吃可用宽），所以两边各算各的，最后按下标对上
+  const borders = resolveTableBorders(borderRowsOf(t.rows), t.props.borders, columns.length);
+
+  const rows = t.rows.map((r, ri): RowLayout => {
     // 被 w:gridBefore 跳掉的列照样占位置 —— 第一格的 x 要从它们之后起算
     let col = r.props.gridBefore;
-    const cells = r.cells.map((c): CellLayout => {
-      const cell = layoutCell(c, columns, col, opts);
+    const cells = r.cells.map((c, ci): CellLayout => {
+      const cell = layoutCell(c, columns, col, opts, borders[ri]?.[ci] ?? NO_BORDERS);
       col += c.gridSpan;
       return cell;
     });
@@ -185,11 +197,22 @@ function tableX(t: ResolvedTable, width: Twips, avail: Twips): Twips {
   return widthToTwips(t.props.indent, avail) ?? 0;
 }
 
+/** 下标对不上时的兜底（正常走不到：边框结果与 `t.rows` 逐格同构） */
+const NO_BORDERS: CellBorderLayout = {
+  top: [],
+  bottom: [],
+  left: undefined,
+  right: undefined,
+  tl2br: undefined,
+  tr2bl: undefined,
+};
+
 function layoutCell(
   c: ResolvedTableCell,
   columns: readonly Twips[],
   col: number,
   opts: LayoutTableOptions,
+  borders: CellBorderLayout,
 ): CellLayout {
   let x = 0;
   for (let i = 0; i < col && i < columns.length; i++) x += columns[i] as Twips;
@@ -212,6 +235,7 @@ function layoutCell(
     paddingLeft,
     paddingRight,
     vMerge: c.vMerge,
+    borders,
     blocks,
     contentHeight: contentHeightOf(blocks) + marginOf(c.props.margins.top) + marginOf(c.props.margins.bottom),
   };

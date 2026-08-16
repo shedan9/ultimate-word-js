@@ -199,6 +199,24 @@ describe('嵌套表格', () => {
   });
 });
 
+describe('边框接线', () => {
+  /** 规则本身在 table-borders.test.ts 里测，这里只验证接线：结果挂对了格子、列数没数错 */
+  const line = (size: number) => ({ style: 'single', size, space: 0, color: 'auto' });
+
+  it('冲突解析的结果挂在每格上，末列认得出自己贴着外框', () => {
+    const t = table([3000, 3000, 3000], [row([textCell('甲'), textCell('乙'), textCell('丙')])], {
+      props: tableProps({
+        borders: { left: line(20), right: line(20), insideV: line(10) },
+      }),
+    });
+    const cells = layoutTable(t, opts(AVAIL)).rows[0]?.cells ?? [];
+    expect(cells[0]?.borders.left?.size).toBe(20);
+    expect(cells[0]?.borders.right?.size).toBe(10);
+    // 这一条同时在验 colCount 取的是列宽数组的长度 —— 数错的话末列会拿到 insideV
+    expect(cells[2]?.borders.right?.size).toBe(20);
+  });
+});
+
 describe('可结构化克隆（原则 1.1）', () => {
   it('整个 TableLayout 能过 Worker 边界', () => {
     const t = table([2000, 2000], [row([textCell('甲'), cell([table([500], [row([textCell('内')])])])])]);
