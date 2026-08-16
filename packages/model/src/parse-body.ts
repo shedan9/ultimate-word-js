@@ -71,7 +71,7 @@ const IGNORED_IN_RUN = new Set([
 ]);
 
 /** 透明容器：内容照收，容器本身不产生节点 */
-const TRANSPARENT = new Set(['w:smartTag', 'w:bdo', 'w:dir', 'w:fldSimple', 'w:ins', 'w:moveTo']);
+const TRANSPARENT = new Set(['w:smartTag', 'w:bdo', 'w:dir', 'w:ins', 'w:moveTo']);
 
 /** 删除的内容：`w:del` / `w:moveFrom` 里的文字是「已删除」，最终版式里不出现 */
 const DELETED = new Set(['w:del', 'w:moveFrom']);
@@ -175,32 +175,50 @@ function sdtBlocks(ctx: Ctx, sdt: XmlElement): Block[] {
 
 function parseParagraph(ctx: Ctx, p: XmlElement, props: ParaProps): Paragraph {
   const runs: Run[] = [];
-  collectRuns(ctx, p, runs, undefined);
+  collectRuns(ctx, p, runs, {});
   return { kind: 'paragraph', id: nextId(ctx, 'p'), props, runs };
+}
+
+/**
+ * 从外层容器往下带的标记。
+ *
+ * `w:hyperlink` 与 `w:fldSimple` 都是**包着 run 的容器**，压平后信息只能挂在 run 上。
+ * 合成一个对象而不是排开成两个参数：这类容器还会再加（`w:customXml` 之类），
+ * 每加一种就改遍递归签名的写法撑不住。
+ */
+interface RunMarks {
+  link?: Run['hyperlink'];
+  field?: Run['fieldSimple'];
 }
 
 /**
  * 把 `parent` 底下所有 run 收进 `out`，沿途拆掉透明容器。
  *
- * `link` 是从外层 `w:hyperlink` 带下来的，会盖到每个 run 上 —— 嵌套超链接在 Word 里
- * 不合法，所以内层直接覆盖外层，不必合并。
+ * `marks` 是从外层容器带下来的，会盖到每个 run 上 —— 嵌套超链接在 Word 里不合法，
+ * 所以内层直接覆盖外层，不必合并。
  */
-function collectRuns(ctx: Ctx, parent: XmlElement, out: Run[], link: Run['hyperlink']): void {
+function collectRuns(ctx: Ctx, parent: XmlElement, out: Run[], marks: RunMarks): void {
   for (const el of children(parent)) {
     if (el.name === 'w:r') {
-      out.push(parseRun(ctx, el, link));
+      out.push(parseRun(ctx, el, marks));
     } else if (el.name === 'w:hyperlink') {
       const next: NonNullable<Run['hyperlink']> = {};
       const relId = attr(el, 'r:id');
       const anchor = attr(el, 'w:anchor');
       if (relId !== undefined) next.relId = relId;
       if (anchor !== undefined) next.anchor = anchor;
-      collectRuns(ctx, el, out, next);
+      collectRuns(ctx, el, out, { ...marks, link: next });
+    } else if (el.name === 'w:fldSimple') {
+      // 简单域：整个域压缩成一个元素，域代码在 `w:instr` 属性里、结果就是它的子 run。
+      // 内容照旧压平（结果文字与普通文字排版上毫无区别），域代码挂在 run 上给 fields.ts 收。
+      // **必须给个 id**：相邻两个 `w:fldSimple w:instr="PAGE"` 是两个域，只比指令文字会并成一个
+      const field = { id: nextId(ctx, 'fld'), instr: attr(el, 'w:instr') ?? '' };
+      collectRuns(ctx, el, out, { ...marks, field });
     } else if (TRANSPARENT.has(el.name)) {
-      collectRuns(ctx, el, out, link);
+      collectRuns(ctx, el, out, marks);
     } else if (el.name === 'w:sdt') {
       const content = child(el, 'w:sdtContent');
-      if (content !== undefined) collectRuns(ctx, content, out, link);
+      if (content !== undefined) collectRuns(ctx, content, out, marks);
     } else if (DELETED.has(el.name)) {
       // 修订只做显示、不做编辑（非目标），显示的是**接受后**的版式：删掉的字不占位。
       // 记一条 info 是因为「文档里有字没画出来」必须留痕，否则查起来无从下手
@@ -213,12 +231,13 @@ function collectRuns(ctx: Ctx, parent: XmlElement, out: Run[], link: Run['hyperl
   }
 }
 
-function parseRun(ctx: Ctx, r: XmlElement, link: Run['hyperlink']): Run {
+function parseRun(ctx: Ctx, r: XmlElement, marks: RunMarks): Run {
   const props: Run['props'] = parseRunProps(child(r, 'w:rPr'));
   const content: RunContent[] = [];
   collectRunContent(ctx, r, content);
   const run: Run = { kind: 'run', id: nextId(ctx, 'r'), props, content };
-  if (link !== undefined) run.hyperlink = link;
+  if (marks.link !== undefined) run.hyperlink = marks.link;
+  if (marks.field !== undefined) run.fieldSimple = marks.field;
   return run;
 }
 
@@ -233,7 +252,11 @@ function collectRunContent(ctx: Ctx, parent: XmlElement, out: RunContent[]): voi
       case 'w:delText':
         break; // 同 DELETED：已删除的字不占位，外层已经记过诊断
       case 'w:instrText':
-        out.push({ kind: 'fieldInstruction', text: xmlText(el) });
+        // 域代码**不去首尾空白**（与 `w:t` 相反）：这段文字不显示，空白是词与词的分隔符。
+        // 一条指令常被切成好几段，去掉空白再拼就成了 ` IF ` + ` = 1 ` → `IF= 1`，
+        // 域名当场变成 `IF=`。Word 自己总写 xml:space="preserve"，
+        // 这一条挡的是第三方生成器（见 fields.ts 的「切碎的 instrText」用例）
+        out.push({ kind: 'fieldInstruction', text: textContent(el) });
         break;
       case 'w:tab':
         out.push({ kind: 'tab' });

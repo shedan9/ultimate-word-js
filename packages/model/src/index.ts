@@ -4,10 +4,12 @@
  * 现状：`loadDocument()` 这条链已经通 —— OPC → 样式表 / 主题 / 设置 / 字体表 / 编号定义
  * → 正文节点树（段落 / run / 表格 / 分节）→ 级联完的纯数据树。
  * 编号已经消费到「每段的编号文字」（`ResolvedParaProps.numbering.label`）；
- * 表格的属性与级联（含条件格式）也已完成，**列宽算法在 `@uw/layout`**，还没写。
+ * 表格的属性与级联（含条件格式）也已完成，**列宽算法在 `@uw/layout`**；
+ * 域已经从界桩还原成「指令 + 结果」（`fields.ts`），**求值**要等分页。
  */
 export * from './cascade.ts';
 export * from './cascade-table.ts';
+export * from './fields.ts';
 export * from './font-table.ts';
 export * from './load.ts';
 export * from './nodes.ts';

@@ -12,6 +12,8 @@ import type { DiagnosticSink } from '@uw/core';
 import type { OpcPackage, XmlDocument } from '@uw/ooxml';
 import { RelType } from '@uw/ooxml';
 import type { CascadeContext } from './cascade.ts';
+import type { FieldRegion } from './fields.ts';
+import { fieldHyperlinks, scanFields } from './fields.ts';
 import type { FontTable } from './font-table.ts';
 import { parseFontTable } from './font-table.ts';
 import type { Body, ResolvedBody } from './nodes.ts';
@@ -71,16 +73,27 @@ export interface LoadedDocument {
    * 这份原始定义留给编辑期（改编号、加一级）与回写。
    */
   numbering: Numbering;
+  /**
+   * 配对好的域，按 begin 的先后排。
+   *
+   * 单独放一份而不是挂在树上，是因为域**跨段落**（TOC 能跨几十段），挂在任何一个节点上
+   * 都得再补一堆跨节点引用 —— 那正是原则 1.1 要挡的反向指针。
+   * 现在的消费者只有 HYPERLINK（已铺进 `resolved` 的 run 上）；PAGE / TOC 的求值等分页。
+   */
+  fields: FieldRegion[];
 }
 
 export function loadDocument(pkg: OpcPackage, diagnostics: DiagnosticSink): LoadedDocument {
   const cascade = loadCascadeContext(pkg, diagnostics);
   const partName = pkg.mainDocumentPartName();
   const body = parseBody(pkg.xml(partName), diagnostics, partName);
+  // 域要在级联**之前**扫：级联是按段落递归的，跨段落的配对在那儿看不见
+  const fields = scanFields(body, diagnostics);
   return {
     cascade,
     body,
-    resolved: resolveBody(cascade, body),
+    resolved: resolveBody(cascade, body, { hyperlinks: fieldHyperlinks(fields) }),
+    fields,
     fonts: parseFontTable(partXml(pkg, RelType.FONT_TABLE)),
     // 不重新解析一遍：同一份定义解析两次会让 numbering.xml 的诊断也报两次
     numbering: cascade.numbering,

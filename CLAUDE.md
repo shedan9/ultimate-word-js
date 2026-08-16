@@ -9,18 +9,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 当前进度：Phase 0 已完成（地基 + 行高穿刺 + CI），Phase 1 的**解析链已完整**，
 Phase 2 已排到**行盒的门口** —— 水平方向（断行 + 行内几何）与行高总量都做完了，就差基线。
-Phase 5 的**列表编号**也已经从 `numbering.xml` 一路通到首行几何（它不依赖基线，所以能先做）。
+Phase 5 的**列表编号**也已经从 `numbering.xml` 一路通到首行几何（它不依赖基线，所以能先做），
+同阶段的**域**做完了结构还原（界桩配对 + 指令解析 + HYPERLINK），**求值**要等分页。
 Phase 4 的**表格**也排到了同一个门口：属性 + 级联（含 `w:tblStylePr` 条件格式）在 model 层，
-列宽 + 每格的 x 与可用宽 + 格内段落在 layout 层，**没有 y**。
+列宽 + 每格的 x 与可用宽 + 格内段落 + **边框冲突解析**在 layout 层，**没有 y**。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、
-`@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 制表位 + **编号（解析 + 计数器 + 编号文字 + 接进级联）** + **表格（属性 + 级联 + 条件格式）**）、
+`@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 制表位 + **编号（解析 + 计数器 + 编号文字 + 接进级联）** + **表格（属性 + 级联 + 条件格式）** + **域（界桩配对 + 指令解析 + HYPERLINK）**）、
 `@uw/fonts`（行高规则 + 脚本分桶 + 度量包 + 注册表 + `TextMeasurer`）、
-`@uw/layout`（item 流 + 断行 + 缩进 / 对齐 / 制表位 / 列表编号 + 行高与网格吸附 + **表格列宽与格内几何**）。
+`@uw/layout`（item 流 + 断行 + 缩进 / 对齐 / 制表位 / 列表编号 + 行高与网格吸附 +
+**表格列宽与格内几何 + 边框冲突解析**）。
 `@uw/render-dom` 仍是占位 —— 没有 y 画不了，等下面那个穿刺。
 
 一份 docx 的入口是 `loadDocument(pkg, sink)`（`packages/model/src/load.ts`），产出
 `body`（直接格式，可编辑）、`resolved`（级联完的纯数据，给布局）、`cascade`（上下文，**不可**过 Worker 边界）、
-`fonts`、`numbering`。`resolveBody()` 那一步就是 Worker 边界 —— `StyleSheet` 带方法，级联必须在过界前做完；
+`fonts`、`numbering`、`fields`（配对好的域，单独一份而不是挂在树上 —— 域跨段落，挂上去就得补反向指针）。
+`resolveBody()` 那一步就是 Worker 边界 —— `StyleSheet` 带方法，级联必须在过界前做完；
 它同时是**编号计数器**跑的地方（编号「第几」只有按文档顺序走一遍才知道），结果落在
 `ResolvedParaProps.numbering.label`（编号文字 + 它自己的字符属性 + `w:suff`）。
 部件一律**按关系类型找**（`RelType.*`），不按 `word/styles.xml` 这种路径惯例猜。
@@ -35,8 +38,9 @@ Phase 4 的**表格**也排到了同一个门口：属性 + 级联（含 `w:tblS
 `@uw/layout` 的用法：`layoutParagraph(resolvedParagraph, { measurer, contentWidth, settings, docGrid })`
 → `ParagraphLayout`（每行的 x / 逐字 x / 行高 / 渲染片段，**没有 y**）；
 `layoutTable(resolvedTable, { …, availWidth })` → `TableLayout`（列宽 / 每格的 x 与可用宽 /
-格内段落，同样**没有 y**）。表格的列宽直接取 `w:tblGrid` —— **Word 存盘时已经把 autofit
-算完的结果写在那儿了**，照着用就与 Word 一致，这也是「完整 autofit 算法」能列为非目标的原因。
+格内段落 / 每格四条边解析完的边框，同样**没有 y**）。表格的列宽直接取 `w:tblGrid` ——
+**Word 存盘时已经把 autofit 算完的结果写在那儿了**，照着用就与 Word 一致，
+这也是「完整 autofit 算法」能列为非目标的原因。
 未标定的常数一律集中在 `packages/layout/src/uncalibrated.ts`，每条都写了「拿什么样本能钉死」——
 布局里出现别处的魔法数字视为 bug，散落的数字会被后人当成实测结论。
 
@@ -56,6 +60,16 @@ Phase 4 的**表格**也排到了同一个门口：属性 + 级联（含 `w:tblS
 ③ 布局里编号是一段**没有 run 的 item**（`numbering: true` 标记），命中测试与可选文本层必须跳过它。
 未做：`w:lvlJc`（编号自身对齐）只带在数据上、布局忽略；中文读法的几处未标定见 `number-format.ts` 文件头。
 
+域那一层（`fields.ts`）有三处容易搞反：
+① 域**跨段落**（TOC 能跨几十段），所以 `scanFields()` 先把整份 body 拉平成一条 run 流再配对 ——
+按段落扫永远配不上，这也是它必须在 `resolveBody()` **之前**跑的原因；
+② **没有 separate 的域什么都不显示**，不是「显示指令」；结果区里存的是 Word 上次算出来的文字，
+直接显示就是「打开即所见」——**本阶段不做求值**（PAGE / TOC 要分页）；
+③ 嵌套域的 `instrText` 归内层（靠栈分家），外层的指令文字因此**缺一块**（`IF { PAGE } = 1` 只看得到 `IF  = 1`），
+回填是求值期的事。另外 `w:fldSimple`（压缩写法）走的是「压平成 run 上的标记」那条路，与 `w:hyperlink` 同理，
+标记**带 id** —— 挨着的两个 `w:instr="PAGE"` 是两个域。`w:instrText` 与 `w:t` 相反，**不去首尾空白**：
+去掉再拼会把 ` IF ` + ` = 1 ` 接成 `IF= 1`。
+
 表格那一层（`table-props.ts` / `parse-table-props.ts` / `cascade-table.ts`）也有四处容易搞反：
 ① 级联层序是「样式链自身属性 → 命中的条件格式（按 `CONDITIONAL_ORDER`）→ 直接格式」，
 其中**行带排在列带之后、首末行排在首末列之后**（所以表头行会盖住首列的格式）；
@@ -65,6 +79,14 @@ Phase 4 的**表格**也排到了同一个门口：属性 + 级联（含 `w:tblS
 ④ 单元格左右各 108 twips 的默认边距来自**默认表格样式**（`Normal Table`）而不是什么规范常数 ——
 `w:tcMar` 缺席退到表级 `w:tblCellMar`，不是退到 0。
 未标定：隔行带（`band1Horz` 那四种）的**序号算法**只有规范做依据，没有 Word 样本，见 `cascade-table.ts` 文件头。
+
+边框冲突解析（`layout/src/table-borders.ts`）是**两级模型，顺序不能反**：
+① 层级覆盖 —— 单元格写了这条边就用它（**含 `w:val="nil"`**），没写才退到表级的
+`top`/`insideH` 那一套；② 相邻竞争 —— 共享这条线的两个格子各出一个候选比大小。
+`nil` 在 ① 里是强的（Word 里「擦掉某格的格线」就靠它），在 ② 里是弱的（一格 nil、
+邻格 single 就画 single）；**合成一步会让整表的内部格线被一格的 nil 抹掉**。
+另外水平边要**按列分段**（表头一格跨 3 列、下面 3 格，那条线分 3 段各比各的），
+`vMerge=continue` 与上格之间不画线。竞争规则本身照 CSS collapsing borders 类比，**没有 Word 真值**。
 
 字体名有个坑：中文版 Word 写的是「黑体」「等线」这种本地化名，磁盘上的字体叫 `SimHei` / `DengXian`。
 桥在 `fontTable.xml` 的 `w:altName`，查找顺序用 `fontNameCandidates()`，别只按一个名字查。
@@ -167,6 +189,9 @@ pnpm --filter @uw/fidelity spike     # Phase 0 行高穿刺
 `chineseCounting` 与 `chineseCountingThousand` 在 105 / 1005 上各显示什么。
 三是表格隔行带的序号：一份「6 行 3 列、开表头行 + 隔行带、`w:tblStyleRowBandSize=2`」的样本，
 就能钉死「首行算不算进带」「带从第几条开始数」这两问 —— 带影响字重，字重影响宽度，最终影响断行。
+四是表格边框冲突：一张 2×2 的表、四条内部边分别让相邻两格写不同的 `w:val` / `w:sz` / `nil`，
+一份就能钉死「比宽度还是比样式」「平局取左上还是右下」「nil 在竞争里强不强」三问。
+它只改画法不改坐标，所以优先级低于上面三条。
 
 另一个反复咬人的点：中文版 Word 的 Normal 模板**默认开着行网格**（linePitch 312 twips = 15.6pt），
 基线会被吸到网格上、把字体度量差异整个盖掉。做度量实验必须显式关网格（`PageSetup.LayoutMode = wdLayoutModeDefault`）。

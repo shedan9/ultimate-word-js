@@ -106,13 +106,25 @@ export interface RunNode<S extends PropSet> {
   props: S['run'];
   content: RunContent[];
   /**
-   * 外层 `w:hyperlink` 的信息。
+   * 超链接。
    *
-   * XML 里超链接是**包着 run 的容器**，这里把它压平成 run 上的一个标记 ——
+   * XML 里超链接是**包着 run 的容器**（`w:hyperlink`），这里把它压平成 run 上的一个标记 ——
    * 段落的子节点因此是一列扁平的 run，断行算法不必递归下钻。
-   * 排版上超链接与普通文字毫无区别，只有渲染层需要这两个字段。
+   * 排版上超链接与普通文字毫无区别，只有渲染层需要这几个字段。
+   *
+   * 三个字段不会同时出现：容器那条路给 `relId`（地址要查 rels），HYPERLINK **域**那条路
+   * 把地址字面写在指令里、给 `url`（见 fields.ts）。域那条是**派生**的，只出现在
+   * `ResolvedBody` 上 —— 可编辑的那棵树里它仍然只是一串界桩，回写时才对得上原样。
    */
-  hyperlink?: { relId?: string; anchor?: string };
+  hyperlink?: { relId?: string; url?: string; anchor?: string };
+  /**
+   * 外层 `w:fldSimple`（**简单域**）的域代码。
+   *
+   * 简单域是「begin + instrText + separate + 结果 + end」那一串的压缩写法：整个域一个元素，
+   * 域代码在属性里、结果就是子 run。压平的道理与超链接相同，但**必须带 id** ——
+   * 挨着的两个 `w:instr="PAGE"` 是两个域，只比指令文字会把它们并成一个。
+   */
+  fieldSimple?: { id: NodeId; instr: string };
 }
 
 export interface ParagraphNode<S extends PropSet> {

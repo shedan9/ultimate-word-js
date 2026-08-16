@@ -12,9 +12,11 @@ import type { CascadeContext } from './cascade.ts';
 import { resolveParaProps, resolveRunProps } from './cascade.ts';
 import type { CellPosition } from './cascade-table.ts';
 import { gridColumnCount, resolveCellProps, resolveRowProps, resolveTableProps } from './cascade-table.ts';
+import type { FieldHyperlink } from './fields.ts';
 import type {
   Block,
   Body,
+  NodeId,
   Paragraph,
   ResolvedBlock,
   ResolvedBody,
@@ -40,10 +42,26 @@ import type { ResolvedParaProps, ResolvedRunProps } from './props.ts';
 interface Pass {
   ctx: CascadeContext;
   counters: NumberingCounters;
+  hyperlinks: ReadonlyMap<NodeId, FieldHyperlink> | undefined;
 }
 
-export function resolveBody(ctx: CascadeContext, body: Body): ResolvedBody {
-  const pass: Pass = { ctx, counters: createNumberingCounters(ctx.numbering, ctx.styles) };
+export interface ResolveBodyOptions {
+  /**
+   * HYPERLINK 域算出来的链接（`fieldHyperlinks(scanFields(body))`），按 run id 铺到结果 run 上。
+   *
+   * 为什么不在这里现扫：域**跨段落**，而这一趟是按段落递归下去的，扫不出跨段的配对。
+   * 由调用方（`loadDocument`）先扫一遍整份 body 再传进来，顺序上也对 ——
+   * 扫描要的是**直接格式**那棵树，级联改不了界桩的位置。
+   */
+  hyperlinks?: ReadonlyMap<NodeId, FieldHyperlink>;
+}
+
+export function resolveBody(ctx: CascadeContext, body: Body, opts: ResolveBodyOptions = {}): ResolvedBody {
+  const pass: Pass = {
+    ctx,
+    counters: createNumberingCounters(ctx.numbering, ctx.styles),
+    hyperlinks: opts.hyperlinks,
+  };
   return {
     sections: body.sections.map((s): ResolvedSection => {
       // 节属性本来就是解析完的纯数据，直接带过来；克隆是为了断开与可编辑树的共享，
@@ -71,7 +89,11 @@ function paragraph(pass: Pass, p: Paragraph): ResolvedParagraph {
     runs: p.runs.map((r): ResolvedRun => {
       const rp: ResolvedRunProps = resolveRunProps(ctx, p.props, r.props);
       const out: ResolvedRun = { kind: 'run', id: r.id, props: rp, content: structuredClone(r.content) };
-      if (r.hyperlink !== undefined) out.hyperlink = { ...r.hyperlink };
+      // 容器（`w:hyperlink`）优先于 HYPERLINK 域：两者同时罩着一个 run 不合法，
+      // 真遇上时听那个**写在正文结构里**的，域是派生量
+      const link = r.hyperlink ?? pass.hyperlinks?.get(r.id);
+      if (link !== undefined) out.hyperlink = { ...link };
+      if (r.fieldSimple !== undefined) out.fieldSimple = { ...r.fieldSimple };
       return out;
     }),
   };
