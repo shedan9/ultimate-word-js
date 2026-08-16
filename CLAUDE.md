@@ -10,12 +10,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 当前进度：Phase 0 已完成（地基 + 行高穿刺 + CI），Phase 1 的**解析链已完整**，
 Phase 2 已排到**行盒的门口** —— 水平方向（断行 + 行内几何）与行高总量都做完了，就差基线。
 Phase 5 的**列表编号**也已经从 `numbering.xml` 一路通到首行几何（它不依赖基线，所以能先做）。
-Phase 4 的**表格属性与级联**（含 `w:tblStylePr` 条件格式）在 model 层做完了，
-**列宽算法还没写** —— 那是 layout 的活，纯水平方向，同样不被基线挡着。
+Phase 4 的**表格**也排到了同一个门口：属性 + 级联（含 `w:tblStylePr` 条件格式）在 model 层，
+列宽 + 每格的 x 与可用宽 + 格内段落在 layout 层，**没有 y**。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、
 `@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 制表位 + **编号（解析 + 计数器 + 编号文字 + 接进级联）** + **表格（属性 + 级联 + 条件格式）**）、
 `@uw/fonts`（行高规则 + 脚本分桶 + 度量包 + 注册表 + `TextMeasurer`）、
-`@uw/layout`（item 流 + 断行 + 缩进 / 对齐 / 制表位 / 列表编号 + 行高与网格吸附）。
+`@uw/layout`（item 流 + 断行 + 缩进 / 对齐 / 制表位 / 列表编号 + 行高与网格吸附 + **表格列宽与格内几何**）。
 `@uw/render-dom` 仍是占位 —— 没有 y 画不了，等下面那个穿刺。
 
 一份 docx 的入口是 `loadDocument(pkg, sink)`（`packages/model/src/load.ts`），产出
@@ -33,7 +33,10 @@ Phase 4 的**表格属性与级联**（含 `w:tblStylePr` 条件格式）在 mod
 **不挡**解析、样式级联、分桶、度量、断行、行内几何 —— 这些在 Mac 上都能做完，也确实做完了。
 
 `@uw/layout` 的用法：`layoutParagraph(resolvedParagraph, { measurer, contentWidth, settings, docGrid })`
-→ `ParagraphLayout`（每行的 x / 逐字 x / 行高 / 渲染片段，**没有 y**）。
+→ `ParagraphLayout`（每行的 x / 逐字 x / 行高 / 渲染片段，**没有 y**）；
+`layoutTable(resolvedTable, { …, availWidth })` → `TableLayout`（列宽 / 每格的 x 与可用宽 /
+格内段落，同样**没有 y**）。表格的列宽直接取 `w:tblGrid` —— **Word 存盘时已经把 autofit
+算完的结果写在那儿了**，照着用就与 Word 一致，这也是「完整 autofit 算法」能列为非目标的原因。
 未标定的常数一律集中在 `packages/layout/src/uncalibrated.ts`，每条都写了「拿什么样本能钉死」——
 布局里出现别处的魔法数字视为 bug，散落的数字会被后人当成实测结论。
 

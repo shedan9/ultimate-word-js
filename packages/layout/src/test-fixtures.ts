@@ -14,10 +14,17 @@ import { isEastAsianCodePoint } from '@uw/fonts';
 import type {
   DocGrid,
   NumberLabel,
+  ResolvedBlock,
+  ResolvedCellProps,
   ResolvedParagraph,
   ResolvedParaProps,
+  ResolvedRowProps,
   ResolvedRun,
   ResolvedRunProps,
+  ResolvedTable,
+  ResolvedTableCell,
+  ResolvedTableProps,
+  ResolvedTableRow,
   RunContent,
 } from '@uw/model';
 
@@ -136,4 +143,97 @@ export function runOf(content: RunContent[], over: Partial<ResolvedRunProps> = {
 
 export function para(runs: ResolvedRun[], over: Partial<ResolvedParaProps> = {}): ResolvedParagraph {
   return { kind: 'paragraph', id: `p${seq++}`, props: paraProps(over), runs };
+}
+
+// ── 表格 ──────────────────────────────────────────────────────────────────────
+// 同样直接造**级联后**的属性：表格样式与条件格式那套的正确性归 `@uw/model` 管
+// （table-cascade.test.ts），布局测试只关心「给定这些属性，格子摆在哪儿」。
+
+/** 默认边距取 Word 模板的左右各 108 twips，这样测出来的可用宽是真实文档的样子 */
+export function cellProps(over: Partial<ResolvedCellProps> = {}): ResolvedCellProps {
+  return {
+    width: { value: 0, type: 'auto' },
+    borders: {},
+    shading: undefined,
+    margins: {
+      top: { value: 0, type: 'dxa' },
+      left: { value: 108, type: 'dxa' },
+      bottom: { value: 0, type: 'dxa' },
+      right: { value: 108, type: 'dxa' },
+    },
+    verticalAlign: 'top',
+    noWrap: false,
+    fitText: false,
+    textDirection: '',
+    ...over,
+  };
+}
+
+export function rowProps(over: Partial<ResolvedRowProps> = {}): ResolvedRowProps {
+  return {
+    height: { value: 0, rule: 'auto' },
+    cantSplit: false,
+    header: false,
+    justification: undefined,
+    cellSpacing: { value: 0, type: 'nil' },
+    gridBefore: 0,
+    gridAfter: 0,
+    widthBefore: { value: 0, type: 'nil' },
+    widthAfter: { value: 0, type: 'nil' },
+    ...over,
+  };
+}
+
+export function tableProps(over: Partial<ResolvedTableProps> = {}): ResolvedTableProps {
+  return {
+    styleId: '',
+    width: { value: 0, type: 'auto' },
+    justification: 'left',
+    indent: { value: 0, type: 'dxa' },
+    borders: {},
+    shading: undefined,
+    cellMargins: {
+      top: { value: 0, type: 'dxa' },
+      left: { value: 108, type: 'dxa' },
+      bottom: { value: 0, type: 'dxa' },
+      right: { value: 108, type: 'dxa' },
+    },
+    cellSpacing: { value: 0, type: 'nil' },
+    layout: 'autofit',
+    look: {
+      firstRow: false,
+      lastRow: false,
+      firstColumn: false,
+      lastColumn: false,
+      noHBand: false,
+      noVBand: false,
+    },
+    rowBandSize: 1,
+    colBandSize: 1,
+    ...over,
+  };
+}
+
+export function cell(blocks: ResolvedBlock[], over: Partial<ResolvedTableCell> = {}): ResolvedTableCell {
+  return {
+    kind: 'cell',
+    id: `tc${seq++}`,
+    props: cellProps(),
+    blocks,
+    gridSpan: 1,
+    vMerge: 'none',
+    ...over,
+  };
+}
+
+export function row(cells: ResolvedTableCell[], over: Partial<ResolvedTableRow> = {}): ResolvedTableRow {
+  return { kind: 'row', id: `tr${seq++}`, props: rowProps(), cells, ...over };
+}
+
+export function table(
+  grid: number[],
+  rows: ResolvedTableRow[],
+  over: Partial<ResolvedTable> = {},
+): ResolvedTable {
+  return { kind: 'table', id: `tbl${seq++}`, props: tableProps(), grid, rows, ...over };
 }
