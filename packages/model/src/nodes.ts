@@ -5,16 +5,59 @@
  * （原则 1.1）：没有方法、没有闭包、没有父指针、没有 `XmlElement` 引用。
  * 父指针尤其要忍住 —— 它是 Worker 边界上最常见的破坏者，而且会让 JSON 快照测试变成环。
  *
- * 树按属性类型分两次实例化，靠 `<P, R>` 两个类型参数复用同一套形状：
- * - `Block` / `Body` —— 属性是**直接格式**（`ParaProps` / `RunProps`，可缺席）。解析产出这个，
+ * 树按属性类型分两次实例化，靠**一个** `PropSet` 类型参数复用同一套形状：
+ * - `Block` / `Body` —— 属性是**直接格式**（`ParaProps` / `RunProps` / …，可缺席）。解析产出这个，
  *   编辑也改这个：级联结果是派生量，存进树里迟早会过期
  * - `ResolvedBlock` / `ResolvedBody` —— 属性已级联完（字段全有值）。这才是交给 `@uw/layout` 的
  *
  * 之所以要两套而不是「树里存直接格式、布局时现算」：`StyleSheet` 带方法（`chainOf`），
  * 不可结构化克隆，因此级联必须发生在 Worker 边界**之前**。见 resolve-body.ts。
+ *
+ * 打包成一个 `PropSet` 而不是排开成 `<P, R, T, TR, TC>`：属性的**种类**还会增加
+ * （图片、脚注…），每加一种就改遍所有签名的设计撑不住。
  */
 import type { Twips } from '@uw/core';
 import type { ParaProps, ResolvedParaProps, ResolvedRunProps, RunProps } from './props.ts';
+import type {
+  CellProps,
+  ResolvedCellProps,
+  ResolvedRowProps,
+  ResolvedTableProps,
+  RowProps,
+  TableProps,
+} from './table-props.ts';
+
+/**
+ * 一棵树用的一套属性类型。两个实例见下面的 `DirectProps` / `ResolvedProps`。
+ *
+ * 字段用 `unknown` 而不是具体类型：这个接口只负责「有这么几个槽」，
+ * 谁填进去由实例说了算。节点里写 `S['para']` 取槽。
+ */
+export interface PropSet {
+  para: unknown;
+  run: unknown;
+  table: unknown;
+  row: unknown;
+  cell: unknown;
+}
+
+/** 直接格式那棵树（解析产出、编辑改的那棵） */
+export interface DirectProps extends PropSet {
+  para: ParaProps;
+  run: RunProps;
+  table: TableProps;
+  row: RowProps;
+  cell: CellProps;
+}
+
+/** 级联完那棵树（交给布局的那棵） */
+export interface ResolvedProps extends PropSet {
+  para: ResolvedParaProps;
+  run: ResolvedRunProps;
+  table: ResolvedTableProps;
+  row: ResolvedRowProps;
+  cell: ResolvedCellProps;
+}
 
 /**
  * 节点标识。`DocPosition{nodeId, offset}` 靠它在重排后依然有效（架构 §5）。
@@ -57,10 +100,10 @@ export type RunContent =
 
 // ── 节点 ──────────────────────────────────────────────────────────────────────
 
-export interface RunNode<R> {
+export interface RunNode<S extends PropSet> {
   kind: 'run';
   id: NodeId;
-  props: R;
+  props: S['run'];
   content: RunContent[];
   /**
    * 外层 `w:hyperlink` 的信息。
@@ -72,43 +115,52 @@ export interface RunNode<R> {
   hyperlink?: { relId?: string; anchor?: string };
 }
 
-export interface ParagraphNode<P, R> {
+export interface ParagraphNode<S extends PropSet> {
   kind: 'paragraph';
   id: NodeId;
-  props: P;
-  runs: RunNode<R>[];
+  props: S['para'];
+  runs: RunNode<S>[];
 }
 
-/**
- * 表格。Phase 1 只建**结构**，不解析表格属性（宽度、边框、单元格边距都在 Phase 4）。
- *
- * 为什么不干脆跳过：跳过等于把表格里的文字**静默丢掉**，而 `w:tbl` 在公文的版记里很常见。
- * 建了结构至少内容都在、`Body` 是完整的，Phase 4 补属性时不动这棵树的形状。
- */
-export interface TableNode<P, R> {
+export interface TableNode<S extends PropSet> {
   kind: 'table';
   id: NodeId;
-  rows: TableRowNode<P, R>[];
+  props: S['table'];
+  /**
+   * `w:tblGrid`：列宽的基准网格，一列一个值（twips）。
+   *
+   * 放在**节点**上而不是属性里，因为它不参与样式级联 —— 表格样式定义不了 `w:tblGrid`。
+   * 与 `gridSpan` 同类：这是结构，不是格式。空数组表示文件里没写，
+   * 那就只能靠 `w:tcW` 反推（见布局层的列宽算法）。
+   */
+  grid: Twips[];
+  rows: TableRowNode<S>[];
 }
 
-export interface TableRowNode<P, R> {
+export interface TableRowNode<S extends PropSet> {
   kind: 'row';
   id: NodeId;
-  cells: TableCellNode<P, R>[];
+  props: S['row'];
+  cells: TableCellNode<S>[];
 }
 
-export interface TableCellNode<P, R> {
+export interface TableCellNode<S extends PropSet> {
   kind: 'cell';
   id: NodeId;
+  props: S['cell'];
   /** 单元格里又是完整的块级内容 —— 表格可以嵌套表格 */
-  blocks: BlockNode<P, R>[];
-  /** `w:gridSpan`：横向合并占几列，默认 1 */
+  blocks: BlockNode<S>[];
+  /**
+   * `w:gridSpan`：横向合并占几列，默认 1。
+   * 和 `vMerge` 一样是**结构**不是格式：放进 `props` 的话，表格样式的条件格式
+   * 就能把「这格合并了几列」给覆盖掉。
+   */
   gridSpan: number;
   /** `w:vMerge`：`restart` 是合并区的第一格，`continue` 的内容不显示（由上格占位） */
   vMerge: 'none' | 'restart' | 'continue';
 }
 
-export type BlockNode<P, R> = ParagraphNode<P, R> | TableNode<P, R>;
+export type BlockNode<S extends PropSet> = ParagraphNode<S> | TableNode<S>;
 
 // ── 分节 ──────────────────────────────────────────────────────────────────────
 
@@ -165,34 +217,40 @@ export interface SectionProps {
  * 最后一节的挂在 `w:body` 末尾。这里已经归一化成「一节 = 属性 + 它管辖的块」，
  * 布局层不必再懂这套约定。
  */
-export interface SectionNode<P, R> {
+export interface SectionNode<S extends PropSet> {
   id: NodeId;
   props: SectionProps;
-  blocks: BlockNode<P, R>[];
+  blocks: BlockNode<S>[];
 }
 
-export interface DocumentBody<P, R> {
-  sections: SectionNode<P, R>[];
+export interface DocumentBody<S extends PropSet> {
+  sections: SectionNode<S>[];
 }
 
 // ── 两次实例化的别名 ──────────────────────────────────────────────────────────
 
-export type Run = RunNode<RunProps>;
-export type Paragraph = ParagraphNode<ParaProps, RunProps>;
-export type Block = BlockNode<ParaProps, RunProps>;
-export type Section = SectionNode<ParaProps, RunProps>;
-export type Body = DocumentBody<ParaProps, RunProps>;
+export type Run = RunNode<DirectProps>;
+export type Paragraph = ParagraphNode<DirectProps>;
+export type Table = TableNode<DirectProps>;
+export type TableRow = TableRowNode<DirectProps>;
+export type TableCell = TableCellNode<DirectProps>;
+export type Block = BlockNode<DirectProps>;
+export type Section = SectionNode<DirectProps>;
+export type Body = DocumentBody<DirectProps>;
 
-export type ResolvedRun = RunNode<ResolvedRunProps>;
-export type ResolvedParagraph = ParagraphNode<ResolvedParaProps, ResolvedRunProps>;
-export type ResolvedBlock = BlockNode<ResolvedParaProps, ResolvedRunProps>;
-export type ResolvedSection = SectionNode<ResolvedParaProps, ResolvedRunProps>;
-export type ResolvedBody = DocumentBody<ResolvedParaProps, ResolvedRunProps>;
+export type ResolvedRun = RunNode<ResolvedProps>;
+export type ResolvedParagraph = ParagraphNode<ResolvedProps>;
+export type ResolvedTable = TableNode<ResolvedProps>;
+export type ResolvedTableRow = TableRowNode<ResolvedProps>;
+export type ResolvedTableCell = TableCellNode<ResolvedProps>;
+export type ResolvedBlock = BlockNode<ResolvedProps>;
+export type ResolvedSection = SectionNode<ResolvedProps>;
+export type ResolvedBody = DocumentBody<ResolvedProps>;
 
 // ── 遍历与取文本 ──────────────────────────────────────────────────────────────
 
 /** 深度优先遍历所有块（会下钻进表格单元格） */
-export function* walkBlocks<P, R>(blocks: readonly BlockNode<P, R>[]): Generator<BlockNode<P, R>> {
+export function* walkBlocks<S extends PropSet>(blocks: readonly BlockNode<S>[]): Generator<BlockNode<S>> {
   for (const b of blocks) {
     yield b;
     if (b.kind === 'table') {
@@ -202,7 +260,7 @@ export function* walkBlocks<P, R>(blocks: readonly BlockNode<P, R>[]): Generator
 }
 
 /** 深度优先遍历所有段落 */
-export function* walkParagraphs<P, R>(body: DocumentBody<P, R>): Generator<ParagraphNode<P, R>> {
+export function* walkParagraphs<S extends PropSet>(body: DocumentBody<S>): Generator<ParagraphNode<S>> {
   for (const section of body.sections) {
     for (const b of walkBlocks(section.blocks)) if (b.kind === 'paragraph') yield b;
   }
@@ -214,7 +272,7 @@ export function* walkParagraphs<P, R>(body: DocumentBody<P, R>): Generator<Parag
  * 只给调试与测试用 —— **不要拿它去排版**：它把制表位当成 `\t`、把符号和图形当成空，
  * 这些在真正排版时的宽度完全不是这么算的。
  */
-export function paragraphText<P, R>(p: ParagraphNode<P, R>): string {
+export function paragraphText<S extends PropSet>(p: ParagraphNode<S>): string {
   let out = '';
   for (const run of p.runs) {
     for (const c of run.content) {

@@ -33,7 +33,7 @@ const TAB_LEADERS = ['none', 'dot', 'hyphen', 'underscore', 'heavy', 'middleDot'
  * `w:jc` 的取值。`start` / `end` 是较新的写法，等价于 left / right ——
  * 我们不做 RTL（非目标），所以直接映射掉，不必带着两套名字进布局层。
  */
-function parseJustification(v: string | undefined): Justification | undefined {
+export function parseJustification(v: string | undefined): Justification | undefined {
   if (v === 'start') return 'left';
   if (v === 'end') return 'right';
   return enumVal(v, ['left', 'center', 'right', 'both', 'distribute']);

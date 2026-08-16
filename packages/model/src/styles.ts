@@ -13,7 +13,16 @@ import type { DiagnosticSink } from '@uw/core';
 import type { XmlDocument, XmlElement } from '@uw/ooxml';
 import { attr, child, children } from '@uw/ooxml';
 import { parseParaProps, parseRunProps } from './parse-props.ts';
+import { parseCellProps, parseRowProps, parseTableProps } from './parse-table-props.ts';
 import type { ParaProps, RunProps } from './props.ts';
+import type {
+  CellProps,
+  RowProps,
+  TableProps,
+  TableStyleOverride,
+  TableStyleOverrideType,
+} from './table-props.ts';
+import { CONDITIONAL_ORDER } from './table-props.ts';
 import { valOf } from './xml-values.ts';
 
 export type StyleType = 'paragraph' | 'character' | 'table' | 'numbering';
@@ -30,6 +39,15 @@ export interface Style {
   isDefault: boolean;
   paraProps: ParaProps;
   runProps: RunProps;
+  /** `w:tblPr` / `w:trPr` / `w:tcPr`。只有 `type="table"` 的样式才可能非空 */
+  tableProps: TableProps;
+  rowProps: RowProps;
+  cellProps: CellProps;
+  /**
+   * `w:tblStylePr`：条件格式（首行 / 末列 / 隔行带…）。
+   * 一个类型最多一份，重复出现按**后者胜**收进 Map —— 与其它「后面覆盖前面」一致。
+   */
+  conditional: Map<TableStyleOverrideType, TableStyleOverride>;
 }
 
 export interface StyleSheet {
@@ -39,6 +57,14 @@ export interface StyleSheet {
   /** 默认段落样式 id（通常是 Normal 那个）。找不到返回空串 */
   defaultParagraphStyleId(): string;
   defaultCharacterStyleId(): string;
+  /**
+   * 默认表格样式（通常是 `Normal Table`）。
+   *
+   * 它**不是**摆设：Word 模板里单元格默认的左右边距 108 twips 就写在这份样式的
+   * `w:tblCellMar` 里。没写 `w:tblStyle` 的表格照样吃它 —— 与段落吃 `Normal` 同构。
+   * 把 108 硬编码成兜底常数是错的，那样用户改了模板我们也跟不上。
+   */
+  defaultTableStyleId(): string;
   /**
    * 展平后的样式链，**从祖先到自己**，可以直接按序 apply。
    * 结果带缓存：一份公文里同一个样式会被几百个段落问到。
@@ -78,6 +104,7 @@ export function parseStyles(doc: XmlDocument | undefined, diagnostics: Diagnosti
   };
   const defaultPara = defaultIdOf('paragraph');
   const defaultChar = defaultIdOf('character');
+  const defaultTable = defaultIdOf('table');
 
   const chainCache = new Map<string, Style[]>();
 
@@ -124,6 +151,7 @@ export function parseStyles(doc: XmlDocument | undefined, diagnostics: Diagnosti
     byId: (id) => styles.get(id),
     defaultParagraphStyleId: () => defaultPara,
     defaultCharacterStyleId: () => defaultChar,
+    defaultTableStyleId: () => defaultTable,
     chainOf,
     all: () => [...styles.values()],
   };
@@ -143,5 +171,33 @@ function parseStyle(el: XmlElement): Style | undefined {
     isDefault: attr(el, 'w:default') === '1' || attr(el, 'w:default') === 'true',
     paraProps: parseParaProps(child(el, 'w:pPr')),
     runProps: parseRunProps(child(el, 'w:rPr')),
+    tableProps: parseTableProps(child(el, 'w:tblPr')),
+    rowProps: parseRowProps(child(el, 'w:trPr')),
+    cellProps: parseCellProps(child(el, 'w:tcPr')),
+    conditional: parseConditional(el),
   };
+}
+
+const OVERRIDE_TYPES: readonly TableStyleOverrideType[] = CONDITIONAL_ORDER;
+
+/**
+ * `w:tblStylePr` 一份份收进 Map。
+ *
+ * 认不出的 `w:type` **丢掉而不是报诊断**：这里没有 sink，而且它的后果只是
+ * 少一层格式，不会丢内容。真正需要出声的未知元素在 parse-body.ts 那条路上。
+ */
+function parseConditional(el: XmlElement): Map<TableStyleOverrideType, TableStyleOverride> {
+  const out = new Map<TableStyleOverrideType, TableStyleOverride>();
+  for (const pr of children(el, 'w:tblStylePr')) {
+    const type = attr(pr, 'w:type');
+    if (type === undefined || !OVERRIDE_TYPES.includes(type as TableStyleOverrideType)) continue;
+    out.set(type as TableStyleOverrideType, {
+      paraProps: parseParaProps(child(pr, 'w:pPr')),
+      runProps: parseRunProps(child(pr, 'w:rPr')),
+      tableProps: parseTableProps(child(pr, 'w:tblPr')),
+      rowProps: parseRowProps(child(pr, 'w:trPr')),
+      cellProps: parseCellProps(child(pr, 'w:tcPr')),
+    });
+  }
+  return out;
 }

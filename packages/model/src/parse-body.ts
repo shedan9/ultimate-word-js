@@ -22,12 +22,13 @@ import type {
   Run,
   RunContent,
   Section,
-  TableCellNode,
-  TableNode,
-  TableRowNode,
+  Table,
+  TableCell,
+  TableRow,
 } from './nodes.ts';
 import { parseParaProps, parseRunProps } from './parse-props.ts';
-import type { ParaProps, RunProps } from './props.ts';
+import { parseCellProps, parseRowProps, parseTableGrid, parseTableProps } from './parse-table-props.ts';
+import type { ParaProps } from './props.ts';
 import { parseSectionProps } from './section.ts';
 import { attrOf, enumVal } from './xml-values.ts';
 
@@ -213,7 +214,7 @@ function collectRuns(ctx: Ctx, parent: XmlElement, out: Run[], link: Run['hyperl
 }
 
 function parseRun(ctx: Ctx, r: XmlElement, link: Run['hyperlink']): Run {
-  const props: RunProps = parseRunProps(child(r, 'w:rPr'));
+  const props: Run['props'] = parseRunProps(child(r, 'w:rPr'));
   const content: RunContent[] = [];
   collectRunContent(ctx, r, content);
   const run: Run = { kind: 'run', id: nextId(ctx, 'r'), props, content };
@@ -314,11 +315,11 @@ function drawingExtent(drawing: XmlElement): { width: Twips; height: Twips } {
 }
 
 // ── 表格 ──────────────────────────────────────────────────────────────────────
-// Phase 1 只建结构，表格属性（宽度 / 边框 / 单元格边距 / 表格样式）都在 Phase 4。
-// 但 gridSpan / vMerge 现在就要收：漏了它们，合并单元格的文字会重复画出来。
+// 属性（宽度 / 边框 / 单元格边距 / 表格样式）见 parse-table-props.ts。
+// gridSpan / vMerge 不走那条路：它们是**结构**，见 nodes.ts 上的注释。
 
-function parseTable(ctx: Ctx, tbl: XmlElement): TableNode<ParaProps, RunProps> {
-  const rows: TableRowNode<ParaProps, RunProps>[] = [];
+function parseTable(ctx: Ctx, tbl: XmlElement): Table {
+  const rows: TableRow[] = [];
   for (const el of children(tbl)) {
     if (el.name === 'w:tr') rows.push(parseRow(ctx, el));
     else if (el.name === 'w:sdt') {
@@ -330,11 +331,17 @@ function parseTable(ctx: Ctx, tbl: XmlElement): TableNode<ParaProps, RunProps> {
       unknown(ctx, el, 'w:tbl');
     }
   }
-  return { kind: 'table', id: nextId(ctx, 'tbl'), rows };
+  return {
+    kind: 'table',
+    id: nextId(ctx, 'tbl'),
+    props: parseTableProps(child(tbl, 'w:tblPr')),
+    grid: parseTableGrid(child(tbl, 'w:tblGrid')),
+    rows,
+  };
 }
 
-function parseRow(ctx: Ctx, tr: XmlElement): TableRowNode<ParaProps, RunProps> {
-  const cells: TableCellNode<ParaProps, RunProps>[] = [];
+function parseRow(ctx: Ctx, tr: XmlElement): TableRow {
+  const cells: TableCell[] = [];
   for (const el of children(tr)) {
     if (el.name === 'w:tc') cells.push(parseCell(ctx, el));
     else if (el.name === 'w:sdt') {
@@ -344,12 +351,12 @@ function parseRow(ctx: Ctx, tr: XmlElement): TableRowNode<ParaProps, RunProps> {
       unknown(ctx, el, 'w:tr');
     }
   }
-  return { kind: 'row', id: nextId(ctx, 'tr'), cells };
+  return { kind: 'row', id: nextId(ctx, 'tr'), props: parseRowProps(child(tr, 'w:trPr')), cells };
 }
 
 const V_MERGE = ['restart', 'continue'] as const;
 
-function parseCell(ctx: Ctx, tc: XmlElement): TableCellNode<ParaProps, RunProps> {
+function parseCell(ctx: Ctx, tc: XmlElement): TableCell {
   const tcPr = child(tc, 'w:tcPr');
   const blocks: Block[] = [];
   for (const el of children(tc)) {
@@ -367,6 +374,7 @@ function parseCell(ctx: Ctx, tc: XmlElement): TableCellNode<ParaProps, RunProps>
   return {
     kind: 'cell',
     id: nextId(ctx, 'tc'),
+    props: parseCellProps(tcPr),
     blocks,
     gridSpan: Number.isNaN(gridSpan) || gridSpan < 1 ? 1 : gridSpan,
     vMerge,

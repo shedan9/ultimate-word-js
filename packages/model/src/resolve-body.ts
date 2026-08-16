@@ -10,22 +10,25 @@
  */
 import type { CascadeContext } from './cascade.ts';
 import { resolveParaProps, resolveRunProps } from './cascade.ts';
+import type { CellPosition } from './cascade-table.ts';
+import { gridColumnCount, resolveCellProps, resolveRowProps, resolveTableProps } from './cascade-table.ts';
 import type {
   Block,
   Body,
-  ParagraphNode,
+  Paragraph,
   ResolvedBlock,
   ResolvedBody,
   ResolvedParagraph,
   ResolvedRun,
   ResolvedSection,
-  TableCellNode,
-  TableNode,
-  TableRowNode,
+  ResolvedTable,
+  ResolvedTableCell,
+  ResolvedTableRow,
+  Table,
 } from './nodes.ts';
 import type { NumberingCounters } from './numbering-counter.ts';
 import { createNumberingCounters } from './numbering-counter.ts';
-import type { ParaProps, ResolvedParaProps, ResolvedRunProps, RunProps } from './props.ts';
+import type { ResolvedParaProps, ResolvedRunProps } from './props.ts';
 
 /**
  * 一趟级联的全部状态。
@@ -54,7 +57,7 @@ function block(pass: Pass, b: Block): ResolvedBlock {
   return b.kind === 'paragraph' ? paragraph(pass, b) : table(pass, b);
 }
 
-function paragraph(pass: Pass, p: ParagraphNode<ParaProps, RunProps>): ResolvedParagraph {
+function paragraph(pass: Pass, p: Paragraph): ResolvedParagraph {
   const ctx = pass.ctx;
   // 段落的直接 pPr 要同时喂给字符级联 —— 段落样式链上的 rPr 是字符属性的一层，
   // 而 ResolvedParaProps 里已经没有「段落样式 id 之外的原始信息」了。
@@ -75,34 +78,54 @@ function paragraph(pass: Pass, p: ParagraphNode<ParaProps, RunProps>): ResolvedP
 }
 
 /**
- * 表格里的段落**参与同一条编号计数**：Word 里表格单元格中的列表和正文里的列表
- * 共用一个编号实例时是连着数的。所以这里递归下去的是同一个 `pass`，不是新建一个。
+ * 表格。
+ *
+ * 两件事必须在这一层做，因为只有这里同时知道「表格样式」和「单元格在表里的位置」：
+ *
+ * 1. **条件格式的命中**（首行 / 末列 / 隔行带）要行列号，所以这里逐格数列号 ——
+ *    数的是**网格列**（累加 `gridSpan`），不是第几个 `w:tc`
+ * 2. 单元格命中的那些层要**派生一个带层的 ctx** 交给格内段落用，出了这个格就没了
+ *
+ * 表格里的段落**参与同一条编号计数**：Word 里单元格中的列表和正文里的列表
+ * 共用一个编号实例时是连着数的。所以递归下去的是同一个 `pass.counters`。
  */
-function table(
-  pass: Pass,
-  t: TableNode<ParaProps, RunProps>,
-): TableNode<ResolvedParaProps, ResolvedRunProps> {
+function table(pass: Pass, t: Table): ResolvedTable {
+  const props = resolveTableProps(pass.ctx, t.props);
+  const rowCount = t.rows.length;
+  const colCount = gridColumnCount(t.grid, t.rows);
+
   return {
     kind: 'table',
     id: t.id,
-    rows: t.rows.map((r): TableRowNode<ResolvedParaProps, ResolvedRunProps> => {
+    props,
+    grid: [...t.grid],
+    rows: t.rows.map((r, rowIndex): ResolvedTableRow => {
+      const rowProps = resolveRowProps(pass.ctx, props, t.props, r.props, {
+        row: rowIndex,
+        rowCount,
+      });
+      // 本行被 w:gridBefore 跳掉的那几列也占位置，列号要从它之后开始数
+      let col = rowProps.gridBefore;
       return {
         kind: 'row',
         id: r.id,
-        cells: r.cells.map((c): TableCellNode<ResolvedParaProps, ResolvedRunProps> => {
+        props: rowProps,
+        cells: r.cells.map((c): ResolvedTableCell => {
+          const pos: CellPosition = { row: rowIndex, rowCount, col, span: c.gridSpan, colCount };
+          col += c.gridSpan;
+          const { props: cellProps, layers } = resolveCellProps(pass.ctx, props, t.props, c.props, pos);
+          // 格内的段落 / run 走同一条级联，只是多了这几层前置样式
+          const inner: Pass = { ...pass, ctx: { ...pass.ctx, tableStyleLayers: layers } };
           return {
             kind: 'cell',
             id: c.id,
+            props: cellProps,
             gridSpan: c.gridSpan,
             vMerge: c.vMerge,
-            blocks: c.blocks.map((b) => block(pass, b)),
+            blocks: c.blocks.map((b) => block(inner, b)),
           };
         }),
       };
     }),
   };
 }
-
-// 表格样式的条件格式（首行 / 末列 / 隔行底纹）那一层还没有位置，Phase 4 补：
-// 它插在段落样式链**之前**，且要知道单元格在表里的行列号 —— 也就是说届时
-// `table()` 这条路径要往下传一个「单元格在表中的位置」，不只是无脑递归。

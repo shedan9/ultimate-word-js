@@ -4,10 +4,13 @@
  * 顺序（ECMA-376 §17.7.2，后面的覆盖前面的）：
  *
  * ```
- * 段落属性： docDefaults.pPr → 段落样式链(祖先→自己) → 编号 pPr → 直接 pPr
- * 字符属性： docDefaults.rPr → 段落样式链.rPr        → 字符样式链.rPr → 直接 rPr
- * 编号文字： docDefaults.rPr → 段落样式链.rPr        → 编号 rPr → 段落标记的 rPr
+ * 段落属性： docDefaults.pPr → 表格样式层 → 段落样式链(祖先→自己) → 编号 pPr → 直接 pPr
+ * 字符属性： docDefaults.rPr → 表格样式层 → 段落样式链.rPr → 字符样式链.rPr → 直接 rPr
+ * 编号文字： docDefaults.rPr → 表格样式层 → 段落样式链.rPr → 编号 rPr → 段落标记的 rPr
  * ```
+ *
+ * 「表格样式层」只在单元格里的段落上有（见 `CascadeContext.tableStyleLayers`），
+ * 位置在段落样式**之前** —— 表头行的加粗要能被段落自己的样式盖掉。
  *
  * 三处容易错的地方：
  * 1. **段落样式也带字符属性**，且它排在字符样式**前面**。漏了这一层，
@@ -36,6 +39,7 @@ import type {
 } from './props.ts';
 import type { DocumentSettings } from './settings.ts';
 import type { StyleSheet } from './styles.ts';
+import type { TableStyleLayer } from './table-props.ts';
 import type { Theme } from './theme.ts';
 import { resolveThemeFont } from './theme.ts';
 
@@ -53,6 +57,14 @@ export interface CascadeContext {
    * 所以它是级联的**输入**，不是解析出来放着看的旁支。缺席时给 `EMPTY_NUMBERING`。
    */
   numbering: Numbering;
+  /**
+   * 「本段落在某个表格单元格里」时，该单元格命中的表格样式层（见 cascade-table.ts）。
+   *
+   * 放在上下文里而不是当参数传，是因为它**就是**环境的一部分：进单元格时派生一个带层的
+   * ctx，出来就没了。嵌套表格因此天然是「内层的层覆盖外层」—— 内层派生时直接换掉这个
+   * 字段，不做叠加（没有真值支持叠加，且嵌套表格在公文里罕见）。
+   */
+  tableStyleLayers?: readonly TableStyleLayer[];
 }
 
 /**
@@ -182,6 +194,7 @@ export function resolveRunProps(
   const acc: RunAccum = { props: {}, slots: {}, hint: undefined };
 
   applyRunLevel(acc, ctx.styles.defaults.runProps);
+  for (const l of ctx.tableStyleLayers ?? []) applyRunLevel(acc, l.runProps);
   for (const s of ctx.styles.chainOf(paragraphStyleId(ctx, paraProps))) applyRunLevel(acc, s.runProps);
   if (numberingRunProps !== undefined) applyRunLevel(acc, numberingRunProps);
   // 字符样式链排在段落样式之后 —— 字符样式是「更局部」的那一个
@@ -292,6 +305,7 @@ export function resolveParaProps(
 
   const acc: ParaAccum = { props: {}, indent: {}, spacing: {}, numbering: {}, tabs: new Map() };
   applyParaLevel(acc, ctx.styles.defaults.paraProps);
+  for (const l of ctx.tableStyleLayers ?? []) applyParaLevel(acc, l.paraProps);
   for (const s of chain) applyParaLevel(acc, s.paraProps);
   if (numbered !== undefined) applyParaLevel(acc, numberingParaLayer(numbered.level.paraProps));
   if (direct !== undefined) applyParaLevel(acc, direct);
