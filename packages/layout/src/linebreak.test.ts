@@ -77,7 +77,7 @@ describe('禁则（避头尾）', () => {
   });
 });
 
-describe('压缩优先，压不下再回退', () => {
+describe('悬挂 → 挤压 → 回退', () => {
   it('挤压：行尾全角标点压掉空着的半边就塞得下', () => {
     const items = buildItems(para([run('一二。三')]), M);
     const lines = breakLines(items, ctx(2.5, { compressPunctuation: true }));

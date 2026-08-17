@@ -265,7 +265,7 @@ flowchart TB
   A["段落 + ResolvedParaProps / ResolvedRunProps"] --> B
   B["脚本分桶（fonts 提供）<br/>逐字符判定 ascii / hAnsi / eastAsia / cs<br/>产出 FontRun 数组「同字体连续段」"] --> C
   C["度量（fonts 提供）<br/>advance 宽度 + 行度量<br/>两级缓存：字体级 Map + 全局 LRU"] --> D
-  D["断行<br/>UAX#14 基础 + 中文禁则<br/>压缩优先，压不下再回退"] --> E
+  D["断行<br/>UAX#14 基础 + 中文禁则<br/>悬挂 → 挤压 → 回退（顺序实测）"] --> E
   E["行盒装配<br/>行高 = 各字体行高取 max<br/>基线 = 核心盒居中<br/>中西文自动间距 1/8 em"] --> F
   F["网格吸附<br/>docGrid：行高吸到 linePitch 的整数倍<br/>再乘行距倍数（顺序是实测的）"] --> G
   G["段落装配<br/>对齐 · 缩进（字符单位）· 段间距 · 制表位"] --> H
