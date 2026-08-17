@@ -8,8 +8,9 @@
  * 用真实度量排版，断行点与页数就和 Word 完全一致，只是字形外观不同 ——
  * 这比想办法凑齐中文字体授权现实得多。
  *
- * 体积之所以能压到 1–2 KB：CJK 字体里汉字几乎全是 1 em 等宽，只有 ASCII 那一小段是例外。
+ * 宽度部分之所以能压到 1–2 KB：CJK 字体里汉字几乎全是 1 em 等宽，只有 ASCII 那一小段是例外，
  * 所以存一个 `defaultAdvance` + 一张只记「与默认不同」的稀疏表就够了。
+ * 加上 `coverage`（覆盖码点压成区间）之后整包是 3–7 KB，值不值得见 `coverageOf()` 的注释。
  */
 import type { RawFontMetrics } from './metrics.ts';
 
@@ -45,10 +46,27 @@ export function defaultSampleCodePoints(): number[] {
   return out;
 }
 
+/**
+ * 符号字体（Symbol / Wingdings）的采样范围：**整个 0x00–0xFF**。
+ *
+ * 这两款是 symbol-encoded 字体，用 `(3,0)` cmap 子表，fontkit 把它们的码点报成 0x00–0xFF
+ * 而不是 docx 里写的 U+F020–U+F0FF 私用区 —— 也就是说 `w:char="F0B7"` 要**减掉 0xF000**
+ * 才查得到（实测 `hasGlyphForCodePoint(0xF0B7)` 是 false、`0xB7` 是 true）。
+ * 减法归调用方（编号的 bullet 那一层），包里存的是字体自己的码点空间。
+ *
+ * 采满 256 个而不是跳过控制码段，是为了让覆盖范围内的每个码点都有精确宽度：
+ * 符号字体的宽度杂乱无章，`defaultAdvance` 对它没有意义。
+ */
+export function symbolSampleCodePoints(): number[] {
+  return Array.from({ length: 0x100 }, (_, i) => i);
+}
+
 /** fontkit 里我们真正用到的字形接口。@types/fontkit 没暴露，这里只声明用得着的 */
 export interface GlyphSource {
   hasGlyphForCodePoint?: (cp: number) => boolean;
   glyphForCodePoint?: (cp: number) => { advanceWidth?: number } | null;
+  /** 字体覆盖的全部码点（fontkit 的 `characterSet`）。有就压成区间存进包里 */
+  characterSet?: readonly number[];
 }
 
 export interface BuildPackOptions {
@@ -58,7 +76,7 @@ export interface BuildPackOptions {
   sample?: Iterable<number>;
   /**
    * 判定 `defaultAdvance` 用的探针码点，缺省 U+4E00「一」。
-   * 拉丁字体没有这个字形，此时退回 unitsPerEm（等宽假设），例外表会把真实宽度补回来。
+   * 拉丁字体没有这个字形，此时退到**采样宽度的众数**（见 `buildMetricsPack`）。
    */
   probe?: number;
 }
@@ -79,16 +97,25 @@ export function buildMetricsPack(
     return font.glyphForCodePoint?.(cp)?.advanceWidth;
   };
 
-  const probe = opts.probe ?? 0x4e00;
-  const defaultAdvance = advanceOf(probe) ?? metrics.unitsPerEm;
-
-  const advances: Record<string, number> = {};
-  for (const cp of opts.sample ?? defaultSampleCodePoints()) {
+  const sample = [...(opts.sample ?? defaultSampleCodePoints())];
+  const sampled = new Map<number, number>();
+  for (const cp of sample) {
     const w = advanceOf(cp);
-    if (w !== undefined && w !== defaultAdvance) advances[String(cp)] = w;
+    if (w !== undefined) sampled.set(cp, w);
   }
 
-  return {
+  const probe = opts.probe ?? 0x4e00;
+  // 默认宽度取「探针字形」优先、采样众数次之。众数那一档是给拉丁字体准备的：
+  // 它们没有 U+4E00，退到 unitsPerEm 就等于宣布「所有没列出来的字都是全角」，
+  // 于是希腊字母、西里尔字母全被算成一个汉字宽 —— 而它们实际上都是半角上下。
+  const defaultAdvance = advanceOf(probe) ?? modeOf(sampled.values()) ?? metrics.unitsPerEm;
+
+  const advances: Record<string, number> = {};
+  for (const [cp, w] of sampled) {
+    if (w !== defaultAdvance) advances[String(cp)] = w;
+  }
+
+  const pack: MetricsPack = {
     version: 1,
     family: opts.family ?? metrics.family,
     postscriptName: metrics.postscriptName,
@@ -98,6 +125,47 @@ export function buildMetricsPack(
     defaultAdvance,
     advances,
   };
+  const coverage = coverageOf(font.characterSet);
+  if (coverage !== undefined) pack.coverage = coverage;
+  return pack;
+}
+
+/** 出现次数最多的宽度。并列时取较小的那个 —— 拉丁字体里窄字比宽字常见 */
+function modeOf(values: Iterable<number>): number | undefined {
+  const counts = new Map<number, number>();
+  for (const v of values) counts.set(v, (counts.get(v) ?? 0) + 1);
+  let best: number | undefined;
+  let bestCount = 0;
+  for (const [v, n] of counts) {
+    if (n > bestCount || (n === bestCount && best !== undefined && v < best)) {
+      best = v;
+      bestCount = n;
+    }
+  }
+  return best;
+}
+
+/**
+ * 码点列表 → 升序不重叠的 `[lo, hi]` 区间。
+ *
+ * 压成区间是**体积**的需要：宋体覆盖 28850 个码点，逐个存下来是 200KB 量级，
+ * 压成 159 个区间只要 2KB。等线的 353 个区间约 5KB —— 所以「一个包 1–2 KB」
+ * 那句话只对不带覆盖范围的包成立，带上之后是 3–7 KB。
+ *
+ * 为什么值得这 5KB：没有覆盖范围，`packAdvance()` 会对**任何**码点都回答
+ * `defaultAdvance`，于是「这款字体没有这个字」这件事就无从得知，
+ * 而 Word 遇到缺字是换一款字体去画的（宽度随之改变）。逐字符字体回退要靠它。
+ */
+function coverageOf(codePoints: readonly number[] | undefined): [number, number][] | undefined {
+  if (codePoints === undefined || codePoints.length === 0) return undefined;
+  const sorted = [...new Set(codePoints)].sort((a, b) => a - b);
+  const ranges: [number, number][] = [];
+  for (const cp of sorted) {
+    const last = ranges[ranges.length - 1];
+    if (last !== undefined && cp === last[1] + 1) last[1] = cp;
+    else ranges.push([cp, cp]);
+  }
+  return ranges;
 }
 
 /** 度量包 → 行高计算要的原始度量 */

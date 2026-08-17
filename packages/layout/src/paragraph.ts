@@ -32,6 +32,8 @@ export function layoutParagraph(p: ResolvedParagraph, opts: LayoutParagraphOptio
   const itemOpts = {
     measurer: opts.measurer,
     kinsoku,
+    // 相邻标点挤压是**常态排版**，所以在 item 流那一步就做掉，不等断行
+    compressPunctuation: opts.settings.characterSpacingControl !== 'doNotCompress',
     ...(opts.defaultFont === undefined ? {} : { defaultFont: opts.defaultFont }),
   };
   const items = buildItems(p, itemOpts);
@@ -165,7 +167,8 @@ function assemble(
     // 拉伸过的行正好占满可用宽度 —— 回归比对时这一项要能直接和真值的行宽对上
     width: stretched ? ctx.avail : line.width,
     height: height.height,
-    metrics: height.metrics,
+    baseline: height.baseline,
+    natural: height.natural,
     fragments: fragmentsOf(line, items, xs, ctx.left + offset),
     leaders: leadersOf(line, xs, ctx.left + offset),
     isLast: ctx.isLast,

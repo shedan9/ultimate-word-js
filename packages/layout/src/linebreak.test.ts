@@ -71,7 +71,9 @@ describe('禁则（避头尾）', () => {
 
   it('整行没有合法断点时硬断，不至于把一行撑到无限长', () => {
     const items = buildItems(para([run('。。。。。。')]), M);
-    expect(texts(items, breakLines(items, ctx(2)))).toEqual(['。。', '。。', '。。']);
+    // 一行两个字宽却放得下三个句号：相邻标点固定挤掉半个字（实测，见 PUNCT_PAIR_COMPRESS_EM），
+    // 于是 1 + 0.5 + 0.5 = 2.0 恰好占满。这一条与「硬断」无关，但会改断在第几个字
+    expect(texts(items, breakLines(items, ctx(2)))).toEqual(['。。。', '。。。']);
   });
 });
 

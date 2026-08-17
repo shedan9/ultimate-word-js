@@ -1,16 +1,21 @@
 /**
- * 拿真实公文 `gongwen-01.docx` 走完整条链：解包 → 级联 → 分桶度量 → 断行 → 段落装配。
+ * 拿真实公文 `gongwen-01.docx` 走完整条链：解包 → 级联 → 分桶度量 → 断行 → 段落装配，
+ * 再与 Word 导出的坐标真值 `gongwen-01.truth.json` 逐行比断行点（L2）。
  *
- * 这里**不比坐标真值**：字体度量走的是三级降级里的第③级（等宽近似），因为宋体 / 仿宋的
- * 度量包要在 Windows 上抽（架构 §5.2），仓库里还没有。所以断言只覆盖「与度量精度无关」
- * 的那些性质：每段都排得出行、行不会莫名其妙地超出版心、结果能过 Worker 边界。
+ * 度量走三级降级里的第②级 —— 随库分发的度量包（`packages/fonts/packs`）。它是在 Windows 上
+ * 从 `C:/Windows/Fonts` 抽的，但**入库了**，所以这个测试在 Mac / CI 上跑到的度量与 Word
+ * 用的完全一致。这正是 L2 断言能存在的前提：靠第③级的等宽近似，断行点必然对不上。
  *
- * 等度量包进来，同一份 fixture 就能直接换成 L2（每行断行点与 `*.truth.json` 一致）的断言 ——
- * 这个文件的结构是照那一天准备的。
+ * L2 目前**没有全绿**，测试里断言的是「不许退步」而不是「已经对了」——
+ * 剩下的差指向同一件已经量到、但还没实现的事：**悬挂标点的墨留在版心内，只有空半边吐出去**，
+ * 而我们把悬挂项整个不计入行宽。见 `uncalibrated.ts` 的 `PUNCT_COMPRESS_RATIO` 末段。
+ * 修完之后 `MIN_L2_MATCH` 要往上调。
  */
 import { readFileSync } from 'node:fs';
 import { createDiagnosticSink } from '@uw/core';
+import type { TextMeasurer } from '@uw/fonts';
 import { createTextMeasurer, FontRegistry } from '@uw/fonts';
+import { loadBundledPacks } from '@uw/fonts/node';
 import type { LoadedDocument, ResolvedParagraph } from '@uw/model';
 import { fontNameCandidates, loadDocument, walkBlocks } from '@uw/model';
 import { OpcPackage } from '@uw/ooxml';
@@ -20,12 +25,24 @@ import { layoutParagraph } from './paragraph.ts';
 import type { ParagraphLayout } from './types.ts';
 
 const FIXTURE = new URL('../../../apps/fidelity/fixtures/gongwen-01.docx', import.meta.url);
+const TRUTH = new URL('../../../apps/fidelity/fixtures/gongwen-01.truth.json', import.meta.url);
+
+/**
+ * 与真值逐字一致的行数下限。**只允许往上调** —— 它是「不许退步」的闸门，不是达标线。
+ *
+ * 当前 18 行里对上 8 行（含首行与末行）。第一处分歧在第 5 行：Word 让行尾的「，」
+ * 把**空半边**吐出版心、墨留在里面，于是那一行到此结束；我们把悬挂的标点整个不计入行宽，
+ * 于是还剩得下一个字，从此每一行都错开一个字。修法见 `uncalibrated.ts` 末段，
+ * 它要连带改两端对齐与行宽断言，所以没有塞进这一轮。
+ */
+const MIN_L2_MATCH = 8;
 
 const sink = createDiagnosticSink();
 let doc: LoadedDocument;
 let paragraphs: ResolvedParagraph[];
 let laid: ParagraphLayout[];
 let contentWidth: number;
+let measurer: TextMeasurer;
 
 beforeAll(() => {
   doc = loadDocument(OpcPackage.open(new Uint8Array(readFileSync(FIXTURE))), sink);
@@ -35,7 +52,11 @@ beforeAll(() => {
   const { page, margin, docGrid } = section.props;
   contentWidth = page.width - margin.left - margin.right;
 
-  const measurer = createTextMeasurer(new FontRegistry(), {
+  const registry = new FontRegistry();
+  // 度量包是**入库的数据**，所以这一步跨平台。Windows 上重抽见 @uw/fonts 的 tools/build-packs.ts
+  for (const pack of loadBundledPacks()) registry.registerMetrics(pack);
+
+  measurer = createTextMeasurer(registry, {
     // 中文版 Word 写的是「仿宋」这种本地化名，磁盘上叫 FangSong —— 桥在 fontTable.xml
     candidates: (family) => fontNameCandidates(doc.fonts, family),
     diagnostics: sink,
@@ -99,9 +120,60 @@ describe('真实公文走完整条链', () => {
     expect(structuredClone(laid)).toEqual(laid);
   });
 
-  it('这份文档在布局阶段只报字体缺失，没有别的诊断', () => {
-    const codes = new Set(sink.list().map((d) => d.code));
-    codes.delete('font-missing');
-    expect([...codes]).toEqual([]);
+  it('这份文档在布局阶段一条诊断都没有 —— 三款字体全部命中度量包', () => {
+    // 度量包进来之前这里要放过 font-missing。现在放过它就等于放过「包没被用上」
+    expect(sink.list()).toEqual([]);
+  });
+
+  it('三款字体都落在降级链第②级（度量包），一个都没退到等宽近似', () => {
+    for (const family of ['仿宋', '黑体', 'Times New Roman']) {
+      expect(measurer.status(family)).toBe('metrics');
+    }
+  });
+});
+
+/**
+ * L2：每行断行点与 Word 一致。
+ *
+ * 比的是**行文字**而不是首末码点：文字一致蕴含首末码点一致，且失败时的报错直接能看出
+ * 「我们多收了一个字」还是「少收了一个字」。行尾空格不算 —— Word 让它吐出版心，
+ * PDF 里那个空格不落墨，真值的行文字里也就没有它。
+ */
+describe('L2 · 断行点与 Word 真值', () => {
+  const ourLines = (): string[] =>
+    laid
+      .flatMap((p) => p.lines)
+      .map((l) =>
+        l.fragments
+          .map((f) => f.text)
+          .join('')
+          .replace(/\s+$/u, ''),
+      )
+      .filter((t) => t !== '');
+
+  const truthLines = (): string[] => {
+    const truth = JSON.parse(readFileSync(TRUTH, 'utf8')) as { pages: { lines: { text: string }[] }[] };
+    return truth.pages
+      .flatMap((p) => p.lines.map((l) => l.text.replace(/\s+$/u, '')))
+      .filter((t) => t !== '');
+  };
+
+  it('行数与 Word 一致', () => {
+    // 这一条比逐行文字更硬：行数错了说明断行系统性偏了，而不是某一行差一个字
+    expect(ourLines()).toHaveLength(truthLines().length);
+  });
+
+  it(`至少 ${MIN_L2_MATCH} 行与 Word 逐字一致（闸门，只许往上调）`, () => {
+    const ours = ourLines();
+    const theirs = truthLines();
+    const matched = ours.filter((t, i) => t === theirs[i]).length;
+    expect(matched).toBeGreaterThanOrEqual(MIN_L2_MATCH);
+  });
+
+  it('第一行与最后一行完全一致 —— 它们不受行内挤压的累积误差影响', () => {
+    const ours = ourLines();
+    const theirs = truthLines();
+    expect(ours[0]).toBe(theirs[0]);
+    expect(ours[ours.length - 1]).toBe(theirs[theirs.length - 1]);
   });
 });

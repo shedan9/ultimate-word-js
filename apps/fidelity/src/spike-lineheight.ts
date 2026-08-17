@@ -14,9 +14,9 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ptToTwips, twipsToPt } from '@uw/core';
-import { lineMetrics, readRawMetrics } from '@uw/fonts';
-import { hasEastAsianCoverage, openFont, WINDOWS_FONT_DIR } from '@uw/fonts/node';
+import { lineMetrics } from '@uw/fonts';
 import { assertWindows } from './platform.ts';
+import { hasEastAsianText, loadSpikeFont } from './spike-fonts.ts';
 import type { TruthPage, WordTruth } from './truth-types.ts';
 
 assertWindows({ tool: 'Phase 0 行高穿刺', needs: '要读 C:/Windows/Fonts 下的真实字体表' });
@@ -25,42 +25,6 @@ const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const DEFAULT_FIXTURES = ['spike-lineheight-01', 'spike-lineheight-02'];
 /** DoD 阈值（pt） */
 const TOLERANCE_PT = 1;
-
-/**
- * PDF 里的字体名 → Windows 字体文件。
- * 这张表只服务于穿刺实验；正式的字体解析走 @uw/fonts 的替换表（Phase 2）。
- */
-const FONT_FILES: Record<string, { file: string; postscriptName?: string }> = {
-  FangSong: { file: 'simfang.ttf' },
-  SimSun: { file: 'simsun.ttc', postscriptName: 'SimSun' },
-  SimHei: { file: 'simhei.ttf' },
-  KaiTi: { file: 'simkai.ttf' },
-  MicrosoftYaHei: { file: 'msyh.ttc', postscriptName: 'MicrosoftYaHei' },
-  DengXian: { file: 'Deng.ttf' },
-  TimesNewRomanPSMT: { file: 'times.ttf' },
-  ArialMT: { file: 'arial.ttf' },
-};
-
-interface FontEntry {
-  metrics: ReturnType<typeof readRawMetrics>;
-  eastAsian: boolean;
-}
-
-const fontCache = new Map<string, FontEntry>();
-
-function loadFont(pdfName: string): FontEntry {
-  const hit = fontCache.get(pdfName);
-  if (hit) return hit;
-  const entry = FONT_FILES[pdfName];
-  if (!entry) throw new Error(`没有登记字体文件：${pdfName}（补进 spike-lineheight.ts 的 FONT_FILES）`);
-  const font = openFont(
-    path.join(WINDOWS_FONT_DIR, entry.file),
-    ...(entry.postscriptName ? [entry.postscriptName] : []),
-  );
-  const loaded: FontEntry = { metrics: readRawMetrics(font), eastAsian: hasEastAsianCoverage(font) };
-  fontCache.set(pdfName, loaded);
-  return loaded;
-}
 
 /** 一行的「字体 + 字号」签名；同签名的连续行才能拿来量基线差 */
 function lineSignature(page: TruthPage, lineIndex: number): string {
@@ -74,9 +38,6 @@ function lineSignature(page: TruthPage, lineIndex: number): string {
   return [...parts].sort().join(' + ');
 }
 
-/** 该行是否含东亚文字 —— 用字符判定，不看字体 */
-const EAST_ASIAN_RE = /[⺀-鿿豈-﫿＀-｠]/;
-
 /** 混排行的行高 = 各字体行高的最大值（ascent / descent 逐项取最大，这里只关心总高） */
 function predictLineHeightPt(page: TruthPage, lineIndex: number): number {
   const line = page.lines[lineIndex];
@@ -89,10 +50,10 @@ function predictLineHeightPt(page: TruthPage, lineIndex: number): number {
     const key = `${it.font}@${it.size}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    const { metrics, eastAsian } = loadFont(it.font);
+    const { metrics, eastAsian } = loadSpikeFont(it.font);
     // 字号取 PDF 里的实际值：Word 导出时会把 16pt 写成 15.96，用标称值反而引入误差
     const lm = lineMetrics(metrics, ptToTwips(it.size), {
-      eastAsian: eastAsian && EAST_ASIAN_RE.test(line.text),
+      eastAsian: eastAsian && hasEastAsianText(line.text),
     });
     if (lm.lineHeight > maxTwips) maxTwips = lm.lineHeight;
   }

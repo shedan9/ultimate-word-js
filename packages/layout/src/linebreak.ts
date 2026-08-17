@@ -5,13 +5,19 @@
  * 追求全局最优反而会系统性地偏离真值。塞不下时按三条补救措施依次尝试，
  * 全都不行才回退到上一个允许的断点：
  *
- * 1. **挤压**：全角标点压掉空着的半边（`w:characterSpacingControl`）
- * 2. **悬挂**：后置标点允许溢出版心（`w:overflowPunct`，默认开）—— 行尾那个句号吐出边界
+ * 1. **悬挂**：后置标点与行尾空格允许溢出版心（`w:overflowPunct`，默认开）——
+ *    行尾那个句号吐出边界，然后这一行就结束了
+ * 2. **挤压**：挂不出去（溢出的是汉字或拉丁字）才挤，把**整行**的全角标点挤到刚好够 ——
+ *    见 `compress()`
  * 3. **回退**：往回找最近的合法断点，把前面的字一起推到下一行
  *
- * ⚠️ 这个顺序是照开发计划 §2.2 的「压缩优先」写的，**没有真值验证**：
- * 挤压与悬挂在 Word 里的确切触发条件（尤其是两者同时可用时谁先）要靠
- * 「一行末尾恰好差半个标点」的样本钉死。顺序错了会差一个字的断行位置。
+ * **先挂后挤**是实测的，与开发计划 §2.2 写的「压缩优先」相反。判据是 gongwen-01 的两行：
+ * 第 5 行溢出的是「，」，Word 把它挂出版心 8.04pt 就收行了，**没有**去挤行内另一个「，」；
+ * 第 4 行溢出的是「自」（挂不了），Word 才挤出 6pt 把它留在行内。
+ * 顺序反了会差一个字，而且错会顺着往后每一行传下去。
+ *
+ * 另有一条**与断行无关**的常态挤压：相邻两个全角标点固定挤掉半个字，
+ * 那个在 `items.ts` 的 `applyPunctPairs` 里、`buildItems` 阶段就做完了。
  *
  * 输出只有**行内水平几何**：没有 y、没有基线。理由见 types.ts 的文件头。
  */
@@ -80,7 +86,13 @@ export function breakLines(items: readonly LayoutItem[], ctx: LineBreakContext):
   let xs: Twips[] = [];
   let ws: Twips[] = [];
   let hanging: boolean[] = [];
+  /** 每个 item 前面的间隙（中西文自动间距）。回头挤压之后要靠它重排 xs */
+  let gaps: Twips[] = [];
+  /** 每个 item 还能挤掉多少宽度。只有全角标点非零，压过之后相应减少 */
+  let room: Twips[] = [];
   let tabs: TabHit[] = [];
+  /** 这一行已经有东西吐出版心了 —— 见循环里那段注释，它决定行到此为止 */
+  let hung = false;
   let avail = ctx.availWidth(0);
 
   function close(end: number, breakAfter?: BrokenLine['breakAfter']): number {
@@ -95,16 +107,93 @@ export function breakLines(items: readonly LayoutItem[], ctx: LineBreakContext):
     xs = [];
     ws = [];
     hanging = [];
+    gaps = [];
+    room = [];
     tabs = [];
+    hung = false;
     avail = ctx.availWidth(lineIndex);
     return end;
   }
 
-  function accept(width: Twips, gap: Twips, hang: boolean): void {
+  function accept(width: Twips, gap: Twips, hang: boolean, compressRoom = 0): void {
     xs.push(x + gap);
     ws.push(width);
     hanging.push(hang);
+    gaps.push(gap);
+    room.push(compressRoom);
     x += gap + width;
+  }
+
+  /**
+   * 这个 item 还能挤掉多少 —— 只有全角标点能挤，且要文档没关掉挤压。
+   *
+   * `gapBefore < 0` 的标点排除在外：它已经因为「紧跟着上一个标点」交出了空半边
+   * （`items.ts` 的 `applyPunctPairs`），再挤就是把墨压掉了。
+   */
+  function roomOf(item: LayoutItem, width: Twips): Twips {
+    if (item.kind !== 'char' || !item.compressible || !ctx.compressPunctuation) return 0;
+    return item.gapBefore < 0 ? 0 : width * PUNCT_COMPRESS_RATIO;
+  }
+
+  /**
+   * 回头把这一行**已经放下**的标点挤掉一点，给正要放进来的字腾地方。
+   *
+   * 这是 gongwen-01 的真值逼出来的：`为落实……通知如下。自` 这一行，26 个三号字自然宽 416pt、
+   * 可用宽只有 410.25pt，Word 却把 26 个字全塞进去了，行宽 410.00pt —— 它把行内的
+   * 「，」「。」各挤掉一点（合计 6pt），而不是把「自」推到下一行。只挤「正在溢出的那个字」
+   * （下面 ① 的老做法）解释不了这一行，因为溢出的是「自」，它不是标点。
+   *
+   * 挤多少：**刚好够**，不是一律 50%。同样是那一行的证据（Word 只挤了 6pt，
+   * 而两个标点合起来能挤 16pt）。多个标点之间按等额分摊，先到 50% 上限的不再摊 ——
+   * 这就是下面按 `room` 升序做的注水。
+   *
+   * ⚠️ 未标定：等额分摊是判断。Word 也可能优先挤行尾那个、或者按标点种类给不同额度。
+   * 一份「一行里三个标点、只需挤掉一个的量」的样本能钉死它 —— 看是三个各挤 1/3 还是一个挤满。
+   * 分摊方式只影响行内逐字 x（L4，误差 0.25pt 量级），不影响断点（L2），所以优先级低。
+   *
+   * @param deficit 还差多少宽度
+   * @param incoming 正要放进来的那个 item 自己能挤掉多少
+   * @returns 真挤出来的宽度与其中属于 incoming 的部分；挤不够时调用方走下一条补救措施
+   */
+  function compress(deficit: Twips, incoming: Twips): { got: Twips; fromIncoming: Twips } {
+    // 制表位之前的 item 不能动：挤了它们，制表位就不再停在它该停的位置上。
+    // 之后的可以动 —— 挤它们不改变制表位自身的宽度与位置
+    const lastTab = tabs.length === 0 ? -1 : (tabs[tabs.length - 1] as TabHit).index - start;
+    const ks = room
+      .map((_, k) => k)
+      .filter((k) => k > lastTab && (room[k] as Twips) > 0)
+      .sort((a, b) => (room[a] as Twips) - (room[b] as Twips));
+
+    // 注水：按剩余额度升序摊，额度小的先摊满，省下的自动流给额度大的
+    const caps = [...ks.map((k) => room[k] as Twips), incoming];
+    const order = caps.map((_, n) => n).sort((a, b) => (caps[a] as Twips) - (caps[b] as Twips));
+    const take = new Array<Twips>(caps.length).fill(0);
+    let need = deficit;
+    let left = caps.length;
+    for (const n of order) {
+      const t = Math.min(need / left, caps[n] as Twips);
+      take[n] = t;
+      need -= t;
+      left--;
+    }
+    const got = deficit - need;
+    // 差一点点就够时是浮点误差，别把整行推到下一行
+    if (got < deficit - 1e-9) return { got: 0, fromIncoming: 0 };
+
+    ks.forEach((k, n) => {
+      const t = take[n] as Twips;
+      ws[k] = (ws[k] as Twips) - t;
+      room[k] = (room[k] as Twips) - t;
+    });
+    // 挤过之后 xs 全都要往左挪 —— 靠 gaps 重排，不要试图增量修补
+    let cur = 0;
+    for (let k = 0; k < ws.length; k++) {
+      cur += gaps[k] as Twips;
+      xs[k] = cur;
+      cur += ws[k] as Twips;
+    }
+    x = cur;
+    return { got, fromIncoming: take[caps.length - 1] as Twips };
   }
 
   let i = 0;
@@ -119,30 +208,44 @@ export function breakLines(items: readonly LayoutItem[], ctx: LineBreakContext):
     }
 
     const gap = i === start ? 0 : gapOf(item);
-    let width = widthOf(item, x + gap, ctx, lineIndex);
+    const width = widthOf(item, x + gap, ctx, lineIndex);
     if (item.kind === 'tab') recordTab(tabs, i, x + gap, ctx, lineIndex, item.numbering === true);
 
     if (x + gap + width <= avail || i === start) {
       // 一个 item 比整行还宽时也必须收下（否则死循环），让它溢出去
-      accept(width, gap, false);
+      accept(width, gap, false, roomOf(item, width));
       i++;
       continue;
     }
 
-    // ① 挤压
-    if (item.kind === 'char' && item.compressible && ctx.compressPunctuation) {
-      const compressed = width * (1 - PUNCT_COMPRESS_RATIO);
-      if (x + gap + compressed <= avail) {
-        accept(compressed, gap, false);
+    // 悬挂过之后这一行就结束了：吐出版心的标点按定义在行尾，后面不可能再有字。
+    // 唯一的例外是空格 —— 行尾的一串空格要一起吐出去，不能把第二个空格推到下一行的行首。
+    // 少了这一条，① 的挤压会在悬挂之后又腾出地方来，把下一个字硬拉回这一行
+    // （gongwen-01 第 5 行就是这么错的：Word 让「，」悬挂出去 8.04pt 然后收行）。
+    if (hung) {
+      if (item.kind === 'char' && item.space) {
+        accept(width, gap, true);
         i++;
         continue;
       }
-      width = compressed; // 压过之后仍塞不下，后面按压缩宽度悬挂
+      i = close(i);
+      continue;
     }
 
-    // ② 悬挂：后置标点与行尾空格可以吐出版心
+    // ① 悬挂：后置标点与行尾空格可以吐出版心
     if (item.kind === 'char' && (item.space || (item.kinsoku === 'noStart' && ctx.overflowPunct))) {
       accept(width, gap, true);
+      hung = true;
+      i++;
+      continue;
+    }
+
+    // ② 挤压：挂不出去（溢出的是汉字或拉丁字）才挤，把这一行的全角标点挤到刚好够
+    const incomingRoom = roomOf(item, width);
+    const deficit = x + gap + width - avail;
+    const { got, fromIncoming } = compress(deficit, incomingRoom);
+    if (got > 0) {
+      accept(width - fromIncoming, gap, false, incomingRoom - fromIncoming);
       i++;
       continue;
     }
@@ -155,6 +258,8 @@ export function breakLines(items: readonly LayoutItem[], ctx: LineBreakContext):
     xs.length = b - start;
     ws.length = b - start;
     hanging.length = b - start;
+    gaps.length = b - start;
+    room.length = b - start;
     tabs = tabs.filter((t) => t.index < b);
     x = xs.length === 0 ? 0 : (xs[xs.length - 1] as Twips) + (ws[ws.length - 1] as Twips);
     i = close(b);

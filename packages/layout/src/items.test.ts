@@ -5,6 +5,7 @@
  * 失败时能直接看出差了几分之几个字。
  */
 import { describe, expect, it } from 'vitest';
+import { PUNCT_PAIR_COMPRESS_EM } from './break-class.ts';
 import { buildItems } from './items.ts';
 import { fakeMeasurer, para, run, runOf, SIZE_5 } from './test-fixtures.ts';
 import type { CharItem, LayoutItem } from './types.ts';
@@ -97,5 +98,41 @@ describe('中西文自动间距', () => {
 
   it('两侧都是拉丁或都是汉字时不加', () => {
     expect(chars(buildItems(para([run('ab中中')]), M)).map((i) => i.gapBefore)).toEqual([0, 0, gap, 0]);
+  });
+});
+
+describe('相邻标点挤压', () => {
+  // 实测（spike-punct-01，26 段短句）：孤立的标点一点都不压，两个标点相邻固定压掉半个字。
+  // 这是**常态排版**，与「行尾塞不下」无关 —— 所以做在 item 流这一步，见 applyPunctPairs
+  const gaps = (text: string): number[] => chars(buildItems(para([run(text)]), M)).map((i) => i.gapBefore);
+  const HALF = -SIZE_5 * PUNCT_PAIR_COMPRESS_EM;
+
+  it('孤立的标点不压 —— 「甲，乙」的三个字宽精确等于三个字号', () => {
+    expect(gaps('一，二')).toEqual([0, 0, 0]);
+  });
+
+  it('两个标点相邻，后一个往左挪半个字', () => {
+    expect(gaps('一，，二')).toEqual([0, 0, HALF, 0]);
+  });
+
+  it('三连标点 = 两对，各压半个字', () => {
+    expect(gaps('一，，，二')).toEqual([0, 0, HALF, HALF, 0]);
+  });
+
+  it('收口 + 开口中间空着整整一个字，但也只压半个 —— 实测如此', () => {
+    expect(gaps('一，（二）三')).toEqual([0, 0, HALF, 0, 0, 0]);
+  });
+
+  it('行首、行末、紧邻汉字的标点都不压', () => {
+    expect(gaps('（一二）三')).toEqual([0, 0, 0, 0, 0]);
+  });
+
+  it('省略号与破折号不在可挤压表里 —— 它们的墨横贯整个字宽，没有空半边', () => {
+    expect(gaps('一…—二')).toEqual([0, 0, 0, 0]);
+  });
+
+  it('文档关掉 w:characterSpacingControl 时一个都不压', () => {
+    const off = { measurer: fakeMeasurer(), compressPunctuation: false };
+    expect(chars(buildItems(para([run('一，，二')]), off)).map((i) => i.gapBefore)).toEqual([0, 0, 0, 0]);
   });
 });

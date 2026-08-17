@@ -8,7 +8,14 @@
 
 import { ptToTwips, twipsToPt } from '@uw/core';
 import { describe, expect, it } from 'vitest';
-import { combineLineMetrics, gdiExternalLeading, lineMetrics, type RawFontMetrics } from './metrics.ts';
+import {
+  baselineOffset,
+  composeBaseline,
+  gdiExternalLeading,
+  lineMetrics,
+  naturalLineHeight,
+  type RawFontMetrics,
+} from './metrics.ts';
 
 /** 仿宋 / 宋体 / 黑体 / 楷体：unitsPerEm=256，win 跨度恰好 1.0 em */
 const fangSong: RawFontMetrics = {
@@ -58,6 +65,38 @@ const yaHei: RawFontMetrics = {
   hhea: { ascender: 2167, descender: -536, lineGap: 0 },
 };
 
+/** 等线：win 跨度 1.0420 em，无 lineGap —— 现代中文字体里 win 跨度最接近 1 em 的一款 */
+const dengXian: RawFontMetrics = {
+  family: 'DengXian',
+  postscriptName: 'DengXian',
+  unitsPerEm: 2048,
+  os2: {
+    winAscent: 1659,
+    winDescent: 475,
+    typoAscender: 1659,
+    typoDescender: -475,
+    typoLineGap: 0,
+    useTypoMetrics: false,
+  },
+  hhea: { ascender: 1659, descender: -475, lineGap: 0 },
+};
+
+/** Arial：win 跨度 1.1172 em，GDI 外部行距 67/2048 */
+const arial: RawFontMetrics = {
+  family: 'Arial',
+  postscriptName: 'ArialMT',
+  unitsPerEm: 2048,
+  os2: {
+    winAscent: 1854,
+    winDescent: 434,
+    typoAscender: 1491,
+    typoDescender: -431,
+    typoLineGap: 307,
+    useTypoMetrics: false,
+  },
+  hhea: { ascender: 1854, descender: -434, lineGap: 67 },
+};
+
 const heightPt = (m: RawFontMetrics, sizePt: number, eastAsian: boolean): number =>
   twipsToPt(lineMetrics(m, ptToTwips(sizePt), { eastAsian }).lineHeight);
 
@@ -99,13 +138,123 @@ describe('单倍行距行高（对齐 Word 实测）', () => {
   });
 });
 
-describe('混排行', () => {
-  it('ascent 与 descent 逐项取最大，可能来自不同字体', () => {
+/**
+ * 基线在行高里的位置。
+ *
+ * 期望值全部是 Word 实测的「首行基线 − 版心顶」，来自 apps/fidelity 的
+ * spike-baseline-01 / 02 / 03（每段用 pageBreakBefore 顶到自己那页最上面，
+ * 于是这个差就是基线在行盒里的位置，与前面排了什么无关）。
+ *
+ * 容差 0.15pt：实测残差最大 0.13pt，与 Phase 0 的 0.132pt 同量级，都来自 Word 那一侧的取整。
+ * 想收紧容差得先解释掉那个系统偏差（26 个样本的残差**全为负**），不是改这里的数字。
+ * 用 `toBeCloseTo` 表达不了 0.15 这个刻度（它只认 10 的幂），所以显式写差值。
+ */
+const TOLERANCE_PT = 0.15;
+
+const expectPt = (actual: number, measured: number): void => {
+  expect(Math.abs(actual - measured)).toBeLessThan(TOLERANCE_PT);
+};
+
+/** 行顶到基线（pt）。`heightPtValue` 缺省表示自然行高，给了就是被规则 / 网格拉大之后的行高 */
+const baselinePt = (
+  m: RawFontMetrics,
+  sizePt: number,
+  eastAsian: boolean,
+  heightPtValue?: number,
+): number => {
+  const lm = lineMetrics(m, ptToTwips(sizePt), { eastAsian });
+  return twipsToPt(
+    baselineOffset(lm, heightPtValue === undefined ? lm.lineHeight : ptToTwips(heightPtValue)),
+  );
+};
+
+describe('基线位置：自然行盒（对齐 Word 实测）', () => {
+  it('东亚：额外的 30% 上下均分', () => {
+    // spike-baseline-01：仿宋 16pt 实测 16.050、宋体 12pt 12.070、黑体 22pt 22.170
+    // （这四款字体的 win 度量完全相同，所以同一份 RawFontMetrics 就代表了它们全部）
+    expectPt(baselinePt(fangSong, 16, true), 16.05);
+    expectPt(baselinePt(fangSong, 12, true), 12.07);
+    expectPt(baselinePt(fangSong, 22, true), 22.17);
+    // spike-baseline-02 把字号放大到 48–72pt，信号是噪声的十几倍
+    expectPt(baselinePt(fangSong, 72, true), 72.57);
+    expectPt(baselinePt(fangSong, 48, true), 48.33);
+    // 雅黑 60pt 实测 75.330、等线 72pt 实测 69.570 —— 两者 win 跨度差 27%，
+    // 能把「1.3 乘在字体度量上」与「1.3 乘在字号上」彻底分开
+    expectPt(baselinePt(yaHei, 60, true), 75.33);
+    expectPt(baselinePt(dengXian, 72, true), 69.57);
+  });
+
+  it('拉丁：GDI 外部行距全在基线以上', () => {
+    // Times 12 / 48 / 72pt 实测 11.110 / 44.730 / 67.170
+    expectPt(baselinePt(timesNewRoman, 12, false), 11.11);
+    expectPt(baselinePt(timesNewRoman, 48, false), 44.73);
+    expectPt(baselinePt(timesNewRoman, 72, false), 67.17);
+    // Arial 12 / 72pt 实测 11.230 / 67.530
+    expectPt(baselinePt(arial, 12, false), 11.23);
+    expectPt(baselinePt(arial, 72, false), 67.53);
+  });
+
+  it('拉丁的外部行距若也上下均分，72pt 上要差 1.5pt —— 当初 12pt 样本分辨不出来的就是这个', () => {
+    const lm = lineMetrics(timesNewRoman, ptToTwips(72), { eastAsian: false });
+    // 半个外部行距在 72pt 上是 1.53pt，与实测值比是 1.48pt（预测本身还差 0.05）
+    expect(Math.abs(twipsToPt(lm.ascent + lm.lineGap / 2) - 67.17)).toBeGreaterThan(1.4);
+    // 同一个错误在 12pt 上只差 0.26pt，与坐标噪声同量级
+    const small = lineMetrics(timesNewRoman, ptToTwips(12), { eastAsian: false });
+    expect(Math.abs(twipsToPt(small.ascent + small.lineGap / 2) - 11.11)).toBeLessThan(0.3);
+  });
+
+  it('东亚的额外行距若全在基线以上，宋体 72pt 上要差 10pt', () => {
+    const lm = lineMetrics(fangSong, ptToTwips(72), { eastAsian: true });
+    expect(Math.abs(twipsToPt(lm.ascent + lm.lineGap) - 72.57)).toBeGreaterThan(10);
+  });
+});
+
+describe('基线位置：行高被拉大之后（对齐 Word 实测）', () => {
+  // spike-baseline-03：行网格 linePitch 636 twips = 31.8pt
+  it('网格吸附多出来的空间上下均分', () => {
+    // 仿宋 16pt 吸到 31.8pt，实测基线 21.570；宋体 12pt 也吸到 31.8pt，实测 20.250
+    expectPt(baselinePt(fangSong, 16, true, 31.8), 21.57);
+    expectPt(baselinePt(fangSong, 12, true, 31.8), 20.25);
+    // 黑体 26pt 的自然行高 33.8pt 超过一个网格行，吸到两行 63.6pt，实测 41.130
+    expectPt(baselinePt(fangSong, 26, true, 63.6), 41.13);
+  });
+
+  it('拉丁行的吸附余量也上下均分 —— 与自然行盒里「外部行距全在上」是两件事', () => {
+    // Times 12pt 吸到 31.8pt，实测 20.130；若吸附余量也全在上会是 29.20pt
+    expectPt(baselinePt(timesNewRoman, 12, false, 31.8), 20.13);
+    const lm = lineMetrics(timesNewRoman, ptToTwips(12), { eastAsian: false });
+    const allAbove = twipsToPt(lm.coreAbove + (ptToTwips(31.8) - (lm.coreAbove + lm.descent)));
+    expect(Math.abs(allAbove - 20.13)).toBeGreaterThan(8);
+  });
+
+  it('倍数行距放大的余量上下均分', () => {
+    // 网格 31.8pt + 1.5 倍行距：行高 47.7pt（先吸附再乘，所以与字号无关）
+    // 仿宋 16pt 实测 29.490、宋体 12pt 实测 28.170、2.0 倍（63.6pt）实测 37.530
+    expectPt(baselinePt(fangSong, 16, true, 47.7), 29.49);
+    expectPt(baselinePt(fangSong, 12, true, 47.7), 28.17);
+    expectPt(baselinePt(fangSong, 16, true, 63.6), 37.53);
+  });
+});
+
+describe('混排行的合成', () => {
+  it('自然行高取各字体的最大值', () => {
     const ea = lineMetrics(fangSong, ptToTwips(12), { eastAsian: true });
-    const latin = lineMetrics(timesNewRoman, ptToTwips(12), { eastAsian: false });
-    const combined = combineLineMetrics([ea, latin]);
-    expect(combined.ascent).toBe(Math.max(ea.ascent, latin.ascent));
-    expect(combined.descent).toBe(Math.max(ea.descent, latin.descent));
-    expect(combined.lineHeight).toBe(combined.ascent + combined.descent + combined.lineGap);
+    const latin = lineMetrics(timesNewRoman, ptToTwips(12), { eastAsian: true });
+    expect(naturalLineHeight([ea, latin])).toBe(Math.max(ea.lineHeight, latin.lineHeight));
+  });
+
+  it('东亚行的行盒只由东亚字体定 —— 把拉丁一侧也算进来会差 6.5pt', () => {
+    // spike-baseline-02 的「等 Tj 等」那一页：等线 72pt 与 Times New Roman 72pt 同排一行，
+    // 实测首行基线 69.570 —— 与同字号的**纯等线**那一页一模一样。
+    const ea = lineMetrics(dengXian, ptToTwips(72), { eastAsian: true });
+    const latin = lineMetrics(timesNewRoman, ptToTwips(72), { eastAsian: true });
+
+    // 只让东亚一侧定行盒：对得上
+    expectPt(twipsToPt(composeBaseline([ea], ea.lineHeight)), 69.57);
+
+    // 让拉丁也参与：Times 的 win 跨度比等线大 6%，行高与基线一起被顶高，差出 6pt 以上。
+    // 这一页是全部混排样本里唯一能分开两种做法的 —— 别的页上拉丁一侧本来就赢不了。
+    const bothHeight = naturalLineHeight([ea, latin]);
+    expect(Math.abs(twipsToPt(composeBaseline([ea, latin], bothHeight)) - 69.57)).toBeGreaterThan(6);
   });
 });

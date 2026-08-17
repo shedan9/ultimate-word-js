@@ -8,7 +8,9 @@
     "truth": "node src/cli.ts",
     "truth:force": "node src/cli.ts --force",
     "typecheck": "tsc --noEmit",
-    "spike": "node src/spike-lineheight.ts"
+    "spike": "node src/spike-lineheight.ts",
+    "spike:baseline": "node src/spike-baseline.ts",
+    "spike:punct": "node src/spike-punct.ts"
   },
   "dependencies": {
     "@uw/core": "workspace:*",

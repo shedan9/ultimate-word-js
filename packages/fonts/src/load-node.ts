@@ -2,6 +2,7 @@
  * Node 侧字体加载 —— 只给保真度实验、度量包抽取这类离线工具用。
  * 浏览器侧走字节流（内嵌字体 / 用户注册的 webfont / 度量包 JSON），不碰这个文件。
  */
+import { readFileSync } from 'node:fs';
 // fontkit 2.x 的 ESM 入口只有具名导出，没有 default
 import { openSync } from 'fontkit';
 import { unwrapFont } from './decode.ts';
@@ -55,4 +56,36 @@ export function buildPackFromFile(
 ): MetricsPack {
   const font = openFont(filePath, postscriptName);
   return buildMetricsPack(font, readRawMetrics(font), opts);
+}
+
+/**
+ * 随库分发的度量包目录（`packages/fonts/packs`）。
+ *
+ * 生成它要 Windows（`tools/build-packs.ts`），读它不要 —— 包已入库，
+ * 所以 CI 与 Mac 上的测试拿到的度量与 Word 用的完全一致。
+ * 这是坐标级真值断言（L2 断行点 / L4 片段 x）能跨平台跑的前提。
+ */
+export const BUNDLED_PACKS_DIR = new URL('../packs/', import.meta.url);
+
+/** `packs/index.json` 的一条 —— 生成时写的，消费侧据此枚举，不用把字体名硬编码第二遍 */
+export interface BundledPackEntry {
+  family: string;
+  file: string;
+  class: 'A' | 'B' | 'C' | 'D';
+}
+
+/**
+ * 读出全部随库度量包。
+ *
+ * 用 `readFileSync` 而不是 fetch / 动态 import：`import` JSON 要开
+ * `resolveJsonModule`（会把这批数据焊进类型系统），而这些包是**数据**不是模块 ——
+ * 浏览器侧的正确做法是 fetch 之后 `registry.registerMetrics()`，与这里同一个入口。
+ */
+export function loadBundledPacks(): MetricsPack[] {
+  const index = JSON.parse(
+    readFileSync(new URL('index.json', BUNDLED_PACKS_DIR), 'utf8'),
+  ) as BundledPackEntry[];
+  return index.map(
+    (e) => JSON.parse(readFileSync(new URL(e.file, BUNDLED_PACKS_DIR), 'utf8')) as MetricsPack,
+  );
 }

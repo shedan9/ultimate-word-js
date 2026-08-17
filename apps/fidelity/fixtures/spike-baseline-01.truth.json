@@ -1,0 +1,466 @@
+{
+  "source": "spike-baseline-01.docx",
+  "generator": {
+    "tool": "@uw/fidelity",
+    "formatVersion": 1,
+    "pdfjs": "6.2.108",
+    "word": "16.0",
+    "wordBuild": "16.0.20228"
+  },
+  "unit": "pt",
+  "origin": "top-left",
+  "pageCount": 10,
+  "fonts": {
+    "ArialMT": {
+      "name": "ArialMT",
+      "ascent": 0.905,
+      "descent": -0.212,
+      "vertical": false
+    },
+    "DengXian": {
+      "name": "DengXian",
+      "ascent": 0.81,
+      "descent": -0.232,
+      "vertical": false
+    },
+    "FangSong": {
+      "name": "FangSong",
+      "ascent": 0.859,
+      "descent": -0.141,
+      "vertical": false
+    },
+    "KaiTi": {
+      "name": "KaiTi",
+      "ascent": 0.859,
+      "descent": -0.141,
+      "vertical": false
+    },
+    "MicrosoftYaHei": {
+      "name": "MicrosoftYaHei",
+      "ascent": 1.058,
+      "descent": -0.262,
+      "vertical": false
+    },
+    "SimHei": {
+      "name": "SimHei",
+      "ascent": 0.859,
+      "descent": -0.141,
+      "vertical": false
+    },
+    "SimSun": {
+      "name": "SimSun",
+      "ascent": 0.859,
+      "descent": -0.141,
+      "vertical": false
+    },
+    "TimesNewRomanPSMT": {
+      "name": "TimesNewRomanPSMT",
+      "ascent": 0.891,
+      "descent": -0.216,
+      "vertical": false
+    }
+  },
+  "wordPageCount": 10,
+  "sections": [
+    {
+      "pageWidth": 595.3,
+      "pageHeight": 841.9,
+      "topMargin": 70.85,
+      "bottomMargin": 70.85,
+      "leftMargin": 70.85,
+      "rightMargin": 70.85,
+      "headerDist": 42.55,
+      "footerDist": 49.6,
+      "gutter": 0,
+      "orientation": 0,
+      "lineNumbers": false
+    }
+  ],
+  "pages": [
+    {
+      "index": 0,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 86.9,
+          "w": 111.832,
+          "size": 15.96,
+          "font": "FangSong",
+          "text": "仿宋十六磅首行"
+        },
+        {
+          "x": 70.824,
+          "y": 103.7,
+          "w": 108,
+          "size": 12,
+          "font": "SimSun",
+          "text": "宋体十二磅紧随其后"
+        },
+        {
+          "x": 70.824,
+          "y": 123.26,
+          "w": 127.903,
+          "size": 15.96,
+          "font": "FangSong",
+          "text": "仿宋十六磅第三段"
+        }
+      ],
+      "lines": [
+        {
+          "y": 86.9,
+          "x": 70.824,
+          "xEnd": 182.656,
+          "text": "仿宋十六磅首行",
+          "first": "仿",
+          "last": "行",
+          "items": [
+            0
+          ]
+        },
+        {
+          "y": 103.7,
+          "x": 70.824,
+          "xEnd": 178.824,
+          "text": "宋体十二磅紧随其后",
+          "first": "宋",
+          "last": "后",
+          "items": [
+            1
+          ]
+        },
+        {
+          "y": 123.26,
+          "x": 70.824,
+          "xEnd": 198.727,
+          "text": "仿宋十六磅第三段",
+          "first": "仿",
+          "last": "段",
+          "items": [
+            2
+          ]
+        }
+      ]
+    },
+    {
+      "index": 1,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 93.02,
+          "w": 175.856,
+          "size": 21.96,
+          "font": "SimHei",
+          "text": "黑体二十二磅首行"
+        },
+        {
+          "x": 70.824,
+          "y": 111.5,
+          "w": 108,
+          "size": 12,
+          "font": "SimSun",
+          "text": "宋体十二磅紧随黑体"
+        }
+      ],
+      "lines": [
+        {
+          "y": 93.02,
+          "x": 70.824,
+          "xEnd": 246.68,
+          "text": "黑体二十二磅首行",
+          "first": "黑",
+          "last": "行",
+          "items": [
+            0
+          ]
+        },
+        {
+          "y": 111.5,
+          "x": 70.824,
+          "xEnd": 178.824,
+          "text": "宋体十二磅紧随黑体",
+          "first": "宋",
+          "last": "体",
+          "items": [
+            1
+          ]
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 84.86,
+          "w": 98.154,
+          "size": 14.04,
+          "font": "KaiTi",
+          "text": "楷体十四磅首行"
+        }
+      ],
+      "lines": [
+        {
+          "y": 84.86,
+          "x": 70.824,
+          "xEnd": 168.978,
+          "text": "楷体十四磅首行",
+          "first": "楷",
+          "last": "行",
+          "items": [
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 85.94,
+          "w": 108,
+          "size": 12,
+          "font": "MicrosoftYaHei",
+          "text": "微软雅黑十二磅首行"
+        }
+      ],
+      "lines": [
+        {
+          "y": 85.94,
+          "x": 70.824,
+          "xEnd": 178.824,
+          "text": "微软雅黑十二磅首行",
+          "first": "微",
+          "last": "行",
+          "items": [
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 82.32,
+          "w": 84,
+          "size": 12,
+          "font": "DengXian",
+          "text": "等线十二磅首行"
+        },
+        {
+          "x": 70.824,
+          "y": 99.26,
+          "w": 108,
+          "size": 12,
+          "font": "SimSun",
+          "text": "宋体十二磅紧随等线"
+        }
+      ],
+      "lines": [
+        {
+          "y": 82.32,
+          "x": 70.824,
+          "xEnd": 154.824,
+          "text": "等线十二磅首行",
+          "first": "等",
+          "last": "行",
+          "items": [
+            0
+          ]
+        },
+        {
+          "y": 99.26,
+          "x": 70.824,
+          "xEnd": 178.824,
+          "text": "宋体十二磅紧随等线",
+          "first": "宋",
+          "last": "线",
+          "items": [
+            1
+          ]
+        }
+      ]
+    },
+    {
+      "index": 5,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 81.96,
+          "w": 94.224,
+          "size": 12,
+          "font": "TimesNewRomanPSMT",
+          "text": "Times first baseline"
+        },
+        {
+          "x": 70.824,
+          "y": 95.9,
+          "w": 99.3,
+          "size": 12,
+          "font": "ArialMT",
+          "text": "Arial follows Times"
+        }
+      ],
+      "lines": [
+        {
+          "y": 81.96,
+          "x": 70.824,
+          "xEnd": 165.048,
+          "text": "Times first baseline",
+          "first": "T",
+          "last": "e",
+          "items": [
+            0
+          ]
+        },
+        {
+          "y": 95.9,
+          "x": 70.824,
+          "xEnd": 170.124,
+          "text": "Arial follows Times",
+          "first": "A",
+          "last": "s",
+          "items": [
+            1
+          ]
+        }
+      ]
+    },
+    {
+      "index": 6,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 82.08,
+          "w": 94.68,
+          "size": 12,
+          "font": "ArialMT",
+          "text": "Arial first baseline"
+        }
+      ],
+      "lines": [
+        {
+          "y": 82.08,
+          "x": 70.824,
+          "xEnd": 165.504,
+          "text": "Arial first baseline",
+          "first": "A",
+          "last": "e",
+          "items": [
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "index": 7,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 82.92,
+          "w": 108,
+          "size": 12,
+          "font": "SimSun",
+          "text": "宋体十二磅独占一页"
+        }
+      ],
+      "lines": [
+        {
+          "y": 82.92,
+          "x": 70.824,
+          "xEnd": 178.824,
+          "text": "宋体十二磅独占一页",
+          "first": "宋",
+          "last": "页",
+          "items": [
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "index": 8,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 96.74,
+          "w": 120,
+          "size": 12,
+          "font": "SimSun",
+          "text": "空段之后的宋体十二磅"
+        }
+      ],
+      "lines": [
+        {
+          "y": 96.74,
+          "x": 70.824,
+          "xEnd": 190.824,
+          "text": "空段之后的宋体十二磅",
+          "first": "空",
+          "last": "磅",
+          "items": [
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "index": 9,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 108.26,
+          "w": 132,
+          "size": 12,
+          "font": "SimSun",
+          "text": "空的黑体二十二磅段之后"
+        }
+      ],
+      "lines": [
+        {
+          "y": 108.26,
+          "x": 70.824,
+          "xEnd": 202.824,
+          "text": "空的黑体二十二磅段之后",
+          "first": "空",
+          "last": "后",
+          "items": [
+            0
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -7,18 +7,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 自研布局引擎的 Word（OOXML）在线预览 / 编辑库，定位是**中文公文 / 周报 / 报告类文档的高保真引擎**。
 保真度由自己算的排版决定，**不依赖浏览器排版** —— 所以「用 CSS 让它看起来差不多」永远不是正确答案。
 
-当前进度：Phase 0 已完成（地基 + 行高穿刺 + CI），Phase 1 的**解析链已完整**，
-Phase 2 已排到**行盒的门口** —— 水平方向（断行 + 行内几何）与行高总量都做完了，就差基线。
-Phase 5 的**列表编号**也已经从 `numbering.xml` 一路通到首行几何（它不依赖基线，所以能先做），
+当前进度：Phase 0 已完成（地基 + 行高穿刺 + 基线穿刺 + CI），Phase 1 的**解析链已完整**，
+Phase 2 的**行盒装完了** —— 水平方向（断行 + 行内几何）、行高总量、行内基线都有了，
+差的是**分页**：段落不知道自己排在第几页的哪个高度上，所以 `LineLayout` 有 `baseline` 没有 `y`。
+Phase 5 的**列表编号**也已经从 `numbering.xml` 一路通到首行几何，
 同阶段的**域**做完了结构还原（界桩配对 + 指令解析 + HYPERLINK），**求值**要等分页。
-Phase 4 的**表格**也排到了同一个门口：属性 + 级联（含 `w:tblStylePr` 条件格式）在 model 层，
-列宽 + 每格的 x 与可用宽 + 格内段落 + **边框冲突解析**在 layout 层，**没有 y**。
+Phase 4 的**表格**停在同一个门口：属性 + 级联（含 `w:tblStylePr` 条件格式）在 model 层，
+列宽 + 每格的 x 与可用宽 + 格内段落 + **边框冲突解析**在 layout 层；格内段落有基线，
+但**格子自己没有 y**，那要等分页。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、
 `@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 制表位 + **编号（解析 + 计数器 + 编号文字 + 接进级联）** + **表格（属性 + 级联 + 条件格式）** + **域（界桩配对 + 指令解析 + HYPERLINK）**）、
 `@uw/fonts`（行高规则 + 脚本分桶 + 度量包 + 注册表 + `TextMeasurer`）、
-`@uw/layout`（item 流 + 断行 + 缩进 / 对齐 / 制表位 / 列表编号 + 行高与网格吸附 +
+`@uw/layout`（item 流 + 断行 + 缩进 / 对齐 / 制表位 / 列表编号 + 行高与网格吸附 + **行内基线** +
 **表格列宽与格内几何 + 边框冲突解析**）。
-`@uw/render-dom` 仍是占位 —— 没有 y 画不了，等下面那个穿刺。
+`@uw/render-dom` 仍是占位 —— 行内有基线了，但页与 y 是分页的产物。
 
 一份 docx 的入口是 `loadDocument(pkg, sink)`（`packages/model/src/load.ts`），产出
 `body`（直接格式，可编辑）、`resolved`（级联完的纯数据，给布局）、`cascade`（上下文，**不可**过 Worker 边界）、
@@ -28,15 +30,28 @@ Phase 4 的**表格**也排到了同一个门口：属性 + 级联（含 `w:tblS
 `ResolvedParaProps.numbering.label`（编号文字 + 它自己的字符属性 + `w:suff`）。
 部件一律**按关系类型找**（`RelType.*`），不按 `word/styles.xml` 这种路径惯例猜。
 
-**卡在 Windows 的两件事**：
-① 东亚行高里那 30% 额外行距在基线上下如何分配，需要「首行基线到版心顶」的穿刺来定（要 Word COM）——
-它挡的是**行盒装配及其之后的一切**（基线、y、分页、DOM 渲染）；
-② A/C 类中文字体的**度量包抽取**（要 `C:/Windows/Fonts`）—— 没有它，Mac 上只能走三级降级的
-第③级等宽近似，于是**坐标级真值断言（L2–L4）跑不了**，断行算法的正确性目前只由合成字体的单测保证。
-**不挡**解析、样式级联、分桶、度量、断行、行内几何 —— 这些在 Mac 上都能做完，也确实做完了。
+**原来卡在 Windows 的两件事都做完了**（基线穿刺 + 度量包抽取），Windows 侧现在只剩标定样本。
+度量包：`packages/fonts/packs/*.json`，A/B/C/D 四类 17 款，**已入库**，所以消费侧完全跨平台 ——
+`loadBundledPacks()` 一行注册进 `FontRegistry`，Mac / CI 上拿到的度量与 Word 用的一样。
+重抽（换了字体或 Word 版本时）：`pnpm --filter @uw/fonts run packs`，非 Windows 上以退出码 2 拒绝跑。
+
+直接后果：`layout/src/fixture.test.ts` 从「只能测与度量无关的性质」升级成**逐行比真值（L2）**，
+现状是真实公文 18 行**对上 8 行**（行数一致、首末行一致）。
+
+顺着 L2 的差做完了**标点挤压**的标定（样本 `spike-punct-01`，跑 `pnpm --filter @uw/fidelity spike:punct`）：
+**孤立的标点一点都不压，只有「标点紧跟标点」才压，固定 0.5 em** —— 这条推翻了从正文反推出来的猜测。
+常态挤压落在 `items.ts` 的 `applyPunctPairs`（`buildItems` 阶段，给后一个标点一个**负的 `gapBefore`**，
+与 Word 在 PDF 里的做法一致），塞不下时的临时挤压落在 `linebreak.ts` 的 `compress()`（挤**整行**的标点、
+只挤到刚好够）。同一批真值还钉死了**悬挂优先于挤压**：行尾溢出的是标点就挂出去，
+挂不了（汉字 / 拉丁字）才挤 —— 与开发计划原先写的「压缩优先」相反。
+
+L2 剩下那 10 行指向**同一件已量到未实现**的事：悬挂标点的**墨留在版心内**、只有空半边吐出版心
+（实测左边缘在版心线内 7.96pt、右边缘出界 8.05pt），而我们把悬挂项整个不计入行宽。
+修它要连带改两端对齐与行宽断言，写在 `uncalibrated.ts` 末段。
 
 `@uw/layout` 的用法：`layoutParagraph(resolvedParagraph, { measurer, contentWidth, settings, docGrid })`
-→ `ParagraphLayout`（每行的 x / 逐字 x / 行高 / 渲染片段，**没有 y**）；
+→ `ParagraphLayout`（每行的 x / 逐字 x / 行高 / **行顶到基线** / 渲染片段，**没有 y**：
+行的 y 靠把前面各行的 `height` 累加，页与页内位置是分页的产物）；
 `layoutTable(resolvedTable, { …, availWidth })` → `TableLayout`（列宽 / 每格的 x 与可用宽 /
 格内段落 / 每格四条边解析完的边框，同样**没有 y**）。表格的列宽直接取 `w:tblGrid` ——
 **Word 存盘时已经把 autofit 算完的结果写在那儿了**，照着用就与 Word 一致，
@@ -44,7 +59,8 @@ Phase 4 的**表格**也排到了同一个门口：属性 + 级联（含 `w:tblS
 未标定的常数一律集中在 `packages/layout/src/uncalibrated.ts`，每条都写了「拿什么样本能钉死」——
 布局里出现别处的魔法数字视为 bug，散落的数字会被后人当成实测结论。
 
-`@uw/fonts` 的用法：`FontRegistry` 收字体（`fontkitSource` 一级 / `metricsPackSource` 二级；
+`@uw/fonts` 的用法：`FontRegistry` 收字体（`fontkitSource` 一级 / `metricsPackSource` 二级，
+随库那 17 款走 `@uw/fonts/node` 的 `loadBundledPacks()`；
 字节走 `@uw/fonts/decode` 的 `fontSourceFromBytes()`，文件走 `@uw/fonts/node` 的 `fileSource()`
 —— **主入口刻意不依赖 fontkit**，只带度量包的部署不该被迫打包它），
 `createTextMeasurer(registry, { candidates, diagnostics })` 产出给 layout 注入的 `TextMeasurer`。
@@ -129,7 +145,11 @@ pnpm --filter @uw/fonts run test src/metrics.test.ts -t "东亚"
 pnpm truth                           # 只重算过期 fixture
 pnpm truth gongwen-01                # 指定 fixture
 pnpm truth --force
-pnpm --filter @uw/fidelity spike     # Phase 0 行高穿刺
+pnpm --filter @uw/fidelity spike           # Phase 0 行高穿刺
+pnpm --filter @uw/fidelity spike:baseline  # 基线穿刺（基线在行高里的位置）
+pnpm --filter @uw/fidelity spike:punct     # 标点挤压穿刺（什么时候压、压多少）
+pnpm --filter @uw/fonts run packs          # 重抽度量包（仅 Windows，产物入库）
+pnpm --filter @uw/fonts run packs:check    # 只校验入库的包与本机字体是否一致
 ```
 
 真值的**生成**绑死 Windows（Word COM + `C:/Windows/Fonts`），真值的**消费**跨平台 ——
@@ -179,16 +199,29 @@ pnpm --filter @uw/fidelity spike     # Phase 0 行高穿刺
 
 那个 1.3 是乘在**字体度量**上，不是「1.3 × 字号」；只测宋体家族（unitsPerEm=256、win 跨度恰好 1.0em）两种假设分不开。
 
-**未决（阻塞 Phase 2 的行盒）**：东亚那 30% 额外行距在基线上下如何分配 —— 决定行内基线的确切位置，
-现在一律记进 `lineGap`，只保证行高总量正确。**写行盒布局代码之前必须先补「首行基线到版心顶」的穿刺。**
+**已定死（基线穿刺，30 个样本最大误差 0.140pt）** —— 实现在同一个文件的 `baselineOffset()`：
+**「核心盒」在最终行高里居中**，核心盒 = win 跨度（拉丁的话再加上 GDI 外部行距）。
+推论是行距倍数、网格吸附、固定值行距拉出来或压掉的空间**一律上下均分**，不用为每种来源各写一条规则。
+同一批 fixture（`spike-baseline-01|02|03`，跑 `pnpm --filter @uw/fidelity spike:baseline`）
+还顺手钉死了三条容易搞反的：
+① **网格吸附在行距倍数之前** —— 网格 31.8pt 开 1.5 倍行距，仿宋 16pt 与宋体 12pt 的行高都是 47.7pt，与字号无关；
+② **东亚行的行盒只由东亚字体决定**，拉丁 run 完全不参与（判据是等线 72pt + Times 72pt 那一页：
+Times 的 winAscent 更大，若参与就该赢，实测却仍是等线单独的值）；
+③ **空段落走段落标记的 ascii 桶 + 拉丁规则** —— 12pt 空段落的行高是 13.78pt（Times 的 1.1499 em）
+而不是宋体的 15.6pt，因为段落标记本身不是东亚字符。
 
-行高之外还有两处未标定。一是 `splitFontRuns()` 的歧义字符集取的是 Unicode **EastAsianWidth = Ambiguous**
+**未决（阻塞分页的精度而非可行性）**：混排行的合成规则只有单字体样本 ——
+`composeBaseline()` 的「逐个居中再取 max」是判断，要一份「同一行两款东亚字体、字号不同」的样本才能钉死，
+而 fixture spec 目前一段只有一个字号。
+
+行高与基线之外还有四处未标定。一是 `splitFontRuns()` 的歧义字符集取的是 Unicode **EastAsianWidth = Ambiguous**
 （`w:hint` 要回答的正是「这份文档算不算东亚环境」，两者同构），但 Word 的实际边界有没有偏差没有真值验证过 ——
 上 Windows 时顺手做一份「① ※ ℃ Ⅰ 在 hint=eastAsia / default 下各占多宽」的样本就能钉死。
 二是编号的三个样本：`w:lvlJc="right"` 的编号以哪条线对齐、编号宽过悬挂缩进时正文落在哪、
 `chineseCounting` 与 `chineseCountingThousand` 在 105 / 1005 上各显示什么。
 三是表格隔行带的序号：一份「6 行 3 列、开表头行 + 隔行带、`w:tblStyleRowBandSize=2`」的样本，
 就能钉死「首行算不算进带」「带从第几条开始数」这两问 —— 带影响字重，字重影响宽度，最终影响断行。
+（标点挤压那一条原来也在这份名单里，已经用 `spike-punct-01` 做完了，见上。）
 四是表格边框冲突：一张 2×2 的表、四条内部边分别让相邻两格写不同的 `w:val` / `w:sz` / `nil`，
 一份就能钉死「比宽度还是比样式」「平局取左上还是右下」「nil 在竞争里强不强」三问。
 它只改画法不改坐标，所以优先级低于上面三条。

@@ -40,9 +40,11 @@ export function fakeMeasurer(): TextMeasurer {
     lineMetrics(_family, fontSize, o = {}): LineMetrics {
       const ascent = fontSize * 0.8;
       const descent = fontSize * 0.2;
-      // 东亚行的 1.3 倍系数（metrics.ts 里 13 个样本标定的那个），拉丁行没有外部行距
+      // 东亚行的 1.3 倍系数（metrics.ts 里 13 个样本标定的那个），拉丁行没有外部行距。
+      // 合成字体刻意让拉丁的外部行距为 0，于是 coreAbove 恒等于 ascent —— 期望值能手算，
+      // 而「外部行距整块在基线以上」那条规则由 @uw/fonts 的单测用真字体的度量兜着。
       const lineGap = o.eastAsian === true ? (ascent + descent) * 0.3 : 0;
-      return { ascent, descent, lineGap, lineHeight: ascent + descent + lineGap };
+      return { ascent, descent, lineGap, lineHeight: ascent + descent + lineGap, coreAbove: ascent };
     },
     advances(_family, fontSize, codePoints, out, count) {
       const n = count ?? codePoints.length;

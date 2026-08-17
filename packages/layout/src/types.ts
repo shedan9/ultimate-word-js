@@ -5,13 +5,14 @@
  * 这一条同时买到 Worker 化、golden file 回归、以及将来把断行换成 Rust/WASM 的能力。
  * 单位一律 twips（原则 1.3），出现 px 视为 bug。
  *
- * ⚠️ 这里**没有 y、没有基线、没有页**：东亚行高里那 30% 额外行距在基线上下如何分配
- * 还没标定（见 `@uw/fonts` 的 metrics.ts），行盒装配与分页因此全部停工。
- * 现在做完的是流水线里「行盒之前」的那一段：分桶 → 度量 → 断行 → 行内水平几何。
- * 补完穿刺后，`LineLayout` 加 `baseline` / `y` 即可，其余字段不用动。
+ * 行盒里已经有 `baseline`（基线穿刺标定完了，见 `@uw/fonts` 的 `baselineOffset`），
+ * 但**仍然没有 y、没有页** —— 那是分页的产物，段落自己不知道它排在第几页的哪个高度上。
+ * 段落的坐标原点是**它自己的左上角**：`LineLayout.x` 相对版心左边，行的 y 靠把前面所有行的
+ * `height` 累加起来，分页时再整段平移。这样一段的布局结果可以缓存、可以复用，改动第一段
+ * 不会让第五十段的坐标全部失效。
  */
 import type { Twips } from '@uw/core';
-import type { LineMetrics, ScriptKind } from '@uw/fonts';
+import type { ScriptKind } from '@uw/fonts';
 import type { NodeId } from '@uw/model';
 
 /** 断行与度量的最小单位。一个码点一个 item —— 逐字 x 是中文排版的硬需求 */
@@ -32,7 +33,13 @@ export interface CharItem {
   script: ScriptKind;
   /** 推进宽度，已含 `w:w` 横向缩放与 `w:spacing` 字间距 */
   width: Twips;
-  /** 与**前一个** item 之间的中西文自动间距。行首的那一个不生效 */
+  /**
+   * 与**前一个** item 之间的间距。行首的那一个不生效。
+   *
+   * 可以是**负数**：两个全角标点相邻时固定挤掉半个字（实测，见 `PUNCT_PAIR_COMPRESS_EM`），
+   * 记法就是给后一个标点一个负间距 —— Word 导出的 PDF 里也是用负偏移把它往左挪的。
+   * 负间距同时意味着「这个标点的空半边已经交出去了」，断行时不该再挤它。
+   */
   gapBefore: Twips;
   /** 空白字符：断点在它之后，且行尾的它不计入行宽 */
   space: boolean;
@@ -123,10 +130,19 @@ export interface LineLayout {
   x: Twips;
   /** 行内容宽度，**不含**行尾空格与悬挂出边界的标点 */
   width: Twips;
-  /** 行高总量。基线在行内哪个位置**尚未标定**，见文件头 */
+  /** 行高总量：行距规则与网格吸附之后的值 */
   height: Twips;
-  /** 各字体逐项取 max 之后的行度量，`lineHeight` 是未经行距规则调整的自然值 */
-  metrics: LineMetrics;
+  /**
+   * 行顶到基线，`0 <= baseline <= height`。渲染时文字的基线 = 行顶 y + 这个值。
+   * 「多出来的空间上下均分」那条规则就体现在它与 `natural` 的差上，见 `@uw/fonts`
+   * 的 `baselineOffset`。
+   */
+  baseline: Twips;
+  /**
+   * 未经行距规则与网格调整的自然行高。留着是为了回归比对能分辨
+   * 「行高不对是度量的锅还是规则的锅」—— 两者的修法完全不同。
+   */
+  natural: Twips;
   fragments: LineFragment[];
   leaders: TabLeader[];
   /** 段落的最后一行 —— 两端对齐不拉伸它 */

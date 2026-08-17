@@ -1,0 +1,126 @@
+{
+  "name": "spike-baseline-03",
+  "note": "基线穿刺第三组：**开行网格**（每页 22 行 → w:docGrid linePitch=636 twips = 31.8pt，只吸行不吸字）。中文版 Word 的 Normal 模板默认就开着网格，公文更是把每页 22 行写进了规范，所以「基线被吸附之后落在这一行的哪个位置」跟不开网格时的答案一样挡着分页 —— 01 / 02 量的是自然行盒，这一份量的是吸附后的行盒。四个问题各有对应的段落：① 吸附多出来的空间加在基线以上、以下还是上下均分（前三段，16 / 12 / 26pt，其中 26pt 的自然行高 33.8pt 已超过一个网格行距，必须吸到两行，同时验证向上取整而非四舍五入）；② 拉丁行的吸附余量是否与东亚行同一条规则（第四段）—— 自然行盒里外部行距是**全在基线以上**的，与东亚的上下均分不同，所以这里不能想当然；③ 段落关掉 w:snapToGrid 之后退回自然行高（第五段，与第一段同字号对照）；④ 倍数行距与网格吸附的**先后**（末两段 1.5 倍、一段 2.0 倍）—— 先乘倍数再吸附的话，仿宋 16pt 是 20.8 × 1.5 = 31.2pt 吸到 1 个网格行 = 31.8pt，宋体 12pt 是 23.4pt 也吸到 31.8pt；先吸附再乘则两者都是 31.8 × 1.5 = 47.7pt。两个答案差着半行多，且第二种与字号无关，同时放两个字号就能把它们分开。layout/src/line-height.ts 的 applyGrid 现在按第一种实现，但没有真值。每段都写到三行以上：吸附余量只能从相邻基线之差反推，只有两行就只有一个差值，分不出系统偏差是每行都有还是只有一次。",
+  "page": {
+    "widthMm": 210,
+    "heightMm": 297,
+    "marginMm": {
+      "top": 25,
+      "bottom": 25,
+      "left": 25,
+      "right": 25
+    },
+    "grid": {
+      "linesPage": 22
+    }
+  },
+  "paragraphs": [
+    {
+      "text": "行网格样本正文：这一段要写得足够长，长到无论多大的字号都能折成三行以上，因为吸附后的行高只能靠相邻基线之差来量，只有两行就只有一个差值，分不出「多出来那一点点是每行都有还是只有一次」。所以宁可啰嗦也要把它写长。排版引擎的判据是与真值差多少磅，不是看起来像不像，样本不够长就等于没量。",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 16,
+      "bold": false,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "行网格样本正文：这一段要写得足够长，长到无论多大的字号都能折成三行以上，因为吸附后的行高只能靠相邻基线之差来量，只有两行就只有一个差值，分不出「多出来那一点点是每行都有还是只有一次」。所以宁可啰嗦也要把它写长。排版引擎的判据是与真值差多少磅，不是看起来像不像，样本不够长就等于没量。",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "bold": false,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "pageBreakBefore": true
+    },
+    {
+      "text": "行网格样本正文：这一段要写得足够长，长到无论多大的字号都能折成三行以上，因为吸附后的行高只能靠相邻基线之差来量，只有两行就只有一个差值，分不出「多出来那一点点是每行都有还是只有一次」。所以宁可啰嗦也要把它写长。排版引擎的判据是与真值差多少磅，不是看起来像不像，样本不够长就等于没量。",
+      "fontEA": "黑体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 26,
+      "bold": false,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "pageBreakBefore": true
+    },
+    {
+      "text": "Latin control paragraph under the line grid, written long enough to wrap onto at least three lines so that the snapped line height can be measured from consecutive baselines rather than inferred from a single gap. The GDI external leading of Times New Roman sits entirely above the baseline in the natural line box, and this paragraph asks whether the extra space introduced by grid snapping follows the same rule or gets split evenly.",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "bold": false,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "pageBreakBefore": true
+    },
+    {
+      "text": "行网格样本正文：这一段要写得足够长，长到无论多大的字号都能折成三行以上，因为吸附后的行高只能靠相邻基线之差来量，只有两行就只有一个差值，分不出「多出来那一点点是每行都有还是只有一次」。所以宁可啰嗦也要把它写长。排版引擎的判据是与真值差多少磅，不是看起来像不像，样本不够长就等于没量。",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 16,
+      "bold": false,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "pageBreakBefore": true,
+      "snapToGrid": false
+    },
+    {
+      "text": "行网格样本正文：这一段要写得足够长，长到无论多大的字号都能折成三行以上，因为吸附后的行高只能靠相邻基线之差来量，只有两行就只有一个差值，分不出「多出来那一点点是每行都有还是只有一次」。所以宁可啰嗦也要把它写长。排版引擎的判据是与真值差多少磅，不是看起来像不像，样本不够长就等于没量。",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 16,
+      "bold": false,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "pageBreakBefore": true,
+      "lineSpacingMultiple": 1.5
+    },
+    {
+      "text": "行网格样本正文：这一段要写得足够长，长到无论多大的字号都能折成三行以上，因为吸附后的行高只能靠相邻基线之差来量，只有两行就只有一个差值，分不出「多出来那一点点是每行都有还是只有一次」。所以宁可啰嗦也要把它写长。排版引擎的判据是与真值差多少磅，不是看起来像不像，样本不够长就等于没量。",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "bold": false,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "pageBreakBefore": true,
+      "lineSpacingMultiple": 1.5
+    },
+    {
+      "text": "行网格样本正文：这一段要写得足够长，长到无论多大的字号都能折成三行以上，因为吸附后的行高只能靠相邻基线之差来量，只有两行就只有一个差值，分不出「多出来那一点点是每行都有还是只有一次」。所以宁可啰嗦也要把它写长。排版引擎的判据是与真值差多少磅，不是看起来像不像，样本不够长就等于没量。",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 16,
+      "bold": false,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "pageBreakBefore": true,
+      "lineSpacingMultiple": 2.0
+    }
+  ]
+}

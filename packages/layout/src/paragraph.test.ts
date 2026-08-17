@@ -4,6 +4,7 @@
  * 版心宽度一律取 `SIZE_5 * 10` —— 「一行 10 个字」，期望值可以数着字写。
  */
 
+import type { LineMetrics, TextMeasurer } from '@uw/fonts';
 import type { DocGrid } from '@uw/model';
 import { DEFAULT_SETTINGS } from '@uw/model';
 import { describe, expect, it } from 'vitest';
@@ -128,19 +129,119 @@ describe('行高', () => {
     ).toBe(300);
   });
 
+  it('网格吸附在行距倍数**之前** —— 于是 1.5 倍行距的行高与字号无关', () => {
+    // 实测（spike-baseline-03 末三段）：网格 31.8pt 下开 1.5 倍行距，仿宋 16pt 与宋体 12pt
+    // 的行高都是 47.7pt = 1.5 个网格行。反过来（先乘倍数再吸附）会得到 1 个网格行，
+    // 而且结果随字号变。这里用两个字号一起断言，正是为了让顺序搞反时必然有一个挂掉。
+    const grid: DocGrid = { type: 'lines', linePitch: 312, charSpace: 0 };
+    const spacing = { ...paraProps().spacing, line: 360 };
+    expect(heightOf({ spacing }, { docGrid: grid })).toBe(312 * 1.5);
+    const line = layoutParagraph(
+      para([run('一二', { size: SIZE_5 * 2 })], { spacing }),
+      opts({ docGrid: grid }),
+    ).lines[0];
+    // 两倍字号的自然行高 546 > 312，吸到两个网格行再乘 1.5
+    expect(line?.height).toBe(312 * 2 * 1.5);
+  });
+
   it('纯拉丁行不走 1.3 系数', () => {
     expect(layoutParagraph(para([run('ab')]), opts()).lines[0]?.height).toBe(SIZE_5);
   });
 
-  it('空段落的行高取段落标记的字符属性 —— 它不是摆设', () => {
+  it('空段落的行高取段落标记的字符属性，且走 ascii 桶 + 拉丁规则', () => {
+    // 实测（spike-baseline-01 末两页）：只有段落标记的空段落，行高是标记 **ascii** 字体的
+    // 拉丁行高，不是 eastAsia 字体的 1.3 倍 —— 段落标记本身不是东亚字符。
+    // 合成度量器里拉丁行高恰好是 1 em，所以期望值是 SIZE_5 而不是 EA_LINE。
     const out = layoutParagraph(para([]), opts());
     expect(out.lines).toHaveLength(1);
-    expect(out.lines[0]?.height).toBe(EA_LINE);
+    expect(out.lines[0]?.height).toBe(SIZE_5);
   });
 
   it('段前间距的行单位按行高折算', () => {
     const p = para([run('一')], { spacing: { ...paraProps().spacing, beforeLines: 100, before: 999 } });
     expect(layoutParagraph(p, opts()).spaceBefore).toBe(EA_LINE);
+  });
+});
+
+/**
+ * 一款「比东亚字体伸得更高」的拉丁字体，用来测混排行的合成规则。
+ *
+ * 合成度量器默认所有字体同形（0.8 / 0.2 em），那样测不出「谁定行盒」——
+ * 必须让拉丁一侧在参与合成时会**赢**，才能证明它没有参与。
+ * 参数取 0.9 / 0.25 em 是算好的：拉丁自然行高 241.5 < 东亚的 273（不影响行高），
+ * 核心盒上沿 189 < 东亚基线 199.5（不触发防切字下限），
+ * 但若参与居中就会给出 204.75 —— 与实测的 199.5 差得出来。
+ */
+function tallLatinMeasurer(ascentEm: number, descentEm: number): TextMeasurer {
+  const base = fakeMeasurer();
+  return {
+    ...base,
+    lineMetrics(family, fontSize, o = {}): LineMetrics {
+      if (family !== 'Times New Roman') return base.lineMetrics(family, fontSize, o);
+      const ascent = fontSize * ascentEm;
+      const descent = fontSize * descentEm;
+      return { ascent, descent, lineGap: 0, lineHeight: ascent + descent, coreAbove: ascent };
+    },
+  };
+}
+
+describe('基线在行盒里的位置', () => {
+  const lineOf = (text: string, over = {}, o: Partial<LayoutParagraphOptions> = {}) =>
+    layoutParagraph(para([run(text)], over), opts(o)).lines[0];
+
+  it('东亚行：额外的 30% 上下均分，基线落在 0.95 em', () => {
+    const line = lineOf('一二');
+    expect(line?.height).toBe(EA_LINE);
+    expect(line?.baseline).toBe(SIZE_5 * 0.95);
+  });
+
+  it('拉丁行：外部行距全在基线以上，合成字体里它是 0，所以基线就是 ascent', () => {
+    const line = lineOf('ab');
+    expect(line?.height).toBe(SIZE_5);
+    expect(line?.baseline).toBe(SIZE_5 * 0.8);
+  });
+
+  it('网格吸附多出来的空间上下均分 —— 行高变了，字体度量没变', () => {
+    const grid: DocGrid = { type: 'lines', linePitch: 312, charSpace: 0 };
+    const line = lineOf('一二', {}, { docGrid: grid });
+    expect(line?.height).toBe(312);
+    // ascent 168 + (312 − 核心盒 210) / 2
+    expect(line?.baseline).toBe(168 + (312 - SIZE_5) / 2);
+  });
+
+  it('固定值行距把行压矮时基线跟着上移，且永不超出行高', () => {
+    const line = lineOf('一二', { spacing: { ...paraProps().spacing, line: 100, lineRule: 'exact' } });
+    expect(line?.height).toBe(100);
+    expect(line?.baseline).toBeLessThanOrEqual(100);
+  });
+
+  it('自然行高与最终行高分开记 —— 行高不对时要能分辨是度量的锅还是规则的锅', () => {
+    const grid: DocGrid = { type: 'lines', linePitch: 312, charSpace: 0 };
+    const line = lineOf('一二', {}, { docGrid: grid });
+    expect(line?.natural).toBe(EA_LINE);
+    expect(line?.height).toBe(312);
+  });
+});
+
+describe('混排行的行盒', () => {
+  it('东亚行的行盒只由东亚字体定，拉丁 run 不参与', () => {
+    // 实测（spike-baseline-02 的「等 Tj 等」）：混排行的基线与同字号纯东亚行**一模一样**。
+    const measurer = tallLatinMeasurer(0.9, 0.25);
+    const mixed = layoutParagraph(para([run('一a')]), opts({ measurer })).lines[0];
+    const pure = layoutParagraph(para([run('一二')]), opts({ measurer })).lines[0];
+    expect(mixed?.height).toBe(pure?.height);
+    expect(mixed?.baseline).toBe(pure?.baseline);
+    // 若拉丁也参与居中，基线会被顶到 204.75
+    expect(mixed?.baseline).not.toBe(189 + (EA_LINE - (189 + SIZE_5 * 0.25)) / 2);
+  });
+
+  it('拉丁一侧高到会被切字时，下限把行撑开 —— 这是判断不是实测', () => {
+    // 2.0 em 的 ascent 远超东亚基线，样本外的情形（12pt 汉字里嵌 72pt 英文）就长这样。
+    // 没有真值，所以只保证「不切字」，不保证与 Word 一致，见 line-height.ts 的 floorBox。
+    const measurer = tallLatinMeasurer(2, 0.5);
+    const line = layoutParagraph(para([run('一a')]), opts({ measurer })).lines[0];
+    expect(line?.baseline).toBe(SIZE_5 * 2);
+    expect(line?.height).toBeGreaterThanOrEqual((line?.baseline ?? 0) + SIZE_5 * 0.5);
   });
 });
 

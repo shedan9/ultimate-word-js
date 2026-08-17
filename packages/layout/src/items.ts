@@ -13,7 +13,7 @@ import type { TextMeasurer } from '@uw/fonts';
 import { splitFontRuns } from '@uw/fonts';
 import type { NodeId, ResolvedParagraph, ResolvedRun, ResolvedRunProps } from '@uw/model';
 import type { KinsokuSets } from './break-class.ts';
-import { isCompressiblePunct, isSpaceCp, kinsokuOf } from './break-class.ts';
+import { isCompressiblePunct, isSpaceCp, kinsokuOf, PUNCT_PAIR_COMPRESS_EM } from './break-class.ts';
 import type { CharItem, LayoutItem } from './types.ts';
 import { AUTO_SPACE_EM, em, SMALL_CAPS_SCALE, VERT_ALIGN_SCALE } from './uncalibrated.ts';
 
@@ -26,6 +26,11 @@ export interface BuildItemsOptions {
    * fonts 包刻意不替调用方决定默认字体（见 `bucketFont`），这个决定在这里做。
    */
   defaultFont?: string;
+  /**
+   * `w:characterSpacingControl` 不是 `doNotCompress`（Word 中文版的默认就是压）。
+   * 缺省按开着算 —— 关掉它的文档极少，而漏传导致「不压」是**看得见**的错版。
+   */
+  compressPunctuation?: boolean;
 }
 
 /**
@@ -42,6 +47,7 @@ export function buildItems(p: ResolvedParagraph, opts: BuildItemsOptions): Layou
     appendRun(out, run, opts);
   }
   applyAutoSpace(out, p.props.autoSpaceDE, p.props.autoSpaceDN);
+  applyPunctPairs(out, opts.compressPunctuation !== false);
   return out;
 }
 
@@ -335,6 +341,31 @@ function applyAutoSpace(items: LayoutItem[], de: boolean, dn: boolean): void {
     if (digit ? !dn : letter ? !de : true) continue;
 
     cur.gapBefore = em(eastAsiaSide.fontSize, AUTO_SPACE_EM);
+  }
+}
+
+/**
+ * 相邻两个全角标点之间挤掉半个字 —— **常态排版，与断行无关**。
+ *
+ * 实测（`spike-punct-01`，见 `PUNCT_PAIR_COMPRESS_EM` 的表）：孤立的标点一点都不压，
+ * 只有「标点紧跟标点」才压，且固定 0.5 em。这解释了为什么真实公文里每行都能多塞一个字 ——
+ * 之前我们只在「行尾塞不下」时才压，于是每行都比 Word 宽。
+ *
+ * 记法是给后一个标点一个**负的 `gapBefore`**，而不是改前一个的宽度：Word 导出的 PDF 里
+ * 也正是这么干的（第二个标点起一个新的 show-text，用负偏移往左挪半个字），
+ * 于是逐字 x 与真值天然对齐，命中测试与选区也不用另加特例。
+ *
+ * 压多少按**后一个**标点的字号算：两个标点字号不同时该按谁算没有真值，
+ * 取后者是因为挪的是它。混排字号的标点相邻在公文里基本不出现，先这么定。
+ */
+function applyPunctPairs(items: LayoutItem[], enabled: boolean): void {
+  if (!enabled) return;
+  for (let i = 1; i < items.length; i++) {
+    const prev = items[i - 1] as LayoutItem;
+    const cur = items[i] as LayoutItem;
+    if (prev.kind !== 'char' || cur.kind !== 'char') continue;
+    if (!prev.compressible || !cur.compressible) continue;
+    cur.gapBefore -= em(cur.fontSize, PUNCT_PAIR_COMPRESS_EM);
   }
 }
 

@@ -12,7 +12,9 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "packs": "node tools/build-packs.ts",
+    "packs:check": "node tools/build-packs.ts --check"
   },
   "dependencies": {
     "@uw/core": "workspace:*",

@@ -1,0 +1,631 @@
+{
+  "source": "spike-baseline-02.docx",
+  "generator": {
+    "tool": "@uw/fidelity",
+    "formatVersion": 1,
+    "pdfjs": "6.2.108",
+    "word": "16.0",
+    "wordBuild": "16.0.20228"
+  },
+  "unit": "pt",
+  "origin": "top-left",
+  "pageCount": 14,
+  "fonts": {
+    "ArialMT": {
+      "name": "ArialMT",
+      "ascent": 0.905,
+      "descent": -0.212,
+      "vertical": false
+    },
+    "DengXian": {
+      "name": "DengXian",
+      "ascent": 0.81,
+      "descent": -0.232,
+      "vertical": false
+    },
+    "FangSong": {
+      "name": "FangSong",
+      "ascent": 0.859,
+      "descent": -0.141,
+      "vertical": false
+    },
+    "KaiTi": {
+      "name": "KaiTi",
+      "ascent": 0.859,
+      "descent": -0.141,
+      "vertical": false
+    },
+    "MicrosoftYaHei": {
+      "name": "MicrosoftYaHei",
+      "ascent": 1.058,
+      "descent": -0.262,
+      "vertical": false
+    },
+    "SimHei": {
+      "name": "SimHei",
+      "ascent": 0.859,
+      "descent": -0.141,
+      "vertical": false
+    },
+    "SimSun": {
+      "name": "SimSun",
+      "ascent": 0.859,
+      "descent": -0.141,
+      "vertical": false
+    },
+    "TimesNewRomanPSMT": {
+      "name": "TimesNewRomanPSMT",
+      "ascent": 0.891,
+      "descent": -0.216,
+      "vertical": false
+    }
+  },
+  "wordPageCount": 14,
+  "sections": [
+    {
+      "pageWidth": 595.3,
+      "pageHeight": 841.9,
+      "topMargin": 70.85,
+      "bottomMargin": 70.85,
+      "leftMargin": 70.85,
+      "rightMargin": 70.85,
+      "headerDist": 42.55,
+      "footerDist": 49.6,
+      "gutter": 0,
+      "orientation": 0,
+      "lineNumbers": false
+    }
+  ],
+  "pages": [
+    {
+      "index": 0,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 143.42,
+          "w": 288.072,
+          "size": 72,
+          "font": "SimSun",
+          "text": "宋七十二"
+        }
+      ],
+      "lines": [
+        {
+          "y": 143.42,
+          "x": 70.824,
+          "xEnd": 358.896,
+          "text": "宋七十二",
+          "first": "宋",
+          "last": "二",
+          "items": [
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "index": 1,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 143.42,
+          "w": 288.072,
+          "size": 72,
+          "font": "FangSong",
+          "text": "仿七十二"
+        }
+      ],
+      "lines": [
+        {
+          "y": 143.42,
+          "x": 70.824,
+          "xEnd": 358.896,
+          "text": "仿七十二",
+          "first": "仿",
+          "last": "二",
+          "items": [
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 140.42,
+          "w": 288.072,
+          "size": 72,
+          "font": "DengXian",
+          "text": "等七十二"
+        }
+      ],
+      "lines": [
+        {
+          "y": 140.42,
+          "x": 70.824,
+          "xEnd": 358.896,
+          "text": "等七十二",
+          "first": "等",
+          "last": "二",
+          "items": [
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 146.18,
+          "w": 180.048,
+          "size": 60,
+          "font": "MicrosoftYaHei",
+          "text": "雅六十"
+        }
+      ],
+      "lines": [
+        {
+          "y": 146.18,
+          "x": 70.824,
+          "xEnd": 250.872,
+          "text": "雅六十",
+          "first": "雅",
+          "last": "十",
+          "items": [
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 119.18,
+          "w": 192,
+          "size": 48,
+          "font": "KaiTi",
+          "text": "楷四十八"
+        }
+      ],
+      "lines": [
+        {
+          "y": 119.18,
+          "x": 70.824,
+          "xEnd": 262.824,
+          "text": "楷四十八",
+          "first": "楷",
+          "last": "八",
+          "items": [
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "index": 5,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 119.18,
+          "w": 192,
+          "size": 48,
+          "font": "SimHei",
+          "text": "黑四十八"
+        }
+      ],
+      "lines": [
+        {
+          "y": 119.18,
+          "x": 70.824,
+          "xEnd": 262.824,
+          "text": "黑四十八",
+          "first": "黑",
+          "last": "八",
+          "items": [
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "index": 6,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 138.02,
+          "w": 154.008,
+          "size": 72,
+          "font": "TimesNewRomanPSMT",
+          "text": "Tj 72"
+        }
+      ],
+      "lines": [
+        {
+          "y": 138.02,
+          "x": 70.824,
+          "xEnd": 224.832,
+          "text": "Tj 72",
+          "first": "T",
+          "last": "2",
+          "items": [
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "index": 7,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 138.38,
+          "w": 164.088,
+          "size": 72,
+          "font": "ArialMT",
+          "text": "Aj 72"
+        }
+      ],
+      "lines": [
+        {
+          "y": 138.38,
+          "x": 70.824,
+          "xEnd": 234.912,
+          "text": "Aj 72",
+          "first": "A",
+          "last": "2",
+          "items": [
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "index": 8,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 115.58,
+          "w": 102.672,
+          "size": 48,
+          "font": "TimesNewRomanPSMT",
+          "text": "Tj 48"
+        }
+      ],
+      "lines": [
+        {
+          "y": 115.58,
+          "x": 70.824,
+          "xEnd": 173.496,
+          "text": "Tj 48",
+          "first": "T",
+          "last": "8",
+          "items": [
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "index": 9,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 115.82,
+          "w": 109.392,
+          "size": 48,
+          "font": "ArialMT",
+          "text": "Aj 48"
+        }
+      ],
+      "lines": [
+        {
+          "y": 115.82,
+          "x": 70.824,
+          "xEnd": 180.216,
+          "text": "Aj 48",
+          "first": "A",
+          "last": "8",
+          "items": [
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "index": 10,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 143.42,
+          "w": 72,
+          "size": 72,
+          "font": "SimSun",
+          "text": "宋"
+        },
+        {
+          "x": 142.824,
+          "y": 143.42,
+          "w": 17.996,
+          "size": 72,
+          "font": "SimSun",
+          "text": " "
+        },
+        {
+          "x": 160.82,
+          "y": 143.42,
+          "w": 63.984,
+          "size": 72,
+          "font": "ArialMT",
+          "text": "Aj"
+        },
+        {
+          "x": 224.804,
+          "y": 143.42,
+          "w": 18.126,
+          "size": 72,
+          "font": "ArialMT",
+          "text": " "
+        },
+        {
+          "x": 242.93,
+          "y": 143.42,
+          "w": 72,
+          "size": 72,
+          "font": "SimSun",
+          "text": "宋"
+        }
+      ],
+      "lines": [
+        {
+          "y": 143.42,
+          "x": 70.824,
+          "xEnd": 314.93,
+          "text": "宋 Aj 宋",
+          "first": "宋",
+          "last": "宋",
+          "items": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ]
+        }
+      ]
+    },
+    {
+      "index": 11,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 140.42,
+          "w": 72,
+          "size": 72,
+          "font": "DengXian",
+          "text": "等"
+        },
+        {
+          "x": 142.824,
+          "y": 140.42,
+          "w": 17.996,
+          "size": 72,
+          "font": "DengXian",
+          "text": " "
+        },
+        {
+          "x": 160.82,
+          "y": 140.42,
+          "w": 64.056,
+          "size": 72,
+          "font": "TimesNewRomanPSMT",
+          "text": "Tj"
+        },
+        {
+          "x": 224.876,
+          "y": 140.42,
+          "w": 17.934,
+          "size": 72,
+          "font": "TimesNewRomanPSMT",
+          "text": " "
+        },
+        {
+          "x": 242.81,
+          "y": 140.42,
+          "w": 72,
+          "size": 72,
+          "font": "DengXian",
+          "text": "等"
+        }
+      ],
+      "lines": [
+        {
+          "y": 140.42,
+          "x": 70.824,
+          "xEnd": 314.81,
+          "text": "等 Tj 等",
+          "first": "等",
+          "last": "等",
+          "items": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ]
+        }
+      ]
+    },
+    {
+      "index": 12,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 161.18,
+          "w": 72,
+          "size": 72,
+          "font": "MicrosoftYaHei",
+          "text": "雅"
+        },
+        {
+          "x": 142.824,
+          "y": 161.18,
+          "w": 17.996,
+          "size": 72,
+          "font": "MicrosoftYaHei",
+          "text": " "
+        },
+        {
+          "x": 160.82,
+          "y": 161.18,
+          "w": 63.984,
+          "size": 72,
+          "font": "ArialMT",
+          "text": "Aj"
+        },
+        {
+          "x": 224.804,
+          "y": 161.18,
+          "w": 18.126,
+          "size": 72,
+          "font": "ArialMT",
+          "text": " "
+        },
+        {
+          "x": 242.93,
+          "y": 161.18,
+          "w": 72,
+          "size": 72,
+          "font": "MicrosoftYaHei",
+          "text": "雅"
+        }
+      ],
+      "lines": [
+        {
+          "y": 161.18,
+          "x": 70.824,
+          "xEnd": 314.93,
+          "text": "雅 Aj 雅",
+          "first": "雅",
+          "last": "雅",
+          "items": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ]
+        }
+      ]
+    },
+    {
+      "index": 13,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 143.42,
+          "w": 72,
+          "size": 72,
+          "font": "KaiTi",
+          "text": "楷"
+        },
+        {
+          "x": 142.824,
+          "y": 143.42,
+          "w": 17.996,
+          "size": 72,
+          "font": "KaiTi",
+          "text": " "
+        },
+        {
+          "x": 160.82,
+          "y": 143.42,
+          "w": 64.056,
+          "size": 72,
+          "font": "TimesNewRomanPSMT",
+          "text": "Tj"
+        },
+        {
+          "x": 224.876,
+          "y": 143.42,
+          "w": 17.934,
+          "size": 72,
+          "font": "TimesNewRomanPSMT",
+          "text": " "
+        },
+        {
+          "x": 242.81,
+          "y": 143.42,
+          "w": 72,
+          "size": 72,
+          "font": "KaiTi",
+          "text": "楷"
+        }
+      ],
+      "lines": [
+        {
+          "y": 143.42,
+          "x": 70.824,
+          "xEnd": 314.81,
+          "text": "楷 Tj 楷",
+          "first": "楷",
+          "last": "楷",
+          "items": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ]
+        }
+      ]
+    }
+  ]
+}

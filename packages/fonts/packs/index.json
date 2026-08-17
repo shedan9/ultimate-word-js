@@ -1,0 +1,87 @@
+[
+  {
+    "family": "宋体",
+    "file": "宋体.json",
+    "class": "A"
+  },
+  {
+    "family": "仿宋",
+    "file": "仿宋.json",
+    "class": "A"
+  },
+  {
+    "family": "黑体",
+    "file": "黑体.json",
+    "class": "A"
+  },
+  {
+    "family": "楷体",
+    "file": "楷体.json",
+    "class": "A"
+  },
+  {
+    "family": "等线",
+    "file": "等线.json",
+    "class": "A"
+  },
+  {
+    "family": "微软雅黑",
+    "file": "微软雅黑.json",
+    "class": "A"
+  },
+  {
+    "family": "Times New Roman",
+    "file": "Times New Roman.json",
+    "class": "B"
+  },
+  {
+    "family": "Arial",
+    "file": "Arial.json",
+    "class": "B"
+  },
+  {
+    "family": "Courier New",
+    "file": "Courier New.json",
+    "class": "B"
+  },
+  {
+    "family": "Calibri",
+    "file": "Calibri.json",
+    "class": "B"
+  },
+  {
+    "family": "Cambria",
+    "file": "Cambria.json",
+    "class": "B"
+  },
+  {
+    "family": "Georgia",
+    "file": "Georgia.json",
+    "class": "C"
+  },
+  {
+    "family": "Verdana",
+    "file": "Verdana.json",
+    "class": "C"
+  },
+  {
+    "family": "Tahoma",
+    "file": "Tahoma.json",
+    "class": "C"
+  },
+  {
+    "family": "Segoe UI",
+    "file": "Segoe UI.json",
+    "class": "C"
+  },
+  {
+    "family": "Symbol",
+    "file": "Symbol.json",
+    "class": "D"
+  },
+  {
+    "family": "Wingdings",
+    "file": "Wingdings.json",
+    "class": "D"
+  }
+]
