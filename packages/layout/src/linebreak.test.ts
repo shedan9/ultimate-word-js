@@ -20,6 +20,9 @@ function ctx(chars: number, over: Partial<LineBreakContext> = {}): LineBreakCont
     tabs: [],
     defaultTabStop: 420,
     compressPunctuation: false,
+    // 临时挤压是两端对齐才有的行为（实测），所以脚手架默认按两端对齐给 ——
+    // 公文正文就是它，而「左对齐不挤」有自己的用例
+    justified: true,
     overflowPunct: false,
     ...over,
   };
@@ -78,12 +81,22 @@ describe('禁则（避头尾）', () => {
 });
 
 describe('悬挂 → 挤压 → 回退', () => {
-  it('挤压：行尾全角标点压掉空着的半边就塞得下', () => {
+  it('挤压：行尾全角标点让出空半边就塞得下', () => {
     const items = buildItems(para([run('一二。三')]), M);
-    const lines = breakLines(items, ctx(2.5, { compressPunctuation: true }));
+    // 一个标点最多让出 0.48 em（实测，PUNCT_COMPRESS_MAX_EM），不是整整半个字 ——
+    // 所以可用宽写 2.55：亏空 0.45 字在上限内。写 2.5 要挤 0.5 字，Word 也会换行
+    const lines = breakLines(items, ctx(2.55, { compressPunctuation: true }));
     expect(texts(items, lines)[0]).toBe('一二。');
-    // 压过之后这一行正好占满：两个全角字 + 半个标点
-    expect(lines[0]?.width).toBe(SIZE_5 * 2.5);
+    expect(lines[0]?.width).toBeCloseTo(SIZE_5 * 2.55, 6);
+  });
+
+  it('挤压有上限：要挤掉的超过一个标点的空半边（0.48 em）就换行', () => {
+    const items = buildItems(para([run('一二。三')]), M);
+    expect(texts(items, breakLines(items, ctx(2.5, { compressPunctuation: true })))).toEqual([
+      '一',
+      '二。',
+      '三',
+    ]);
   });
 
   it('悬挂：吐出版心的只是空半边，墨还在版心里，所以行宽多算半个字', () => {
@@ -110,6 +123,30 @@ describe('悬挂 → 挤压 → 回退', () => {
     const items = buildItems(para([run('一二。三')]), M);
     // 可用宽正好两个字：「。」的墨要占进版心半个字，挂不了 —— 回退到「二。」一起下行
     expect(texts(items, breakLines(items, ctx(2, { overflowPunct: true })))).toEqual(['一', '二。', '三']);
+  });
+
+  it('左对齐一格都不挤 —— 挤压是两端对齐才有的行为', () => {
+    // 实测（spike-compress-01 的 B 组）：同一把阶梯改成左对齐，15 段全部把最后一个字推下行。
+    // 右边本来就是毛边，挤出来的地方没有用处
+    const items = buildItems(para([run('一二。三')]), M);
+    const left = ctx(2.55, { compressPunctuation: true, justified: false });
+    expect(texts(items, breakLines(items, left))).toEqual(['一', '二。', '三']);
+    // 同一份输入，两端对齐就挤得下
+    const both = ctx(2.55, { compressPunctuation: true });
+    expect(texts(items, breakLines(items, both))[0]).toBe('一二。');
+  });
+
+  it('挤得动也未必肯挤 —— 亏空大到不划算时 Word 宁可换行', () => {
+    // 判据见 PUNCT_COMPRESS_STRETCH_K：挤压量 × 字距数 ≤ K × 标点数 × 换行后要拉开的量。
+    // 20 个字（含两个孤立标点）排在 19.2 / 19.3 字宽的行里，两个标点合起来能挤 0.96 字，
+    // 两种情形都**挤得动**，翻转的是划不划算：
+    //   19.2：亏空 0.80 字，换行只需拉开 0.20 字 → 0.80×19 = 15.2 > 30.6×2×0.20 = 12.24 → 换行
+    //   19.3：亏空 0.70 字，换行要拉开 0.30 字 → 0.70×19 = 13.3 ≤ 30.6×2×0.30 = 18.36 → 挤
+    const items = buildItems(para([run('一二三四五六，八九十一二三四，六七八九十')]), M);
+    const tight = texts(items, breakLines(items, ctx(19.2, { compressPunctuation: true })));
+    expect([...(tight[0] as string)]).toHaveLength(19);
+    const loose = texts(items, breakLines(items, ctx(19.3, { compressPunctuation: true })));
+    expect([...(loose[0] as string)]).toHaveLength(20);
   });
 
   it('两条补救都关掉才走回退 —— 这三条的顺序决定断在第几个字', () => {

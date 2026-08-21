@@ -118,6 +118,12 @@ try {
     $fmt.SpaceBefore = [double]$p.spaceBeforePt
     $fmt.SpaceAfter  = [double]$p.spaceAfterPt
     $fmt.CharacterUnitFirstLineIndent = [double]$p.firstLineChars
+    # RightIndent is in points, not character units: the compression spike needs the line's
+    # available width dialled in sub-point steps, and the character-unit knobs quantise to
+    # 1/100 of the font size AND depend on how Word defines "one character" -- which is one
+    # of the things under calibration. Points sidestep both.
+    $fmt.RightIndent = [double]$p.rightIndentPt
+    $fmt.LeftIndent  = [double]$p.leftIndentPt
     # Every paragraph-level knob below is assigned UNCONDITIONALLY, even when the spec
     # omits it. InsertParagraphAfter inherits the previous paragraph's formatting, so a
     # `if (spec has it) { set it }` shape lets one paragraph's setting leak into every

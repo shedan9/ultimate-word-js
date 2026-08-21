@@ -389,11 +389,18 @@ function neighborScript(items: readonly LayoutItem[], index: number, step: 1 | -
  * 东亚字符与拉丁字母 / 数字相邻时插入 1/8 em。不做的话中英混排的行长永远对不上，
  * 断行点会随着每行的中英切换次数越差越多。
  *
- * 三条边界：
+ * 四条边界：
  * - 空格两侧不加 —— 已经有空隙了，再加就成了双份
+ * - **全角标点两侧也不加**（实测）：`gongwen-01` 里 `（ascii`、`cs）`、`（autoSpaceDE`
+ *   三处的间隙都是 0.05pt 以内，也就是一点没加。道理与空格同理 ——
+ *   标点自己就带着空半边，再加 1/8 em 就成了双份。漏了这一条，一行里每有一个
+ *   「标点挨着西文」就多出 2pt（三号字），真值第 13 行正是被这 2pt 顶掉了一个「）」
  * - DE 管字母、DN 管数字，两个开关是分开的（Word 界面上也是两项）
  * - 间距记在**后一个** item 上（`gapBefore`），行首那一个不生效 ——
  *   断行把它俩分到两行时，这个间距必须消失
+ *
+ * ⚠️ 「…」「—」这类**没有空半边**的全角标点旁边加不加，没有样本 ——
+ * 现在按「有空半边的才不加」处理，也就是它们照常加。
  */
 function applyAutoSpace(items: LayoutItem[], de: boolean, dn: boolean): void {
   if (!de && !dn) return;
@@ -402,6 +409,7 @@ function applyAutoSpace(items: LayoutItem[], de: boolean, dn: boolean): void {
     const cur = items[i] as LayoutItem;
     if (prev.kind !== 'char' || cur.kind !== 'char') continue;
     if (prev.space || cur.space) continue;
+    if (isCompressiblePunct(prev.cp) || isCompressiblePunct(cur.cp)) continue;
 
     const eastAsiaSide = prev.script === 'eastAsia' ? prev : cur.script === 'eastAsia' ? cur : undefined;
     const latinSide = prev.script === 'eastAsia' ? cur : prev;

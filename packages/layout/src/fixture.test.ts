@@ -6,11 +6,12 @@
  * 从 `C:/Windows/Fonts` 抽的，但**入库了**，所以这个测试在 Mac / CI 上跑到的度量与 Word
  * 用的完全一致。这正是 L2 断言能存在的前提：靠第③级的等宽近似，断行点必然对不上。
  *
- * L2 目前**没有全绿**，测试里断言的是「不许退步」而不是「已经对了」——
- * 18 行里对上 11 行（原先是 8 行：空格分桶 + 悬挂半宽两条修完涨上来的）。
- * 剩下的 7 行全从真值第 6 行（0 起）开始连锁：那一行 Word 宁可换行也不肯再挤 14.16pt 的标点，
- * 而我们挤了。这是**临时挤压的上限**没标定，证据表在 `uncalibrated.ts` 的
- * `PUNCT_COMPRESS_RATIO` 里，钉死它要一份专门的 spike 样本。
+ * L2 目前**没有全绿**，测试里断言的是「不许退步」而不是「已经对了」—— 18 行里对上 16 行。
+ * 一路是这么涨上来的：8（度量包进来）→ 11（空格分桶 + 悬挂只吐空半边）
+ * → 16（`spike-compress-01/02` 定完临时挤压的三条规则 + 标点旁不加自动间距）。
+ * 剩下的 2 行（真值第 10 / 11 行）是一个**至今解释不了的反例**：第 10 行 Word 只差 4.6pt
+ * 就能留住「出」，行内还有四个孤立标点给得起，却换了行 —— 见 `break-class.ts` 的
+ * `PUNCT_COMPRESS_STRETCH_K`。
  */
 import { readFileSync } from 'node:fs';
 import { createDiagnosticSink } from '@uw/core';
@@ -31,15 +32,17 @@ const TRUTH = new URL('../../../apps/fidelity/fixtures/gongwen-01.truth.json', i
 /**
  * 与真值逐字一致的行数下限。**只允许往上调** —— 它是「不许退步」的闸门，不是达标线。
  *
- * 当前 18 行里对上 11 行（含首行与末行）。涨到 11 靠的是两条实测规则：
- * ① 挨着东亚字的空格走 eastAsia 桶（每个空格差 4pt，`items.ts` 的 `applySpaceFont`）；
- * ② 悬挂标点的墨留在版心内、只有空半边吐出去（`HANG_INSIDE_RATIO`）。
+ * 当前 18 行里对上 16 行（含首行与末行）。撑起这 16 行的五条实测规则：
+ * ① 挨着东亚字的空格走 eastAsia 桶（`items.ts` 的 `applySpaceFont`）；
+ * ② 悬挂标点的墨留在版心内、只有空半边吐出去（`HANG_INSIDE_RATIO`）；
+ * ③ 全角标点旁边不加中西文自动间距（`applyAutoSpace`）；
+ * ④ 后置标点先试着整个塞进版心，塞不下才谈悬挂（`linebreak.ts` 的 ⓪ 步）；
+ * ⑤ 临时挤压只在两端对齐的行里发生，且有上限与兑换率
+ *    （`PUNCT_COMPRESS_MAX_EM` / `PUNCT_COMPRESS_STRETCH_K`，样本 `spike-compress-01/02`）。
  *
- * 第一处分歧在真值第 6 行（行号 0 起）：那一行再多收一个「用」需要挤掉 14.16pt 的标点，行内两个孤立标点
- * 合起来给得起（16pt），Word 却宁可换行。同一份真值里 Word 接受过 9.30pt 的临时挤压、
- * 拒绝过 13.75pt —— 上限就卡在这两个数之间，没有样本能钉死，见 `PUNCT_COMPRESS_RATIO`。
+ * 剩下 2 行卡在真值第 10 行（0 起）那个反例上，见 `PUNCT_COMPRESS_STRETCH_K` 的注释。
  */
-const MIN_L2_MATCH = 11;
+const MIN_L2_MATCH = 16;
 
 const sink = createDiagnosticSink();
 let doc: LoadedDocument;

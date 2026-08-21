@@ -5,16 +5,19 @@
  * 追求全局最优反而会系统性地偏离真值。塞不下时按三条补救措施依次尝试，
  * 全都不行才回退到上一个允许的断点：
  *
+ * 0. **先试整个塞进去**（只对后置标点）：挤掉行内别的标点，让它完整落在版心里。
+ *    悬挂只发生在行尾，而「行尾」是塞不下的结果 —— 真值第 13 行的「）」就是这么留住的
  * 1. **悬挂**：后置标点与行尾空格允许溢出版心（`w:overflowPunct`，默认开）。
  *    吐出去的**只是空的那半边**，标点的墨要留在版心内（`HANG_INSIDE_RATIO`，实测）——
  *    所以连半宽都塞不下时，得先挤压腾出地方再挂
  * 2. **挤压**：挂不出去（溢出的是汉字或拉丁字）才挤，把**整行**的全角标点挤到刚好够 ——
- *    见 `compress()`
+ *    见 `compress()`；挤到什么程度就宁可换行，见 `worthCompressing()`
  * 3. **回退**：往回找最近的合法断点，把前面的字一起推到下一行
  *
- * **先挂后挤**是实测的，与开发计划 §2.2 写的「压缩优先」相反。判据是 gongwen-01 的两行
- * （行号按真值的顺序，0 起）：第 4 行溢出的是「，」，Word 把它挂出版心 8.05pt 就收行了，
- * **没有**再去多收一个字；第 3 行溢出的是「自」（挂不了），Word 才挤出 6pt 把它留在行内。
+ * **悬挂优先于「为了多留一个字而挤压」**，这是实测的，与开发计划 §2.2 写的「压缩优先」
+ * 相反（行号按真值顺序，0 起）：第 4 行溢出的是「，」，行内另一个「，」只够挤 7.68pt、
+ * 而把它整个收进版心要 15.53pt —— Word 挂了它，**没有**再去多收一个字；
+ * 第 3 行溢出的是「自」（挂不了），Word 才挤出 6pt 把它留在行内。
  * 顺序反了会差一个字，而且错会顺着往后每一行传下去。
  *
  * 另有一条**与断行无关**的常态挤压：相邻两个全角标点固定挤掉半个字，
@@ -24,9 +27,13 @@
  */
 import type { Twips } from '@uw/core';
 import type { TabStop } from '@uw/model';
-import { canBreakBetween, HANG_INSIDE_RATIO } from './break-class.ts';
+import {
+  canBreakBetween,
+  HANG_INSIDE_RATIO,
+  PUNCT_COMPRESS_MAX_EM,
+  PUNCT_COMPRESS_STRETCH_K,
+} from './break-class.ts';
 import type { LayoutItem } from './types.ts';
-import { PUNCT_COMPRESS_RATIO } from './uncalibrated.ts';
 
 export interface LineBreakContext {
   /** 第 `lineIndex` 行（0 起）的可用宽度：版心宽减掉左右缩进与首行缩进 */
@@ -37,6 +44,15 @@ export interface LineBreakContext {
   defaultTabStop: Twips;
   /** `w:characterSpacingControl` 不是 doNotCompress 时为 true */
   compressPunctuation: boolean;
+  /**
+   * 两端对齐或分散对齐。**临时挤压是两端对齐才有的行为**（实测）。
+   *
+   * `spike-compress-01` 的 B 组：同一把阶梯（亏空 1.1 → 15.1pt）改成左对齐之后，
+   * 15 段**全部**把最后一个字推到了下一行，行宽恒等于 19 个字宽 —— 一格都没挤。
+   * 道理也说得通：左对齐的行右边本来就是毛边，挤出来的地方没有用处；
+   * 两端对齐才需要「凑齐一行」，挤压是它的手段之一。
+   */
+  justified: boolean;
   /** `w:overflowPunct`，默认开 */
   overflowPunct: boolean;
   /**
@@ -133,7 +149,30 @@ export function breakLines(items: readonly LayoutItem[], ctx: LineBreakContext):
    */
   function roomOf(item: LayoutItem, width: Twips): Twips {
     if (item.kind !== 'char' || !item.compressible || !ctx.compressPunctuation) return 0;
-    return item.gapBefore < 0 ? 0 : width * PUNCT_COMPRESS_RATIO;
+    // 左对齐 / 居中 / 右对齐的行一格都不挤（实测，见 ctx.justified）
+    if (!ctx.justified) return 0;
+    return item.gapBefore < 0 ? 0 : width * PUNCT_COMPRESS_MAX_EM;
+  }
+
+  /**
+   * 值不值得为这个字挤 —— **挤得动**（capacity）与**肯不肯挤**（quality）是两回事。
+   *
+   * 判据是 `spike-compress-02` 反推的兑换率（见 `PUNCT_COMPRESS_STRETCH_K`）：
+   * 「每个标点挨的挤压」不超过「换行后每个字距挨的拉伸」的 K 倍。直觉是两端对齐的行
+   * 两条路都会变形 —— 留住它就得挤标点，推下去这一行就得拉开字距 —— Word 比的是哪种更轻。
+   *
+   * 只在「多留一个普通字符」时问这一句。**悬挂不问**：后置标点不能作行首是禁则（硬约束），
+   * Word 会为它挤到上限为止，与好不好看无关。这一条是 gongwen-01 第 4 行钉死的 ——
+   * 那一行推下去只省 0.47pt 的拉伸（按这个闸门远远不值），Word 照样挤了 7.53pt 让「，」挂出去。
+   *
+   * @param deficit 留住它还差多少宽度
+   * @param slack   换行的话这一行要拉开多少（可用宽 − 当前行宽）
+   * @param slots   行内能出力的标点个数
+   * @param gaps    留住它之后这一行有多少个字距
+   */
+  function worthCompressing(deficit: Twips, slack: Twips, slots: number, gaps: number): boolean {
+    if (slots === 0 || slack <= 0 || gaps === 0) return false;
+    return deficit * gaps <= PUNCT_COMPRESS_STRETCH_K * slots * slack;
   }
 
   /**
@@ -149,9 +188,9 @@ export function breakLines(items: readonly LayoutItem[], ctx: LineBreakContext):
    * 而两个标点合起来能挤 16pt）。多个标点之间按等额分摊，先到 50% 上限的不再摊 ——
    * 这就是下面按 `room` 升序做的注水。
    *
-   * ⚠️ 未标定两处，都在 `uncalibrated.ts` 的 `PUNCT_COMPRESS_RATIO` 里：
-   * ① **挤到多少就该放弃**（Word 接受过 9.30pt、拒绝过 13.75pt）—— 这是 L2 剩下 7 行的唯一原因；
-   * ② 等额分摊是判断，Word 也可能优先挤行尾那个。分摊方式只影响行内逐字 x（L4），不影响断点。
+   * ⚠️ 等额分摊是**判断**，不是实测：Word 也可能优先挤行尾那个、或按标点种类给不同额度。
+   * 一份「一行三个标点、只需挤掉一个的量」的样本能钉死它。分摊方式只影响行内逐字 x（L4），
+   * 不影响断点（L2）。「挤到多少就该放弃」是另一回事，已经标定，见 `worthCompressing()`。
    *
    * @param deficit 还差多少宽度
    * @param incoming 正要放进来的那个 item 自己能挤掉多少
@@ -234,6 +273,23 @@ export function breakLines(items: readonly LayoutItem[], ctx: LineBreakContext):
       continue;
     }
 
+    // ⓪ 后置标点先试着**整个塞进版心**，塞不下才谈悬挂 —— 悬挂只发生在行尾，
+    // 而「行尾」是塞不下的结果不是原因。真值第 13 行：`默认开启），` 里的「）」
+    // 靠挤掉行内那个「（」正好收进版心，然后换「，」悬挂出去；先挂后挤会把「）」挂了收行，
+    // 那个「，」被推到下一行，从此每行错一个字。
+    //
+    // 挤的时候**不算这个标点自己的空半边**：拿它自己的空半边把自己收进来，
+    // 与「让它挂出去」是同一件事（都是这半边不占地方），只是记法不同 ——
+    // 而真值第 4 行说 Word 选的是挂（行内另一个「，」给不够 15.53pt，只够 7.53pt 的悬挂）。
+    if (item.kind === 'char' && item.kinsoku === 'noStart' && ctx.overflowPunct) {
+      const fit = compress(x + gap + width - avail, 0);
+      if (fit.got > 0) {
+        accept(width, gap, false, roomOf(item, width));
+        i++;
+        continue;
+      }
+    }
+
     // ① 悬挂：后置标点与行尾空格可以吐出版心。**吐出去的只是空的那半边** ——
     // 标点的墨要留在版心内（HANG_INSIDE_RATIO，实测），所以半宽也塞不下时得先挤压。
     // 行尾空格没有墨，整个吐出去
@@ -249,14 +305,18 @@ export function breakLines(items: readonly LayoutItem[], ctx: LineBreakContext):
       // 墨塞不进去、也挤不出地方 —— 落到 ③ 把它整个推到下一行
     }
 
-    // ② 挤压：挂不出去（溢出的是汉字或拉丁字）才挤，把这一行的全角标点挤到刚好够
+    // ② 挤压：挂不出去（溢出的是汉字或拉丁字）才挤，把这一行的全角标点挤到刚好够。
+    // 先问值不值得 —— 挤得动不等于肯挤，Word 到一定程度就宁可换行（见 worthCompressing）
     const incomingRoom = roomOf(item, width);
     const deficit = x + gap + width - avail;
-    const { got, fromIncoming } = compress(deficit, incomingRoom);
-    if (got > 0) {
-      accept(width - fromIncoming, gap, false, incomingRoom - fromIncoming);
-      i++;
-      continue;
+    const slots = room.filter((r) => r > 0).length + (incomingRoom > 0 ? 1 : 0);
+    if (worthCompressing(deficit, avail - x, slots, xs.length)) {
+      const { got, fromIncoming } = compress(deficit, incomingRoom);
+      if (got > 0) {
+        accept(width - fromIncoming, gap, false, incomingRoom - fromIncoming);
+        i++;
+        continue;
+      }
     }
 
     // ③ 回退到最近的合法断点。禁则已经写进 canBreakBetween，这里不必再修一遍

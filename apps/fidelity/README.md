@@ -25,9 +25,10 @@ node src/extract-truth.ts out/gongwen-01.pdf   # 只抽某个已有 PDF，结果
 pnpm spike                 # Phase 0 行高穿刺：单倍行距行高对不对
 pnpm spike:baseline        # 基线穿刺：基线在行高里的位置对不对
 pnpm spike:punct           # 标点挤压穿刺：什么时候压、压多少
+pnpm spike:compress        # 临时挤压穿刺：塞不下时肯挤多少才换行
 ```
 
-这三个 spike 脚本是**标定工具**，不是单测：它们从真值反推系数、打出残差表，
+这四个 spike 脚本是**标定工具**，不是单测：它们从真值反推系数、打出残差表，
 并在「最优假设不是代码里实现的那个」时以退出码 1 失败。跨平台的回归由单测兜着 ——
 `@uw/fonts` 的 `metrics.test.ts` / `metrics-pack.test.ts` 与 `@uw/layout` 的
 `items.test.ts` 里的期望值，就是这些脚本打出来的实测值。
@@ -38,7 +39,8 @@ pnpm spike:punct           # 标点挤压穿刺：什么时候压、压多少
 |---|---|---|
 | `spike` | `spike-lineheight-01/02` | 单倍行距行高：东亚 win 跨度 × 1.3、拉丁 win 跨度 + 外部行距 |
 | `spike:baseline` | `spike-baseline-01/02/03` | 基线位置：核心盒在行高里居中；网格吸附在行距倍数之前；东亚行的行盒只由东亚字体定；空段落走 ascii 桶 |
-| `spike:punct` | `spike-punct-01` | 孤立标点不压，相邻标点固定压 0.5 em；悬挂优先于挤压 |
+| `spike:punct` | `spike-punct-01` | 孤立标点不压，相邻标点固定压 0.5 em |
+| `spike:compress` | `spike-compress-01/02` | 临时挤压只在两端对齐的行里发生；一个标点最多让 0.48 em；挤到什么程度就宁可换行（`挤压量 × 字距数 ≤ 30.6 × 标点数 × 拉伸量`） |
 
 新增 fixture 有两种方式：
 
@@ -53,10 +55,14 @@ pnpm spike:punct           # 标点挤压穿刺：什么时候压、压多少
 **没写 `grid` 就显式关掉网格** —— 中文版 Word 的 Normal 模板默认是开着的。
 
 段落：`text`（可以是空串，用来量空段落的行高）、`fontEA` / `fontLatin` / `sizePt` / `bold` /
-`align` / `firstLineChars` / `spaceBeforePt` / `spaceAfterPt`，行距二选一
+`align` / `firstLineChars` / `leftIndentPt` / `rightIndentPt` / `spaceBeforePt` / `spaceAfterPt`，行距二选一
 （`lineSpacingPt` = 固定值，`lineSpacingMultiple` = 倍数），以及
 `pageBreakBefore`（把这一段顶到新页的最上面，量「首行基线 − 版心顶」靠它）
 与 `snapToGrid: false`（这一段不吸网格）。
+
+缩进有两套单位，别混：`firstLineChars` 是**字符**（1/100 字），`leftIndentPt` / `rightIndentPt`
+是**点**。要把可用宽度一格格调窄来找某个阈值，用 pt 的那套 —— 字符单位既量化到字号的 1/100，
+又依赖「一个字符多宽」这个待标定的量（`spike-compress-01/02` 就是踩着这一点设计的）。
 
 一段只有**一个字号**：`w:rPr` 是挂在整段 range 上的。要造「一行里两个字号」的样本
 得先给 `make-fixture.ps1` 加 run 级支持，`@uw/fonts` 的 `composeBaseline()` 正等着这个。

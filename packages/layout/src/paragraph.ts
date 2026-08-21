@@ -45,6 +45,8 @@ export function layoutParagraph(p: ResolvedParagraph, opts: LayoutParagraphOptio
     tabs: p.props.tabs,
     defaultTabStop: opts.settings.defaultTabStop,
     compressPunctuation: opts.settings.characterSpacingControl !== 'doNotCompress',
+    // 临时挤压是两端对齐才有的行为（实测，见 LineBreakContext.justified）
+    justified: p.props.justification === 'both' || p.props.justification === 'distribute',
     overflowPunct: p.props.overflowPunct,
     // 编号后的制表位停在正文的左边缘（也就是悬挂缩进落脚处），见 linebreak.ts
     numberingTabStop: geom.left,
