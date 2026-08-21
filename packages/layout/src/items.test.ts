@@ -71,6 +71,41 @@ describe('分桶与度量', () => {
     expect(items[0]).toMatchObject({ kind: 'object', width: 1000, height: 800 });
   });
 
+  it('空格挨着东亚字时走 eastAsia 桶 —— 拿拉丁字体的 0.25 em 量会每个空格差 4pt', () => {
+    // 实测 gongwen-01：「以 Word」「Word 导出」两侧的空格 Word 都按仿宋的 0.5 em 排
+    const items = chars(buildItems(para([run('中 a')]), M));
+    expect(items.map((i) => i.font)).toEqual(['仿宋', '仿宋', 'Times New Roman']);
+    expect(items.map((i) => i.script)).toEqual(['eastAsia', 'eastAsia', 'latin']);
+  });
+
+  it('空格两侧都是拉丁字时照旧走 ascii 桶 —— 「0.5 pt」里那个实测就是半角', () => {
+    const items = chars(buildItems(para([run('a b')]), M));
+    expect(items.map((i) => i.font)).toEqual(['Times New Roman', 'Times New Roman', 'Times New Roman']);
+    expect(items.map((i) => i.script)).toEqual(['latin', 'latin', 'latin']);
+  });
+
+  it('空格的邻居**跨 run** —— 这正是它不能在 splitFontRuns 里做的原因', () => {
+    const items = chars(buildItems(para([run('a '), run('中')]), M));
+    expect(items.map((i) => i.script)).toEqual(['latin', 'eastAsia', 'eastAsia']);
+  });
+
+  it('一串空格整体随邻居，不会因为「邻居也是空格」就判不出来', () => {
+    const items = chars(buildItems(para([run('a  中')]), M));
+    expect(items.map((i) => i.script)).toEqual(['latin', 'eastAsia', 'eastAsia', 'eastAsia']);
+  });
+
+  it('hint 不是 eastAsia 时空格不改桶 —— 那时没有真值，保持规范默认', () => {
+    const fonts = {
+      ascii: 'Times New Roman',
+      hAnsi: 'Times New Roman',
+      eastAsia: '仿宋',
+      cs: '',
+      hint: 'default' as const,
+    };
+    const items = chars(buildItems(para([run('中 a', { fonts })]), M));
+    expect(items.map((i) => i.script)).toEqual(['eastAsia', 'latin', 'latin']);
+  });
+
   it('offset 指回源文本的 UTF-16 下标，代理对不会被切开', () => {
     // U+20000 是扩充 B 的汉字，UTF-16 占两个码元
     const items = chars(buildItems(para([run('中\u{20000}文')]), M));
@@ -129,6 +164,15 @@ describe('相邻标点挤压', () => {
 
   it('省略号与破折号不在可挤压表里 —— 它们的墨横贯整个字宽，没有空半边', () => {
     expect(gaps('一…—二')).toEqual([0, 0, 0, 0]);
+  });
+
+  it('开口紧跟收口（「，）不压 —— 接缝两侧都是墨', () => {
+    // gongwen-01 真值第 10 行（0 起）实测：Word 在那一串标点的 12 个接缝上各挤半个字，唯独「，那个没挤
+    expect(gaps('一「，二')).toEqual([0, 0, 0, 0]);
+  });
+
+  it('收口紧跟省略号（】…）要压 —— 挤掉的是「】」的右半边，与省略号自己压不压无关', () => {
+    expect(gaps('一】…二')).toEqual([0, 0, HALF, 0]);
   });
 
   it('文档关掉 w:characterSpacingControl 时一个都不压', () => {

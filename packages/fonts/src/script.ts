@@ -353,6 +353,35 @@ export function bucketOf(cp: number, hint: FontHint = 'default'): FontBucket {
   return 'hAnsi';
 }
 
+/**
+ * 空格这类**中性字符**要不要跟着东亚邻居走 —— 中英混排行宽算错的第二个原因（第一个是分桶）。
+ *
+ * 空格是 ASCII，按 `bucketOf` 一律进 ascii 桶，于是拿 Times New Roman 的 0.25 em 去量。
+ * 真值说不是：`gongwen-01` 里 12 个空格，只要**任一侧的邻居是东亚字**，Word 量到的就是
+ * 0.5 em（仿宋的空格宽），两侧都是拉丁字时才是 0.25 em。
+ *
+ * | 上下文 | Word 实测（16pt） | 谁的空格 |
+ * |---|---|---|
+ * | `以 Word` / `Word 导出` / `2026 年` / `年 8` | 7.95–8.23 pt | 仿宋（0.5 em） |
+ * | `0.5 pt` 里那个 | ~3.76 pt | Times New Roman（0.25 em） |
+ *
+ * 注意**两侧都要看**：`Word 导出` 那个空格的前一个字是拉丁的 `d`，若只看前一个字就会
+ * 判成 Times，实测却是 0.5 em。所以规则是「邻居里有一个东亚字就算东亚」，
+ * 与 Unicode bidi 里中性字符随强方向的做法同构。
+ *
+ * ⚠️ 两处未标定：① 这里要求 `hint="eastAsia"`（公文的常态），hint=default 时会不会翻过来
+ * 没有样本；② 只处理空格，其他中性字符（`/` `-` 之类）没有样本，一律照 `bucketOf` 走。
+ * 要钉死：一份「中文 + 各种中性字符 + 拉丁」的样本，逐个量宽。
+ */
+export function neutralTakesEastAsia(
+  hint: FontHint,
+  prev: ScriptKind | undefined,
+  next: ScriptKind | undefined,
+): boolean {
+  if (hint !== 'eastAsia') return false;
+  return prev === 'eastAsia' || next === 'eastAsia';
+}
+
 /** 桶 → 排版脚本类型。ascii / hAnsi 排版规则相同，合并成 latin */
 export function scriptOfBucket(bucket: FontBucket): ScriptKind {
   if (bucket === 'eastAsia') return 'eastAsia';

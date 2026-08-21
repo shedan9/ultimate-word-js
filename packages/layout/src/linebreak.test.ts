@@ -86,12 +86,30 @@ describe('悬挂 → 挤压 → 回退', () => {
     expect(lines[0]?.width).toBe(SIZE_5 * 2.5);
   });
 
-  it('悬挂：overflowPunct 开着时行尾标点吐出版心，且不计入行宽', () => {
+  it('悬挂：吐出版心的只是空半边，墨还在版心里，所以行宽多算半个字', () => {
     const items = buildItems(para([run('一二。三')]), M);
-    const lines = breakLines(items, ctx(2, { overflowPunct: true }));
+    const lines = breakLines(items, ctx(2.5, { overflowPunct: true }));
     expect(texts(items, lines)[0]).toBe('一二。');
-    expect(lines[0]?.width).toBe(SIZE_5 * 2);
+    // 实测（gongwen-01 第 4 / 13 行）：悬挂的「，」左边缘在版心内 7.96pt、右边缘出界 8.05pt
+    expect(lines[0]?.width).toBe(SIZE_5 * 2.5);
     expect(lines[0]?.hanging).toEqual([false, false, true]);
+    // 挤压那条路会把标点的**宽度**压掉，悬挂不压 —— 两者行宽一样，靠这一项分辨
+    expect(lines[0]?.ws[2]).toBe(SIZE_5);
+  });
+
+  it('悬挂：半个字也塞不下时先挤行内的标点，挤够了再挂', () => {
+    const items = buildItems(para([run('一，二。三')]), M);
+    const lines = breakLines(items, ctx(3.4, { overflowPunct: true, compressPunctuation: true }));
+    // 「。」的墨要占到 3.5 个字宽，差 0.1 —— 从行内那个「，」身上挤出来
+    expect(texts(items, lines)[0]).toBe('一，二。');
+    expect(lines[0]?.width).toBeCloseTo(SIZE_5 * 3.4, 6);
+    expect(lines[0]?.hanging).toEqual([false, false, false, true]);
+  });
+
+  it('悬挂：墨塞不下又挤不出地方，就整个推到下一行', () => {
+    const items = buildItems(para([run('一二。三')]), M);
+    // 可用宽正好两个字：「。」的墨要占进版心半个字，挂不了 —— 回退到「二。」一起下行
+    expect(texts(items, breakLines(items, ctx(2, { overflowPunct: true })))).toEqual(['一', '二。', '三']);
   });
 
   it('两条补救都关掉才走回退 —— 这三条的顺序决定断在第几个字', () => {

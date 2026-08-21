@@ -7,7 +7,14 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { ScriptFonts } from './script.ts';
-import { bucketFont, bucketOf, hasEastAsianText, isEastAsianCodePoint, splitFontRuns } from './script.ts';
+import {
+  bucketFont,
+  bucketOf,
+  hasEastAsianText,
+  isEastAsianCodePoint,
+  neutralTakesEastAsia,
+  splitFontRuns,
+} from './script.ts';
 
 const cp = (s: string): number => s.codePointAt(0) as number;
 
@@ -147,5 +154,31 @@ describe('切段', () => {
     expect(splitFontRuns('', gongwen)).toEqual([]);
     const runs = splitFontRuns('中文abc', gongwen);
     expect(structuredClone(runs)).toEqual(runs);
+  });
+});
+
+/**
+ * 空格这类中性字符归谁 —— 判据是 `gongwen-01` 的 12 个空格（见 `neutralTakesEastAsia`）。
+ * 它不在 `bucketOf` 里，因为 `bucketOf` 只看一个码点，而这一条要看邻居。
+ */
+describe('中性字符随邻居', () => {
+  it('任一侧邻居是东亚字就跟着走东亚桶', () => {
+    expect(neutralTakesEastAsia('eastAsia', 'eastAsia', 'latin')).toBe(true);
+    expect(neutralTakesEastAsia('eastAsia', 'latin', 'eastAsia')).toBe(true);
+    expect(neutralTakesEastAsia('eastAsia', 'eastAsia', 'eastAsia')).toBe(true);
+  });
+
+  it('两侧都是拉丁就留在 ascii 桶 —— 「0.5 pt」里那个空格实测是半角', () => {
+    expect(neutralTakesEastAsia('eastAsia', 'latin', 'latin')).toBe(false);
+  });
+
+  it('一侧没有邻居（行首行末、制表位旁）也按拉丁算', () => {
+    expect(neutralTakesEastAsia('eastAsia', undefined, undefined)).toBe(false);
+    expect(neutralTakesEastAsia('eastAsia', undefined, 'eastAsia')).toBe(true);
+  });
+
+  it('hint 不是 eastAsia 时不改桶 —— 那时没有真值', () => {
+    expect(neutralTakesEastAsia('default', 'eastAsia', 'eastAsia')).toBe(false);
+    expect(neutralTakesEastAsia('cs', 'eastAsia', 'eastAsia')).toBe(false);
   });
 });

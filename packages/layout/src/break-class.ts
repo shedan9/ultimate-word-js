@@ -27,13 +27,19 @@ const DEFAULT_NO_START = '!),.:;?]}¢°\'"′″‰℃、。〃々〉》」』�
 const DEFAULT_NO_END = '$([{£¥·‘“〈《「『【〔（［｛＄＇＜＠｀￡￥';
 
 /**
- * 可挤压的全角标点：字形只占半边，空着的那半可以被压掉。
+ * 全角标点的**空半边在哪一侧** —— 挤压的物理依据，也是「哪两个标点之间能挤」的判据。
  *
  * 只收**中文全角**标点：拉丁标点本来就是紧排的，压它会让英文变形。
- * 省略号「…」与破折号「——」不在表里 —— 它们的墨横贯整个字宽，没有空半边可压，
- * 实测也确实一点不压（spike-punct-01 第 14 / 15 段）。
+ *
+ * - `BLANK_LEFT`（开口类）：墨在右半边，空的是左半边 —— 「『（〔【《〈 与左引号
+ * - `BLANK_RIGHT`（收口与句读）：墨在左半边，空的是右半边 —— 、。，．：；！？ 与右括号
+ * - 省略号「…」与破折号「—」两边都不空（墨横贯整个字宽），**自己不可压**，
+ *   但它仍是标点：邻居的空半边挨着它照样能压（见 `punctPairCompressible`）
  */
-const COMPRESSIBLE = '、。，．：；！？「」『』（）〔〕【】《》〈〉“”‘’';
+const BLANK_LEFT = '「『（〔【《〈“‘';
+const BLANK_RIGHT = '、。，．：；！？」』）〕】》〉”’';
+/** 两边都不空的全角标点。它们只作为**邻居**参与挤压判定 */
+const NO_BLANK = '…‥—―';
 
 export interface KinsokuSets {
   noStart: ReadonlySet<number>;
@@ -51,7 +57,9 @@ export const DEFAULT_KINSOKU: KinsokuSets = {
   noEnd: setOf(DEFAULT_NO_END),
 };
 
-const COMPRESSIBLE_SET = setOf(COMPRESSIBLE);
+const BLANK_LEFT_SET = setOf(BLANK_LEFT);
+const BLANK_RIGHT_SET = setOf(BLANK_RIGHT);
+const NO_BLANK_SET = setOf(NO_BLANK);
 
 /**
  * 用 `settings.xml` 的自定义禁则集覆盖内建表。
@@ -82,8 +90,32 @@ export function kinsokuOf(cp: number, sets: KinsokuSets = DEFAULT_KINSOKU): 'non
   return 'none';
 }
 
+/** 有空半边可以交出去的全角标点。省略号与破折号**不**在内（墨横贯整个字宽） */
 export function isCompressiblePunct(cp: number): boolean {
-  return COMPRESSIBLE_SET.has(cp);
+  return BLANK_LEFT_SET.has(cp) || BLANK_RIGHT_SET.has(cp);
+}
+
+/**
+ * 这两个相邻的字符之间要不要挤掉半个字 —— **两条都要成立**：
+ *
+ * 1. 两边都是全角标点。标点挨着汉字一点都不压（`spike-punct-01`，26 段实测）
+ * 2. 这个**接缝上有空白**：前一个是收口类（空在右），或后一个是开口类（空在左）。
+ *    唯一压不了的组合是「开口紧跟收口」（`「，`）—— 开口的墨在右半边、收口的墨在左半边，
+ *    接缝上两边都是墨，挤它就是把字形叠起来
+ *
+ * 第 2 条是从 `gongwen-01` 真值第 10 行（0 起）反推的，那一行把整套标点排成一串：
+ * Word 在 `，。`…`）】`…`】…` 这 12 个接缝上各挤了半个字，唯独 `「，` 那个接缝
+ * **一点没挤**（前 11 个字的推进宽 163.29pt，只够容下一次挤压加一点行内调整）。
+ * 同一行还说明**省略号也参与**：`】…` 那个接缝挤了 —— 挤掉的是「】」的右半边，
+ * 与「…」自己压不压无关，所以判定要按「接缝上有没有空白」而不是「两边都可压」。
+ */
+export function punctPairCompressible(prev: number, next: number): boolean {
+  if (!isPunctCp(prev) || !isPunctCp(next)) return false;
+  return BLANK_RIGHT_SET.has(prev) || BLANK_LEFT_SET.has(next);
+}
+
+function isPunctCp(cp: number): boolean {
+  return isCompressiblePunct(cp) || NO_BLANK_SET.has(cp);
 }
 
 /**
@@ -107,6 +139,27 @@ export function isCompressiblePunct(cp: number): boolean {
  * 那个量是随行况变的（真值里出现过 0.19 em），至今没有独立样本钉死它的上限。
  */
 export const PUNCT_PAIR_COMPRESS_EM = 0.5;
+
+/**
+ * 悬挂出版心的标点，有多少**留在版心里**（占它自己宽度的比例）。
+ *
+ * 这个 0.5 也是实测的：`gongwen-01` 真值第 4 与第 13 行（行号 0 起）的行尾「，」，
+ * 左边缘落在版心线**内** 7.96pt、右边缘出界 8.05pt（16pt 字号，即 15.96pt 的推进宽），
+ * 正好一半一半 —— **吐出版心的是空的那半边，墨留在里面**。
+ *
+ * | 行 | 版心右边缘 | 「，」右边缘 | 出界 |
+ * |---|---|---|---|
+ * | 第 4 行 | 521.594 pt | 529.643 pt | 8.049 pt |
+ * | 第 13 行 | 521.594 pt | 529.520 pt | 7.926 pt |
+ *
+ * 直接后果有两个，都在 `linebreak.ts`：① 能不能挂，看的是**半宽**塞不塞得下，
+ * 塞不下要先挤压；② 行宽要把这半个字算进去，否则两端对齐会把整行多拉半个字宽 ——
+ * 实测第 4 行的「，」左边缘落在 434.30pt，正是「版心宽 442.25 − 半个字 8」。
+ *
+ * ⚠️ 只对**全角**后置标点有真值。行尾空格仍然整个不计入行宽（那是另一条老规则，
+ * 见 `contentWidth`）；拉丁标点（`.` `,`）会不会悬挂、悬挂多少，没有样本。
+ */
+export const HANG_INSIDE_RATIO = 0.5;
 
 /** 空白：断点在它之后，且行尾的它不计入行宽（可以吐出版心） */
 export function isSpaceCp(cp: number): boolean {

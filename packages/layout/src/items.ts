@@ -9,11 +9,17 @@
  * `splitFontRuns` 来，宽度从注入的 `TextMeasurer` 来。
  */
 import type { Twips } from '@uw/core';
-import type { TextMeasurer } from '@uw/fonts';
-import { splitFontRuns } from '@uw/fonts';
+import type { ScriptKind, TextMeasurer } from '@uw/fonts';
+import { bucketFont, neutralTakesEastAsia, splitFontRuns } from '@uw/fonts';
 import type { NodeId, ResolvedParagraph, ResolvedRun, ResolvedRunProps } from '@uw/model';
 import type { KinsokuSets } from './break-class.ts';
-import { isCompressiblePunct, isSpaceCp, kinsokuOf, PUNCT_PAIR_COMPRESS_EM } from './break-class.ts';
+import {
+  isCompressiblePunct,
+  isSpaceCp,
+  kinsokuOf,
+  PUNCT_PAIR_COMPRESS_EM,
+  punctPairCompressible,
+} from './break-class.ts';
 import type { CharItem, LayoutItem } from './types.ts';
 import { AUTO_SPACE_EM, em, SMALL_CAPS_SCALE, VERT_ALIGN_SCALE } from './uncalibrated.ts';
 
@@ -41,14 +47,28 @@ export interface BuildItemsOptions {
  */
 export function buildItems(p: ResolvedParagraph, opts: BuildItemsOptions): LayoutItem[] {
   const out: LayoutItem[] = [];
-  appendNumbering(out, p, opts);
+  // 空格的字体要等邻居都到齐才能定（见 applySpaceFont），先记下位置
+  const spaces: SpaceRef[] = [];
+  appendNumbering(out, p, opts, spaces);
   for (const run of p.runs) {
     if (run.props.hidden) continue;
-    appendRun(out, run, opts);
+    appendRun(out, run, opts, spaces);
   }
+  applySpaceFont(out, spaces, opts);
   applyAutoSpace(out, p.props.autoSpaceDE, p.props.autoSpaceDN);
   applyPunctPairs(out, opts.compressPunctuation !== false);
   return out;
+}
+
+/**
+ * 一个待定字体的空格：它自己在 `out` 里的下标，加上它所属 run 的字符属性。
+ *
+ * 不把属性挂到 `CharItem` 上，是因为那份数据要过 Worker 边界（原则 1.1），
+ * 而这个信息只在 `buildItems` 内部活着。
+ */
+interface SpaceRef {
+  index: number;
+  props: ResolvedRunProps;
 }
 
 /**
@@ -65,7 +85,12 @@ export function buildItems(p: ResolvedParagraph, opts: BuildItemsOptions): Layou
  * 3. `runId` 拼的是段落 id，**在模型树里查不到**。命中测试要靠 `numbering` 标记
  *    跳过这些 item，不要试图按这个 id 反查节点
  */
-function appendNumbering(out: LayoutItem[], p: ResolvedParagraph, opts: BuildItemsOptions): void {
+function appendNumbering(
+  out: LayoutItem[],
+  p: ResolvedParagraph,
+  opts: BuildItemsOptions,
+  spaces: SpaceRef[],
+): void {
   const label = p.props.numbering.label;
   if (label === undefined) return;
 
@@ -73,12 +98,14 @@ function appendNumbering(out: LayoutItem[], p: ResolvedParagraph, opts: BuildIte
   const props = label.runProps;
   const size = effectiveSize(props);
   const start = out.length;
-  appendText(out, runId, props, -1, label.text, label.text, size, opts);
+  appendText(out, runId, props, -1, label.text, label.text, size, opts, spaces);
 
   if (label.suffix === 'tab') {
     out.push({ kind: 'tab', runId, contentIndex: -1, fontSize: size, numbering: true });
   } else if (label.suffix === 'space') {
     out.push(single(runId, props, -1, 0x20, fontFor(props, 0x20, opts), size, opts));
+    // 编号后的分隔空格与正文里的空格同一条规则：正文首字是汉字时它就该按东亚字体量
+    spaces.push({ index: out.length - 1, props });
   }
   for (let i = start; i < out.length; i++) {
     const item = out[i] as LayoutItem;
@@ -95,14 +122,14 @@ export function numberingRunId(paragraphId: NodeId): NodeId {
   return `${paragraphId}#num`;
 }
 
-function appendRun(out: LayoutItem[], run: ResolvedRun, opts: BuildItemsOptions): void {
+function appendRun(out: LayoutItem[], run: ResolvedRun, opts: BuildItemsOptions, spaces: SpaceRef[]): void {
   const props = run.props;
   const size = effectiveSize(props);
   for (let ci = 0; ci < run.content.length; ci++) {
     const c = run.content[ci] as (typeof run.content)[number];
     switch (c.kind) {
       case 'text':
-        appendText(out, run.id, props, ci, transformCase(c.text, props), c.text, size, opts);
+        appendText(out, run.id, props, ci, transformCase(c.text, props), c.text, size, opts, spaces);
         break;
       case 'tab':
         out.push({ kind: 'tab', runId: run.id, contentIndex: ci, fontSize: size });
@@ -163,6 +190,7 @@ function appendText(
   original: string,
   size: Twips,
   opts: BuildItemsOptions,
+  spaces: SpaceRef[],
 ): void {
   if (text === '') return;
   const defaultFont = opts.defaultFont ?? '';
@@ -193,20 +221,20 @@ function appendText(
       opts.measurer.advances(font, size, Uint32Array.from(cps), widths);
     }
     for (let k = 0; k < cps.length; k++) {
-      out.push(
-        charItem(
-          runId,
-          props,
-          contentIndex,
-          offsets[k] as number,
-          cps[k] as number,
-          font,
-          sizes[k] as Twips,
-          fr.script,
-          widths[k] as number,
-          opts.kinsoku,
-        ),
+      const item = charItem(
+        runId,
+        props,
+        contentIndex,
+        offsets[k] as number,
+        cps[k] as number,
+        font,
+        sizes[k] as Twips,
+        fr.script,
+        widths[k] as number,
+        opts.kinsoku,
       );
+      if (item.space) spaces.push({ index: out.length, props });
+      out.push(item);
     }
   }
 }
@@ -313,6 +341,49 @@ function fontFor(props: ResolvedRunProps, cp: number, opts: BuildItemsOptions): 
 }
 
 /**
+ * 空格随邻居选字体 —— 中英混排行宽错得最狠的一处，实测逼出来的。
+ *
+ * 空格是 ASCII，`bucketOf` 一律把它丢进 ascii 桶，于是「以 Word 导出」里的两个空格
+ * 都按 Times New Roman 的 0.25 em 量，一个空格就差 4pt（16pt 字号）。真值里
+ * 只要**任一侧的邻居是东亚字**，Word 量到的都是 0.5 em（仿宋自己的空格宽），
+ * 判据与残差见 `@uw/fonts` 的 `neutralTakesEastAsia`。
+ *
+ * 为什么是 `buildItems` 的后处理而不是 `splitFontRuns` 里：邻居**跨 run**
+ * （`' 2026 '` 与 `'年起，'` 是两个 run），切段那一层只看得见一个 run 的文字。
+ * 一串连着的空格整体随邻居 —— 中间那个空格的两边都是空格，孤立地看谁也判不出来。
+ *
+ * 顺带把 `script` 也改成 `eastAsia`：桶变了，行高那一层的「这一行算不算东亚行」
+ * 就该跟着变（`line-height.ts` 的 `hasEastAsia` 按 item.script 判）。
+ * ⚠️ 边界：一行以空格结尾、而定它字体的那个东亚邻居被断到了下一行时，
+ * 这个纯拉丁行会因为行尾空格按东亚行算行高。没有真值，且行尾空格本就不计入行宽，
+ * 先按「桶跟着字符走」的一致性处理。
+ */
+function applySpaceFont(out: LayoutItem[], spaces: readonly SpaceRef[], opts: BuildItemsOptions): void {
+  for (const ref of spaces) {
+    const item = out[ref.index];
+    if (item === undefined || item.kind !== 'char') continue;
+    const prev = neighborScript(out, ref.index, -1);
+    const next = neighborScript(out, ref.index, 1);
+    if (!neutralTakesEastAsia(ref.props.fonts.hint, prev, next)) continue;
+    const font = bucketFont(ref.props.fonts, 'eastAsia') || (opts.defaultFont ?? '');
+    item.font = font;
+    item.script = 'eastAsia';
+    item.width = scaledWidth(opts.measurer.advance(font, item.fontSize, item.cp), ref.props);
+  }
+}
+
+/** 邻居的脚本：跳过其他空格，碰到制表位 / 换行 / 内嵌对象就当这一侧没有邻居 */
+function neighborScript(items: readonly LayoutItem[], index: number, step: 1 | -1): ScriptKind | undefined {
+  for (let i = index + step; i >= 0 && i < items.length; i += step) {
+    const item = items[i] as LayoutItem;
+    if (item.kind !== 'char') return undefined;
+    if (item.space) continue;
+    return item.script;
+  }
+  return undefined;
+}
+
+/**
  * 中西文自动间距（`w:autoSpaceDE` / `w:autoSpaceDN`，两者默认**开**）。
  *
  * 东亚字符与拉丁字母 / 数字相邻时插入 1/8 em。不做的话中英混排的行长永远对不上，
@@ -351,6 +422,9 @@ function applyAutoSpace(items: LayoutItem[], de: boolean, dn: boolean): void {
  * 只有「标点紧跟标点」才压，且固定 0.5 em。这解释了为什么真实公文里每行都能多塞一个字 ——
  * 之前我们只在「行尾塞不下」时才压，于是每行都比 Word 宽。
  *
+ * 「算不算紧跟」由 `punctPairCompressible` 判：接缝上要有空白，所以 `「，`（开口紧跟收口）
+ * 不压，而 `】…`（收口紧跟省略号）要压 —— 两条都是 gongwen-01 真值第 10 行（0 起）钉死的。
+ *
  * 记法是给后一个标点一个**负的 `gapBefore`**，而不是改前一个的宽度：Word 导出的 PDF 里
  * 也正是这么干的（第二个标点起一个新的 show-text，用负偏移往左挪半个字），
  * 于是逐字 x 与真值天然对齐，命中测试与选区也不用另加特例。
@@ -364,7 +438,7 @@ function applyPunctPairs(items: LayoutItem[], enabled: boolean): void {
     const prev = items[i - 1] as LayoutItem;
     const cur = items[i] as LayoutItem;
     if (prev.kind !== 'char' || cur.kind !== 'char') continue;
-    if (!prev.compressible || !cur.compressible) continue;
+    if (!punctPairCompressible(prev.cp, cur.cp)) continue;
     cur.gapBefore -= em(cur.fontSize, PUNCT_PAIR_COMPRESS_EM);
   }
 }

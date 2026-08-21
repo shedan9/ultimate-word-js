@@ -5,15 +5,16 @@
  * 追求全局最优反而会系统性地偏离真值。塞不下时按三条补救措施依次尝试，
  * 全都不行才回退到上一个允许的断点：
  *
- * 1. **悬挂**：后置标点与行尾空格允许溢出版心（`w:overflowPunct`，默认开）——
- *    行尾那个句号吐出边界，然后这一行就结束了
+ * 1. **悬挂**：后置标点与行尾空格允许溢出版心（`w:overflowPunct`，默认开）。
+ *    吐出去的**只是空的那半边**，标点的墨要留在版心内（`HANG_INSIDE_RATIO`，实测）——
+ *    所以连半宽都塞不下时，得先挤压腾出地方再挂
  * 2. **挤压**：挂不出去（溢出的是汉字或拉丁字）才挤，把**整行**的全角标点挤到刚好够 ——
  *    见 `compress()`
  * 3. **回退**：往回找最近的合法断点，把前面的字一起推到下一行
  *
- * **先挂后挤**是实测的，与开发计划 §2.2 写的「压缩优先」相反。判据是 gongwen-01 的两行：
- * 第 5 行溢出的是「，」，Word 把它挂出版心 8.04pt 就收行了，**没有**去挤行内另一个「，」；
- * 第 4 行溢出的是「自」（挂不了），Word 才挤出 6pt 把它留在行内。
+ * **先挂后挤**是实测的，与开发计划 §2.2 写的「压缩优先」相反。判据是 gongwen-01 的两行
+ * （行号按真值的顺序，0 起）：第 4 行溢出的是「，」，Word 把它挂出版心 8.05pt 就收行了，
+ * **没有**再去多收一个字；第 3 行溢出的是「自」（挂不了），Word 才挤出 6pt 把它留在行内。
  * 顺序反了会差一个字，而且错会顺着往后每一行传下去。
  *
  * 另有一条**与断行无关**的常态挤压：相邻两个全角标点固定挤掉半个字，
@@ -23,7 +24,7 @@
  */
 import type { Twips } from '@uw/core';
 import type { TabStop } from '@uw/model';
-import { canBreakBetween } from './break-class.ts';
+import { canBreakBetween, HANG_INSIDE_RATIO } from './break-class.ts';
 import type { LayoutItem } from './types.ts';
 import { PUNCT_COMPRESS_RATIO } from './uncalibrated.ts';
 
@@ -66,7 +67,7 @@ export interface BrokenLine {
   /** 对应 `items` 的区间 `[start, end)` */
   start: number;
   end: number;
-  /** 行内容宽度：行尾空格与悬挂出去的标点**不算** */
+  /** 行内容宽度：行尾空格不算，悬挂的标点只算留在版心内的半个（见 `contentWidth`） */
   width: Twips;
   /** 每个 item 的行内 x（相对行首），下标与 `[start, end)` 一一对应 */
   xs: Twips[];
@@ -138,18 +139,19 @@ export function breakLines(items: readonly LayoutItem[], ctx: LineBreakContext):
   /**
    * 回头把这一行**已经放下**的标点挤掉一点，给正要放进来的字腾地方。
    *
-   * 这是 gongwen-01 的真值逼出来的：`为落实……通知如下。自` 这一行，26 个三号字自然宽 416pt、
-   * 可用宽只有 410.25pt，Word 却把 26 个字全塞进去了，行宽 410.00pt —— 它把行内的
-   * 「，」「。」各挤掉一点（合计 6pt），而不是把「自」推到下一行。只挤「正在溢出的那个字」
+   * 这是 gongwen-01 的真值逼出来的：`为落实……通知如下。自` 那一行（真值第 3 行，0 起），
+   * 26 个三号字自然宽 416pt、可用宽只有 410.25pt，Word 却把 26 个字全塞进去了，
+   * 行宽 410.00pt —— 它把行内的「，」「。」各挤掉一点（合计 6pt），
+   * 而不是把「自」推到下一行。只挤「正在溢出的那个字」
    * （下面 ① 的老做法）解释不了这一行，因为溢出的是「自」，它不是标点。
    *
    * 挤多少：**刚好够**，不是一律 50%。同样是那一行的证据（Word 只挤了 6pt，
    * 而两个标点合起来能挤 16pt）。多个标点之间按等额分摊，先到 50% 上限的不再摊 ——
    * 这就是下面按 `room` 升序做的注水。
    *
-   * ⚠️ 未标定：等额分摊是判断。Word 也可能优先挤行尾那个、或者按标点种类给不同额度。
-   * 一份「一行里三个标点、只需挤掉一个的量」的样本能钉死它 —— 看是三个各挤 1/3 还是一个挤满。
-   * 分摊方式只影响行内逐字 x（L4，误差 0.25pt 量级），不影响断点（L2），所以优先级低。
+   * ⚠️ 未标定两处，都在 `uncalibrated.ts` 的 `PUNCT_COMPRESS_RATIO` 里：
+   * ① **挤到多少就该放弃**（Word 接受过 9.30pt、拒绝过 13.75pt）—— 这是 L2 剩下 7 行的唯一原因；
+   * ② 等额分摊是判断，Word 也可能优先挤行尾那个。分摊方式只影响行内逐字 x（L4），不影响断点。
    *
    * @param deficit 还差多少宽度
    * @param incoming 正要放进来的那个 item 自己能挤掉多少
@@ -221,7 +223,7 @@ export function breakLines(items: readonly LayoutItem[], ctx: LineBreakContext):
     // 悬挂过之后这一行就结束了：吐出版心的标点按定义在行尾，后面不可能再有字。
     // 唯一的例外是空格 —— 行尾的一串空格要一起吐出去，不能把第二个空格推到下一行的行首。
     // 少了这一条，① 的挤压会在悬挂之后又腾出地方来，把下一个字硬拉回这一行
-    // （gongwen-01 第 5 行就是这么错的：Word 让「，」悬挂出去 8.04pt 然后收行）。
+    // （gongwen-01 真值第 4 行就是这么错的：Word 让「，」悬挂出去 8.05pt 然后收行）。
     if (hung) {
       if (item.kind === 'char' && item.space) {
         accept(width, gap, true);
@@ -232,12 +234,19 @@ export function breakLines(items: readonly LayoutItem[], ctx: LineBreakContext):
       continue;
     }
 
-    // ① 悬挂：后置标点与行尾空格可以吐出版心
+    // ① 悬挂：后置标点与行尾空格可以吐出版心。**吐出去的只是空的那半边** ——
+    // 标点的墨要留在版心内（HANG_INSIDE_RATIO，实测），所以半宽也塞不下时得先挤压。
+    // 行尾空格没有墨，整个吐出去
     if (item.kind === 'char' && (item.space || (item.kinsoku === 'noStart' && ctx.overflowPunct))) {
-      accept(width, gap, true);
-      hung = true;
-      i++;
-      continue;
+      const inside = item.space ? 0 : width * HANG_INSIDE_RATIO;
+      const over = x + gap + inside - avail;
+      if (over <= 0 || compress(over, 0).got > 0) {
+        accept(width, gap, true);
+        hung = true;
+        i++;
+        continue;
+      }
+      // 墨塞不进去、也挤不出地方 —— 落到 ③ 把它整个推到下一行
     }
 
     // ② 挤压：挂不出去（溢出的是汉字或拉丁字）才挤，把这一行的全角标点挤到刚好够
@@ -373,17 +382,22 @@ function decimalTarget(
 }
 
 /**
- * 行宽**不含行尾**的空格与悬挂标点。
+ * 行宽**不含行尾空格**，悬挂标点只算**留在版心内的那半个**。
  *
- * 行尾空格必须扣掉，否则「居中」的中文标题只要末尾多打了一个空格就会整体左移半个字宽 ——
+ * 行尾空格必须整个扣掉，否则「居中」的中文标题只要末尾多打了一个空格就会整体左移半个字宽 ——
  * 这是肉眼可见的错位，而公文标题末尾带空格相当常见。行中间的空格照常计入。
+ *
+ * 悬挂的标点不一样：它的墨还在版心里（`HANG_INSIDE_RATIO`，实测），只有空半边吐了出去。
+ * 整个不计入的话，两端对齐会拿这半个字当成空隙再拉一次，行内每个字都跟着往右挪 ——
+ * 真值第 4 行的行尾「，」左边缘正好落在「版心宽 − 半个字」上。
  */
 function contentWidth(line: BrokenLine, items: readonly LayoutItem[]): Twips {
   for (let k = line.xs.length - 1; k >= 0; k--) {
     const item = items[line.start + k];
-    if (line.hanging[k] === true) continue;
-    if (item !== undefined && item.kind === 'char' && item.space) continue;
-    return (line.xs[k] as Twips) + (line.ws[k] as Twips);
+    const space = item !== undefined && item.kind === 'char' && item.space;
+    if (space) continue;
+    const ratio = line.hanging[k] === true ? HANG_INSIDE_RATIO : 1;
+    return (line.xs[k] as Twips) + (line.ws[k] as Twips) * ratio;
   }
   return 0;
 }
