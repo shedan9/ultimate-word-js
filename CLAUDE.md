@@ -8,19 +8,33 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 保真度由自己算的排版决定，**不依赖浏览器排版** —— 所以「用 CSS 让它看起来差不多」永远不是正确答案。
 
 当前进度：Phase 0 已完成（地基 + 行高穿刺 + 基线穿刺 + CI），Phase 1 的**解析链已完整**，
-Phase 2 的**行盒装完了** —— 水平方向（断行 + 行内几何）、行高总量、行内基线都有了，
-差的是**分页**：段落不知道自己排在第几页的哪个高度上，所以 `LineLayout` 有 `baseline` 没有 `y`。
-Phase 5 的**列表编号**也已经从 `numbering.xml` 一路通到首行几何，
-同阶段的**域**做完了结构还原（界桩配对 + 指令解析 + HYPERLINK），**求值**要等分页。
-Phase 4 的**表格**停在同一个门口：属性 + 级联（含 `w:tblStylePr` 条件格式）在 model 层，
-列宽 + 每格的 x 与可用宽 + 格内段落 + **边框冲突解析**在 layout 层；格内段落有基线，
-但**格子自己没有 y**，那要等分页。
+Phase 2 除了 DOM 渲染器都做完了，**Phase 3 的分页骨架也做完了** —— `layoutDocument()`
+把段落与表格摞进一页页的版心，每一行都有了页号与 y，`LineLayout` 的 `baseline` 终于能拼成
+绝对坐标。**卡口没有了**：横向（断行）与纵向（基线 y）现在都能与真值逐行比。
+Phase 5 的**列表编号**已经从 `numbering.xml` 一路通到首行几何，
+同阶段的**域**做完了结构还原（界桩配对 + 指令解析 + HYPERLINK），**求值**还没做（不再是被挡着，
+是还没写）。Phase 4 的**表格**：属性 + 级联（含 `w:tblStylePr` 条件格式）在 model 层，
+列宽 + 每格的 x 与可用宽 + 格内段落 + **边框冲突解析**在 layout 层，跨页按**行**拆
+（行是原子的 = 全表 cantSplit，拆行还没做）。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、
 `@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 制表位 + **编号（解析 + 计数器 + 编号文字 + 接进级联）** + **表格（属性 + 级联 + 条件格式）** + **域（界桩配对 + 指令解析 + HYPERLINK）**）、
 `@uw/fonts`（行高规则 + 脚本分桶 + 度量包 + 注册表 + `TextMeasurer`）、
 `@uw/layout`（item 流 + 断行 + 缩进 / 对齐 / 制表位 / 列表编号 + 行高与网格吸附 + **行内基线** +
-**表格列宽与格内几何 + 边框冲突解析**）。
-`@uw/render-dom` 仍是占位 —— 行内有基线了，但页与 y 是分页的产物。
+**表格列宽与格内几何 + 边框冲突解析** + **分页**）。
+`@uw/render-dom` 仍是占位 —— 但它不再被任何东西挡着，页与 y 都齐了，这是下一件该做的事。
+
+**分页**（`packages/layout/src/page.ts`）四处容易搞反：
+① `w:sectPr/w:type` 说的是**本节自己**从哪儿开始，不是「下一节怎么开始」（§17.6.22）——
+按后者实现整份文档会错开一节；② **keepNext 是「接缝」不是「整块」**：本段末行与下一段首行
+同页即可，整段照样能拆，所以实现成「排本段时把接缝高度算进可用高」（`joinHeight`），
+按整块原子做会平白把一整段推到下一页；③ **页是惰性开的**（`Flow.page === undefined`），
+文末的硬分页符因此不会凭空多出一张空页，`evenPage` / `oddPage` 补的空页才是显式造的
+（带 `filler`）；④ `continuous` 只在**页面设置没变**时才真的不换页 —— 一页只能有一个版心框。
+每行的绝对基线 = `page.geometry.content.y + PlacedLine.y + LineLayout.baseline`，
+gongwen-01 的 18 行与 Word 真值最大差 **0.06pt**（L3 判据 0.5pt），断言在 `fixture.test.ts`。
+逐行累加**不需要**「每页重新对齐网格」的修正 —— 网格吸附已经吸在每一行的行高上了。
+未做：页眉页脚（部件没解析，版心顶固定取 `w:top`）、表格拆行、脚注不占位；
+未标定的两条（孤行寡行的 2 行下限、段前间距在页首算不算）在 `uncalibrated.ts`。
 
 一份 docx 的入口是 `loadDocument(pkg, sink)`（`packages/model/src/load.ts`），产出
 `body`（直接格式，可编辑）、`resolved`（级联完的纯数据，给布局）、`cascade`（上下文，**不可**过 Worker 边界）、
@@ -81,11 +95,13 @@ L2 剩下那 2 行（真值第 10 / 11 行）是**唯一一个解释不了的反
 12 个接缝已经在常态挤压里各压掉了半个字 —— 「已经压过的行还肯不肯再压」多半另有规则。
 写在 `PUNCT_COMPRESS_STRETCH_K` 的注释里，**没有为它硬凑常数**。
 
-`@uw/layout` 的用法：`layoutParagraph(resolvedParagraph, { measurer, contentWidth, settings, docGrid })`
-→ `ParagraphLayout`（每行的 x / 逐字 x / 行高 / **行顶到基线** / 渲染片段，**没有 y**：
-行的 y 靠把前面各行的 `height` 累加，页与页内位置是分页的产物）；
+`@uw/layout` 的用法：整份文档走 `layoutDocument(resolved, { measurer, settings })`
+→ `DocumentLayout`（`pages → blocks → lines/rows → fragments`，**有 y**）。
+单块的两个入口仍然**不带 y**，它们是分页的输入、也是缓存的单位：
+`layoutParagraph(resolvedParagraph, { measurer, contentWidth, settings, docGrid })`
+→ `ParagraphLayout`（每行的 x / 逐字 x / 行高 / **行顶到基线** / 渲染片段）；
 `layoutTable(resolvedTable, { …, availWidth })` → `TableLayout`（列宽 / 每格的 x 与可用宽 /
-格内段落 / 每格四条边解析完的边框，同样**没有 y**）。表格的列宽直接取 `w:tblGrid` ——
+格内段落 / 每格四条边解析完的边框）。表格的列宽直接取 `w:tblGrid` ——
 **Word 存盘时已经把 autofit 算完的结果写在那儿了**，照着用就与 Word 一致，
 这也是「完整 autofit 算法」能列为非目标的原因。
 未标定的常数一律集中在 `packages/layout/src/uncalibrated.ts`，每条都写了「拿什么样本能钉死」——

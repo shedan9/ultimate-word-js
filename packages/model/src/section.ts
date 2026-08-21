@@ -7,11 +7,18 @@
 import type { Twips } from '@uw/core';
 import type { XmlElement } from '@uw/ooxml';
 import { attr, child, children } from '@uw/ooxml';
-import type { DocGrid, HeaderFooterRef, SectionProps } from './nodes.ts';
+import type { DocGrid, HeaderFooterRef, SectionProps, SectionStart } from './nodes.ts';
 import { attrInt, attrOf, enumVal, onOff, put } from './xml-values.ts';
 
 const GRID_TYPES = ['default', 'lines', 'linesAndChars', 'snapToChars'] as const;
 const HF_TYPES = ['default', 'first', 'even'] as const;
+const SECTION_TYPES: readonly SectionStart[] = [
+  'nextPage',
+  'continuous',
+  'nextColumn',
+  'evenPage',
+  'oddPage',
+];
 
 /**
  * `w:sectPr` 缺席时的兜底 —— A4 纵向 + 中文版 Word 默认页边距。
@@ -21,6 +28,7 @@ const HF_TYPES = ['default', 'first', 'even'] as const;
  */
 export const DEFAULT_SECTION_PROPS: SectionProps = {
   page: { width: 11906, height: 16838, orientation: 'portrait' },
+  type: 'nextPage',
   margin: { top: 1440, right: 1800, bottom: 1440, left: 1800, header: 851, footer: 992, gutter: 0 },
   docGrid: { type: 'default', linePitch: 0, charSpace: 0 },
   columns: 1,
@@ -45,6 +53,8 @@ export function parseSectionProps(sectPr: XmlElement | undefined): SectionProps 
       // 拿它去转置尺寸会把横向页面转回竖的
       orientation: attrOf(pgSz, 'w:orient') === 'landscape' ? 'landscape' : 'portrait',
     },
+    // 缺席按 nextPage（规范默认）。注意它说的是**本节**从哪儿开始，见 SectionStart
+    type: enumVal(attrOf(child(sectPr, 'w:type'), 'w:val'), SECTION_TYPES) ?? d.type,
     margin: {
       top: attrInt(pgMar, 'w:top') ?? d.margin.top,
       right: attrInt(pgMar, 'w:right') ?? d.margin.right,

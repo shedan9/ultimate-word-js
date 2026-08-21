@@ -1,6 +1,6 @@
 /**
- * 拿真实公文 `gongwen-01.docx` 走完整条链：解包 → 级联 → 分桶度量 → 断行 → 段落装配，
- * 再与 Word 导出的坐标真值 `gongwen-01.truth.json` 逐行比断行点（L2）。
+ * 拿真实公文 `gongwen-01.docx` 走完整条链：解包 → 级联 → 分桶度量 → 断行 → 段落装配 →
+ * **分页**，再与 Word 导出的坐标真值 `gongwen-01.truth.json` 比断行点（L2）与基线 y（L3）。
  *
  * 度量走三级降级里的第②级 —— 随库分发的度量包（`packages/fonts/packs`）。它是在 Windows 上
  * 从 `C:/Windows/Fonts` 抽的，但**入库了**，所以这个测试在 Mac / CI 上跑到的度量与 Word
@@ -22,6 +22,8 @@ import type { LoadedDocument, ResolvedParagraph } from '@uw/model';
 import { fontNameCandidates, loadDocument, walkBlocks } from '@uw/model';
 import { OpcPackage } from '@uw/ooxml';
 import { beforeAll, describe, expect, it } from 'vitest';
+import type { DocumentLayout } from './page.ts';
+import { layoutDocument } from './page.ts';
 import type { LayoutParagraphOptions } from './paragraph.ts';
 import { layoutParagraph } from './paragraph.ts';
 import type { ParagraphLayout } from './types.ts';
@@ -48,6 +50,7 @@ const sink = createDiagnosticSink();
 let doc: LoadedDocument;
 let paragraphs: ResolvedParagraph[];
 let laid: ParagraphLayout[];
+let paged: DocumentLayout;
 let contentWidth: number;
 let measurer: TextMeasurer;
 
@@ -80,6 +83,11 @@ beforeAll(() => {
     if (block.kind === 'paragraph') paragraphs.push(block);
   }
   laid = paragraphs.map((p) => layoutParagraph(p, opts));
+  paged = layoutDocument(doc.resolved, {
+    measurer,
+    settings: doc.cascade.settings,
+    diagnostics: sink,
+  });
 });
 
 describe('真实公文走完整条链', () => {
@@ -205,5 +213,78 @@ describe('L2 · 断行点与 Word 真值', () => {
     const theirs = truthLines();
     expect(ours[0]).toBe(theirs[0]);
     expect(ours[ours.length - 1]).toBe(theirs[theirs.length - 1]);
+  });
+});
+
+/**
+ * L0 / L3：页数与每一行的基线 y。
+ *
+ * 这两条是**分页**（`page.ts`）的验收：真值里每一行的 `y` 就是 Word 画那一行时的基线，
+ * 原点是页面左上角。我们这边把它拼出来的路径是
+ * **版心顶（`content.y`）+ 行顶（`PlacedLine.y`）+ 行内基线（`LineLayout.baseline`）**，
+ * 三个数分别来自 `w:pgMar`、逐行累加、基线穿刺标定的公式 —— 任何一处错了都会被这里抓住。
+ *
+ * 实测 18 行最大误差 **0.06pt**（判据 0.5pt），也就是说逐行累加**不需要**任何
+ * 「每页重新对齐到网格」的修正：网格吸附已经吸在每一行的行高上了。
+ */
+const L3_TOLERANCE_PT = 0.5;
+
+describe('L0 / L3 · 页数与基线 y', () => {
+  interface TruthPages {
+    pageCount: number;
+    pages: { lines: { y: number; text: string }[] }[];
+  }
+  const truthFile = (): TruthPages => JSON.parse(readFileSync(TRUTH, 'utf8')) as TruthPages;
+
+  it('L0：页数与 Word 一致', () => {
+    expect(paged.pages).toHaveLength(truthFile().pageCount);
+  });
+
+  it('分页没有引入新诊断 —— 单栏、单节，什么都不该报', () => {
+    expect(sink.list()).toEqual([]);
+  });
+
+  it(`L3：每一行的基线 y 与真值差 < ${L3_TOLERANCE_PT}pt`, () => {
+    const truth = truthFile();
+    const worst = { line: -1, delta: 0, text: '' };
+
+    paged.pages.forEach((page, pi) => {
+      // 空段落在 PDF 里不落墨，真值也就没有那一行 —— 比对时要跳过它，否则整页错位
+      const ours = page.blocks
+        .filter((b) => b.kind === 'paragraph')
+        .flatMap((b) => b.lines)
+        .map((placed) => ({
+          y: twipsToPt(page.geometry.content.y + placed.y + placed.line.baseline),
+          text: placed.line.fragments
+            .map((f) => f.text)
+            .join('')
+            .replace(/\s+$/u, ''),
+        }))
+        .filter((l) => l.text !== '');
+      const theirs = truth.pages[pi]?.lines ?? [];
+      expect(ours).toHaveLength(theirs.length);
+
+      ours.forEach((line, i) => {
+        const delta = Math.abs(line.y - (theirs[i]?.y ?? 0));
+        if (delta > worst.delta) {
+          worst.line = i;
+          worst.delta = delta;
+          worst.text = line.text;
+        }
+      });
+    });
+
+    // 失败时把最坏的那一行连文字一起报出来，省得再去逐行 diff
+    expect(worst.delta, `最坏的是第 ${worst.line} 行「${worst.text}」`).toBeLessThan(L3_TOLERANCE_PT);
+  });
+
+  it('每一行都落在版心里 —— 累加出来的 y 不许溢出页底', () => {
+    for (const page of paged.pages) {
+      const bottom = page.blocks
+        .filter((b) => b.kind === 'paragraph')
+        .flatMap((b) => b.lines)
+        .reduce((max, l) => Math.max(max, l.y + l.line.height), 0);
+      expect(bottom).toBeLessThanOrEqual(page.geometry.content.height);
+    }
   });
 });

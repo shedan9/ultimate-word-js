@@ -118,7 +118,7 @@ flowchart TB
 | `ooxml` | 字节 | `OpcPackage` | zip 损坏 / 不是 OOXML → **抛异常** | 解包后 part 清单快照 |
 | `model` | `OpcPackage` | `LoadedDocument`（`loadDocument()`） | `basedOn` 成环、引用缺失 → **诊断，不抛** | 属性树 dump 与 Word「显示格式」面板抽查一致 |
 | `fonts` | 字体字节 / 度量包 | `FontMetrics` · `TextMeasurer` | 字体缺失 → **三级降级**（见 §5.3） | 硬编码实测值的单测（跨平台可跑） |
-| `layout` | `ResolvedParagraph` / `ResolvedTable` + `TextMeasurer` | 今天：`ParagraphLayout` · `TableLayout`（**没有 y**）；分页后：`LayoutResult` · `LayoutIndex` | 域不收敛 → **振荡检测后冻结** | 与 `*.truth.json` 逐行 diff（L0–L4 分级） |
+| `layout` | `ResolvedBody`（或单个 `ResolvedParagraph` / `ResolvedTable`）+ `TextMeasurer` | `DocumentLayout`（pages → blocks → lines → fragments，**有 y**）；单块入口仍产出不带 y 的 `ParagraphLayout` / `TableLayout` | 域不收敛 → **振荡检测后冻结** | 与 `*.truth.json` 逐行 diff（L0–L4 分级） |
 | `render-*` | `LayoutResult` | DOM / Canvas | —— | 截图回归（辅助手段，不是主力） |
 | `serialize` | `Document` | `.docx` | —— | round-trip：加载→导出→Word 打开无修复提示 |
 
@@ -207,8 +207,8 @@ flowchart BT
 | `@uw/fonts` | 🟢 行高规则 + 基线位置（两次穿刺实测标定）· 脚本分桶（含**中性字符随邻居**：空格挨着东亚字就用东亚字体）· 度量包（**17 款已抽取入库**）· 注册表（三级降级）· `TextMeasurer` + 两级缓存 |
 | `@uw/ooxml` | 🟢 OPC 解包 · 内容类型 · 关系 · 保序 XML 纯数据树 + 反向序列化 |
 | `@uw/model` | 🟢 样式级联（含编号层与表格样式层）· 主题字体 · 正文节点树 · 分节 · 设置 · 字体表 · 编号（解析 + 计数器 + 编号文字）· 表格（属性 + 级联 + `w:tblStylePr` 条件格式）· 域的结构还原（界桩配对 + 指令解析 + HYPERLINK，**求值要等分页**） |
-| `@uw/layout` | 🟢 断行（禁则 / 挤压 / 悬挂，四条补救顺序与三个常数全部实测标定）· 缩进（含字符单位）· 对齐 · 制表位 · 列表编号 · 行高 + 网格吸附 + **行内基线** · 表格列宽与格内几何 + 边框冲突解析 · ⏸ **分页未做**（段落不知道自己在第几页，见 §5.1） |
-| `@uw/render-dom` | ⚪ 占位 —— 行内有基线了，但页与 y 要等分页 |
+| `@uw/layout` | 🟢 断行（禁则 / 挤压 / 悬挂，四条补救顺序与三个常数全部实测标定）· 缩进（含字符单位）· 对齐 · 制表位 · 列表编号 · 行高 + 网格吸附 + **行内基线** · 表格列宽与格内几何 + 边框冲突解析 · **分页**（`layoutDocument()`：页面几何 · 分节 · 孤行寡行 · keepNext / keepLines · 硬分页符 · 表格按行拆页 · 页码，见 §5.4）· ⏸ 页眉页脚与表格拆行未做 |
+| `@uw/render-dom` | ⚪ 占位 —— 分页给出了页与 y，渲染器本身还没写 |
 | `@uw/render-canvas` `@uw/view` `@uw/editor` `@uw/serialize` `ultimate-word` `@uw/react` | ⚪ 未创建 |
 
 ---
@@ -297,8 +297,9 @@ flowchart TB
 核心盒 = win 跨度（拉丁的话再加上外部行距）。于是行距倍数、网格吸附、固定值行距
 拉出来或压掉的空间，一律上下均分，不需要为每种来源各写一条规则。
 
-**下一个卡口不在这儿了，在分页。** 行盒有了 `baseline`，但页与 y 是分页的产物 ——
-段落的坐标原点是它自己的左上角，行的 y 靠把前面各行的 `height` 累加得到。
+行盒有了 `baseline` 之后，页与 y 由分页补上（§5.4）：段落的坐标原点仍是它自己的左上角，
+行的 y 靠把前面各行的 `height` 累加得到 —— 这个累加**已经用真值验过**，
+gongwen-01 的 18 行基线 y 与 Word 最大差 0.06pt。
 
 ### 5.2 空格归谁：一条要跨 run 才判得出的分桶规则
 
@@ -353,6 +354,29 @@ canvas 是 DOM API，而 `@uw/fonts` 在虚线框内的无 DOM 区，调不到�
 | 随库带一份「常见中文字体」的度量包，把③ 压缩成极少数情况 | ✅ 已做：`packages/fonts/packs` 17 款 88KB，A/B/C/D 分级见开发计划 §2.1 |
 
 倾向第三条 —— 它把问题从「近似得准不准」变成「有没有覆盖到」，后者可测。
+
+### 5.4 分页：y 是在这里补的
+
+`layoutDocument(resolvedBody, { measurer, settings })` → `DocumentLayout`：
+`pages → blocks（PlacedParagraph / PlacedTable）→ lines / rows → fragments`。
+每一行的绝对基线 = **`page.geometry.content.y` + `PlacedLine.y` + `LineLayout.baseline`**，
+三个数分别来自 `w:pgMar`、逐行累加、基线穿刺的公式。这条拼法在 gongwen-01 的 18 行上
+最大误差 **0.06pt**（L3 判据 0.5pt），也就是说**逐行累加不需要「每页重新对齐网格」的修正** ——
+网格吸附已经吸在每一行的行高上了。
+
+三个刻意的设计：
+
+- **段落仍然不带 y。** 分页只往上加一层「这一片在第几页的什么高度」，段落布局本身可缓存；
+  跨页的段落在两页上各出现一片，靠 `first` / `last` 与 `PlacedLine.index` 缝回去
+- **页是惰性开的**（`Flow.page === undefined` 表示「下次放东西时才开」）。
+  这样文末的硬分页符不会凭空多出一张空页，空节也不会留下垃圾页；
+  真正要空页的只有 `evenPage` / `oddPage` 补的那种，它带 `filler` 标记
+- **keepNext 是「接缝」而不是「整块」**：本块末行与下一块首行必须同页，所以排本块时
+  就把接缝高度算进可用高度（`joinHeight`）。按「整块原子」实现会平白把一整段推到下一页
+
+未做且写明的洞：页眉页脚（部件还没解析，版心顶固定取 `w:top`）、表格拆行
+（行是原子的，等价于全表 `cantSplit`）、脚注与浮动对象不占位。
+两个未标定的常数（孤行寡行的 2 行下限、段前间距在页首算不算）在 `uncalibrated.ts`。
 
 ---
 

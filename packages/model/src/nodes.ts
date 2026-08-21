@@ -199,8 +199,19 @@ export interface HeaderFooterRef {
   relId: string;
 }
 
+/**
+ * `w:sectPr/w:type`：这一节**自己**从哪儿开始（不是「下一节怎么开始」）。
+ *
+ * 容易搞反的地方：`sectPr` 存在一节的**末尾**，但 `w:type` 说的是**本节相对前一节**
+ * 怎么落位（§17.6.22）。按「它管下一节」实现的话，整份文档的分页会整体错开一节。
+ * 缺席时按 `nextPage`。`nextColumn` 在单栏文档里等同于 `nextPage`（多栏是非目标）。
+ */
+export type SectionStart = 'nextPage' | 'continuous' | 'nextColumn' | 'evenPage' | 'oddPage';
+
 export interface SectionProps {
   page: { width: Twips; height: Twips; orientation: 'portrait' | 'landscape' };
+  /** 本节从哪儿开始，见 `SectionStart` */
+  type: SectionStart;
   /** `header` / `footer` 是页眉页脚**到纸边**的距离，不是到版心的 */
   margin: {
     top: Twips;
