@@ -20,7 +20,7 @@ import {
   PUNCT_PAIR_COMPRESS_EM,
   punctPairCompressible,
 } from './break-class.ts';
-import type { CharItem, LayoutItem } from './types.ts';
+import type { CharItem, FragmentStyle, LayoutItem } from './types.ts';
 import { AUTO_SPACE_EM, em, SMALL_CAPS_SCALE, VERT_ALIGN_SCALE } from './uncalibrated.ts';
 
 export interface BuildItemsOptions {
@@ -269,12 +269,40 @@ function charItem(
     font,
     fontSize,
     script,
+    style: styleOf(props),
     width: scaledWidth(advance, props),
     gapBefore: 0,
     space: isSpaceCp(cp),
     kinsoku: kinsokuOf(cp, kinsoku),
     compressible: isCompressiblePunct(cp),
   };
+}
+
+/**
+ * run 属性 → 渲染层要的视觉属性，**同一份 props 只造一个对象**。
+ *
+ * 缓存不是为了省内存（这几个字段很小），是为了让同一个 run 的所有 item 共用一个引用：
+ * 片段合并（paragraph.ts 的 `fragmentsOf`）与将来的增量比对都能直接比引用，
+ * 一字一份的话每次都得逐字段比。WeakMap 只活在布局过程里，不会跟着结果过 Worker 边界。
+ */
+const STYLE_CACHE = new WeakMap<ResolvedRunProps, FragmentStyle>();
+
+function styleOf(props: ResolvedRunProps): FragmentStyle {
+  const hit = STYLE_CACHE.get(props);
+  if (hit !== undefined) return hit;
+  const style: FragmentStyle = {
+    bold: props.bold,
+    italic: props.italic,
+    color: props.color,
+    underline: props.underline,
+    strike: props.strike,
+    doubleStrike: props.doubleStrike,
+    vertAlign: props.vertAlign,
+    position: props.position,
+    scale: props.scale,
+  };
+  STYLE_CACHE.set(props, style);
+  return style;
 }
 
 /** 零散的单个字符（符号、连字符）：不走 `splitFontRuns`，单独问一次度量器 */

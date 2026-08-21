@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 保真度由自己算的排版决定，**不依赖浏览器排版** —— 所以「用 CSS 让它看起来差不多」永远不是正确答案。
 
 当前进度：Phase 0 已完成（地基 + 行高穿刺 + 基线穿刺 + CI），Phase 1 的**解析链已完整**，
-Phase 2 除了 DOM 渲染器都做完了，**Phase 3 的分页骨架也做完了** —— `layoutDocument()`
+**Phase 2 全部做完了**（DOM 渲染器 v1 已落地），**Phase 3 的分页骨架也做完了** —— `layoutDocument()`
 把段落与表格摞进一页页的版心，每一行都有了页号与 y，`LineLayout` 的 `baseline` 终于能拼成
 绝对坐标。**卡口没有了**：横向（断行）与纵向（基线 y）现在都能与真值逐行比。
 Phase 5 的**列表编号**已经从 `numbering.xml` 一路通到首行几何，
@@ -20,8 +20,33 @@ Phase 5 的**列表编号**已经从 `numbering.xml` 一路通到首行几何，
 `@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 制表位 + **编号（解析 + 计数器 + 编号文字 + 接进级联）** + **表格（属性 + 级联 + 条件格式）** + **域（界桩配对 + 指令解析 + HYPERLINK）**）、
 `@uw/fonts`（行高规则 + 脚本分桶 + 度量包 + 注册表 + `TextMeasurer`）、
 `@uw/layout`（item 流 + 断行 + 缩进 / 对齐 / 制表位 / 列表编号 + 行高与网格吸附 + **行内基线** +
-**表格列宽与格内几何 + 边框冲突解析** + **分页**）。
-`@uw/render-dom` 仍是占位 —— 但它不再被任何东西挡着，页与 y 都齐了，这是下一件该做的事。
+**表格列宽与格内几何 + 边框冲突解析** + **分页**）、
+`@uw/render-dom`（**元素树 → SVG / DOM**，见下）。
+
+**渲染器**（`packages/render-dom`）是流水线的出口，**px 只在这一步出现**。
+一页一个 `<svg>`，**viewBox 的单位是 pt** —— 与 `fixtures/*.truth.json` 同一套坐标
+（原点纸左上角、y 向下），属性里读到的 `y="119.05"` 就是真值里那个数，比对不用换算。
+逐字 x 走 `<text x="x1 x2 …">`，粒度 = 一行里的一个 run 片段（不是一字一元素）。
+**缩放只改 `<svg>` 的 width / height，viewBox 一个字不动** —— 架构 §4.1 的
+「缩放永不触发重排」就落在这一行属性上。两个入口：主入口只到「纯数据元素树 → 标记文本」，
+**一个 DOM API 都不碰**（单测跑纯 Node，`preview` 拿它落盘成 HTML，将来 Worker 里也走这条）；
+`@uw/render-dom/dom` 才建真 DOM，`Document` 是注入的。分开不是洁癖：workspace 包的
+`exports` 直接指向 `src/*.ts`，主入口牵进 `dom.ts` 会逼着 `@uw/fidelity` 打开 `lib: ["DOM"]`。
+表格分三遍画（底纹 → 文字 → 线），**因为格线是共享的** —— 逐格画完再画下一格，
+后一格的底纹会盖掉先画的半条线；共享的线还按几何位置去重，只画一次。
+渲染层**不回头查模型**：要画的视觉属性由 `LineFragment.style` 从布局带过来
+（包依赖单向，且 Worker 化之后主线程手上只有 `DocumentLayout` 这一份数据）。
+未画：页眉页脚（布局层就没有）、图片、run 级高亮（model 没解析）、可选文本层、增量更新。
+画法里没有真值的常数（下划线 / 删除线的位置粗细、上下标升降量、前导符点距）
+关在 `packages/render-dom/src/uncalibrated.ts` —— **它们一个都不改坐标**，
+所以 L2/L3/L4 全绿也证明不了它们对。
+
+**两个「看得见」的出口**（改完布局或画法值得跑一眼）：
+`pnpm --filter @uw/fidelity preview [name] -- --truth --debug` 把 fixture 画成
+`apps/fidelity/out/*.html`（真值基线红虚线、我们的蓝实线，重合即对；产物不入库）；
+`pnpm --filter @uw/playground dev` 拖一份 docx 进去就画，带缩放与版心 / 行盒开关。
+preview 报的「最大差 x pt」**不是保真度指标** —— 它按行序号硬配对，一行断错后面全错位，
+真正的判据在 `layout/src/fixture.test.ts` 与各个 spike 脚本里。
 
 **分页**（`packages/layout/src/page.ts`）四处容易搞反：
 ① `w:sectPr/w:type` 说的是**本节自己**从哪儿开始，不是「下一节怎么开始」（§17.6.22）——
@@ -194,7 +219,7 @@ pnpm install
 pnpm turbo run typecheck test        # 全量检查（跨平台，应当全绿）
 pnpm lint                            # biome check .
 pnpm lint:fix
-pnpm --filter @uw/playground dev     # 调试台，:5273
+pnpm --filter @uw/playground dev     # 调试台，:5273（拖一份 docx 进去就画）
 
 # 单个包 / 单个测试文件 / 单个用例
 pnpm --filter @uw/fonts run test
@@ -210,6 +235,7 @@ pnpm --filter @uw/fidelity spike:baseline  # 基线穿刺（基线在行高里�
 pnpm --filter @uw/fidelity spike:punct     # 标点挤压穿刺（什么时候压、压多少）
 pnpm --filter @uw/fidelity spike:compress  # 临时挤压穿刺（塞不下时肯挤多少才换行）
 pnpm --filter @uw/fidelity spike:page      # 分页穿刺（孤行寡行 / keepNext / 页首段前间距，**不需要 Word**）
+pnpm --filter @uw/fidelity preview -- --truth  # fixture 画成 out/*.html 并叠真值基线（不需要 Word）
 pnpm --filter @uw/fonts run packs          # 重抽度量包（仅 Windows，产物入库）
 pnpm --filter @uw/fonts run packs:check    # 只校验入库的包与本机字体是否一致
 ```

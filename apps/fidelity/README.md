@@ -27,6 +27,9 @@ pnpm spike:baseline        # 基线穿刺：基线在行高里的位置对不对
 pnpm spike:punct           # 标点挤压穿刺：什么时候压、压多少
 pnpm spike:compress        # 临时挤压穿刺：塞不下时肯挤多少才换行
 pnpm spike:page            # 分页穿刺：孤行寡行 / keepNext / 页首段前间距
+
+pnpm preview                     # 全部 fixture → out/*.html，用眼睛看引擎画成什么样
+pnpm preview gongwen-01 -- --truth --debug   # 叠真值基线（红虚线）+ 画版心与行盒
 ```
 
 这五个 spike 脚本是**标定工具**，不是单测：它们从真值反推系数、打出残差表，
@@ -52,6 +55,23 @@ pnpm spike:page            # 分页穿刺：孤行寡行 / keepNext / 页首段�
 分页规则不是一个数，是三条互相纠缠的判断，单独反推任何一条都会被另一条污染。
 做法是把 3 × 2 × 3 种组合排开，看哪一组能逐页复现 Word（当前：唯一满分 50/50 页）。
 它也是唯一**不需要 Windows** 的 spike —— docx 与 truth.json 都入库了。
+
+## preview：用眼睛验收
+
+`pnpm preview` 把 fixture 走完整条链（解包 → 级联 → 度量 → 断行 → 分页 → 画）再落盘成
+`out/<name>.html`（**不入库**，与 PDF 同理）。它不需要 Word，也不需要 Windows。
+
+`--truth` 会在每一页叠一层真值：Word 画每一行时的基线是**红虚线**，我们自己的基线是
+**蓝实线**，重合就是对的。之所以能直接叠上去而不换算，是因为渲染器的 `viewBox` 单位
+选的就是 pt，原点也同样是纸的左上角、y 向下 —— 与 `truth.json` 是同一套坐标系。
+
+`--debug` 额外画出版心框（绿虚线）与每一行的行盒（蓝细框），排版跑偏时一眼能看出
+是版心算错了还是行高算错了。
+
+⚠️ 命令行末尾报的「N 行基线最大差 x pt」**不是保真度指标**：它按行序号硬配对，
+只要有一行断得与 Word 不同，后面每一行都会错位一整行的高度，报出来的就是十几 pt 的假差值。
+真正的判据在 `packages/layout/src/fixture.test.ts`（L2 / L3）与上面几个 spike 脚本里。
+这个数只回答一个问题：「刚才那一改，有没有把某一页整体挪歪」。
 
 新增 fixture 有两种方式：
 

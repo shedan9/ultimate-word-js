@@ -32,6 +32,7 @@ import type {
   ResolvedBlock,
   ResolvedTable,
   ResolvedTableCell,
+  Shading,
   TableWidth,
 } from '@uw/model';
 import type { LayoutParagraphOptions } from './paragraph.ts';
@@ -59,6 +60,16 @@ export interface CellLayout {
   /** 左边距，格内内容的 x 要从它起算 */
   paddingLeft: Twips;
   paddingRight: Twips;
+  /**
+   * 上下边距。**不影响断行**（宽度才影响），但格内内容从哪个 y 起排全靠它 ——
+   * 原先只把它折进 `contentHeight` 的总量里，渲染层就还原不出来了
+   */
+  paddingTop: Twips;
+  paddingBottom: Twips;
+  /** `w:vAlign`：内容不满一格时贴哪边。同样只有画的时候用得上 */
+  verticalAlign: 'top' | 'center' | 'bottom';
+  /** `w:shd` 原样带着（不解析成 RGB，与 model 一致），渲染层在边框之下铺一层底 */
+  shading: Shading | undefined;
   /** `continue` 的格子渲染层不画内容、也不参与行高 —— 上面那个 `restart` 撑着它 */
   vMerge: 'none' | 'restart' | 'continue';
   /**
@@ -221,6 +232,8 @@ function layoutCell(
 
   const paddingLeft = marginOf(c.props.margins.left);
   const paddingRight = marginOf(c.props.margins.right);
+  const paddingTop = marginOf(c.props.margins.top);
+  const paddingBottom = marginOf(c.props.margins.bottom);
   // 边距比格子还宽时可用宽度会变负 —— 夹到 0，别让负宽度传进断行算法
   const contentWidth = Math.max(0, width - paddingLeft - paddingRight);
 
@@ -234,10 +247,14 @@ function layoutCell(
     contentWidth,
     paddingLeft,
     paddingRight,
+    paddingTop,
+    paddingBottom,
+    verticalAlign: c.props.verticalAlign,
+    shading: c.props.shading,
     vMerge: c.vMerge,
     borders,
     blocks,
-    contentHeight: contentHeightOf(blocks) + marginOf(c.props.margins.top) + marginOf(c.props.margins.bottom),
+    contentHeight: contentHeightOf(blocks) + paddingTop + paddingBottom,
   };
 }
 
@@ -249,7 +266,13 @@ function blockLayout(b: ResolvedBlock, contentWidth: Twips, opts: LayoutTableOpt
   return { kind: 'paragraph', layout: layoutParagraph(b, { ...opts, contentWidth }) };
 }
 
-function contentHeightOf(blocks: readonly BlockLayout[]): Twips {
+/**
+ * 一摞块的高度总量（段前后间距 + 各行行高 + 嵌套表格的行高）。
+ *
+ * 导出是给**渲染层**用的：格内的块自己不带 y（与段落同理，见 types.ts 的说明），
+ * 要把内容按 `w:vAlign` 摆到格子里就得先知道这一摞有多高。两处各算一遍必然会漂。
+ */
+export function contentHeightOf(blocks: readonly BlockLayout[]): Twips {
   let h = 0;
   for (const b of blocks) {
     if (b.kind === 'table') {

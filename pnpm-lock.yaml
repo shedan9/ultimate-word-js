@@ -41,6 +41,9 @@ importers:
       '@uw/ooxml':
         specifier: workspace:*
         version: link:../../packages/ooxml
+      '@uw/render-dom':
+        specifier: workspace:*
+        version: link:../../packages/render-dom
       pdfjs-dist:
         specifier: ^6.2.108
         version: 6.2.108
@@ -56,6 +59,12 @@ importers:
       '@uw/layout':
         specifier: workspace:*
         version: link:../../packages/layout
+      '@uw/model':
+        specifier: workspace:*
+        version: link:../../packages/model
+      '@uw/ooxml':
+        specifier: workspace:*
+        version: link:../../packages/ooxml
       '@uw/render-dom':
         specifier: workspace:*
         version: link:../../packages/render-dom
@@ -143,6 +152,15 @@ importers:
         specifier: workspace:*
         version: link:../layout
     devDependencies:
+      '@uw/fonts':
+        specifier: workspace:*
+        version: link:../fonts
+      '@uw/model':
+        specifier: workspace:*
+        version: link:../model
+      '@uw/ooxml':
+        specifier: workspace:*
+        version: link:../ooxml
       tsdown:
         specifier: ^0.22.14
         version: 0.22.14(typescript@7.0.2)

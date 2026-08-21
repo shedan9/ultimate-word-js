@@ -119,7 +119,7 @@ flowchart TB
 | `model` | `OpcPackage` | `LoadedDocument`（`loadDocument()`） | `basedOn` 成环、引用缺失 → **诊断，不抛** | 属性树 dump 与 Word「显示格式」面板抽查一致 |
 | `fonts` | 字体字节 / 度量包 | `FontMetrics` · `TextMeasurer` | 字体缺失 → **三级降级**（见 §5.3） | 硬编码实测值的单测（跨平台可跑） |
 | `layout` | `ResolvedBody`（或单个 `ResolvedParagraph` / `ResolvedTable`）+ `TextMeasurer` | `DocumentLayout`（pages → blocks → lines → fragments，**有 y**）；单块入口仍产出不带 y 的 `ParagraphLayout` / `TableLayout` | 域不收敛 → **振荡检测后冻结** | 与 `*.truth.json` 逐行 diff（L0–L4 分级） |
-| `render-*` | `LayoutResult` | DOM / Canvas | —— | 截图回归（辅助手段，不是主力） |
+| `render-dom` | `DocumentLayout` | 元素树（纯数据）→ 标记文本 / 真 DOM | —— | **属性里的坐标与 `*.truth.json` 逐行 diff**（比 `LayoutResult` 又晚一步，能照出「翻译」阶段丢的偏移）+ 截图回归 |
 | `serialize` | `Document` | `.docx` | —— | round-trip：加载→导出→Word 打开无修复提示 |
 
 **关键的一条**：`model` 阶段对内容问题采取「**诊断而非异常**」。
@@ -208,7 +208,7 @@ flowchart BT
 | `@uw/ooxml` | 🟢 OPC 解包 · 内容类型 · 关系 · 保序 XML 纯数据树 + 反向序列化 |
 | `@uw/model` | 🟢 样式级联（含编号层与表格样式层）· 主题字体 · 正文节点树 · 分节 · 设置 · 字体表 · 编号（解析 + 计数器 + 编号文字）· 表格（属性 + 级联 + `w:tblStylePr` 条件格式）· 域的结构还原（界桩配对 + 指令解析 + HYPERLINK，**求值要等分页**） |
 | `@uw/layout` | 🟢 断行（禁则 / 挤压 / 悬挂，四条补救顺序与三个常数全部实测标定）· 缩进（含字符单位）· 对齐 · 制表位 · 列表编号 · 行高 + 网格吸附 + **行内基线** · 表格列宽与格内几何 + 边框冲突解析 · **分页**（`layoutDocument()`：页面几何 · 分节 · 孤行寡行 · keepNext / keepLines · 硬分页符 · 表格按行拆页 · 页码，见 §5.4）· ⏸ 页眉页脚与表格拆行未做 |
-| `@uw/render-dom` | ⚪ 占位 —— 分页给出了页与 y，渲染器本身还没写 |
+| `@uw/render-dom` | 🟢 v1：一页一个 `<svg>`（viewBox 单位 **pt**）· 逐字 x 走 `<text x="…">` · 下划线 / 删除线 / 上下标 / 横向缩放 · 制表位前导符 · 表格底纹 + 格线（共享的线只画一次）· 缩放只改 `<svg>` 尺寸不重排 · ⏸ 页眉页脚 / 图片 / 可选文本层 / 增量更新 |
 | `@uw/render-canvas` `@uw/view` `@uw/editor` `@uw/serialize` `ultimate-word` `@uw/react` | ⚪ 未创建 |
 
 ---
@@ -351,7 +351,11 @@ canvas 是 DOM API，而 `@uw/fonts` 在虚线框内的无 DOM 区，调不到�
 只保证版面不崩，不保证与 Word 一致，每命中一款就记一条 `font-missing` 诊断。
 这是权宜之计 —— 等宽假设的误差随文本长度累积，一段长英文能偏出好几个字符宽。
 
-三条出路，Phase 3 渲染层落地后再定，**不要现在摆接口**：
+三条出路，原文写的是「Phase 3 渲染层落地后再定」。**渲染层已经落地了**（§5.5），
+答案是第三条，而且理由比原先预想的更硬：渲染器根本不参与度量 ——
+它拿到的 `LineFragment` 里每个字的 x 都是算好的，画的时候连字体有没有装都不问。
+于是「级别③ 上移到渲染层」这条路自己消失了（渲染层没有度量能力可上移），
+剩下的只是「度量包覆盖不到时怎么办」这一个可测的问题。
 
 | 方案 | 代价 |
 |---|---|
@@ -388,6 +392,38 @@ keepNext 的接缝又得看下一段肯不肯拆），单独反推任何一条�
 
 未做且写明的洞：页眉页脚（部件还没解析，版心顶固定取 `w:top`）、表格拆行
 （行是原子的，等价于全表 `cantSplit`）、脚注与浮动对象不占位。
+
+### 5.5 渲染：一页一个 `<svg>`，viewBox 的单位是 pt
+
+`@uw/render-dom` 把 `DocumentLayout` 翻译成元素树，是流水线的出口 ——
+**px 只在这一步出现**（原则 1.3）。它分成两个入口，界线是碰不碰浏览器：
+`@uw/render-dom` 主入口只到「纯数据元素树 → 标记文本」，`@uw/render-dom/dom`
+才把树变成真 DOM（`Document` 是注入的）。
+
+隔一层纯数据的树，而不是一路 `createElementNS` 画到底，买到三样东西：
+**单测在纯 Node 里跑**（不需要 jsdom）、**截图回归的入口**（SVG 直接落盘，
+`pnpm --filter @uw/fidelity preview` 就是拿它写 HTML 的）、
+**与 Worker 化同构**（将来过界的正是这棵树）。
+
+四个不那么显然的选择：
+
+- **viewBox 的单位是 pt，不是 px 也不是 twips。** `fixtures/*.truth.json` 的单位就是 pt，
+  原点也同样是纸的左上角、y 向下 —— 于是 SVG 属性里读到的 `y="119.05"` 与真值里的
+  `y: 119.05` 是同一个数，`preview --truth` 把真值基线直接画上去连一次换算都不要
+- **缩放只改 `<svg>` 的 width / height**，viewBox 一个字不动。§4.1 的「缩放永不触发重排」
+  在这里落地成了一行属性
+- **粒度 = 一行里的一个 run 片段**，逐字微调靠 `<text x="x1 x2 x3 …">`。
+  一字一元素 DOM 会爆，一行一元素则没地方放挤压与两端对齐造成的偏移
+- **视觉属性由布局带过来**（`LineFragment.style`），渲染层**不回头查模型**。
+  包依赖是单向的，而且 Worker 化之后主线程手上只有 `DocumentLayout` 这一份数据
+
+端到端的验收在 `packages/render-dom/src/fixture.test.ts`：拿画出来的 `<text>` 属性
+直接跟真值比，L3 / L4 都在 0.5pt 内。它与布局侧的 `fixture.test.ts` **不重复** ——
+中间隔着「twips → pt」「版心原点搬进 `<g transform>`」「逐字 x 拼成 x 列表」三步翻译，
+那种错在布局侧的断言里一个都照不出来。
+
+没画的：页眉页脚（布局层就没有）、图片、run 级高亮（model 里没解析）、
+可选文本层（Ctrl+F / 复制，属于 `@uw/view`）、增量更新（等增量排版，见 §7）。
 
 ---
 

@@ -13,7 +13,41 @@
  */
 import type { Twips } from '@uw/core';
 import type { ScriptKind } from '@uw/fonts';
-import type { NodeId } from '@uw/model';
+import type { NodeId, VerticalAlign } from '@uw/model';
+
+/**
+ * 一段文字**位置以外**的一切 —— 渲染层照着画，不必回头去查 `ResolvedRunProps`。
+ *
+ * 为什么要复制一份而不是让渲染层拿 `runId` 回模型里查：`render-*` 只依赖 `@uw/layout`
+ * （包依赖方向严格单向，见架构 §3），让它反查模型等于把 model 提到渲染层的依赖里；
+ * 而且 Worker 化之后主线程手上只有 `DocumentLayout` 这一份可结构化克隆的数据，
+ * 模型根本不在这一侧。字段少、每个 run 共用同一个对象，复制的代价可以忽略。
+ *
+ * **只收「画」要用的**：影响宽度的那些（`w:spacing` 字间距、`w:sz` 字号、小型大写的缩放）
+ * 早就折进了 `CharItem.width` 与 `fontSize`，再带一遍就有两个真相。
+ */
+export interface FragmentStyle {
+  bold: boolean;
+  italic: boolean;
+  /** 六位十六进制或 `auto`（= 由渲染层挑，通常是黑）。与 model 一样不解析成 RGB */
+  color: string;
+  /** `w:u/@w:val` 原样带着（`single` / `double` / `wave` …）；`none` = 不画 */
+  underline: string;
+  strike: boolean;
+  doubleStrike: boolean;
+  /**
+   * `w:vertAlign`。字号已经按 `VERT_ALIGN_SCALE` 缩过了（宽度要用），
+   * **升降量还没有** —— 那是渲染层的事，且至今没有真值，见 render-dom 的 uncalibrated.ts
+   */
+  vertAlign: VerticalAlign;
+  /** `w:position`：基线抬高多少 twips（负数是压低）。不影响宽度，所以只有画的时候用得上 */
+  position: Twips;
+  /**
+   * `w:w` 横向缩放，百分数（100 = 不缩）。宽度早已折进 `CharItem.width`，
+   * 但**字形本身**也要跟着扁 —— 那件事只有渲染层做得了，所以这个数得带过去
+   */
+  scale: number;
+}
 
 /** 断行与度量的最小单位。一个码点一个 item —— 逐字 x 是中文排版的硬需求 */
 export interface CharItem {
@@ -31,6 +65,8 @@ export interface CharItem {
   /** 已含上下标 / 小型大写的缩放，直接拿去量 */
   fontSize: Twips;
   script: ScriptKind;
+  /** 画这个字要用的视觉属性。同一个 run 里的所有 item **共用同一个对象** */
+  style: FragmentStyle;
   /** 推进宽度，已含 `w:w` 横向缩放与 `w:spacing` 字间距 */
   width: Twips;
   /**
@@ -109,6 +145,7 @@ export interface LineFragment {
   font: string;
   fontSize: Twips;
   script: ScriptKind;
+  style: FragmentStyle;
   text: string;
   /** 相对**版心左边**（不是行首），twips */
   x: Twips;

@@ -4,6 +4,23 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ultimate-word 调试台</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: #6e7781; }
+      header {
+        position: sticky; top: 0; z-index: 1; display: flex; gap: 16px; align-items: center;
+        flex-wrap: wrap; padding: 10px 16px; background: #1f2328; color: #f6f8fa;
+      }
+      header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+      header label { display: inline-flex; gap: 6px; align-items: center; }
+      .file { padding: 4px 10px; border: 1px solid #57606a; border-radius: 6px; cursor: pointer; }
+      .status { margin-left: auto; opacity: .8; font-variant-numeric: tabular-nums; }
+      .stage { padding: 24px; }
+      /* 页与页之间的间距、纸张阴影都是**视图**的事，不是渲染器的 —— 见 paint.ts 的说明 */
+      .uw-doc { display: flex; flex-direction: column; align-items: center; gap: 24px; }
+      .uw-page { box-shadow: 0 2px 12px rgba(0, 0, 0, .35); background: #fff; }
+      .uw-page-filler { opacity: .6; }
+    </style>
   </head>
   <body>
     <main id="app"></main>

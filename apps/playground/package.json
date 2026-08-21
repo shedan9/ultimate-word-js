@@ -14,7 +14,9 @@
     "@uw/core": "workspace:*",
     "@uw/fonts": "workspace:*",
     "@uw/layout": "workspace:*",
-    "@uw/render-dom": "workspace:*"
+    "@uw/render-dom": "workspace:*",
+    "@uw/model": "workspace:*",
+    "@uw/ooxml": "workspace:*"
   },
   "devDependencies": {
     "vite": "^8.2.1"

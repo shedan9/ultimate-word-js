@@ -12,7 +12,8 @@
     "spike:baseline": "node src/spike-baseline.ts",
     "spike:punct": "node src/spike-punct.ts",
     "spike:compress": "node src/spike-compress.ts",
-    "spike:page": "node src/spike-page.ts"
+    "spike:page": "node src/spike-page.ts",
+    "preview": "node src/preview.ts"
   },
   "dependencies": {
     "@uw/core": "workspace:*",
@@ -20,6 +21,7 @@
     "@uw/layout": "workspace:*",
     "@uw/model": "workspace:*",
     "@uw/ooxml": "workspace:*",
-    "pdfjs-dist": "^6.2.108"
+    "pdfjs-dist": "^6.2.108",
+    "@uw/render-dom": "workspace:*"
   }
 }

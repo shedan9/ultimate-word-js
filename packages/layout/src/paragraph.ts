@@ -277,6 +277,7 @@ function fragmentsOf(
         font: item.font,
         fontSize: item.fontSize,
         script: item.script,
+        style: item.style,
         text: ch,
         x,
         width: item.width,

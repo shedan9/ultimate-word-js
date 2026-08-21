@@ -1,5 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "types": ["node"] },
+  // 虚线以内的六个包（core / ooxml / model / fonts / layout / serialize）刻意**不带** DOM lib，
+  // 那条线就是未来的 Worker 边界；render-* 是线外的第一站，DOM 类型只到这里为止。
+  "compilerOptions": { "types": ["node"], "lib": ["ES2023", "DOM"] },
   "include": ["src/**/*.ts"]
 }
