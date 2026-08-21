@@ -9,7 +9,7 @@
  */
 import type { Twips } from '@uw/core';
 import type { LineMetrics, TextMeasurer } from '@uw/fonts';
-import { bucketFont, composeBaseline, naturalLineHeight } from '@uw/fonts';
+import { baselineOffsetExact, bucketFont, composeBaseline, naturalLineHeight } from '@uw/fonts';
 import type { DocGrid, ResolvedParaProps } from '@uw/model';
 import type { LayoutItem } from './types.ts';
 
@@ -86,8 +86,19 @@ export function lineHeight(
   const floor = floorBox(passenger);
   const natural = Math.max(naturalLineHeight(box), objectHeight, floor.height);
   const height = applyLineRule(applyGrid(natural, props, ctx.docGrid), props);
-  const baseline = Math.min(height, Math.max(composeBaseline(box, height), objectHeight, floor.above));
-  return { height, baseline, natural };
+  return { height, baseline: baselineIn(height, props), natural };
+
+  /**
+   * 固定值行距**不看字体**：基线就在行高的 80% 处（实测，见 `baselineOffsetExact`）。
+   *
+   * 连防切字的那两条下限（内嵌对象、拉丁 passenger）也一并不管 —— 用户写死了行高，
+   * Word 的行为就是**切**（这正是「固定值」与「最小值」的区别）。在这里替他撑开，
+   * 得到的页面会比 Word 少排几行，错得比切字更远。
+   */
+  function baselineIn(h: Twips, p: ResolvedParaProps): Twips {
+    if (p.spacing.lineRule === 'exact') return baselineOffsetExact(h);
+    return Math.min(h, Math.max(composeBaseline(box, h), objectHeight, floor.above));
+  }
 }
 
 /**

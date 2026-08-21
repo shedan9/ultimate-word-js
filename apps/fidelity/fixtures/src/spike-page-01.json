@@ -1,0 +1,929 @@
+{
+  "name": "spike-page-01",
+  "note": "孤行寡行（w:widowControl）的下限穿刺：一段被页底截断时，Word 至少要在页底留几行、至少要往下一页赶几行。结论：**保底 2 行**（落在 @uw/layout 的 PAGINATION_RULES.widowMinLines）——在这份样本之前它只有「Word 界面的说法 + CSS 的默认值」作依据，没有真值。做法：版心 80mm × 80mm、固定行距 20pt，于是一页**恰好 11 行**、一行 18 个汉字，行高与字宽都不依赖任何待标定的度量。每一级阶梯 = j 个一行的垫行段落（第一个带硬分页符，保证从干净的一页开始）+ 一个 5 行的目标段落，j 从 4 走到 11 —— 于是目标段落在本页剩下的行数从 7 一路降到 0，自然断点依次落在 5|0、4|1、3|2、2|3、1|4、0|5 上。三个假设各自的预测在 j=7 就分岔：不做控制 → 4|1；下限 2 → 3|2；下限 3 → 0|5（整段走）。后半截 5 级把 widowControl 显式关掉作对照 —— 它同时验证「一页 11 行」这个前提本身，对照组对不上就说明是版心算错了，而不是规则错了。文字全是汉字、不含标点与西文：标点会牵进悬挂与挤压那两套已经标定完的规则，混进来就分不开了。",
+  "page": {
+    "widthMm": 120,
+    "heightMm": 120,
+    "marginMm": {
+      "top": 20,
+      "bottom": 20,
+      "left": 20,
+      "right": 20
+    }
+  },
+  "paragraphs": [
+    {
+      "text": "甲乙丙丁戊己",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20,
+      "pageBreakBefore": true
+    },
+    {
+      "text": "庚辛壬癸子丑",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "寅卯辰巳午未",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "申酉戌亥东南",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "西北中春夏秋冬风雨雷电山川河海云雾霜雪松柏梅兰竹菊天地玄黄宇宙洪荒日月盈昃辰宿列张寒来暑往秋收冬藏闰余成岁律吕调阳甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "酉戌亥东南西",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20,
+      "pageBreakBefore": true
+    },
+    {
+      "text": "北中春夏秋冬",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "风雨雷电山川",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "河海云雾霜雪",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "松柏梅兰竹菊",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "天地玄黄宇宙",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "洪荒日月盈昃辰宿列张寒来暑往秋收冬藏闰余成岁律吕调阳甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥东南西北中春夏秋冬风雨雷电山川河海云雾霜雪松柏梅兰竹菊天",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "地玄黄宇宙洪",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20,
+      "pageBreakBefore": true
+    },
+    {
+      "text": "荒日月盈昃辰",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "宿列张寒来暑",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "往秋收冬藏闰",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "余成岁律吕调",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "阳甲乙丙丁戊",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "己庚辛壬癸子",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "丑寅卯辰巳午未申酉戌亥东南西北中春夏秋冬风雨雷电山川河海云雾霜雪松柏梅兰竹菊天地玄黄宇宙洪荒日月盈昃辰宿列张寒来暑往秋收冬藏闰余成岁律吕调阳甲乙丙丁戊己",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "庚辛壬癸子丑",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20,
+      "pageBreakBefore": true
+    },
+    {
+      "text": "寅卯辰巳午未",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "申酉戌亥东南",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "西北中春夏秋",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "冬风雨雷电山",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "川河海云雾霜",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "雪松柏梅兰竹",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "菊天地玄黄宇",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "宙洪荒日月盈昃辰宿列张寒来暑往秋收冬藏闰余成岁律吕调阳甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥东南西北中春夏秋冬风雨雷电山川河海云雾霜雪松柏梅兰竹菊",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "天地玄黄宇宙",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20,
+      "pageBreakBefore": true
+    },
+    {
+      "text": "洪荒日月盈昃",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "辰宿列张寒来",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "暑往秋收冬藏",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "闰余成岁律吕",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "调阳甲乙丙丁",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "戊己庚辛壬癸",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "子丑寅卯辰巳",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "午未申酉戌亥",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "东南西北中春夏秋冬风雨雷电山川河海云雾霜雪松柏梅兰竹菊天地玄黄宇宙洪荒日月盈昃辰宿列张寒来暑往秋收冬藏闰余成岁律吕调阳甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "未申酉戌亥东",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20,
+      "pageBreakBefore": true
+    },
+    {
+      "text": "南西北中春夏",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "秋冬风雨雷电",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "山川河海云雾",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "霜雪松柏梅兰",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "竹菊天地玄黄",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "宇宙洪荒日月",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "盈昃辰宿列张",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "寒来暑往秋收",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "冬藏闰余成岁",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "律吕调阳甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥东南西北中春夏秋冬风雨雷电山川河海云雾霜雪松柏梅兰竹菊天地玄黄宇宙洪荒日月盈昃辰宿列张寒来暑往秋收冬",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "藏闰余成岁律",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20,
+      "pageBreakBefore": true
+    },
+    {
+      "text": "吕调阳甲乙丙",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "丁戊己庚辛壬",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "癸子丑寅卯辰",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "巳午未申酉戌",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "亥东南西北中",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "春夏秋冬风雨",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "雷电山川河海",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "云雾霜雪松柏",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "梅兰竹菊天地",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "玄黄宇宙洪荒",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "日月盈昃辰宿列张寒来暑往秋收冬藏闰余成岁律吕调阳甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥东南西北中春夏秋冬风雨雷电山川河海云雾霜雪松柏梅兰竹菊天地玄",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "黄宇宙洪荒日",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20,
+      "pageBreakBefore": true
+    },
+    {
+      "text": "月盈昃辰宿列",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "张寒来暑往秋",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "收冬藏闰余成",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "岁律吕调阳甲",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "乙丙丁戊己庚",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "辛壬癸子丑寅",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "卯辰巳午未申酉戌亥东南西北中春夏秋冬风雨雷电山川河海云雾霜雪松柏梅兰竹菊天地玄黄宇宙洪荒日月盈昃辰宿列张寒来暑往秋收冬藏闰余成岁律吕调阳甲乙丙丁戊己庚辛",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20,
+      "widowControl": false
+    },
+    {
+      "text": "壬癸子丑寅卯",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20,
+      "pageBreakBefore": true
+    },
+    {
+      "text": "辰巳午未申酉",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "戌亥东南西北",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "中春夏秋冬风",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "雨雷电山川河",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "海云雾霜雪松",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "柏梅兰竹菊天",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "地玄黄宇宙洪",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "荒日月盈昃辰宿列张寒来暑往秋收冬藏闰余成岁律吕调阳甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥东南西北中春夏秋冬风雨雷电山川河海云雾霜雪松柏梅兰竹菊天地",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20,
+      "widowControl": false
+    },
+    {
+      "text": "玄黄宇宙洪荒",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20,
+      "pageBreakBefore": true
+    },
+    {
+      "text": "日月盈昃辰宿",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "列张寒来暑往",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "秋收冬藏闰余",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "成岁律吕调阳",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "甲乙丙丁戊己",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "庚辛壬癸子丑",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "寅卯辰巳午未",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "申酉戌亥东南",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "西北中春夏秋冬风雨雷电山川河海云雾霜雪松柏梅兰竹菊天地玄黄宇宙洪荒日月盈昃辰宿列张寒来暑往秋收冬藏闰余成岁律吕调阳甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20,
+      "widowControl": false
+    },
+    {
+      "text": "酉戌亥东南西",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20,
+      "pageBreakBefore": true
+    },
+    {
+      "text": "北中春夏秋冬",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "风雨雷电山川",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "河海云雾霜雪",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "松柏梅兰竹菊",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "天地玄黄宇宙",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "洪荒日月盈昃",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "辰宿列张寒来",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "暑往秋收冬藏",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "闰余成岁律吕",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "调阳甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥东南西北中春夏秋冬风雨雷电山川河海云雾霜雪松柏梅兰竹菊天地玄黄宇宙洪荒日月盈昃辰宿列张寒来暑往秋收冬藏闰",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20,
+      "widowControl": false
+    },
+    {
+      "text": "余成岁律吕调",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20,
+      "pageBreakBefore": true
+    },
+    {
+      "text": "阳甲乙丙丁戊",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "己庚辛壬癸子",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "丑寅卯辰巳午",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "未申酉戌亥东",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "南西北中春夏",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "秋冬风雨雷电",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "山川河海云雾",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "霜雪松柏梅兰",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "竹菊天地玄黄",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "宇宙洪荒日月",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "盈昃辰宿列张寒来暑往秋收冬藏闰余成岁律吕调阳甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥东南西北中春夏秋冬风雨雷电山川河海云雾霜雪松柏梅兰竹菊天地玄黄宇",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20,
+      "widowControl": false
+    }
+  ]
+}

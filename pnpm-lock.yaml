@@ -32,6 +32,15 @@ importers:
       '@uw/fonts':
         specifier: workspace:*
         version: link:../../packages/fonts
+      '@uw/layout':
+        specifier: workspace:*
+        version: link:../../packages/layout
+      '@uw/model':
+        specifier: workspace:*
+        version: link:../../packages/model
+      '@uw/ooxml':
+        specifier: workspace:*
+        version: link:../../packages/ooxml
       pdfjs-dist:
         specifier: ^6.2.108
         version: 6.2.108

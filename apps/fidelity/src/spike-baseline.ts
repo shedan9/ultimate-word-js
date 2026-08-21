@@ -22,14 +22,19 @@
  * 否则说明样本分辨力不够 —— 这正是 spike-baseline-02 把字号放大到 72pt 的原因，
  * 12pt 下拉丁一侧 half 与 above 只差 0.26pt，与坐标噪声同量级。
  *
- *   node src/spike-baseline.ts            # 跑三份 fixture
+ * 第四份 fixture（spike-baseline-04）问的是另一件事：**固定值行距**（`w:lineRule="exact"`）。
+ * 前三份的 `lineSpacingPt` 全是 0，所以「额外行距怎么分」这张表其实缺了一格，
+ * 而那一格的答案根本不在这四个假设里 —— 固定值行距下基线**只是行高的 80%**，
+ * 与字体、字号都无关。它单独一组、单独一套判据，见文件末尾的第三段报告。
+ *
+ *   node src/spike-baseline.ts            # 跑四份 fixture
  *   node src/spike-baseline.ts <name>...  # 指定 fixture
  */
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ptToTwips, twipsToPt } from '@uw/core';
-import { lineMetrics } from '@uw/fonts';
+import { EXACT_LINE_BASELINE_RATIO, lineMetrics } from '@uw/fonts';
 import { assertWindows } from './platform.ts';
 import { hasEastAsianText, loadSpikeFont } from './spike-fonts.ts';
 import type { TruthPage, WordTruth } from './truth-types.ts';
@@ -37,7 +42,7 @@ import type { TruthPage, WordTruth } from './truth-types.ts';
 assertWindows({ tool: '基线穿刺', needs: '要读 C:/Windows/Fonts 下的真实字体表' });
 
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const DEFAULT_FIXTURES = ['spike-baseline-01', 'spike-baseline-02', 'spike-baseline-03'];
+const DEFAULT_FIXTURES = ['spike-baseline-01', 'spike-baseline-02', 'spike-baseline-03', 'spike-baseline-04'];
 /** DoD 阈值（pt）。L3 断言要求 0.5pt，穿刺阶段用同一把尺子 */
 const TOLERANCE_PT = 0.5;
 /** 最优假设至少要比次优好这么多倍，否则算「样本分不开」而不是「测出来了」 */
@@ -127,6 +132,8 @@ interface Sample {
   page: number;
   label: string;
   group: Group;
+  /** 这一页的段落用的是固定值行距 —— 那四个假设对它不适用，单独一组评 */
+  exact: boolean;
   /** 实测：首行基线 − 版心顶 */
   measured: number;
   /** 最终行高：多行段落取实测基线间距，单行段落取自然行高 */
@@ -173,10 +180,32 @@ function measuredPitch(page: TruthPage): number | undefined {
   return deltas[deltas.length >> 1];
 }
 
+/**
+ * 哪些页用的是固定值行距。
+ *
+ * 只能靠 spec 回答：PDF 里没有「行距规则」这种信息。映射按「第 i 段 = 第 i 页」——
+ * 只有**每一段都带 pageBreakBefore** 时这个映射才成立（基线穿刺的 fixture 本来就是这么造的），
+ * 不成立就整份放弃，宁可少一组报告，也不要把页号对错、得出一张假表。
+ */
+async function exactPages(fixture: string): Promise<Set<number>> {
+  const file = path.join(APP_ROOT, 'fixtures', 'src', `${fixture}.json`);
+  const spec = JSON.parse(await readFile(file, 'utf8').catch(() => '{"paragraphs":[]}')) as {
+    paragraphs?: { lineSpacingPt?: number; pageBreakBefore?: boolean }[];
+  };
+  const paras = spec.paragraphs ?? [];
+  if (paras.length === 0 || !paras.every((q) => q.pageBreakBefore === true)) return new Set();
+  const out = new Set<number>();
+  paras.forEach((q, i) => {
+    if ((q.lineSpacingPt ?? 0) > 0) out.add(i);
+  });
+  return out;
+}
+
 async function collect(fixture: string): Promise<Sample[]> {
   const truth = JSON.parse(
     await readFile(path.join(APP_ROOT, 'fixtures', `${fixture}.truth.json`), 'utf8'),
   ) as WordTruth;
+  const exact = await exactPages(fixture);
   const section = truth.sections?.[0];
   if (!section) throw new Error(`${fixture}: 真值里没有 Word 自述的页面设置，取不到版心顶`);
 
@@ -205,6 +234,7 @@ async function collect(fixture: string): Promise<Sample[]> {
       page: page.index,
       label: fonts.join('+'),
       group: hasEastAsianText(first.text) ? 'eastAsia' : 'latin',
+      exact: exact.has(page.index),
       measured: first.y - section.topMargin,
       height,
       natural,
@@ -234,7 +264,7 @@ const GROUP_NAME: Record<Group, string> = { eastAsia: '东亚行', latin: '拉�
 let failed = false;
 
 for (const group of ['eastAsia', 'latin'] as Group[]) {
-  const rows = samples.filter((s) => s.group === group);
+  const rows = samples.filter((s) => s.group === group && !s.exact);
   if (rows.length === 0) continue;
 
   console.log(`\n${GROUP_NAME[group]} · 首行基线到版心顶（pt），Δ = 实测 − 预测\n`);
@@ -351,6 +381,59 @@ for (const fixture of fixtures) {
   }
 }
 
+// ── 固定值行距 ────────────────────────────────────────────────────────────────
+// 上面那四个假设都是「额外行距怎么分」，前提是基线由**字体度量**决定。固定值行距把这个
+// 前提整个推翻了：两款东亚字体、一款拉丁字体在同一个行高上给出**同一个**基线，
+// 也就是说 Word 这时根本没看字体，只按行高取了个固定比例。
+const exactRows = samples.filter((s) => s.exact);
+if (exactRows.length > 0) {
+  console.log('\n固定值行距 · 基线 ÷ 行高（pt）\n');
+  console.log(
+    '字体 @ 字号'.padEnd(LABEL_W) +
+      '自然'.padStart(8) +
+      '行高'.padStart(8) +
+      '实测'.padStart(8) +
+      '实测÷行高'.padStart(11) +
+      'Δ(0.8)'.padStart(10),
+  );
+  console.log('-'.repeat(LABEL_W + 45));
+
+  let worstExact = 0;
+  let worstRow: Sample | undefined;
+  for (const s of exactRows) {
+    const height = twipsToPt(s.height);
+    const delta = s.measured - height * EXACT_LINE_BASELINE_RATIO;
+    if (Math.abs(delta) > Math.abs(worstExact)) {
+      worstExact = delta;
+      worstRow = s;
+    }
+    console.log(
+      s.label.padEnd(LABEL_W) +
+        twipsToPt(s.natural).toFixed(2).padStart(8) +
+        height.toFixed(2).padStart(8) +
+        s.measured.toFixed(2).padStart(8) +
+        (s.measured / height).toFixed(4).padStart(11) +
+        delta.toFixed(3).padStart(10),
+    );
+  }
+  console.log('-'.repeat(LABEL_W + 45));
+  const fitted = exactRows.reduce((sum, s) => sum + s.measured / twipsToPt(s.height), 0) / exactRows.length;
+  console.log(
+    `${exactRows.length} 个样本，拟合比例 ${fitted.toFixed(4)}（代码里是 ${EXACT_LINE_BASELINE_RATIO}），` +
+      `最大误差 ${worstExact.toFixed(3)}pt` +
+      (worstRow ? ` · ${worstRow.fixture} 第 ${worstRow.page + 1} 页 · ${worstRow.label}` : ''),
+  );
+  if (Math.abs(worstExact) > TOLERANCE_PT) {
+    console.error(`✗ 固定值行距：最大误差 ${worstExact.toFixed(3)}pt 超过阈值 ${TOLERANCE_PT}pt`);
+    failed = true;
+  }
+  // 「与字体无关」是这条结论的核心证据，样本里必须真的有两款以上字体，否则测的只是巧合
+  if (new Set(exactRows.map((s) => s.label.replace(/@.*$/u, ''))).size < 2) {
+    console.error('✗ 固定值行距：样本里只有一款字体，证明不了「与字体无关」');
+    failed = true;
+  }
+}
+
 if (failed) process.exit(1);
 console.log(
   [
@@ -360,6 +443,7 @@ console.log(
     '  · 拉丁行的 GDI 外部行距**整块在基线以上**',
     '  · 网格吸附与行距倍数拉出来的余量同样上下均分（「行高」列不等于「自然」列的那几行）',
     '  · 空段落走段落标记的 ascii 桶 + 拉丁规则',
+    `  · **固定值行距**下基线 = 行高 × ${EXACT_LINE_BASELINE_RATIO}，与字体、字号无关`,
     '  行盒可以装了。',
   ].join('\n'),
 );

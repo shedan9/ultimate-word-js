@@ -26,9 +26,10 @@ pnpm spike                 # Phase 0 行高穿刺：单倍行距行高对不对
 pnpm spike:baseline        # 基线穿刺：基线在行高里的位置对不对
 pnpm spike:punct           # 标点挤压穿刺：什么时候压、压多少
 pnpm spike:compress        # 临时挤压穿刺：塞不下时肯挤多少才换行
+pnpm spike:page            # 分页穿刺：孤行寡行 / keepNext / 页首段前间距
 ```
 
-这四个 spike 脚本是**标定工具**，不是单测：它们从真值反推系数、打出残差表，
+这五个 spike 脚本是**标定工具**，不是单测：它们从真值反推系数、打出残差表，
 并在「最优假设不是代码里实现的那个」时以退出码 1 失败。跨平台的回归由单测兜着 ——
 `@uw/fonts` 的 `metrics.test.ts` / `metrics-pack.test.ts` 与 `@uw/layout` 的
 `items.test.ts` 里的期望值，就是这些脚本打出来的实测值。
@@ -41,6 +42,16 @@ pnpm spike:compress        # 临时挤压穿刺：塞不下时肯挤多少才换
 | `spike:baseline` | `spike-baseline-01/02/03` | 基线位置：核心盒在行高里居中；网格吸附在行距倍数之前；东亚行的行盒只由东亚字体定；空段落走 ascii 桶 |
 | `spike:punct` | `spike-punct-01` | 孤立标点不压，相邻标点固定压 0.5 em |
 | `spike:compress` | `spike-compress-01/02` | 临时挤压只在两端对齐的行里发生；一个标点最多让 0.48 em；挤到什么程度就宁可换行（`挤压量 × 字距数 ≤ 30.6 × 标点数 × 拉伸量`） |
+| `spike:page` | `spike-page-01/02` | 孤行寡行保底 2 行；段前间距落在页首不算；keepNext 的接缝要留出下一块「最少能放多少」 |
+
+`spike:baseline` 现在跑**四份** fixture：04 补的是前三份漏掉的那一格 —— **固定值行距**
+（`w:lineRule="exact"`）下基线 = 行高 × 0.8，与字体、字号都无关。它是被 `spike-page-01`
+逼出来的：那份样本用固定行距 20pt，整页文字比「核心盒居中」的预测低 1.77pt。
+
+`spike:page` 与其余四个不同，它**不反推系数**，而是把整台引擎跑一遍再与真值逐页对：
+分页规则不是一个数，是三条互相纠缠的判断，单独反推任何一条都会被另一条污染。
+做法是把 3 × 2 × 3 种组合排开，看哪一组能逐页复现 Word（当前：唯一满分 50/50 页）。
+它也是唯一**不需要 Windows** 的 spike —— docx 与 truth.json 都入库了。
 
 新增 fixture 有两种方式：
 

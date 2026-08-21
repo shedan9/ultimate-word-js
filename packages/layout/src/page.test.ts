@@ -85,13 +85,23 @@ describe('页面几何', () => {
 
 describe('行摞起来', () => {
   it('行的 y 是前面各行行高的累加，段前间距把整段往下推', () => {
-    const doc = layoutDocument(
-      body([para([run(TEN + TEN)], { spacing: { ...paraProps().spacing, before: 100 } })]),
-      opts(),
-    );
-    const p = paras(doc, 0)[0];
-    expect(p?.y).toBe(100);
-    expect(p?.lines.map((l) => l.y)).toEqual([100, 100 + EA_LINE]);
+    const before = { spacing: { ...paraProps().spacing, before: 100 } };
+    const doc = layoutDocument(body([para([run(TEN)]), para([run(TEN)], before)]), opts());
+    const p = paras(doc, 0)[1];
+    expect(p?.y).toBe(EA_LINE + 100);
+    expect(p?.lines.map((l) => l.y)).toEqual([EA_LINE + 100]);
+  });
+
+  it('段前间距落在页首**不算** —— 实测，见 PAGINATION_RULES ②', () => {
+    // spike-page-02 的 C 组：24pt 段前的段落被顶到页首时，首行基线与其余每一页的首行
+    // 一模一样（72.74pt）。原先按规范里 suppressSpBfAfterPgBrk 的存在推断「默认要加」，推反了
+    const before = { spacing: { ...paraProps().spacing, before: 100 } };
+    const doc = layoutDocument(body([para([run(TEN)], before)]), opts());
+    expect(paras(doc, 0)[0]?.y).toBe(0);
+
+    // 被自动分页顶到页首的那一段同理：段前间距在上一页加过，换页时连同 y 一起清掉
+    const flowed = layoutDocument(body([para([run(TEN.repeat(3))]), para([run(TEN)], before)]), opts());
+    expect(paras(flowed, 1)[0]?.y).toBe(0);
   });
 
   it('段后间距只影响下一段的起点，不算进本段的高度', () => {

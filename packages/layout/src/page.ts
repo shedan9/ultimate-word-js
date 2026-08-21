@@ -42,7 +42,6 @@ import { layoutParagraph } from './paragraph.ts';
 import type { RowLayout, TableLayout } from './table.ts';
 import { layoutTable } from './table.ts';
 import type { LineLayout, ParagraphLayout } from './types.ts';
-import { SPACE_BEFORE_AT_PAGE_TOP, WIDOW_ORPHAN_MIN_LINES } from './uncalibrated.ts';
 
 // ── 输出的数据形状 ────────────────────────────────────────────────────────────
 
@@ -127,7 +126,56 @@ export interface LayoutDocumentOptions {
   /** 四个字体桶全空时用哪款字体 */
   defaultFont?: string;
   diagnostics?: DiagnosticSink;
+  /**
+   * 分页规则。**标定用的接缝** —— 正常调用不要传，默认值就是实测出来的那一套
+   * （见 `PAGINATION_RULES`）。`apps/fidelity` 的 `spike:page` 靠它把几种假设各跑一遍，
+   * 证明「代码里实现的这一套」是唯一能复现 Word 的那一套。
+   */
+  rules?: Partial<PaginationRules>;
 }
+
+export interface PaginationRules {
+  /** 孤行寡行的保底行数 */
+  widowMinLines: number;
+  /** 段前间距落在页首算不算 */
+  spaceBeforeAtPageTop: boolean;
+  /** keepNext 的接缝要给下一块留出多少 */
+  keepNextJoin: 'min-chunk' | 'first-line' | 'whole-block';
+}
+
+/**
+ * 分页规则的实测值。样本 `spike-page-01/02`（`pnpm --filter @uw/fidelity spike:page`），
+ * 版心刻意做成「一页恰好 11 行、一行 18 个汉字、固定行距 20pt」，于是行高与字宽都不依赖
+ * 任何待标定的度量，阶梯靠垫行的条数移动断页点。
+ *
+ * ① **孤行寡行保底 2 行**（`spike-page-01`，7 级阶梯 + 5 级关掉 widowControl 的对照）：
+ *    垫 7 行时目标段落的自然断点是 4|1，Word 给的是 **3|2** —— 不做控制会是 4|1、
+ *    下限若是 3 则应当整段推走（0|5）。垫 10 行（自然 1|4）Word 整段推走，与下限 2 吻合。
+ *    对照组 5 级全部与「老实排」逐页一致，这同时验证了「一页 11 行」这个前提本身。
+ *
+ * ② **段前间距落在页首不算**（`spike-page-02` 的 C 组）：24pt 段前的段落被自动分页顶到页首时，
+ *    首行基线 y = **72.74pt**，与其余每一页的首行基线**一模一样**；靠硬分页符顶上去的那一份
+ *    也是 72.74pt。同一段排在页中间时，它与上一行的基线差是 43.95pt ≈ 20 + 24 ——
+ *    也就是段前间距**本身没问题，只是在页首被丢掉**。原先按规范里
+ *    `w:suppressSpBfAfterPgBrk` 的存在推断「默认要加」，推反了。
+ *
+ * ③ **keepNext 要留出的是下一块「最少能放多少」**（`spike-page-02` 的 A / D 两组）：
+ *    A 组是 3 行的 keepNext 段落 P 后面跟 2 行的 Q（Q 的 widowControl 是默认的开）。垫 7 行时
+ *    版心还剩 4 行，按「留一行」算 P 的三行加 Q 的首行正好 4 行放得下，Word 却在 P 的第 2 行
+ *    就断了 —— 因为 Q 只有 2 行，孤行寡行不许它拆，Q **整块**都得下去，P 的末行跟着走。
+ *    D 组把「最少能放多少」与「整块」分开：Q 换成 5 行（孤行寡行只要求它留 2 行），
+ *    Word 按 2 行留 —— 也就是说它算的是「Q 至少要占的那一截」，不是「整个 Q」。
+ *
+ * 三条规则各自的分辨力（`spike:page` 把 3 × 2 × 3 种组合逐页对了一遍，两份样本共 50 页）：
+ * 寡行下限 1 / 2 / 3 → 42 / **50** / 40 页；页首段前 加 / 不加 → 49 / **50**；
+ * 接缝 first-line / whole-block / min-chunk → 46 / 46 / **50**。实现的这一组是唯一的满分，
+ * 没有并列 —— 并列就说明样本分不开，那时该加密阶梯而不是随便挑一个。
+ */
+export const PAGINATION_RULES: PaginationRules = {
+  widowMinLines: 2,
+  spaceBeforeAtPageTop: false,
+  keepNextJoin: 'min-chunk',
+};
 
 // ── 分页过程中的状态 ──────────────────────────────────────────────────────────
 
@@ -140,6 +188,7 @@ export interface LayoutDocumentOptions {
  */
 interface Flow {
   opts: LayoutDocumentOptions;
+  rules: PaginationRules;
   pages: PageLayout[];
   page: PageLayout | undefined;
   /** 游标：下一块内容的顶，相对版心顶 */
@@ -159,6 +208,7 @@ export function layoutDocument(body: ResolvedBody, opts: LayoutDocumentOptions):
   const first = body.sections[0];
   const flow: Flow = {
     opts,
+    rules: { ...PAGINATION_RULES, ...opts.rules },
     pages: [],
     page: undefined,
     y: 0,
@@ -174,7 +224,7 @@ export function layoutDocument(body: ResolvedBody, opts: LayoutDocumentOptions):
     const blocks = section.blocks.map((b) => prepare(b, section.props, opts));
     // keepNext 把相邻的块串成「接缝不许跨页」的链，接缝高度要在排**上一块**时就知道
     blocks.forEach((b, i) => {
-      place(flow, b, joinHeight(blocks, i));
+      place(flow, b, joinHeight(blocks, i, flow.rules));
     });
 
     // 空节也要占一页：Word 里一个分节符至少产生一页，否则页码序列就断了
@@ -343,29 +393,59 @@ function prepare(b: ResolvedBlock, section: SectionProps, opts: LayoutDocumentOp
 }
 
 /**
- * `w:keepNext` 的接缝高度：本块的**末行**与下一块的**首行**必须落在同一页上，
- * 所以排本块最后一行时要连它一起量。
+ * `w:keepNext` 的接缝高度：本块的**末行**与下一块**必须留在本页的那一截**要一起放得下。
  *
- * keepNext 不是「整段跟着走」：一段十行的 keepNext 段落照样可以拆到两页，只要它的
- * 最后一行与下一段的第一行还在一起。按「整块原子」实现会平白把一整段推到下一页。
+ * 「必须留在本页的那一截」不等于「下一块的第一行」—— 这是被真值推翻的第一版实现
+ * （`spike-page-02` 的 A 组）：下一段只有 2 行时，孤行寡行不许它拆，于是它**整块**
+ * 都得跟着走，接缝要按 2 行算。按一行算的话本页会多收一行，往后每一页都跟着错位。
  *
- * 下一块只有一行且它自己也 keepNext 时，接缝要接着往下串（A 的末行 + B 的唯一一行 +
- * C 的首行）—— 标题、副标题、正文首行这种三连在公文里很常见。
+ * keepNext 也不是「整段跟着走」：一段十行的 keepNext 段落照样能拆到两页，
+ * 只要它的最后一行与下一块该留的那一截还在一起（同一批样本的四级阶梯都是这么断的）。
+ *
+ * 下一块整块都得走时，接缝要接着往下串（A 的末行 + 整个 B + C 该留的那一截）——
+ * 标题、副标题、正文首行这种三连在公文里很常见。
  */
-function joinHeight(blocks: readonly Prepared[], i: number): Twips {
+function joinHeight(blocks: readonly Prepared[], i: number, rules: PaginationRules): Twips {
   const self = blocks[i];
   if (self === undefined || self.kind !== 'paragraph' || !self.props.keepNext) return 0;
   const next = blocks[i + 1];
   if (next === undefined) return 0;
+  if (rules.keepNextJoin === 'whole-block') return blockHeight(next) + gapBetween(self, next);
 
   if (next.kind === 'table') {
-    // 表格没有段前间距，首行就是它的第一行
+    // 表格按行分页，最少能放的就是第一行（`w:cantSplit` 与拆行都还没做，见文件头）
     return next.layout.rows[0]?.height ?? 0;
   }
-  const line = next.layout.lines[0];
-  if (line === undefined) return 0;
-  const chained = next.layout.lines.length === 1 ? joinHeight(blocks, i + 1) : 0;
-  return self.layout.spaceAfter + next.layout.spaceBefore + line.height + chained;
+  const lines = next.layout.lines;
+  const min = rules.keepNextJoin === 'first-line' ? 1 : minChunkLines(next.props, lines.length, rules);
+  let h = gapBetween(self, next);
+  for (let k = 0; k < Math.min(min, lines.length); k++) h += lines[k]?.height ?? 0;
+  // 下一块整块都留不下来时，它的接缝也串上来
+  return min >= lines.length ? h + joinHeight(blocks, i + 1, rules) : h;
+}
+
+/** 两块之间的空当。表格没有段前段后间距 */
+function gapBetween(self: Prepared, next: Prepared): Twips {
+  const after = self.kind === 'paragraph' ? self.layout.spaceAfter : 0;
+  const before = next.kind === 'paragraph' ? next.layout.spaceBefore : 0;
+  return after + before;
+}
+
+/**
+ * 一个段落**最少**要在本页留下几行 —— 也就是「它开始排了，就至少占这么多」。
+ *
+ * `keepLines` 与「拆开会违反孤行寡行」两种情形下答案都是整段（n）：
+ * n < 2×min 时任何一刀都会让某一边不足 min，只能整段放或者整段不放。
+ */
+function minChunkLines(props: ResolvedParaProps, n: number, rules: PaginationRules): number {
+  if (props.keepLines) return n;
+  if (!props.widowControl) return 1;
+  return n >= 2 * rules.widowMinLines ? rules.widowMinLines : n;
+}
+
+function blockHeight(b: Prepared): Twips {
+  if (b.kind === 'table') return b.layout.rows.reduce((sum, r) => sum + r.height, 0);
+  return b.layout.lines.reduce((sum, l) => sum + l.height, 0);
 }
 
 function place(flow: Flow, b: Prepared, join: Twips): void {
@@ -384,16 +464,17 @@ function placeParagraph(flow: Flow, b: Extract<Prepared, { kind: 'paragraph' }>,
   // 已经在新的一页上就已经满足了
   if (b.props.pageBreakBefore && pageHasContent(flow)) breakPage(flow);
 
-  // 段前间距在页首照加（`SPACE_BEFORE_AT_PAGE_TOP`，未标定）。要注意它必须在开页**之前**
-  // 判断：`currentPage()` 一开页，`pageHasContent()` 看的就是新页了
+  // 段前间距落在页首**不算**（实测，见 PAGINATION_RULES ②）。判断必须在开页**之前**做：
+  // `currentPage()` 一开页，`pageHasContent()` 看的就是新页了。
+  // 段落整段被推到下一页的那条路不用管：`flow.y` 会在换页时清零，加过的段前间距自然就没了
   const atPageTop = !pageHasContent(flow);
   currentPage(flow);
-  if (!atPageTop || SPACE_BEFORE_AT_PAGE_TOP) flow.y += b.layout.spaceBefore;
+  if (!atPageTop || flow.rules.spaceBeforeAtPageTop) flow.y += b.layout.spaceBefore;
 
   let i = 0;
   while (i < total) {
     const raw = fitLines(lines, i, availHeight(flow), join);
-    let count = adjust(raw, lines, i, b.props);
+    let count = adjust(raw, lines, i, b.props, flow.rules);
 
     if (count === 0) {
       // 空页上都放不下就只能硬塞（溢出版心），否则这个循环永远换页换不完
@@ -439,7 +520,13 @@ function fitLines(lines: readonly LineLayout[], from: number, avail: Twips, join
  * 顺序不能反：先按寡行把行往下一页赶，赶完再看本页留下的够不够孤行的下限 ——
  * 反过来会得到「上面留 2 行、下面只剩 1 行」这种两头都不合规的结果。
  */
-function adjust(count: number, lines: readonly LineLayout[], from: number, props: ResolvedParaProps): number {
+function adjust(
+  count: number,
+  lines: readonly LineLayout[],
+  from: number,
+  props: ResolvedParaProps,
+  rules: PaginationRules,
+): number {
   const rest = lines.length - from;
   if (count >= rest) return count;
 
@@ -448,7 +535,7 @@ function adjust(count: number, lines: readonly LineLayout[], from: number, props
   if (from === 0 && props.keepLines) return 0;
   if (!props.widowControl) return count;
 
-  const min = WIDOW_ORPHAN_MIN_LINES;
+  const min = rules.widowMinLines;
   let n = count;
   if (n > 0 && rest - n < min) n = Math.max(0, rest - min); // 寡行：下一页至少接走 min 行
   if (n > 0 && n < min) n = 0; // 孤行：本页底至少留下 min 行

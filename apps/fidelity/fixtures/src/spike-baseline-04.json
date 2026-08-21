@@ -1,0 +1,86 @@
+{
+  "name": "spike-baseline-04",
+  "note": "基线穿刺的第四份：**固定值行距**（w:line + lineRule=exact）下，那 30% 的东亚额外行距去哪儿了。前三份（spike-baseline-01/02/03）把「核心盒在最终行高里居中、额外行距上下均分」钉死了，但它们的 lineSpacingPt 全是 0 —— 单倍 / 倍数 / 网格三种情形都测过，唯独没测固定值。分页样本 spike-page-01（固定行距 20pt）一跑就露馅：整页文字比预测低 1.8pt，正好是那 30%（3.6pt）的一半，指向「固定值行距下额外行距整块在基线以上」。这一份把信号放大到分得开：仿宋 / 黑体 48pt，固定行距分别取 80pt（比自然行高 62.4pt 大）与 50pt（比自然行高小，压掉一截），两个方向都测；再加 12pt / 20pt 复现原始现象，以及 Times New Roman 的拉丁对照（拉丁的外部行距本来就全在基线以上，它应当不受影响）。每段两行以上，因为基线穿刺是靠**同签名相邻行的基线差**反推行高的，单行段落量不出行高。每段都带 pageBreakBefore：首行基线减版心顶就是基线在行盒里的位置，与前面排了什么无关。",
+  "page": {
+    "widthMm": 210,
+    "heightMm": 297,
+    "marginMm": {
+      "top": 25,
+      "bottom": 25,
+      "left": 25,
+      "right": 25
+    }
+  },
+  "paragraphs": [
+    {
+      "text": "甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥东南西北中春夏秋",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 48,
+      "align": "left",
+      "pageBreakBefore": true,
+      "lineSpacingPt": 80
+    },
+    {
+      "text": "甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥东南西北中春夏秋",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 48,
+      "align": "left",
+      "pageBreakBefore": true,
+      "lineSpacingPt": 50
+    },
+    {
+      "text": "甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥东南西北中春夏秋",
+      "fontEA": "黑体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 48,
+      "align": "left",
+      "pageBreakBefore": true,
+      "lineSpacingPt": 80
+    },
+    {
+      "text": "甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥东南西北中春夏秋",
+      "fontEA": "黑体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 48,
+      "align": "left",
+      "pageBreakBefore": true,
+      "lineSpacingPt": 50
+    },
+    {
+      "text": "甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥东南西北中春夏秋冬风雨雷电山川河海云雾",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "pageBreakBefore": true,
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥东南西北中春夏秋",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 48,
+      "align": "left",
+      "pageBreakBefore": true
+    },
+    {
+      "text": "Hamburgefonstiv quick brown fox jumps over the lazy dog and keeps running past the fence",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 48,
+      "align": "left",
+      "pageBreakBefore": true,
+      "lineSpacingPt": 80
+    },
+    {
+      "text": "Hamburgefonstiv quick brown fox jumps over the lazy dog and keeps running past the fence",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 48,
+      "align": "left",
+      "pageBreakBefore": true
+    }
+  ]
+}

@@ -11,11 +11,15 @@
     "spike": "node src/spike-lineheight.ts",
     "spike:baseline": "node src/spike-baseline.ts",
     "spike:punct": "node src/spike-punct.ts",
-    "spike:compress": "node src/spike-compress.ts"
+    "spike:compress": "node src/spike-compress.ts",
+    "spike:page": "node src/spike-page.ts"
   },
   "dependencies": {
     "@uw/core": "workspace:*",
     "@uw/fonts": "workspace:*",
+    "@uw/layout": "workspace:*",
+    "@uw/model": "workspace:*",
+    "@uw/ooxml": "workspace:*",
     "pdfjs-dist": "^6.2.108"
   }
 }

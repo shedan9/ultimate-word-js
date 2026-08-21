@@ -1,0 +1,739 @@
+{
+  "source": "spike-baseline-04.docx",
+  "generator": {
+    "tool": "@uw/fidelity",
+    "formatVersion": 1,
+    "pdfjs": "6.2.108",
+    "word": "16.0",
+    "wordBuild": "16.0.20228"
+  },
+  "unit": "pt",
+  "origin": "top-left",
+  "pageCount": 8,
+  "fonts": {
+    "FangSong": {
+      "name": "FangSong",
+      "ascent": 0.859,
+      "descent": -0.141,
+      "vertical": false
+    },
+    "SimHei": {
+      "name": "SimHei",
+      "ascent": 0.859,
+      "descent": -0.141,
+      "vertical": false
+    },
+    "TimesNewRomanPSMT": {
+      "name": "TimesNewRomanPSMT",
+      "ascent": 0.891,
+      "descent": -0.216,
+      "vertical": false
+    }
+  },
+  "wordPageCount": 8,
+  "sections": [
+    {
+      "pageWidth": 595.3,
+      "pageHeight": 841.9,
+      "topMargin": 70.85,
+      "bottomMargin": 70.85,
+      "leftMargin": 70.85,
+      "rightMargin": 70.85,
+      "headerDist": 42.55,
+      "footerDist": 49.6,
+      "gutter": 0,
+      "orientation": 0,
+      "lineNumbers": false
+    }
+  ],
+  "pages": [
+    {
+      "index": 0,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 134.9,
+          "w": 432,
+          "size": 48,
+          "font": "FangSong",
+          "text": "甲乙丙丁戊己庚辛壬"
+        },
+        {
+          "x": 70.824,
+          "y": 214.94,
+          "w": 432,
+          "size": 48,
+          "font": "FangSong",
+          "text": "癸子丑寅卯辰巳午未"
+        },
+        {
+          "x": 70.824,
+          "y": 294.89,
+          "w": 432,
+          "size": 48,
+          "font": "FangSong",
+          "text": "申酉戌亥东南西北中"
+        },
+        {
+          "x": 70.824,
+          "y": 374.93,
+          "w": 144,
+          "size": 48,
+          "font": "FangSong",
+          "text": "春夏秋"
+        }
+      ],
+      "lines": [
+        {
+          "y": 134.9,
+          "x": 70.824,
+          "xEnd": 502.824,
+          "text": "甲乙丙丁戊己庚辛壬",
+          "first": "甲",
+          "last": "壬",
+          "items": [
+            0
+          ]
+        },
+        {
+          "y": 214.94,
+          "x": 70.824,
+          "xEnd": 502.824,
+          "text": "癸子丑寅卯辰巳午未",
+          "first": "癸",
+          "last": "未",
+          "items": [
+            1
+          ]
+        },
+        {
+          "y": 294.89,
+          "x": 70.824,
+          "xEnd": 502.824,
+          "text": "申酉戌亥东南西北中",
+          "first": "申",
+          "last": "中",
+          "items": [
+            2
+          ]
+        },
+        {
+          "y": 374.93,
+          "x": 70.824,
+          "xEnd": 214.824,
+          "text": "春夏秋",
+          "first": "春",
+          "last": "秋",
+          "items": [
+            3
+          ]
+        }
+      ]
+    },
+    {
+      "index": 1,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 110.9,
+          "w": 432,
+          "size": 48,
+          "font": "FangSong",
+          "text": "甲乙丙丁戊己庚辛壬"
+        },
+        {
+          "x": 70.824,
+          "y": 160.94,
+          "w": 432,
+          "size": 48,
+          "font": "FangSong",
+          "text": "癸子丑寅卯辰巳午未"
+        },
+        {
+          "x": 70.824,
+          "y": 210.86,
+          "w": 432,
+          "size": 48,
+          "font": "FangSong",
+          "text": "申酉戌亥东南西北中"
+        },
+        {
+          "x": 70.824,
+          "y": 260.9,
+          "w": 144,
+          "size": 48,
+          "font": "FangSong",
+          "text": "春夏秋"
+        }
+      ],
+      "lines": [
+        {
+          "y": 110.9,
+          "x": 70.824,
+          "xEnd": 502.824,
+          "text": "甲乙丙丁戊己庚辛壬",
+          "first": "甲",
+          "last": "壬",
+          "items": [
+            0
+          ]
+        },
+        {
+          "y": 160.94,
+          "x": 70.824,
+          "xEnd": 502.824,
+          "text": "癸子丑寅卯辰巳午未",
+          "first": "癸",
+          "last": "未",
+          "items": [
+            1
+          ]
+        },
+        {
+          "y": 210.86,
+          "x": 70.824,
+          "xEnd": 502.824,
+          "text": "申酉戌亥东南西北中",
+          "first": "申",
+          "last": "中",
+          "items": [
+            2
+          ]
+        },
+        {
+          "y": 260.9,
+          "x": 70.824,
+          "xEnd": 214.824,
+          "text": "春夏秋",
+          "first": "春",
+          "last": "秋",
+          "items": [
+            3
+          ]
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 134.9,
+          "w": 432,
+          "size": 48,
+          "font": "SimHei",
+          "text": "甲乙丙丁戊己庚辛壬"
+        },
+        {
+          "x": 70.824,
+          "y": 214.94,
+          "w": 432,
+          "size": 48,
+          "font": "SimHei",
+          "text": "癸子丑寅卯辰巳午未"
+        },
+        {
+          "x": 70.824,
+          "y": 294.89,
+          "w": 432,
+          "size": 48,
+          "font": "SimHei",
+          "text": "申酉戌亥东南西北中"
+        },
+        {
+          "x": 70.824,
+          "y": 374.93,
+          "w": 144,
+          "size": 48,
+          "font": "SimHei",
+          "text": "春夏秋"
+        }
+      ],
+      "lines": [
+        {
+          "y": 134.9,
+          "x": 70.824,
+          "xEnd": 502.824,
+          "text": "甲乙丙丁戊己庚辛壬",
+          "first": "甲",
+          "last": "壬",
+          "items": [
+            0
+          ]
+        },
+        {
+          "y": 214.94,
+          "x": 70.824,
+          "xEnd": 502.824,
+          "text": "癸子丑寅卯辰巳午未",
+          "first": "癸",
+          "last": "未",
+          "items": [
+            1
+          ]
+        },
+        {
+          "y": 294.89,
+          "x": 70.824,
+          "xEnd": 502.824,
+          "text": "申酉戌亥东南西北中",
+          "first": "申",
+          "last": "中",
+          "items": [
+            2
+          ]
+        },
+        {
+          "y": 374.93,
+          "x": 70.824,
+          "xEnd": 214.824,
+          "text": "春夏秋",
+          "first": "春",
+          "last": "秋",
+          "items": [
+            3
+          ]
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 110.9,
+          "w": 432,
+          "size": 48,
+          "font": "SimHei",
+          "text": "甲乙丙丁戊己庚辛壬"
+        },
+        {
+          "x": 70.824,
+          "y": 160.94,
+          "w": 432,
+          "size": 48,
+          "font": "SimHei",
+          "text": "癸子丑寅卯辰巳午未"
+        },
+        {
+          "x": 70.824,
+          "y": 210.86,
+          "w": 432,
+          "size": 48,
+          "font": "SimHei",
+          "text": "申酉戌亥东南西北中"
+        },
+        {
+          "x": 70.824,
+          "y": 260.9,
+          "w": 144,
+          "size": 48,
+          "font": "SimHei",
+          "text": "春夏秋"
+        }
+      ],
+      "lines": [
+        {
+          "y": 110.9,
+          "x": 70.824,
+          "xEnd": 502.824,
+          "text": "甲乙丙丁戊己庚辛壬",
+          "first": "甲",
+          "last": "壬",
+          "items": [
+            0
+          ]
+        },
+        {
+          "y": 160.94,
+          "x": 70.824,
+          "xEnd": 502.824,
+          "text": "癸子丑寅卯辰巳午未",
+          "first": "癸",
+          "last": "未",
+          "items": [
+            1
+          ]
+        },
+        {
+          "y": 210.86,
+          "x": 70.824,
+          "xEnd": 502.824,
+          "text": "申酉戌亥东南西北中",
+          "first": "申",
+          "last": "中",
+          "items": [
+            2
+          ]
+        },
+        {
+          "y": 260.9,
+          "x": 70.824,
+          "xEnd": 214.824,
+          "text": "春夏秋",
+          "first": "春",
+          "last": "秋",
+          "items": [
+            3
+          ]
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 86.9,
+          "w": 444,
+          "size": 12,
+          "font": "FangSong",
+          "text": "甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥东南西北中春夏秋冬风雨雷电山川"
+        },
+        {
+          "x": 70.824,
+          "y": 106.94,
+          "w": 48,
+          "size": 12,
+          "font": "FangSong",
+          "text": "河海云雾"
+        }
+      ],
+      "lines": [
+        {
+          "y": 86.9,
+          "x": 70.824,
+          "xEnd": 514.824,
+          "text": "甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥东南西北中春夏秋冬风雨雷电山川",
+          "first": "甲",
+          "last": "川",
+          "items": [
+            0
+          ]
+        },
+        {
+          "y": 106.94,
+          "x": 70.824,
+          "xEnd": 118.824,
+          "text": "河海云雾",
+          "first": "河",
+          "last": "雾",
+          "items": [
+            1
+          ]
+        }
+      ]
+    },
+    {
+      "index": 5,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 119.18,
+          "w": 432,
+          "size": 48,
+          "font": "FangSong",
+          "text": "甲乙丙丁戊己庚辛壬"
+        },
+        {
+          "x": 70.824,
+          "y": 181.46,
+          "w": 432,
+          "size": 48,
+          "font": "FangSong",
+          "text": "癸子丑寅卯辰巳午未"
+        },
+        {
+          "x": 70.824,
+          "y": 243.74,
+          "w": 432,
+          "size": 48,
+          "font": "FangSong",
+          "text": "申酉戌亥东南西北中"
+        },
+        {
+          "x": 70.824,
+          "y": 305.93,
+          "w": 144,
+          "size": 48,
+          "font": "FangSong",
+          "text": "春夏秋"
+        }
+      ],
+      "lines": [
+        {
+          "y": 119.18,
+          "x": 70.824,
+          "xEnd": 502.824,
+          "text": "甲乙丙丁戊己庚辛壬",
+          "first": "甲",
+          "last": "壬",
+          "items": [
+            0
+          ]
+        },
+        {
+          "y": 181.46,
+          "x": 70.824,
+          "xEnd": 502.824,
+          "text": "癸子丑寅卯辰巳午未",
+          "first": "癸",
+          "last": "未",
+          "items": [
+            1
+          ]
+        },
+        {
+          "y": 243.74,
+          "x": 70.824,
+          "xEnd": 502.824,
+          "text": "申酉戌亥东南西北中",
+          "first": "申",
+          "last": "中",
+          "items": [
+            2
+          ]
+        },
+        {
+          "y": 305.93,
+          "x": 70.824,
+          "xEnd": 214.824,
+          "text": "春夏秋",
+          "first": "春",
+          "last": "秋",
+          "items": [
+            3
+          ]
+        }
+      ]
+    },
+    {
+      "index": 6,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 134.9,
+          "w": 335.136,
+          "size": 48,
+          "font": "TimesNewRomanPSMT",
+          "text": "Hamburgefonstiv"
+        },
+        {
+          "x": 70.824,
+          "y": 214.94,
+          "w": 446.64,
+          "size": 48,
+          "font": "TimesNewRomanPSMT",
+          "text": "quick brown fox jumps"
+        },
+        {
+          "x": 70.824,
+          "y": 294.89,
+          "w": 413.232,
+          "size": 48,
+          "font": "TimesNewRomanPSMT",
+          "text": "over the lazy dog and"
+        },
+        {
+          "x": 70.824,
+          "y": 374.93,
+          "w": 430.608,
+          "size": 48,
+          "font": "TimesNewRomanPSMT",
+          "text": "keeps running past the"
+        },
+        {
+          "x": 70.824,
+          "y": 454.99,
+          "w": 103.92,
+          "size": 48,
+          "font": "TimesNewRomanPSMT",
+          "text": "fence"
+        }
+      ],
+      "lines": [
+        {
+          "y": 134.9,
+          "x": 70.824,
+          "xEnd": 405.96,
+          "text": "Hamburgefonstiv",
+          "first": "H",
+          "last": "v",
+          "items": [
+            0
+          ]
+        },
+        {
+          "y": 214.94,
+          "x": 70.824,
+          "xEnd": 517.464,
+          "text": "quick brown fox jumps",
+          "first": "q",
+          "last": "s",
+          "items": [
+            1
+          ]
+        },
+        {
+          "y": 294.89,
+          "x": 70.824,
+          "xEnd": 484.056,
+          "text": "over the lazy dog and",
+          "first": "o",
+          "last": "d",
+          "items": [
+            2
+          ]
+        },
+        {
+          "y": 374.93,
+          "x": 70.824,
+          "xEnd": 501.432,
+          "text": "keeps running past the",
+          "first": "k",
+          "last": "e",
+          "items": [
+            3
+          ]
+        },
+        {
+          "y": 454.99,
+          "x": 70.824,
+          "xEnd": 174.744,
+          "text": "fence",
+          "first": "f",
+          "last": "e",
+          "items": [
+            4
+          ]
+        }
+      ]
+    },
+    {
+      "index": 7,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 115.58,
+          "w": 335.136,
+          "size": 48,
+          "font": "TimesNewRomanPSMT",
+          "text": "Hamburgefonstiv"
+        },
+        {
+          "x": 70.824,
+          "y": 170.78,
+          "w": 446.64,
+          "size": 48,
+          "font": "TimesNewRomanPSMT",
+          "text": "quick brown fox jumps"
+        },
+        {
+          "x": 70.824,
+          "y": 225.98,
+          "w": 413.232,
+          "size": 48,
+          "font": "TimesNewRomanPSMT",
+          "text": "over the lazy dog and"
+        },
+        {
+          "x": 70.824,
+          "y": 281.21,
+          "w": 430.608,
+          "size": 48,
+          "font": "TimesNewRomanPSMT",
+          "text": "keeps running past the"
+        },
+        {
+          "x": 70.824,
+          "y": 336.41,
+          "w": 103.92,
+          "size": 48,
+          "font": "TimesNewRomanPSMT",
+          "text": "fence"
+        }
+      ],
+      "lines": [
+        {
+          "y": 115.58,
+          "x": 70.824,
+          "xEnd": 405.96,
+          "text": "Hamburgefonstiv",
+          "first": "H",
+          "last": "v",
+          "items": [
+            0
+          ]
+        },
+        {
+          "y": 170.78,
+          "x": 70.824,
+          "xEnd": 517.464,
+          "text": "quick brown fox jumps",
+          "first": "q",
+          "last": "s",
+          "items": [
+            1
+          ]
+        },
+        {
+          "y": 225.98,
+          "x": 70.824,
+          "xEnd": 484.056,
+          "text": "over the lazy dog and",
+          "first": "o",
+          "last": "d",
+          "items": [
+            2
+          ]
+        },
+        {
+          "y": 281.21,
+          "x": 70.824,
+          "xEnd": 501.432,
+          "text": "keeps running past the",
+          "first": "k",
+          "last": "e",
+          "items": [
+            3
+          ]
+        },
+        {
+          "y": 336.41,
+          "x": 70.824,
+          "xEnd": 174.744,
+          "text": "fence",
+          "first": "f",
+          "last": "e",
+          "items": [
+            4
+          ]
+        }
+      ]
+    }
+  ]
+}

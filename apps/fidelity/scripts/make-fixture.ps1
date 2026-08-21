@@ -141,6 +141,16 @@ try {
     # some coincidence of the font metrics -- one paragraph opts out and must move.
     # Absent property => snap (the Word default), hence the double negation.
     $fmt.DisableLineHeightGrid = (Test-Prop $p 'snapToGrid') -and (-not [bool]$p.snapToGrid)
+    # Pagination knobs. WidowControl defaults to True in Word, so the spec turns it OFF
+    # explicitly (same double-negation shape as DisableLineHeightGrid above); the other two
+    # default to False. All three are assigned unconditionally for the inheritance reason
+    # spelled out above -- a leaked KeepWithNext would silently glue two ladder steps together
+    # and the whole ladder would measure nothing.
+    $fmt.WidowControl = -not ((Test-Prop $p 'widowControl') -and (-not [bool]$p.widowControl))
+    $fmt.KeepWithNext = [bool]$p.keepWithNext
+    # KeepTogether is Word's name for w:keepLines ("keep lines of this paragraph together"),
+    # NOT for keeping it with the next one -- the two are easy to swap by name alone.
+    $fmt.KeepTogether = [bool]$p.keepTogether
     if ((Test-Prop $p 'lineSpacingMultiple') -and [double]$p.lineSpacingMultiple -gt 0) {
       # LineSpacing for the multiple rule is in points, hence LinesToPoints --
       # assigning 1.5 directly would mean "1.5pt fixed" and silently collapse the line.

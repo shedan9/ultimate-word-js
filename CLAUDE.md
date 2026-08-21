@@ -33,8 +33,20 @@ Phase 5 的**列表编号**已经从 `numbering.xml` 一路通到首行几何，
 每行的绝对基线 = `page.geometry.content.y + PlacedLine.y + LineLayout.baseline`，
 gongwen-01 的 18 行与 Word 真值最大差 **0.06pt**（L3 判据 0.5pt），断言在 `fixture.test.ts`。
 逐行累加**不需要**「每页重新对齐网格」的修正 —— 网格吸附已经吸在每一行的行高上了。
-未做：页眉页脚（部件没解析，版心顶固定取 `w:top`）、表格拆行、脚注不占位；
-未标定的两条（孤行寡行的 2 行下限、段前间距在页首算不算）在 `uncalibrated.ts`。
+未做：页眉页脚（部件没解析，版心顶固定取 `w:top`）、表格拆行、脚注不占位。
+
+**分页的三条规则已经标定完**（样本 `spike-page-01/02`，跑 `pnpm --filter @uw/fidelity spike:page`，
+落在 `page.ts` 的 `PAGINATION_RULES`）：孤行寡行**保底 2 行**、段前间距落在页首**不算**、
+keepNext 的接缝要留出下一块**「最少能放多少」**（不是它的第一行，也不是整块）。
+标定方式与别的 spike 不同 —— 分页规则不是一个数而是三条互相纠缠的判断，所以是把
+3 × 2 × 3 种组合排开逐页比对，实现的这一组是**唯一**的满分（50 页全对，无并列）。
+两份样本连同 gongwen-01 一起进了 CI（`page-fixture.test.ts`，跨平台）。
+
+顺带被逼出来一条**行盒**的新结论：**固定值行距（`w:lineRule="exact"`）下基线 = 行高 × 0.8，
+与字体、字号都无关**（`spike-baseline-04`，6 个样本比例 0.8002–0.8009）。原来的
+「核心盒在行高里居中」是拿单倍 / 倍数 / 网格三种行距标定的，固定值那一格是空的 ——
+`spike-page-01` 用固定行距 20pt，整页文字低了 1.77pt 才露出来。实现在
+`@uw/fonts` 的 `baselineOffsetExact`，`line-height.ts` 按 `lineRule` 选哪一套。
 
 一份 docx 的入口是 `loadDocument(pkg, sink)`（`packages/model/src/load.ts`），产出
 `body`（直接格式，可编辑）、`resolved`（级联完的纯数据，给布局）、`cascade`（上下文，**不可**过 Worker 边界）、
@@ -197,6 +209,7 @@ pnpm --filter @uw/fidelity spike           # Phase 0 行高穿刺
 pnpm --filter @uw/fidelity spike:baseline  # 基线穿刺（基线在行高里的位置）
 pnpm --filter @uw/fidelity spike:punct     # 标点挤压穿刺（什么时候压、压多少）
 pnpm --filter @uw/fidelity spike:compress  # 临时挤压穿刺（塞不下时肯挤多少才换行）
+pnpm --filter @uw/fidelity spike:page      # 分页穿刺（孤行寡行 / keepNext / 页首段前间距，**不需要 Word**）
 pnpm --filter @uw/fonts run packs          # 重抽度量包（仅 Windows，产物入库）
 pnpm --filter @uw/fonts run packs:check    # 只校验入库的包与本机字体是否一致
 ```
@@ -250,7 +263,15 @@ pnpm --filter @uw/fonts run packs:check    # 只校验入库的包与本机字�
 
 **已定死（基线穿刺，30 个样本最大误差 0.140pt）** —— 实现在同一个文件的 `baselineOffset()`：
 **「核心盒」在最终行高里居中**，核心盒 = win 跨度（拉丁的话再加上 GDI 外部行距）。
-推论是行距倍数、网格吸附、固定值行距拉出来或压掉的空间**一律上下均分**，不用为每种来源各写一条规则。
+推论是行距倍数、网格吸附拉出来或压掉的空间**一律上下均分**，不用为每种来源各写一条规则。
+
+⚠️ 这条推论原先还写着「固定值行距」，**被 `spike-baseline-04` 推翻了**：
+固定值行距（`w:lineRule="exact"`）下基线 = **行高 × 0.8**，与字体、字号都无关
+（`baselineOffsetExact`）。原来会写错，是因为前三份 fixture 的 `lineSpacingPt` 全是 0 ——
+「固定值」那一格从来没测过，是顺着「多出来的空间一律均分」推出去的。
+露馅的是分页样本 `spike-page-01`（固定行距 20pt）：整页文字比预测低 1.77pt，
+正好是仿宋 12pt 那 30% 额外行距的一半。
+
 同一批 fixture（`spike-baseline-01|02|03`，跑 `pnpm --filter @uw/fidelity spike:baseline`）
 还顺手钉死了三条容易搞反的：
 ① **网格吸附在行距倍数之前** —— 网格 31.8pt 开 1.5 倍行距，仿宋 16pt 与宋体 12pt 的行高都是 47.7pt，与字号无关；
@@ -259,7 +280,12 @@ Times 的 winAscent 更大，若参与就该赢，实测却仍是等线单独的
 ③ **空段落走段落标记的 ascii 桶 + 拉丁规则** —— 12pt 空段落的行高是 13.78pt（Times 的 1.1499 em）
 而不是宋体的 15.6pt，因为段落标记本身不是东亚字符。
 
-**未决（阻塞分页的精度而非可行性）**：混排行的合成规则只有单字体样本 ——
+**已定死（分页穿刺，两份样本 50 页全对）** —— 实现在
+[`packages/layout/src/page.ts`](packages/layout/src/page.ts) 的 `PAGINATION_RULES`：
+孤行寡行保底 **2 行**、段前间距落在页首**不算**、keepNext 的接缝留出下一块**「最少能放多少」**。
+判据不是残差而是「哪一组能逐页复现 Word」：3 × 2 × 3 种组合排开跑，实现的这组唯一满分。
+
+**未决**：混排行的合成规则只有单字体样本 ——
 `composeBaseline()` 的「逐个居中再取 max」是判断，要一份「同一行两款东亚字体、字号不同」的样本才能钉死，
 而 fixture spec 目前一段只有一个字号。
 

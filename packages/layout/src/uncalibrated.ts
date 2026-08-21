@@ -5,10 +5,11 @@
  * 并写清楚「拿什么样本能把它钉死」。散落在各处的魔法数字会被后人当成实测结论，
  * 那比留一个洞危险得多 —— metrics.ts 里的 1.3 之所以可信，正因为它旁边贴着 13 个样本的误差表。
  *
- * 这里的值多数影响**宽度**（也就是断行位置），分页那两条影响**在第几行断页**。
- * 行盒与基线（`@uw/fonts` 的 `lineMetrics` / `baselineOffset`）、标点挤压的三条规则（`break-class.ts` 的 `PUNCT_PAIR_COMPRESS_EM` /
+ * 这里的值影响的是**宽度**，也就是断行位置。行盒与基线（`@uw/fonts` 的 `lineMetrics` /
+ * `baselineOffset`）、标点挤压的三条规则（`break-class.ts` 的 `PUNCT_PAIR_COMPRESS_EM` /
  * `PUNCT_COMPRESS_MAX_EM` / `PUNCT_COMPRESS_STRETCH_K`）都已经实测标定，搬去了实现文件旁边 ——
- * **这个文件只留还没有真值的那些**。`layout/src/fixture.test.ts` 现在 18 行对上 16 行，
+ * **这个文件只留还没有真值的那些** —— 分页那三条（孤行寡行下限、页首段前间距、keepNext 的接缝）
+ * 曾经在这里待过一天，`spike-page-01/02` 一跑就搬去了 `page.ts` 的 `PAGINATION_RULES`。`layout/src/fixture.test.ts` 现在 18 行对上 16 行，
  * 剩下 2 行是一个至今解释不了的反例，写在 `PUNCT_COMPRESS_STRETCH_K` 的注释里。
  * 末尾的 `BORDER_STYLE_RANK` 是个例外：它影响的是**画哪条线**，不改坐标，
  * 但同样是拍脑袋来的，所以一并关在这里。
@@ -60,33 +61,6 @@ export const AUTO_SPACE_EM = 1 / 8;
  * 那时按字号算才是 Word 的行为。
  */
 export const CHAR_UNIT_EM = 1.0;
-
-/**
- * 孤行寡行控制（`w:widowControl`）保底几行：页底不许只留下这么少的行，
- * 下一页也不许只接走这么少的行。
- *
- * 2 是 Word 界面上「孤行控制」的通用说法，也是 CSS `widows` / `orphans` 的默认值，
- * 但**没有真值样本** —— 它决定的是「这一段在第几行处断页」，一步差一行，
- * 后面每一页的内容都跟着错位，属于影响最大的未标定项之一。
- *
- * 钉死办法：一段 12 行的正文，用页边距把版心高度一格格调窄（与 `spike-compress-01`
- * 用右缩进调窄版心同理），让断页点依次落在倒数第 1 / 2 / 3 行上，看 Word 从哪一格
- * 开始把整段推到下一页。同一份样本顺手回答下面那条 `SPACE_BEFORE_AT_PAGE_TOP`。
- */
-export const WIDOW_ORPHAN_MIN_LINES = 2;
-
-/**
- * 段前间距（`w:spacing w:before`）落在页首时算不算数。
- *
- * 取 true（照加）：规范里有个 `w:suppressSpBfAfterPgBrk` 开关，它的存在本身说明
- * 「不加」是需要显式打开的特例，而不是默认行为。但那个开关说的是**硬分页之后**，
- * 自动分页的页首 Word 到底加不加，没有真值。
- *
- * 差别是实打实的：公文标题段常有 24pt 段前，猜错就是整页内容差 24pt。
- * 钉死办法：让一个带段前间距的段落恰好被自动分页推到页首，量它的首行基线到版心顶的
- * 距离，与同一段落在页中时的行顶到基线之差比对。
- */
-export const SPACE_BEFORE_AT_PAGE_TOP = true;
 
 /** 把「em 的倍数」换成 twips。字号本身就是 twips，所以是一次乘法 */
 export function em(fontSize: Twips, ratio: number): Twips {
