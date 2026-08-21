@@ -116,9 +116,9 @@ flowchart TB
 | 阶段 | 输入 | 输出 | 失败模式 | 怎么测 |
 |---|---|---|---|---|
 | `ooxml` | 字节 | `OpcPackage` | zip 损坏 / 不是 OOXML → **抛异常** | 解包后 part 清单快照 |
-| `model` | `OpcPackage` | `Document` | `basedOn` 成环、引用缺失 → **诊断，不抛** | 属性树 dump 与 Word「显示格式」面板抽查一致 |
-| `fonts` | 字体字节 / 度量包 | `FontMetrics` · `TextMeasurer` | 字体缺失 → **三级降级**（见 §5.2） | 硬编码实测值的单测（跨平台可跑） |
-| `layout` | `LayoutInput` | `LayoutResult` · `LayoutIndex` | 域不收敛 → **振荡检测后冻结** | 与 `*.truth.json` 逐行 diff（L0–L4 分级） |
+| `model` | `OpcPackage` | `LoadedDocument`（`loadDocument()`） | `basedOn` 成环、引用缺失 → **诊断，不抛** | 属性树 dump 与 Word「显示格式」面板抽查一致 |
+| `fonts` | 字体字节 / 度量包 | `FontMetrics` · `TextMeasurer` | 字体缺失 → **三级降级**（见 §5.3） | 硬编码实测值的单测（跨平台可跑） |
+| `layout` | `ResolvedParagraph` / `ResolvedTable` + `TextMeasurer` | 今天：`ParagraphLayout` · `TableLayout`（**没有 y**）；分页后：`LayoutResult` · `LayoutIndex` | 域不收敛 → **振荡检测后冻结** | 与 `*.truth.json` 逐行 diff（L0–L4 分级） |
 | `render-*` | `LayoutResult` | DOM / Canvas | —— | 截图回归（辅助手段，不是主力） |
 | `serialize` | `Document` | `.docx` | —— | round-trip：加载→导出→Word 打开无修复提示 |
 
@@ -204,10 +204,10 @@ flowchart BT
 | 包 | 状态 |
 |---|---|
 | `@uw/core` | 🟢 `units.ts` · `errors.ts`（`UwError`）· `diagnostics.ts`（`Diagnostic` / `DiagnosticSink`） |
-| `@uw/fonts` | 🟢 行高规则 + 基线位置（两次穿刺实测标定）· 脚本分桶 · 度量包（**17 款已抽取入库**）· 注册表（三级降级）· `TextMeasurer` + 两级缓存 |
+| `@uw/fonts` | 🟢 行高规则 + 基线位置（两次穿刺实测标定）· 脚本分桶（含**中性字符随邻居**：空格挨着东亚字就用东亚字体）· 度量包（**17 款已抽取入库**）· 注册表（三级降级）· `TextMeasurer` + 两级缓存 |
 | `@uw/ooxml` | 🟢 OPC 解包 · 内容类型 · 关系 · 保序 XML 纯数据树 + 反向序列化 |
-| `@uw/model` | 🟢 样式级联（含编号层与表格样式层）· 主题字体 · 正文节点树 · 分节 · 设置 · 字体表 · 编号（解析 + 计数器 + 编号文字）· 表格（属性 + 级联 + `w:tblStylePr` 条件格式） |
-| `@uw/layout` | 🟢 断行（禁则 / 挤压 / 悬挂）· 缩进（含字符单位）· 对齐 · 制表位 · 列表编号 · 行高 + 网格吸附 + **行内基线** · 表格列宽与格内几何 · ⏸ **分页未做**（段落不知道自己在第几页，见 §5.1） |
+| `@uw/model` | 🟢 样式级联（含编号层与表格样式层）· 主题字体 · 正文节点树 · 分节 · 设置 · 字体表 · 编号（解析 + 计数器 + 编号文字）· 表格（属性 + 级联 + `w:tblStylePr` 条件格式）· 域的结构还原（界桩配对 + 指令解析 + HYPERLINK，**求值要等分页**） |
+| `@uw/layout` | 🟢 断行（禁则 / 挤压 / 悬挂，**悬挂只吐空半边**）· 缩进（含字符单位）· 对齐 · 制表位 · 列表编号 · 行高 + 网格吸附 + **行内基线** · 表格列宽与格内几何 + 边框冲突解析 · ⏸ **分页未做**（段落不知道自己在第几页，见 §5.1） |
 | `@uw/render-dom` | ⚪ 占位 —— 行内有基线了，但页与 y 要等分页 |
 | `@uw/render-canvas` `@uw/view` `@uw/editor` `@uw/serialize` `ultimate-word` `@uw/react` | ⚪ 未创建 |
 
@@ -263,10 +263,11 @@ flowchart LR
 ```mermaid
 flowchart TB
   A["段落 + ResolvedParaProps / ResolvedRunProps"] --> B
-  B["脚本分桶（fonts 提供）<br/>逐字符判定 ascii / hAnsi / eastAsia / cs<br/>产出 FontRun 数组「同字体连续段」"] --> C
-  C["度量（fonts 提供）<br/>advance 宽度 + 行度量<br/>两级缓存：字体级 Map + 全局 LRU"] --> D
-  D["断行<br/>UAX#14 基础 + 中文禁则<br/>悬挂 → 挤压 → 回退（顺序实测）"] --> E
-  E["行盒装配<br/>行高 = 各字体行高取 max<br/>基线 = 核心盒居中<br/>中西文自动间距 1/8 em"] --> F
+  B["脚本分桶（fonts 提供）<br/>逐字符判定 ascii / hAnsi / eastAsia / cs<br/>空格这类中性字符随邻居<br/>产出 FontRun 数组「同字体连续段」"] --> C
+  C["度量（fonts 提供）<br/>advance 宽度 + 行度量<br/>两级缓存：字体级 Map + 全局 LRU"] --> C2
+  C2["item 流的常态调整<br/>中西文自动间距 1/8 em<br/>相邻标点固定挤 0.5 em（实测）<br/>——都在断行之前，因为它们改的是行长"] --> D
+  D["断行<br/>UAX#14 基础 + 中文禁则<br/>悬挂 → 挤压 → 回退（顺序实测）<br/>悬挂只吐出空半边，墨留在版心内"] --> E
+  E["行盒装配<br/>东亚行的行盒只由东亚字体定<br/>基线 = 核心盒在最终行高里居中"] --> F
   F["网格吸附<br/>docGrid：行高吸到 linePitch 的整数倍<br/>再乘行距倍数（顺序是实测的）"] --> G
   G["段落装配<br/>对齐 · 缩进（字符单位）· 段间距 · 制表位"] --> H
   H["分页<br/>widow / orphan · keepNext · keepLines<br/>表格拆行 · 脚注"] --> I
@@ -299,7 +300,27 @@ flowchart TB
 **下一个卡口不在这儿了，在分页。** 行盒有了 `baseline`，但页与 y 是分页的产物 ——
 段落的坐标原点是它自己的左上角，行的 y 靠把前面各行的 `height` 累加得到。
 
-### 5.2 度量的三级降级
+### 5.2 空格归谁：一条要跨 run 才判得出的分桶规则
+
+分桶是 fonts 的事（§3.1），但有一条判不了：**空格**。
+`w:rFonts` 的四个桶按码点分，ASCII 空格一律进 ascii 桶，于是拿 Times New Roman 的
+0.25 em 去量。真值说不对 —— gongwen-01 的 12 个空格里，**只要任一侧的邻居是东亚字**，
+Word 量到的都是 0.5 em（仿宋自己的空格宽），两侧都是拉丁字时才是 0.25 em。
+一个空格差 4pt（三号字），一行几个空格就足以换掉断行点。
+
+架构上值得记一笔的是**这条规则为什么不能放进 `splitFontRuns()`**：
+`' 2026 '` 与 `'年起，'` 是两个 run，那个空格的东亚邻居在**另一个 run 里**，
+而切段函数只看得见一个 run 的文字。所以分工是：
+
+- **策略在 fonts**：`neutralTakesEastAsia(hint, prevScript, nextScript)` —— 判断在哪，
+  依赖方向不变（layout → fonts）
+- **应用在 layout**：`items.ts` 的 `applySpaceFont`，与 `applyAutoSpace` / `applyPunctPairs`
+  并列，都是「item 流建好之后再扫一遍」的后处理。段落的 item 流正是**邻居齐全**的地方
+
+这也是「后处理三件套」这个模式的第三个成员：凡是要看邻居才能定的量（中西文间距、
+相邻标点挤压、空格的字体），都在 item 流上做，而不是在切段或度量里做。
+
+### 5.3 度量的三级降级
 
 ```
 ① 真实字体文件（fontkit 解析 OS/2 · hmtx · cmap）        ← 与 Word 一致
@@ -463,6 +484,7 @@ Worker 传输需要一个可结构化克隆的度量快照，跨平台分发也�
 |---|---|---|
 | ~~行内基线位置未定~~ | ~~Phase 2 首行位置对不上真值~~ | 已解决：基线穿刺（§5.1），30 个样本最大误差 0.140pt |
 | 混排行的合成规则只有单字体样本 | 一行里两款东亚字体、字号不同时行高对不上 | fixture spec 加 run 级字号，补一份样本；现在 `composeBaseline` 是判断不是实测 |
+| **临时挤压的上限没标定** | L2 卡在 18 行对 11 行：Word 接受过 9.30pt 的挤压、拒绝过 13.75pt，我们不知道界在哪 | 造一份 spike（挤压量从 0.1 em 走到 0.9 em × 标点个数 1/2/4），证据表见 `layout/src/uncalibrated.ts` 的 `PUNCT_COMPRESS_RATIO` |
 | 布局层被 DOM 污染 | 有人为了图快在 layout 里写 `document.*` | lint 规则禁止 + CI 拦截 |
 | `LayoutResult` 变得不可序列化 | 有人往里塞类实例 / 回指针 | 结构化克隆冒烟测试 |
 | 表格 autofit 复杂度失控 | Phase 4 陷进去 | 已列为非目标；且加载路径上根本不需要它 —— Word 存盘时把 autofit 的结果写进了 `w:tblGrid` |

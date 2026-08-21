@@ -103,7 +103,7 @@ UltimateWord.fonts.substitute(map: Record<string, string>): void;
 UltimateWord.fonts.status(family: string): 'file' | 'metrics' | 'fallback' | 'missing';
 ```
 
-对应[三级降级策略](./architecture.md#52-度量的三级降级)：
+对应[三级降级策略](./architecture.md#53-度量的三级降级)：
 
 ```ts
 // ① 有真实字体文件：度量与渲染都准
@@ -114,12 +114,21 @@ UltimateWord.fonts.registerMetrics(await fetch('/metrics/fangsong.json').then(r 
 UltimateWord.fonts.substitute({ '仿宋_GB2312': 'Noto Serif CJK SC' });
 
 // ③ 什么都没有：等宽近似，页数可能对不上
-UltimateWord.fonts.status('方正小标宋简体'); // → 'fallback'
+UltimateWord.fonts.status('方正小标宋简体'); // → 'missing'
 ```
+
+`status()` 的四态里 `fallback` 与 `missing` 别搞反（`FontRegistry.status()` 的实际语义）：
+**`fallback` = 替换表命中了另一款已注册的字体**（字形还算像，度量已经偏离 Word，
+但注册一份度量包就能修好）；**`missing` = 什么都没命中**，走等宽近似。
+
+> **随库那 17 款不需要调用方操心**：A/B/C/D 四类度量包已经入库
+> （`packages/fonts/packs`，88 KB），`@uw/fonts/node` 的 `loadBundledPacks()` 一行注册进
+> `FontRegistry`；门面包会在 `load()` 时替调用方做掉。上面的 `registerMetrics`
+> 是给**清单之外**的字体用的（比如 `仿宋_GB2312`）。
 
 > **级别③ 现在是等宽近似，不是 `canvas.measureText`**：canvas 是 DOM API，
 > 而 `@uw/fonts` 在无 DOM 区（架构原则 1.2），调不到它。这个洞的三条出路见
-> [架构 §5.2](./architecture.md#52-度量的三级降级)，Phase 3 再定归属。
+> [架构 §5.3](./architecture.md#53-度量的三级降级)，Phase 3 再定归属。
 >
 > 门面的 `register(family, data)` 由 `@uw/fonts/decode` 的 `fontSourceFromBytes()` 实现，
 > `registerMetrics(pack)` 对应 `FontRegistry.registerMetrics()`。分成子路径是为了让
@@ -338,35 +347,51 @@ view.on('viewport:change', ({ visiblePages, zoom }) => {});
 
 两类问题两种处理，[架构上就分开](./architecture.md#10-错误与诊断)：
 
+这两个类型是**已经实现的**（`@uw/core` 的 `errors.ts` / `diagnostics.ts`），所以这一节写的是
+真实签名，不是设计稿：
+
 ```ts
 // 结构性错误 → 抛
 try {
   await UltimateWord.load(bytes);
 } catch (e) {
-  if (e instanceof UwError && e.code === 'UW_NOT_OOXML') { /* ... */ }
+  if (e instanceof UwError && e.code === UwErrorCode.NOT_A_ZIP) { /* ... */ }
 }
 
 // 内容问题 → 不抛，记诊断，文档照常渲染
-doc.diagnostics; // Diagnostic[]
+doc.diagnostics; // Diagnostic[] 🟢
 
 interface Diagnostic {
-  code: string;                        // 'UW_FONT_MISSING' 等
-  severity: 'info' | 'warning';
-  message: string;
-  node?: NodeId;                       // 出问题的位置，可直接 scrollTo
+  severity: 'warn' | 'info';
+  /** 稳定的短码，kebab-case，如 'font-missing' */
+  code: string;
+  message: string;                     // 中文，给人看
+  part?: string;                       // 出处：部件名，如 '/word/document.xml'
+  path?: string;                       // 部件内的元素路径
 }
 ```
 
-| 错误码 | 类型 | 含义 |
+| 码 | 类型 | 含义 |
 |---|---|---|
-| `UW_NOT_OOXML` | 抛 | 不是 zip / 不是 OOXML 包 |
-| `UW_PART_MISSING` | 抛 | 缺 `document.xml` 等必需 part |
-| `UW_FONT_MISSING` | 诊断 | 字体无文件也无度量包，已降级 |
-| `UW_STYLE_CYCLE` | 诊断 | `basedOn` 成环，已断链 |
-| `UW_FIELD_DIVERGED` | 诊断 | 域迭代未收敛，已冻结（见架构 §6）|
-| `UW_UNSUPPORTED` | 诊断 | 命中非目标特性，已降级渲染 |
+| `NOT_A_ZIP` | 抛 `UwError` | 字节流不是 zip 或 zip 目录损坏 |
+| `NOT_AN_OPC_PACKAGE` | 抛 | 是 zip 但缺 `[Content_Types].xml` / 根关系 |
+| `NOT_A_WORD_DOCUMENT` | 抛 | 是 OPC 包但找不到 officeDocument 主部件 |
+| `PART_NOT_FOUND` | 抛 | 关系指向了包里不存在的部件 |
+| `MALFORMED_XML` | 抛 | XML 解析失败 |
+| `font-missing` | 诊断 | 字体无文件也无度量包，已退到等宽近似 |
+| `style-cycle` | 诊断 | `basedOn` 成环，已断链 |
+| `style-missing` | 诊断 | 引用了不存在的 styleId |
+| `unknown-element` | 诊断 | 不认识的元素，已跳过（同名只报一次） |
+| `missing-body` / `styles-missing` / `theme-missing` | 诊断 | 可选部件缺席，按默认值继续 |
+| `numbering-missing-abstract` | 诊断 | `numId` 指向了不存在的 `abstractNumId` |
+| `field-unbalanced` / `field-unclosed` | 诊断 | 域界桩配不上对，该域按「不显示」处理 |
+| `revision-deleted` | 诊断（info） | 修订痕迹里被删除的文字，不参与排版 |
 
 **规则**：能画出**任何**有意义的东西，就不要抛。
+
+> ⚠️ `Diagnostic` 目前带的是**部件 + 路径**（`part` / `path`），不是 `NodeId` ——
+> 诊断产生在解析期，那时节点树还没建完。「点诊断跳到出问题的段落」要等节点 id
+> 能在解析期就发出来，届时补一个可选的 `node` 字段，不改现有两项。
 
 ---
 

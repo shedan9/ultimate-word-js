@@ -36,7 +36,8 @@ Phase 4 的**表格**停在同一个门口：属性 + 级联（含 `w:tblStylePr
 重抽（换了字体或 Word 版本时）：`pnpm --filter @uw/fonts run packs`，非 Windows 上以退出码 2 拒绝跑。
 
 直接后果：`layout/src/fixture.test.ts` 从「只能测与度量无关的性质」升级成**逐行比真值（L2）**，
-现状是真实公文 18 行**对上 8 行**（行数一致、首末行一致）。
+现状是真实公文 18 行**对上 11 行**（行数一致、首末行一致）。8 → 11 靠的是从**已有真值**里
+又读出来的两条规则（没花新样本）：**空格随邻居分桶**与**悬挂标点只吐空半边**，见下。
 
 顺着 L2 的差做完了**标点挤压**的标定（样本 `spike-punct-01`，跑 `pnpm --filter @uw/fidelity spike:punct`）：
 **孤立的标点一点都不压，只有「标点紧跟标点」才压，固定 0.5 em** —— 这条推翻了从正文反推出来的猜测。
@@ -45,9 +46,21 @@ Phase 4 的**表格**停在同一个门口：属性 + 级联（含 `w:tblStylePr
 只挤到刚好够）。同一批真值还钉死了**悬挂优先于挤压**：行尾溢出的是标点就挂出去，
 挂不了（汉字 / 拉丁字）才挤 —— 与开发计划原先写的「压缩优先」相反。
 
-L2 剩下那 10 行指向**同一件已量到未实现**的事：悬挂标点的**墨留在版心内**、只有空半边吐出版心
-（实测左边缘在版心线内 7.96pt、右边缘出界 8.05pt），而我们把悬挂项整个不计入行宽。
-修它要连带改两端对齐与行宽断言，写在 `uncalibrated.ts` 末段。
+**悬挂标点**也已经按真值做完：吐出版心的**只是空的那半边**，墨留在版心内
+（实测左边缘在版心线内 7.96pt、右边缘出界 8.05pt）。于是「能不能挂」看的是**半宽**塞不塞得下
+（塞不下先挤压再挂），行宽把这半个字算进去（`break-class.ts` 的 `HANG_INSIDE_RATIO`）——
+第 4 行那个悬挂的「，」右边缘与真值差 0.049pt。同一批真值还钉死了「算不算标点紧跟标点」
+要看**接缝上有没有空白**：`「，`（开口紧跟收口）两边都是墨，**不压**；`】…` 压掉「】」的右半边，
+**要压**（`punctPairCompressible`）。
+
+**空格随邻居分桶**（同一天的第二条）：ASCII 空格按区段该进 ascii 桶，真值却说
+「只要任一侧的邻居是东亚字，Word 就用东亚字体量它」（仿宋 0.5 em vs Times 0.25 em，
+三号字差 4pt）。判断在 fonts（`neutralTakesEastAsia`），应用在 layout
+（`items.ts` 的 `applySpaceFont`）—— 邻居**跨 run**，`splitFontRuns` 那一层看不见。
+
+L2 剩下那 7 行全从真值第 6 行连锁下来，指向**同一件缺样本**的事：**临时挤压的上限**。
+Word 在这份文档里接受过 9.30pt 的挤压、拒绝过 13.75pt，而按标点算的模型会自相矛盾。
+证据表与要造的 spike 写在 `uncalibrated.ts` 的 `PUNCT_COMPRESS_RATIO`，**没有替它猜一个常数**。
 
 `@uw/layout` 的用法：`layoutParagraph(resolvedParagraph, { measurer, contentWidth, settings, docGrid })`
 → `ParagraphLayout`（每行的 x / 逐字 x / 行高 / **行顶到基线** / 渲染片段，**没有 y**：
@@ -113,7 +126,7 @@ L2 剩下那 10 行指向**同一件已量到未实现**的事：悬挂标点的
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | 代码怎么切、数据怎么流、坐标怎么管、五条设计原则 |
 | [docs/api.md](docs/api.md) | 对外 API 长什么样 |
-| [docs/DEVELOPMENT-PLAN.md](docs/DEVELOPMENT-PLAN.md) | 阶段顺序、每阶段 DoD、非目标清单 |
+| [docs/DEVELOPMENT-PLAN.md](docs/DEVELOPMENT-PLAN.md) | 阶段顺序、每阶段 DoD、非目标清单、**每做完一件事的收尾动作（§8）** |
 | [apps/fidelity/README.md](apps/fidelity/README.md) | 真值流水线怎么用、truth.json 怎么读、踩过的坑 |
 
 ## 环境
@@ -214,17 +227,19 @@ Times 的 winAscent 更大，若参与就该赢，实测却仍是等线单独的
 `composeBaseline()` 的「逐个居中再取 max」是判断，要一份「同一行两款东亚字体、字号不同」的样本才能钉死，
 而 fixture spec 目前一段只有一个字号。
 
-行高与基线之外还有四处未标定。一是 `splitFontRuns()` 的歧义字符集取的是 Unicode **EastAsianWidth = Ambiguous**
+行高与基线之外还有五处未标定。**最值钱的一处是临时挤压的上限**（见上，L2 剩下 7 行全卡在它上面）：
+一份「挤压量 0.1 → 0.9 em × 标点个数 1/2/4」的 spike 就能钉死，设计写在 `uncalibrated.ts`。
+二是 `splitFontRuns()` 的歧义字符集取的是 Unicode **EastAsianWidth = Ambiguous**
 （`w:hint` 要回答的正是「这份文档算不算东亚环境」，两者同构），但 Word 的实际边界有没有偏差没有真值验证过 ——
-上 Windows 时顺手做一份「① ※ ℃ Ⅰ 在 hint=eastAsia / default 下各占多宽」的样本就能钉死。
-二是编号的三个样本：`w:lvlJc="right"` 的编号以哪条线对齐、编号宽过悬挂缩进时正文落在哪、
+上 Windows 时顺手做一份「① ※ ℃ Ⅰ 在 hint=eastAsia / default 下各占多宽」的样本就能钉死；
+同一份样本顺手回答空格那条规则的两个边界：`hint="default"` 时空格算谁的、`/` `-` 这类中性字符跟不跟着走。
+三是编号的三个样本：`w:lvlJc="right"` 的编号以哪条线对齐、编号宽过悬挂缩进时正文落在哪、
 `chineseCounting` 与 `chineseCountingThousand` 在 105 / 1005 上各显示什么。
-三是表格隔行带的序号：一份「6 行 3 列、开表头行 + 隔行带、`w:tblStyleRowBandSize=2`」的样本，
+四是表格隔行带的序号：一份「6 行 3 列、开表头行 + 隔行带、`w:tblStyleRowBandSize=2`」的样本，
 就能钉死「首行算不算进带」「带从第几条开始数」这两问 —— 带影响字重，字重影响宽度，最终影响断行。
-（标点挤压那一条原来也在这份名单里，已经用 `spike-punct-01` 做完了，见上。）
-四是表格边框冲突：一张 2×2 的表、四条内部边分别让相邻两格写不同的 `w:val` / `w:sz` / `nil`，
+五是表格边框冲突：一张 2×2 的表、四条内部边分别让相邻两格写不同的 `w:val` / `w:sz` / `nil`，
 一份就能钉死「比宽度还是比样式」「平局取左上还是右下」「nil 在竞争里强不强」三问。
-它只改画法不改坐标，所以优先级低于上面三条。
+它只改画法不改坐标，所以优先级低于上面几条。
 
 另一个反复咬人的点：中文版 Word 的 Normal 模板**默认开着行网格**（linePitch 312 twips = 15.6pt），
 基线会被吸到网格上、把字体度量差异整个盖掉。做度量实验必须显式关网格（`PageSetup.LayoutMode = wdLayoutModeDefault`）。
@@ -241,6 +256,16 @@ Times 的 winAscent 更大，若参与就该赢，实测却仍是等线单独的
 - 新包按现有包照抄结构：`package.json`（exports → src）+ `tsconfig.json`（extends base）+ `tsdown.config.ts`。
 - `.ps1` 在工作区是 CRLF（`.gitattributes` 规定），且不用 PS7 专属语法 —— pwsh 7 与 Windows PowerShell 5.1 两条路都要能跑。
   中文正文一律放 UTF-8 的 spec JSON 里由 `[System.IO.File]::ReadAllText` 读，不写进 `.ps1`，免得被主机编码吃掉。
+
+## 做完一件事之后（开发计划 §8 的摘要）
+
+1. `pnpm turbo run typecheck test` + `pnpm lint` 全绿；真值闸门（`MIN_L2_MATCH`）**只许往上调**
+2. 新量到的数字连证据表一起写进注释；未标定的进 `uncalibrated.ts` 并写清「拿什么样本能钉死」
+3. **回头对照 [docs/architecture.md](docs/architecture.md) 与 [docs/api.md](docs/api.md)，
+   把被真值 / 代码推翻的表述改对**，并把「原来为什么是错的」一起留下 ——
+   这两份写在实现之前，实现却是被真值推着走的，它们**必然**会过期
+4. 更新进度三处：本文件的「当前进度」段、开发计划对应 Phase、架构 §3.2 现状表
+5. 提交信息写清楚「为什么」
 
 ## 非目标（不要为它们预留扩展点）
 
