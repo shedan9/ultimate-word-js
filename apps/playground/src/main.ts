@@ -72,6 +72,7 @@ function open(bytes: Uint8Array, name: string): void {
   current = layoutDocumentWithFields(doc.resolved, doc.fields, {
     measurer,
     settings: doc.cascade.settings,
+    headerFooters: doc.headerFooters,
     diagnostics: sink,
   }).layout;
   const ms = performance.now() - t0;

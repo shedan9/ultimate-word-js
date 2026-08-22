@@ -25,6 +25,14 @@
  * 等 TOC / SEQ 进来（它们能让目录**变短**，单调性就没了），再把 A→B→A 的检测补上，
  * 那时也才有样本能验证它 —— 现在写了也是永远跑不到的死代码。
  *
+ * ## 页眉页脚里的域走的是另一条路
+ *
+ * 同一个 `{ PAGE }` 在每一页显示的**不是同一串字**，所以一张全局的「run id → 文字」表
+ * 按定义就装不下页眉里的域。它们改走 `LayoutDocumentOptions.headerFields`：那边存的是
+ * **怎么算**（域类型 + 数字格式），算在**开页那一刻**做（`page.ts` 的 `headerFieldValues`）。
+ * 直接的好处是页脚里的 PAGE **一趟就是准的** —— 页码在开页时已经定了，不必等下一趟迭代。
+ * 还要迭代的只剩 NUMPAGES / SECTIONPAGES：「一共几页」得整份排完才知道。
+ *
  * ## 三处容易搞反
  *
  * 1. **求值的结果不写回模型**，而是外挂一张「run id → 显示的文字」的表交给排版
@@ -37,9 +45,16 @@
  *    `w:pgNumType w:start` 会让某一节的页码重新起算，两者从那以后就对不上了
  */
 import type { DiagnosticSink } from '@uw/core';
-import type { FieldInstruction, FieldRegion, NodeId, ResolvedBody } from '@uw/model';
-import { formatNumber, walkParagraphs } from '@uw/model';
-import type { DocumentLayout, LayoutDocumentOptions, PageLayout } from './page.ts';
+import type { FieldInstruction, FieldRegion, NodeId, ResolvedBlock, ResolvedBody } from '@uw/model';
+import { formatNumber, walkBlocks, walkParagraphs } from '@uw/model';
+import type { HeaderFooterSource } from './header-footer.ts';
+import type {
+  DocumentLayout,
+  HeaderFieldPlan,
+  HeaderFieldSpec,
+  LayoutDocumentOptions,
+  PageLayout,
+} from './page.ts';
 import { layoutDocument } from './page.ts';
 import type { BlockLayout } from './table.ts';
 import type { LineLayout, ParagraphLayout } from './types.ts';
@@ -87,13 +102,18 @@ export function layoutDocumentWithFields(
   fields: readonly FieldRegion[],
   opts: LayoutDocumentWithFieldsOptions,
 ): FieldLayoutResult {
-  const anchors = fieldAnchors(body, fields, opts.diagnostics);
+  const { anchors, plan } = fieldAnchors(body, fields, opts.headerFooters, opts.diagnostics);
 
   let values: FieldValues = opts.fieldValues ?? new Map();
+  let totals: Totals = {};
+  // 「一共几页」只有 NUMPAGES / SECTIONPAGES 用得上。全篇只有 PAGE 时不把它算进收敛判据，
+  // 否则每份带页码的文档都要白排一趟（PAGE 在开页那一刻就是准的）
+  const needsTotals = [...plan.fields.values()].some((f) => f.type !== 'PAGE' && f.type !== 'clear');
+
   // 诊断只在第一趟收：布局自己发的那几条（多栏、连续分节符改了版心）与域文字无关，
   // 每趟都发一遍只会让同一句话在诊断列表里出现三次
-  let layout = layoutDocument(body, { ...opts, fieldValues: values });
-  if (anchors.length === 0) return { layout, values, passes: 1, converged: true };
+  let layout = layoutDocument(body, { ...opts, fieldValues: values, headerFields: { ...plan, ...totals } });
+  if (anchors.length === 0 && !needsTotals) return { layout, values, passes: 1, converged: true };
 
   const { diagnostics: _quieted, ...quiet } = opts;
   const max = Math.max(1, opts.maxPasses ?? MAX_FIELD_PASSES);
@@ -101,7 +121,12 @@ export function layoutDocumentWithFields(
 
   for (let passes = 1; ; passes++) {
     const next = evaluate(anchors, body, layout);
-    if (sameValues(next, values)) return { layout, values, passes, converged: true };
+    const nextTotals: Totals = needsTotals
+      ? { totalPages: layout.pages.length, sectionPages: countBySection(layout) }
+      : {};
+    if (sameValues(next, values) && sameTotals(nextTotals, totals)) {
+      return { layout, values, passes, converged: true };
+    }
 
     if (passes >= max) {
       opts.diagnostics?.warn(
@@ -115,9 +140,23 @@ export function layoutDocumentWithFields(
     }
 
     values = next;
-    layout = layoutDocument(body, { ...quiet, fieldValues: values });
+    totals = nextTotals;
+    layout = layoutDocument(body, { ...quiet, fieldValues: values, headerFields: { ...plan, ...totals } });
     tried.push({ values, layout });
   }
+}
+
+/** 迭代状态里「页数」的那一半，见 `needsTotals` */
+interface Totals {
+  totalPages?: number;
+  sectionPages?: readonly number[];
+}
+
+function sameTotals(a: Totals, b: Totals): boolean {
+  if (a.totalPages !== b.totalPages) return false;
+  const x = a.sectionPages ?? [];
+  const y = b.sectionPages ?? [];
+  return x.length === y.length && x.every((n, i) => n === y[i]);
 }
 
 // ── 域 → 承载结果的那个 run ───────────────────────────────────────────────────
@@ -133,26 +172,43 @@ interface FieldAnchor {
   clear: NodeId[];
 }
 
+/** 页眉页脚里所有 run 的 id —— 用来判断一个域落在正文还是落在页眉 */
+function headerRunIds(source: HeaderFooterSource | undefined): Set<NodeId> {
+  const out = new Set<NodeId>();
+  if (source === undefined) return out;
+  for (const content of Object.values(source)) {
+    for (const b of walkBlocks(content.resolved as ResolvedBlock[])) {
+      if (b.kind === 'paragraph') for (const run of b.runs) out.add(run.id);
+    }
+  }
+  return out;
+}
+
 function fieldAnchors(
   body: ResolvedBody,
   fields: readonly FieldRegion[],
+  headerFooters: HeaderFooterSource | undefined,
   diagnostics?: DiagnosticSink,
-): FieldAnchor[] {
+): { anchors: FieldAnchor[]; plan: HeaderFieldPlan } {
   const runPara = new Map<NodeId, NodeId>();
   for (const p of walkParagraphs(body)) {
     for (const run of p.runs) runPara.set(run.id, p.id);
   }
+  const inHeader = headerRunIds(headerFooters);
 
-  const out: FieldAnchor[] = [];
+  const anchors: FieldAnchor[] = [];
+  const planned = new Map<NodeId, HeaderFieldSpec>();
   const claimed = new Set<NodeId>();
+
   for (const region of fields) {
-    if (!EVALUABLE.has(region.instruction.type)) continue;
+    const type = region.instruction.type;
+    if (!EVALUABLE.has(type)) continue;
 
     const runId = region.resultRuns[0];
     if (runId === undefined) {
       diagnostics?.info(
         'field-no-result',
-        `域 ${region.instruction.type} 没有结果区（缺 w:fldChar separate），Word 里它什么都不显示，这里也不求值`,
+        `域 ${type} 没有结果区（缺 w:fldChar separate），Word 里它什么都不显示，这里也不求值`,
       );
       continue;
     }
@@ -161,23 +217,36 @@ function fieldAnchors(
     if (region.resultRuns.some((id) => claimed.has(id))) {
       diagnostics?.warn(
         'field-nested-eval',
-        `域 ${region.instruction.type} 的结果区与外层域重叠，已跳过 —— 嵌套域的求值要先算内层，本阶段没做`,
+        `域 ${type} 的结果区与外层域重叠，已跳过 —— 嵌套域的求值要先算内层，本阶段没做`,
       );
       continue;
     }
+    const format = switchFormat(region.instruction);
+
+    // 页眉页脚里的域走 plan 那条路：它每一页显示的不是同一串字，装不进一张全局表
+    if (inHeader.has(runId)) {
+      for (const id of region.resultRuns) claimed.add(id);
+      planned.set(runId, {
+        type: type as Exclude<HeaderFieldSpec['type'], 'clear'>,
+        ...(format === undefined ? {} : { format }),
+      });
+      for (const id of region.resultRuns.slice(1)) planned.set(id, { type: 'clear' });
+      continue;
+    }
+
     const paragraphId = runPara.get(runId);
-    // 结果 run 不在正文里：域落在页眉页脚这类还没解析的部件上，没有页可谈
+    // 结果 run 既不在正文也不在页眉：多半是脚注 / 批注这类还没解析的部件，没有页可谈
     if (paragraphId === undefined) continue;
 
     for (const id of region.resultRuns) claimed.add(id);
-    out.push({
+    anchors.push({
       instruction: region.instruction,
       runId,
       paragraphId,
       clear: region.resultRuns.slice(1),
     });
   }
-  return out;
+  return { anchors, plan: { fields: planned } };
 }
 
 // ── 一趟求值 ──────────────────────────────────────────────────────────────────

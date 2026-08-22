@@ -23,7 +23,6 @@
  *
  * ## 已知的洞（写下来免得以为已经画了）
  *
- * - **页眉页脚**：布局层还没做（`page.ts` 的注释），这里自然也没有
  * - **图片 / 内嵌对象**：`ObjectItem` 在布局里只占位，这里连占位框都不画 ——
  *   画一个空框会让人以为「图加载失败」，比什么都没有更误导
  * - **run 级底纹与高亮**（`w:highlight` / `w:shd`）：`ResolvedRunProps` 里就没有这两项，
@@ -44,6 +43,7 @@ import type {
   LineLayout,
   PageLayout,
   PlacedBlock,
+  PlacedHeaderFooter,
   PlacedParagraph,
   PlacedTable,
   RowLayout,
@@ -152,6 +152,10 @@ function buildPageWith(page: PageLayout, ctx: Ctx): RElement {
     );
   }
 
+  // 页眉在正文**之前**画、页脚在之后：三者的框在 Word 里就不该重叠（版心是让开了的），
+  // 万一重叠了（页眉长到把版心吃光），正文压在页眉上比反过来更容易看出是哪儿排错了
+  if (page.header !== undefined) children.push(paintFrame(page.header, ctx));
+
   const inner: RElement[] = [];
   for (const block of page.blocks) paintBlock(block, ctx, inner);
   children.push(
@@ -161,6 +165,8 @@ function buildPageWith(page: PageLayout, ctx: Ctx): RElement {
       inner,
     ),
   );
+
+  if (page.footer !== undefined) children.push(paintFrame(page.footer, ctx));
 
   const attrs: Record<string, string> = {
     xmlns: SVG_NS,
@@ -173,6 +179,39 @@ function buildPageWith(page: PageLayout, ctx: Ctx): RElement {
     viewBox: `0 0 ${fmt(pt(g.width))} ${fmt(pt(g.height))}`,
   };
   return el('svg', attrs, children);
+}
+
+/**
+ * 页眉 / 页脚。**坐标相对纸左上角**，与版心那个 `<g>` 平级 ——
+ * 它不在版心里（版心是被它挤出来的），套进去会平白多偏一个上边距。
+ */
+function paintFrame(frame: PlacedHeaderFooter, ctx: Ctx): RElement {
+  const inner: RElement[] = [];
+  for (const block of frame.blocks) paintBlock(block, ctx, inner);
+  if (ctx.debug) {
+    inner.unshift(
+      el('rect', {
+        class: ctx.cls(`debug-${frame.kind}`),
+        x: '0',
+        y: '0',
+        width: fmt(pt(frame.width)),
+        height: fmt(pt(frame.height)),
+        fill: 'none',
+        stroke: '#bf8700',
+        'stroke-width': '0.4',
+        'stroke-dasharray': '3 2',
+      }),
+    );
+  }
+  return el(
+    'g',
+    {
+      class: ctx.cls(frame.kind),
+      'data-rel': frame.relId,
+      transform: `translate(${fmt(pt(frame.x))} ${fmt(pt(frame.y))})`,
+    },
+    inner,
+  );
 }
 
 // ── 块 ────────────────────────────────────────────────────────────────────────

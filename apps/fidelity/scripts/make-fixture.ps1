@@ -24,6 +24,9 @@ $wdLineSpaceSingle   = 0
 $wdLayoutModeLineGrid = 2
 $wdLayoutModeGrid     = 3
 $wdLayoutModeDefault  = 0
+$wdHeaderFooterPrimary   = 1
+$wdHeaderFooterFirstPage = 2
+$wdHeaderFooterEvenPages = 3
 $align = @{ left = 0; center = 1; right = 2; justify = 3; distribute = 4 }
 
 # ConvertFrom-Json gives PSCustomObject, where a missing property silently reads
@@ -31,6 +34,71 @@ $align = @{ left = 0; center = 1; right = 2; justify = 3; distribute = 4 }
 # omitting knobs, so "was it written?" has to be asked explicitly.
 function Test-Prop($obj, [string]$name) {
   return ($null -ne $obj) -and ($obj.PSObject.Properties.Name -contains $name)
+}
+
+# Paragraph-level formatting, shared by the body loop and the header/footer filler.
+# Every knob is assigned unconditionally for the inheritance reason spelled out at the
+# body loop: a paragraph created after another one inherits its formatting, so a
+# `if (spec has it) { set it }` shape silently leaks one step of a ladder into the rest.
+function Set-ParaFormat($word, $para, $p) {
+  $r = $para.Range
+  $f = $r.Font
+  $f.NameFarEast = $p.fontEA
+  $f.NameAscii   = $p.fontLatin
+  $f.NameOther   = $p.fontLatin
+  $f.Size        = [double]$p.sizePt
+  $f.Bold        = [bool]$p.bold
+
+  $fmt = $para.Format
+  $fmt.Alignment   = $align[[string]$p.align]
+  $fmt.SpaceBefore = [double]$p.spaceBeforePt
+  $fmt.SpaceAfter  = [double]$p.spaceAfterPt
+  $fmt.CharacterUnitFirstLineIndent = [double]$p.firstLineChars
+  $fmt.RightIndent = [double]$p.rightIndentPt
+  $fmt.LeftIndent  = [double]$p.leftIndentPt
+  $fmt.PageBreakBefore = [bool]$p.pageBreakBefore
+  $fmt.DisableLineHeightGrid = (Test-Prop $p 'snapToGrid') -and (-not [bool]$p.snapToGrid)
+  $fmt.WidowControl = -not ((Test-Prop $p 'widowControl') -and (-not [bool]$p.widowControl))
+  $fmt.KeepWithNext = [bool]$p.keepWithNext
+  $fmt.KeepTogether = [bool]$p.keepTogether
+  if ((Test-Prop $p 'lineSpacingMultiple') -and [double]$p.lineSpacingMultiple -gt 0) {
+    $fmt.LineSpacingRule = $wdLineSpaceMultiple
+    $fmt.LineSpacing     = $word.LinesToPoints([double]$p.lineSpacingMultiple)
+  } elseif ($p.lineSpacingPt -and [double]$p.lineSpacingPt -gt 0) {
+    $fmt.LineSpacingRule = $wdLineSpaceExactly
+    $fmt.LineSpacing     = [double]$p.lineSpacingPt
+  } else {
+    $fmt.LineSpacingRule = $wdLineSpaceSingle
+  }
+}
+
+# Fill one header/footer story.
+#
+# The text of all paragraphs goes in with a single assignment separated by CR: a header
+# range starts life with exactly one (empty) paragraph, and InsertParagraphAfter on it
+# behaves differently from the body story. One assignment sidesteps that entirely.
+#
+# A `field` property appends a real Word field ({ PAGE }) at the end of that paragraph --
+# typing "1" would not be the same thing at all, and the whole point of these fixtures is
+# to see what Word computes for the field on each page.
+function Set-StoryContent($word, $hf, $paras) {
+  if (-not $paras) { return }
+  $texts = @()
+  foreach ($p in $paras) { $texts += [string]$p.text }
+  $hf.Range.Text = ($texts -join "`r")
+
+  for ($i = 0; $i -lt $paras.Count; $i++) {
+    $p = $paras[$i]
+    $para = $hf.Range.Paragraphs.Item($i + 1)
+    Set-ParaFormat $word $para $p
+    if (Test-Prop $p 'field') {
+      # End - 1 is just before the paragraph mark; collapsing the paragraph range to its
+      # end would instead land at the start of the *next* paragraph.
+      $at = $hf.Range.Duplicate
+      $at.SetRange($para.Range.End - 1, $para.Range.End - 1)
+      [void]$hf.Range.Fields.Add($at, -1, [string]$p.field, $true)
+    }
+  }
 }
 
 $Spec = (Resolve-Path -LiteralPath $Spec).ProviderPath
@@ -60,6 +128,13 @@ try {
   $ps.BottomMargin = & $mm $s.page.marginMm.bottom
   $ps.LeftMargin   = & $mm $s.page.marginMm.left
   $ps.RightMargin  = & $mm $s.page.marginMm.right
+  # w:pgMar/@w:header is the distance from the paper edge to the TOP of the header,
+  # @w:footer the distance to the BOTTOM of the footer -- the two are not symmetric,
+  # which is exactly one of the things spike-header-01 is here to prove.
+  if (Test-Prop $s.page 'headerDistMm') { $ps.HeaderDistance = & $mm $s.page.headerDistMm }
+  if (Test-Prop $s.page 'footerDistMm') { $ps.FooterDistance = & $mm $s.page.footerDistMm }
+  $ps.DifferentFirstPageHeaderFooter = [bool]$s.page.differentFirstPage
+  $ps.OddAndEvenPagesHeaderFooter    = [bool]$s.page.differentOddEven
   # The Chinese Normal template ships with a line grid switched ON (39 lines,
   # linePitch 312 twips). Leaving LayoutMode untouched means every baseline gets
   # snapped to a 15.6pt multiple, which hides whatever the font metrics say --
@@ -106,61 +181,27 @@ try {
     $para = $doc.Paragraphs.Item($doc.Paragraphs.Count)
     $r = $para.Range
 
-    $f = $r.Font
-    $f.NameFarEast = $p.fontEA
-    $f.NameAscii   = $p.fontLatin
-    $f.NameOther   = $p.fontLatin
-    $f.Size        = [double]$p.sizePt
-    $f.Bold        = [bool]$p.bold
+    # Formatting is applied by the shared helper -- the body loop and the header/footer
+    # filler must not drift apart, or a fixture's header would silently get a different
+    # line spacing rule from its body and the geometry it measures would mean nothing.
+    Set-ParaFormat $word $para $p
+  }
 
-    $fmt = $para.Format
-    $fmt.Alignment   = $align[[string]$p.align]
-    $fmt.SpaceBefore = [double]$p.spaceBeforePt
-    $fmt.SpaceAfter  = [double]$p.spaceAfterPt
-    $fmt.CharacterUnitFirstLineIndent = [double]$p.firstLineChars
-    # RightIndent is in points, not character units: the compression spike needs the line's
-    # available width dialled in sub-point steps, and the character-unit knobs quantise to
-    # 1/100 of the font size AND depend on how Word defines "one character" -- which is one
-    # of the things under calibration. Points sidestep both.
-    $fmt.RightIndent = [double]$p.rightIndentPt
-    $fmt.LeftIndent  = [double]$p.leftIndentPt
-    # Every paragraph-level knob below is assigned UNCONDITIONALLY, even when the spec
-    # omits it. InsertParagraphAfter inherits the previous paragraph's formatting, so a
-    # `if (spec has it) { set it }` shape lets one paragraph's setting leak into every
-    # later one -- pageBreakBefore on paragraph 4 silently put all 17 on their own page.
-    # A missing JSON property reads as $null, and [bool]$null is $false, which is the
-    # intended default in both cases.
-    #
-    # A hard page break makes this paragraph the *first* on its page, so its first
-    # baseline is measured from the top margin and nothing else -- that is the whole
-    # point of the baseline spike. A break character in the text would instead put
-    # the break inside this paragraph, which is not the same thing.
-    $fmt.PageBreakBefore = [bool]$p.pageBreakBefore
-    # w:snapToGrid lives here under an inverted name: DisableLineHeightGrid = True means
-    # 'do not snap'. Needed to prove the grid fixture actually measures snapping and not
-    # some coincidence of the font metrics -- one paragraph opts out and must move.
-    # Absent property => snap (the Word default), hence the double negation.
-    $fmt.DisableLineHeightGrid = (Test-Prop $p 'snapToGrid') -and (-not [bool]$p.snapToGrid)
-    # Pagination knobs. WidowControl defaults to True in Word, so the spec turns it OFF
-    # explicitly (same double-negation shape as DisableLineHeightGrid above); the other two
-    # default to False. All three are assigned unconditionally for the inheritance reason
-    # spelled out above -- a leaked KeepWithNext would silently glue two ladder steps together
-    # and the whole ladder would measure nothing.
-    $fmt.WidowControl = -not ((Test-Prop $p 'widowControl') -and (-not [bool]$p.widowControl))
-    $fmt.KeepWithNext = [bool]$p.keepWithNext
-    # KeepTogether is Word's name for w:keepLines ("keep lines of this paragraph together"),
-    # NOT for keeping it with the next one -- the two are easy to swap by name alone.
-    $fmt.KeepTogether = [bool]$p.keepTogether
-    if ((Test-Prop $p 'lineSpacingMultiple') -and [double]$p.lineSpacingMultiple -gt 0) {
-      # LineSpacing for the multiple rule is in points, hence LinesToPoints --
-      # assigning 1.5 directly would mean "1.5pt fixed" and silently collapse the line.
-      $fmt.LineSpacingRule = $wdLineSpaceMultiple
-      $fmt.LineSpacing     = $word.LinesToPoints([double]$p.lineSpacingMultiple)
-    } elseif ($p.lineSpacingPt -and [double]$p.lineSpacingPt -gt 0) {
-      $fmt.LineSpacingRule = $wdLineSpaceExactly
-      $fmt.LineSpacing     = [double]$p.lineSpacingPt
-    } else {
-      $fmt.LineSpacingRule = $wdLineSpaceSingle
+  # --- headers / footers ----------------------------------------------------
+  # Written AFTER the body so the page count is already what it will be: assigning to a
+  # header's Range repaginates, and Word only materialises the first-page / even-page
+  # stories once the corresponding PageSetup switch is on (done above).
+  $sec = $doc.Sections.Item(1)
+  $stories = @(
+    @{ set = $s.headers; coll = $sec.Headers },
+    @{ set = $s.footers; coll = $sec.Footers }
+  )
+  $types = @{ 'default' = $wdHeaderFooterPrimary; 'first' = $wdHeaderFooterFirstPage; 'even' = $wdHeaderFooterEvenPages }
+  foreach ($story in $stories) {
+    if (-not $story.set) { continue }
+    foreach ($kind in @('default', 'first', 'even')) {
+      if (-not (Test-Prop $story.set $kind)) { continue }
+      Set-StoryContent $word $story.coll.Item($types[$kind]) $story.set.$kind
     }
   }
 

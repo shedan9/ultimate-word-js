@@ -12,7 +12,11 @@
  * **域求值**（`fields.ts`）也接上了：`layoutDocumentWithFields()` 把「排版 → 算页码 → 再排版」
  * 迭代到自洽，PAGE / NUMPAGES / SECTIONPAGES 已经是算出来的而不是文件里存的旧值。
  *
- * **还没有的**：页眉页脚（部件没解析）、表格拆行（行是原子的）、TOC / SEQ 的求值。
+ * **页眉页脚**（`header-footer.ts`）同样做完了：每一页选出该用的那一份、排出高度、
+ * 按实测的三条几何规则摆在纸上，并**反过来把版心挤窄**（页边距是最小值不是固定值）。
+ * 页脚里的 `{ PAGE }` 因此一趟就是准的 —— 页码在开页那一刻就定了。
+ *
+ * **还没有的**：表格拆行（行是原子的）、TOC / SEQ 的求值、脚注尾注。
  *
  * 约束（从第一天就守住，否则后面搬不动）：
  * - 本包**不得** import 任何 DOM API，度量能力靠注入的 `TextMeasurer` 传进来 ——
@@ -24,6 +28,7 @@ export const PACKAGE_NAME = '@uw/layout';
 
 export * from './break-class.ts';
 export * from './fields.ts';
+export * from './header-footer.ts';
 export * from './items.ts';
 export * from './line-height.ts';
 export * from './linebreak.ts';

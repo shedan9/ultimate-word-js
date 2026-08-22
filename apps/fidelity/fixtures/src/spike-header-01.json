@@ -1,0 +1,242 @@
+{
+  "name": "spike-header-01",
+  "note": "页眉页脚的几何穿刺（**矮**的那一格）：页眉框顶在哪、页脚框底在哪、页眉页脚放得下时正文动不动。版心与 spike-page-01 同一套（120×120mm、页边距 20mm、固定行距 20pt、仿宋 12pt），于是一页恰好 11 行、行高恰好 20pt，几何里不掺任何待标定的度量。页眉距 10mm=28.35pt、页脚距 10mm=28.35pt，页眉页脚各一行=20pt 高：页眉底 48.35pt 还在上边距 56.69pt 以内、页脚顶也在下边距以外，所以三个问题的答案在这一份里互不干扰 —— 正文首行基线应当仍是 72.69pt、一页仍是 11 行。页脚那一行的基线位置是这份样本的主角：`w:footer` 量的若是页脚**底**，基线 = 页高 − 页脚距 − 行高 + 0.8×行高 = 307.81pt；量的若是页脚**顶**，则是 327.81pt，差 20pt，分得开。",
+  "page": {
+    "widthMm": 120,
+    "heightMm": 120,
+    "marginMm": {
+      "top": 20,
+      "bottom": 20,
+      "left": 20,
+      "right": 20
+    },
+    "headerDistMm": 10,
+    "footerDistMm": 10
+  },
+  "headers": {
+    "default": [
+      {
+        "text": "页眉甲乙丙",
+        "fontEA": "仿宋",
+        "fontLatin": "Times New Roman",
+        "sizePt": 12,
+        "align": "left",
+        "lineSpacingPt": 20
+      }
+    ]
+  },
+  "footers": {
+    "default": [
+      {
+        "text": "页脚甲乙丙",
+        "fontEA": "仿宋",
+        "fontLatin": "Times New Roman",
+        "sizePt": 12,
+        "align": "left",
+        "lineSpacingPt": 20
+      }
+    ]
+  },
+  "paragraphs": [
+    {
+      "text": "天地玄黄宇宙",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "洪荒日月盈昃",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "辰宿列张寒来",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "暑往秋收冬藏",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "闰余成岁律吕",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "调阳云腾致雨",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "露结为霜金生",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "丽水玉出昆冈",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "剑号巨阙珠称",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "夜光果珍李柰",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "菜重芥姜海咸",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "河淡鳞潜羽翔",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "龙师火帝鸟官",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "人皇始制文字",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "乃服衣裳推位",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "让国有虞陶唐",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "吊民伐罪周发",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "殷汤坐朝问道",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "垂拱平章爱育",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "黎首臣伏戎羌",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "天地玄黄宇宙",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "洪荒日月盈昃",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "辰宿列张寒来",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "暑往秋收冬藏",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "闰余成岁律吕",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    }
+  ]
+}

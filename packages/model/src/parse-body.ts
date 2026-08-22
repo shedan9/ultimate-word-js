@@ -82,12 +82,19 @@ interface Ctx {
   /** 已经报过的元素名，去重用 */
   reported: Set<string>;
   counters: Map<string, number>;
+  /**
+   * id 前缀。主文档是空串，页眉页脚的每个部件各带一个 —— **不带前缀就会撞车**：
+   * 计数器是按部件新建的，页眉里的第一个 run 与正文里的第一个 run 都会叫 `r0`，
+   * 而域求值那张「run id → 显示的文字」的表是全文档一张，撞了就会把页脚的页码
+   * 画到正文里去。
+   */
+  idPrefix: string;
 }
 
 function nextId(ctx: Ctx, prefix: string): NodeId {
   const n = ctx.counters.get(prefix) ?? 0;
   ctx.counters.set(prefix, n + 1);
-  return `${prefix}${n}`;
+  return `${ctx.idPrefix}${prefix}${n}`;
 }
 
 function unknown(ctx: Ctx, el: XmlElement, where: string): void {
@@ -103,7 +110,7 @@ function unknown(ctx: Ctx, el: XmlElement, where: string): void {
 // ── 入口 ──────────────────────────────────────────────────────────────────────
 
 export function parseBody(doc: XmlDocument, diagnostics: DiagnosticSink, part = 'document.xml'): Body {
-  const ctx: Ctx = { diagnostics, part, reported: new Set(), counters: new Map() };
+  const ctx: Ctx = { diagnostics, part, reported: new Set(), counters: new Map(), idPrefix: '' };
   const body = child(doc.root, 'w:body');
   if (body === undefined) {
     // 结构性问题，但不抛 —— `OpcPackage.requirePart` 已经保证部件在，
@@ -150,6 +157,42 @@ export function parseBody(doc: XmlDocument, diagnostics: DiagnosticSink, part = 
     sections.push({ id: nextId(ctx, 'sec'), props: parseSectionProps(undefined), blocks: pending });
   }
   return { sections };
+}
+
+/**
+ * `header*.xml` / `footer*.xml` → 一列块。
+ *
+ * 与 `parseBody` 的差别只有两处，但都藏得深：
+ *
+ * 1. 根元素是 `w:hdr` / `w:ftr`，块**直接**挂在根下，中间没有 `w:body`；
+ *    也没有 `w:sectPr` —— 页眉不分节，它的版心是引用它的那一节给的
+ * 2. `idPrefix` 必须给一个与主文档不同的值（见 `Ctx.idPrefix`）。
+ *    传关系 id 是最省事的一个选择：它在主文档的关系表里唯一，且看 id 就知道来自哪个部件
+ */
+export function parseHeaderFooter(
+  doc: XmlDocument,
+  diagnostics: DiagnosticSink,
+  part: string,
+  idPrefix: string,
+): Block[] {
+  const ctx: Ctx = { diagnostics, part, reported: new Set(), counters: new Map(), idPrefix };
+  const out: Block[] = [];
+  for (const el of children(doc.root)) {
+    switch (el.name) {
+      case 'w:p':
+        out.push(parseParagraph(ctx, el, parseParaProps(child(el, 'w:pPr'))));
+        break;
+      case 'w:tbl':
+        out.push(parseTable(ctx, el));
+        break;
+      case 'w:sdt':
+        out.push(...sdtBlocks(ctx, el));
+        break;
+      default:
+        if (!IGNORED.has(el.name)) unknown(ctx, el, doc.root.name);
+    }
+  }
+  return out;
 }
 
 function sectPrOf(p: XmlElement): XmlElement | undefined {

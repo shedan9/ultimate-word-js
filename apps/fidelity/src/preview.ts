@@ -85,38 +85,42 @@ function overlayTruth(root: RElement, truth: WordTruth): void {
   });
 }
 
+/**
+ * 一页上我们画出的所有基线（pt，纸左上角原点），去重后按 y 排好。
+ *
+ * 必须**沿途累加每一层 `<g>` 的 translate**，不能只认版心那一层：页眉页脚是与版心平级的
+ * 另外两个框，表格与嵌套行也各带一层偏移。只按版心的原点算，页眉的基线会整体偏出
+ * 一个上边距，diff 里表现为「每一行都错」而其实排得没问题。
+ */
+function baselinesOf(svg: RElement): number[] {
+  const ys = new Set<number>();
+  const visit = (n: RElement, dy: number): void => {
+    // `scale(...)`（`w:w` 横向缩放）也走 transform，匹配不上就当没有偏移
+    const m = /translate\(([-\d.]+) ([-\d.]+)\)/.exec(n.attrs.transform ?? '');
+    const y0 = dy + (m === null ? 0 : Number(m[2]));
+    if (n.tag === 'text' && n.text !== undefined && n.text.trim() !== '') {
+      ys.add(Number((y0 + Number(n.attrs.y)).toFixed(2)));
+    }
+    for (const c of n.children) visit(c, y0);
+  };
+  visit(svg, 0);
+  return [...ys].sort((a, b) => a - b);
+}
+
 /** 我们自己画出来的每一行基线（蓝），与红线一起看 */
 function overlayOurs(root: RElement): void {
   for (const svg of root.children) {
-    const content = svg.children.find((c) => c.attrs.class === 'uw-content');
-    if (content === undefined) continue;
-    const m = /translate\(([-\d.]+) ([-\d.]+)\)/.exec(content.attrs.transform ?? '');
-    if (m === null) continue;
-    const oy = Number(m[2]);
     const width = Number((svg.attrs.viewBox ?? '0 0 0 0').split(' ')[2]);
-    const seen = new Set<string>();
-    const lines: RElement[] = [];
-    const visit = (n: RElement): void => {
-      if (n.tag === 'text' && n.text !== undefined && n.text.trim() !== '') {
-        const y = oy + Number(n.attrs.y);
-        const key = y.toFixed(2);
-        if (!seen.has(key)) {
-          seen.add(key);
-          lines.push(
-            el('line', {
-              x1: '0',
-              x2: fmt(width),
-              y1: fmt(y),
-              y2: fmt(y),
-              stroke: '#1f6feb',
-              'stroke-width': '0.2',
-            }),
-          );
-        }
-      }
-      for (const c of n.children) visit(c);
-    };
-    visit(svg);
+    const lines = baselinesOf(svg).map((y) =>
+      el('line', {
+        x1: '0',
+        x2: fmt(width),
+        y1: fmt(y),
+        y2: fmt(y),
+        stroke: '#1f6feb',
+        'stroke-width': '0.2',
+      }),
+    );
     svg.children.push(el('g', { class: 'uw-ours' }, lines));
   }
 }
@@ -135,20 +139,7 @@ function worstDelta(root: RElement, truth: WordTruth): { dy: number; lines: numb
   root.children.forEach((svg, i) => {
     const page = truth.pages[i];
     if (page === undefined) return;
-    const content = svg.children.find((c) => c.attrs.class === 'uw-content');
-    const m = /translate\(([-\d.]+) ([-\d.]+)\)/.exec(content?.attrs.transform ?? '');
-    if (m === null) return;
-    const oy = Number(m[2]);
-    const ys = new Set<number>();
-    const visit = (n: RElement): void => {
-      if (n.tag === 'text' && n.text !== undefined && n.text.trim() !== '') {
-        ys.add(Number((oy + Number(n.attrs.y)).toFixed(2)));
-      }
-      for (const c of n.children) visit(c);
-    };
-    visit(svg);
-    const ours = [...ys].sort((a, b) => a - b);
-    ours.forEach((y, k) => {
+    baselinesOf(svg).forEach((y, k) => {
       const t = page.lines[k];
       if (t === undefined) return;
       count++;
@@ -183,6 +174,7 @@ async function preview(name: string, args: Args): Promise<void> {
   const { layout: paged } = layoutDocumentWithFields(doc.resolved, doc.fields, {
     measurer,
     settings: doc.cascade.settings,
+    headerFooters: doc.headerFooters,
     diagnostics: sink,
   });
   const opts: RenderOptions = { zoom: args.zoom, debug: args.debug };

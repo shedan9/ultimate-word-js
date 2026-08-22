@@ -18,10 +18,15 @@
  * 不需要任何「每页重新对齐到网格」的修正 —— 网格吸附已经吸在行高上了。
  * 断言在 `fixture.test.ts` 的 L3 一节。
  *
- * ## 三件**没做**的（写下来免得以为已经做了）
+ * ## 版心不再是「纸减页边距」
  *
- * - **页眉页脚**：`headers` / `footers` 指向的部件还没解析，版心顶固定取 `w:top`。
- *   Word 里页眉内容过深会把正文往下顶，补页眉时 `content.y` 要改成 max(top, 页眉底)
+ * 页眉页脚进来之后，**页边距是最小值不是固定值**：版心顶 = max(`w:top`, 页眉底)，
+ * 版心底 = min(纸高 − `w:bottom`, 页脚顶)。所以每一页的版心要等它自己的页眉页脚排完
+ * 才知道，`currentPage()` 是唯一有资格算它的地方（首页 / 偶数页用的页眉长度可以不同，
+ * 同一节里各页的版心因此可以不一样高）。实测见 `header-footer.ts` 的 `HEADER_RULES`。
+ *
+ * ## 两件**没做**的（写下来免得以为已经做了）
+ *
  * - **表格拆行**：行是原子的（一行放不下就整行挪到下一页）。Word 默认会把一行**内部**
  *   拆开，`w:cantSplit` 才禁止 —— 所以现在的行为等价于「全表 cantSplit」。
  *   只有单行高过剩余版心时才看得出差别，公文表格基本不会，但它是个洞
@@ -38,6 +43,15 @@ import type {
   ResolvedTableRow,
   SectionProps,
 } from '@uw/model';
+import { formatNumber, walkBlocks } from '@uw/model';
+import type { HeaderFooterSource, HeaderRules, PlacedHeaderFooter, StackResult } from './header-footer.ts';
+import {
+  contentWithHeaderFooter,
+  frameOf,
+  HEADER_RULES,
+  pickHeaderFooter,
+  stackBlocks,
+} from './header-footer.ts';
 import { layoutParagraph } from './paragraph.ts';
 import type { RowLayout, TableLayout } from './table.ts';
 import { layoutTable } from './table.ts';
@@ -110,14 +124,42 @@ export interface PageLayout {
   /** 显示页码：`w:pgNumType w:start` 会让它在某一节重新起算，所以与 `index` 不是一回事 */
   number: number;
   sectionIndex: number;
+  /**
+   * 这一页的版心。**注意它不等于「纸减页边距」** —— 页眉页脚长过页边距时会把它挤窄，
+   * 所以同一节里各页的 `content` 可以不同（首页页眉与偶数页页眉长度不一样就够了）
+   */
   geometry: PageGeometry;
   blocks: PlacedBlock[];
+  /** 这一页的页眉 / 页脚。没有引用、或者内容是空的时候缺席 */
+  header?: PlacedHeaderFooter;
+  footer?: PlacedHeaderFooter;
   /** `evenPage` / `oddPage` 为了凑奇偶补出来的空页 */
   filler?: true;
 }
 
 export interface DocumentLayout {
   pages: PageLayout[];
+}
+
+/**
+ * 页眉页脚里一个域该怎么算。`clear` 是结果区里除第一个 run 以外的那些 ——
+ * Word 常把一个数字切成好几个 `w:t`，不清掉旧的会留在页面上（与正文域同理）。
+ */
+export interface HeaderFieldSpec {
+  type: 'PAGE' | 'NUMPAGES' | 'SECTIONPAGES' | 'clear';
+  /** `\*` 开关解析出来的数字格式。缺席时 PAGE 跟着本节的 `w:pgNumType w:fmt` */
+  format?: string;
+}
+
+export interface HeaderFieldPlan {
+  fields: ReadonlyMap<NodeId, HeaderFieldSpec>;
+  /**
+   * 上一趟排出来的总页数 / 每节页数。**第一趟没有**（页数还不知道），
+   * 那时 NUMPAGES 保留文件里存着的旧值 —— 迭代由 `layoutDocumentWithFields` 转，
+   * 收敛之后这两个数就是自洽的
+   */
+  totalPages?: number;
+  sectionPages?: readonly number[];
 }
 
 export interface LayoutDocumentOptions {
@@ -131,6 +173,17 @@ export interface LayoutDocumentOptions {
    * 那个循环必须在分页**外面**转，否则这一趟排版就得递归调用自己。
    */
   fieldValues?: ReadonlyMap<NodeId, string>;
+  /**
+   * 页眉页脚的内容，关系 id → 级联完的块。直接把 `LoadedDocument.headerFooters` 传进来即可。
+   * 不传 = 不画页眉页脚，版心也就退回「纸减页边距」。
+   */
+  headerFooters?: HeaderFooterSource;
+  /**
+   * 页眉页脚里那些**要算**的域。与正文的 `fieldValues` 分开走，是因为同一个 run
+   * 在每一页显示的**不是同一串字**（`{ PAGE }` 每页都不同），一张全局的
+   * 「run id → 文字」表按定义就装不下它。这里存的是「怎么算」，算在开页那一刻做。
+   */
+  headerFields?: HeaderFieldPlan;
   diagnostics?: DiagnosticSink;
   /**
    * 分页规则。**标定用的接缝** —— 正常调用不要传，默认值就是实测出来的那一套
@@ -138,6 +191,11 @@ export interface LayoutDocumentOptions {
    * 证明「代码里实现的这一套」是唯一能复现 Word 的那一套。
    */
   rules?: Partial<PaginationRules>;
+  /**
+   * 页眉页脚的几何规则。同样是**标定用的接缝**，正常调用不要传 ——
+   * `apps/fidelity` 的 `spike:header` 靠它把 8 组假设各跑一遍，见 `HEADER_RULES`
+   */
+  headerRules?: Partial<HeaderRules>;
 }
 
 export interface PaginationRules {
@@ -195,14 +253,30 @@ export const PAGINATION_RULES: PaginationRules = {
 interface Flow {
   opts: LayoutDocumentOptions;
   rules: PaginationRules;
+  headerRules: HeaderRules;
   pages: PageLayout[];
   page: PageLayout | undefined;
   /** 游标：下一块内容的顶，相对版心顶 */
   y: Twips;
+  /**
+   * 本节的**纸面**几何（只减了页边距与装订线）。每一页的版心从它出发再减页眉页脚，
+   * 所以这一份与 `PageLayout.geometry` **不是同一个东西** —— 拿它去算「还剩多高」会多算
+   */
   geometry: PageGeometry;
+  /** 全部节的属性，`pickHeaderFooter` 要往回找「上一节的那一份」 */
+  sections: SectionProps[];
   sectionIndex: number;
+  /** 下一张开出来的页是不是本节的第一页 —— `w:titlePg` 靠它 */
+  sectionFirstPage: boolean;
   /** 下一张开出来的页拿到的页码 */
   nextNumber: number;
+  /**
+   * 排好的页眉页脚，按「内容 + 这一页的域文字」缓存。纯静态的页眉（绝大多数）
+   * 全文档只排一次，几百页共用同一份数据 —— 只读，且 `structuredClone` 保得住这种共享
+   */
+  hf: Map<string, StackResult>;
+  /** 哪些部件里有要算的域（关系 id）。没有的那些缓存键里就不必带页码 */
+  hfDynamic: Set<string>;
 }
 
 /** 排完行、还没分页的中间形态。分页只关心高度，所以两种块在这里被拉平成同一个层级 */
@@ -215,12 +289,17 @@ export function layoutDocument(body: ResolvedBody, opts: LayoutDocumentOptions):
   const flow: Flow = {
     opts,
     rules: { ...PAGINATION_RULES, ...opts.rules },
+    headerRules: { ...HEADER_RULES, ...opts.headerRules },
     pages: [],
     page: undefined,
     y: 0,
     geometry: pageGeometry(first?.props ?? FALLBACK_SECTION, opts),
+    sections: body.sections.map((s) => s.props),
     sectionIndex: 0,
+    sectionFirstPage: true,
     nextNumber: 1,
+    hf: new Map(),
+    hfDynamic: dynamicParts(opts.headerFooters, opts.headerFields),
   };
 
   body.sections.forEach((section, index) => {
@@ -300,6 +379,8 @@ function startSection(flow: Flow, props: SectionProps, index: number): void {
     // 不同的版心框，而 PageLayout 只有一个 —— 与其画错，不如换页并说明
     if (continuous && sameGeometry(flow.geometry, geometry)) {
       flow.geometry = geometry;
+      // 没换页就谈不上「本节的第一页」：这一页是上一节开的，页眉早画好了
+      flow.sectionFirstPage = flow.page === undefined;
       return;
     }
     if (continuous) {
@@ -313,6 +394,7 @@ function startSection(flow: Flow, props: SectionProps, index: number): void {
 
   flow.geometry = geometry;
   flow.y = 0;
+  flow.sectionFirstPage = true;
 
   if (props.pageNumStart !== undefined) flow.nextNumber = props.pageNumStart;
 
@@ -344,18 +426,139 @@ function sameGeometry(a: PageGeometry, b: PageGeometry): boolean {
 
 function currentPage(flow: Flow): PageLayout {
   if (flow.page !== undefined) return flow.page;
+  const number = flow.nextNumber;
+  // 页眉页脚要在版心之前排完：版心顶取 max(w:top, 页眉底)，不知道页眉多高就算不出来
+  const header = buildFrame(flow, 'header', number);
+  const footer = buildFrame(flow, 'footer', number);
+  const margin = (flow.sections[flow.sectionIndex] ?? FALLBACK_SECTION).margin;
+
   const page: PageLayout = {
     index: flow.pages.length,
-    number: flow.nextNumber,
+    number,
     sectionIndex: flow.sectionIndex,
-    geometry: flow.geometry,
+    geometry: contentWithHeaderFooter(
+      flow.geometry,
+      margin,
+      header?.height ?? 0,
+      footer?.height ?? 0,
+      flow.headerRules,
+    ),
     blocks: [],
+    ...(header === undefined ? {} : { header }),
+    ...(footer === undefined ? {} : { footer }),
   };
   flow.nextNumber += 1;
+  flow.sectionFirstPage = false;
   flow.pages.push(page);
   flow.page = page;
   flow.y = 0;
   return page;
+}
+
+// ── 页眉页脚 ──────────────────────────────────────────────────────────────────
+
+/**
+ * 哪些部件里有要算的域。
+ *
+ * 按 run **是不是真的在这份内容里**判断，而不是拿 id 的前缀去猜 —— 前缀（`rId7:`）是
+ * `parseHeaderFooter` 的约定，一旦有人换个 id 方案，靠前缀的写法会安静地退化成
+ * 「所有页共用第一页的页码」，而那种错在小样本上看不出来。
+ */
+function dynamicParts(
+  source: HeaderFooterSource | undefined,
+  plan: HeaderFieldPlan | undefined,
+): Set<string> {
+  const out = new Set<string>();
+  if (source === undefined || plan === undefined || plan.fields.size === 0) return out;
+  for (const [relId, content] of Object.entries(source)) {
+    for (const b of walkBlocks(content.resolved as ResolvedBlock[])) {
+      if (b.kind !== 'paragraph') continue;
+      if (b.runs.some((r) => plan.fields.has(r.id))) {
+        out.add(relId);
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+function buildFrame(flow: Flow, kind: 'header' | 'footer', number: number): PlacedHeaderFooter | undefined {
+  const source = flow.opts.headerFooters;
+  if (source === undefined) return undefined;
+  const props = flow.sections[flow.sectionIndex];
+  if (props === undefined) return undefined;
+
+  const ref = pickHeaderFooter(
+    flow.sections,
+    flow.sectionIndex,
+    kind,
+    flow.sectionFirstPage,
+    number,
+    flow.opts.settings,
+  );
+  if (ref === undefined) return undefined;
+  const content = source[ref.relId];
+  if (content === undefined || content.resolved.length === 0) return undefined;
+
+  // 静态页眉全文档共用一份；带页码的那种同一页码也能共用（奇偶页眉在偶数页之间就是同一份）
+  const key = flow.hfDynamic.has(ref.relId) ? `${ref.relId}|${number}|${flow.sectionIndex}` : ref.relId;
+  let stacked = flow.hf.get(key);
+  if (stacked === undefined) {
+    const values = headerFieldValues(flow.opts.headerFields, number, flow.sectionIndex, props);
+    stacked = stackBlocks(content.resolved, {
+      measurer: flow.opts.measurer,
+      settings: flow.opts.settings,
+      docGrid: props.docGrid,
+      contentWidth: flow.geometry.content.width,
+      ...(flow.opts.defaultFont === undefined ? {} : { defaultFont: flow.opts.defaultFont }),
+      ...(values === undefined ? {} : { fieldValues: values }),
+    });
+    flow.hf.set(key, stacked);
+  }
+
+  return {
+    kind,
+    relId: ref.relId,
+    ...frameOf(kind, flow.geometry, props.margin, stacked.height, flow.headerRules),
+    blocks: stacked.blocks,
+  };
+}
+
+/**
+ * 这一页的页眉页脚里，每个域该显示什么。
+ *
+ * PAGE 在这里是**精确**的 —— 页码在开页那一刻就定了，不像正文的域要靠迭代把上一趟的
+ * 结果喂回来。要迭代的只有 NUMPAGES / SECTIONPAGES：它们要的是「一共几页」，
+ * 而那个数得整份排完才知道，所以第一趟拿不到（`plan.totalPages` 是 undefined），
+ * 那一趟就让文件里存着的旧值先顶着。
+ */
+function headerFieldValues(
+  plan: HeaderFieldPlan | undefined,
+  number: number,
+  sectionIndex: number,
+  props: SectionProps,
+): ReadonlyMap<NodeId, string> | undefined {
+  if (plan === undefined || plan.fields.size === 0) return undefined;
+  const out = new Map<NodeId, string>();
+  for (const [id, spec] of plan.fields) {
+    switch (spec.type) {
+      case 'clear':
+        out.set(id, '');
+        break;
+      case 'PAGE':
+        out.set(id, formatNumber(number, spec.format ?? props.pageNumFormat ?? 'decimal'));
+        break;
+      case 'NUMPAGES':
+        if (plan.totalPages !== undefined)
+          out.set(id, formatNumber(plan.totalPages, spec.format ?? 'decimal'));
+        break;
+      default:
+        if (plan.sectionPages !== undefined) {
+          out.set(id, formatNumber(plan.sectionPages[sectionIndex] ?? 0, spec.format ?? 'decimal'));
+        }
+    }
+  }
+  return out;
 }
 
 function breakPage(flow: Flow): void {
@@ -368,8 +571,18 @@ function pageHasContent(flow: Flow): boolean {
   return flow.page !== undefined && flow.page.blocks.length > 0;
 }
 
+/**
+ * 这一页还剩多高。
+ *
+ * **必须看开出来的那一页**而不是 `flow.geometry`：页眉页脚已经把版心挤过一道，
+ * 用节的纸面几何算会平白多出页眉那么多空间。所以这里顺手把页开出来 ——
+ * 段落 / 表格的分页循环里，`breakPage()` 之后紧跟的就是「下一页还剩多高」，
+ * 那时页还没开，取不到它自己的版心（页眉进来之前两者恰好相等，这个洞才一直没露出来）。
+ * 惰性开页因此只剩这一处例外，也正是它该有的样子：
+ * **问了「还剩多高」就说明真的要往里放东西了**。
+ */
 function availHeight(flow: Flow): Twips {
-  return flow.geometry.content.height - flow.y;
+  return currentPage(flow).geometry.content.height - flow.y;
 }
 
 // ── 块的准备 ──────────────────────────────────────────────────────────────────

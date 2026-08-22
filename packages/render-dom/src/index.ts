@@ -23,7 +23,7 @@
  * 肉眼比对不用换算），逐字 x 走 `<text x="x1 x2 …">`。缩放只改 `<svg>` 的 width /
  * height，布局结果一个字节不动 —— 架构 §4.1 的「缩放永不触发重排」在这里落地。
  *
- * 没画的东西集中写在 `paint.ts` 的文件头（页眉页脚、图片、run 级高亮、可选文本层）。
+ * 没画的东西集中写在 `paint.ts` 的文件头（图片、run 级高亮、可选文本层）。
  */
 export const PACKAGE_NAME = '@uw/render-dom';
 

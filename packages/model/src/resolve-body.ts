@@ -71,6 +71,25 @@ export function resolveBody(ctx: CascadeContext, body: Body, opts: ResolveBodyOp
   };
 }
 
+/**
+ * 一列块的级联 —— 页眉页脚用的入口（它们没有节，只有块）。
+ *
+ * **计数器是新的一份**：编号在页眉里几乎不出现，但真出现时它绝不该推动正文的
+ * 「第几条」往前走 —— 页眉会在每一页重排一遍，跟着推的话正文编号会随页数漂移。
+ */
+export function resolveBlocks(
+  ctx: CascadeContext,
+  blocks: readonly Block[],
+  opts: ResolveBodyOptions = {},
+): ResolvedBlock[] {
+  const pass: Pass = {
+    ctx,
+    counters: createNumberingCounters(ctx.numbering, ctx.styles),
+    hyperlinks: opts.hyperlinks,
+  };
+  return blocks.map((b) => block(pass, b));
+}
+
 function block(pass: Pass, b: Block): ResolvedBlock {
   return b.kind === 'paragraph' ? paragraph(pass, b) : table(pass, b);
 }

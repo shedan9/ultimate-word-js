@@ -108,6 +108,52 @@ describe('页', () => {
   });
 });
 
+describe('页眉页脚', () => {
+  const frame = (kind: 'header' | 'footer', y: number) => ({
+    kind,
+    relId: `r-${kind}`,
+    x: 1440,
+    y,
+    width: 9026,
+    height: 480,
+    blocks: [
+      {
+        kind: 'paragraph' as const,
+        id: `p-${kind}`,
+        y: 0,
+        lines: [{ index: 0, y: 0, line: line({ fragments: [frag({ text: kind })] }) }],
+        first: true,
+        last: true,
+      },
+    ],
+  });
+
+  const withFrames = (): PageLayout => ({
+    ...paragraphPage(),
+    header: frame('header', 851),
+    footer: frame('footer', 15507),
+  });
+
+  it('框的坐标相对**纸**左上角，与版心那个 g 平级 —— 套进版心会平白多偏一个上边距', () => {
+    const svg = buildPage(withFrames());
+    const g = collect(svg, 'g');
+    // 851 twips = 42.55pt、15507 twips = 775.35pt
+    expect(g.find((n) => n.attrs.class === 'uw-header')?.attrs.transform).toBe('translate(72 42.55)');
+    expect(g.find((n) => n.attrs.class === 'uw-footer')?.attrs.transform).toBe('translate(72 775.35)');
+  });
+
+  it('页眉在正文之前画、页脚在之后 —— 重叠时正文压在页眉上更容易看出是哪儿排错了', () => {
+    const svg = buildPage(withFrames());
+    const order = svg.children.map((c) => c.attrs.class).filter((c) => c !== undefined);
+    expect(order).toEqual(['uw-page-bg', 'uw-header', 'uw-content', 'uw-footer']);
+  });
+
+  it('没有页眉页脚的页与从前一模一样', () => {
+    const svg = buildPage(paragraphPage());
+    expect(collect(svg, 'g').some((n) => n.attrs.class === 'uw-header')).toBe(false);
+  });
+});
+
 describe('文字片段', () => {
   it('基线 = 版心顶 + 行顶 + 行内基线，逐字 x 直接进 x 列表', () => {
     const svg = buildPage(paragraphPage());

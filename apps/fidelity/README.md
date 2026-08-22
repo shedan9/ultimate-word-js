@@ -27,12 +27,13 @@ pnpm spike:baseline        # 基线穿刺：基线在行高里的位置对不对
 pnpm spike:punct           # 标点挤压穿刺：什么时候压、压多少
 pnpm spike:compress        # 临时挤压穿刺：塞不下时肯挤多少才换行
 pnpm spike:page            # 分页穿刺：孤行寡行 / keepNext / 页首段前间距
+pnpm spike:header          # 页眉页脚穿刺：框摆在哪、怎么反过来挤版心
 
 pnpm preview                     # 全部 fixture → out/*.html，用眼睛看引擎画成什么样
 pnpm preview gongwen-01 -- --truth --debug   # 叠真值基线（红虚线）+ 画版心与行盒
 ```
 
-这五个 spike 脚本是**标定工具**，不是单测：它们从真值反推系数、打出残差表，
+这六个 spike 脚本是**标定工具**，不是单测：它们从真值反推系数、打出残差表，
 并在「最优假设不是代码里实现的那个」时以退出码 1 失败。跨平台的回归由单测兜着 ——
 `@uw/fonts` 的 `metrics.test.ts` / `metrics-pack.test.ts` 与 `@uw/layout` 的
 `items.test.ts` 里的期望值，就是这些脚本打出来的实测值。
@@ -46,15 +47,22 @@ pnpm preview gongwen-01 -- --truth --debug   # 叠真值基线（红虚线）+ �
 | `spike:punct` | `spike-punct-01` | 孤立标点不压，相邻标点固定压 0.5 em |
 | `spike:compress` | `spike-compress-01/02` | 临时挤压只在两端对齐的行里发生；一个标点最多让 0.48 em；挤到什么程度就宁可换行（`挤压量 × 字距数 ≤ 30.6 × 标点数 × 拉伸量`） |
 | `spike:page` | `spike-page-01/02` | 孤行寡行保底 2 行；段前间距落在页首不算；keepNext 的接缝要留出下一块「最少能放多少」 |
+| `spike:header` | `spike-header-01/02/03` | 页眉框顶 = `w:header`；页脚量的是框**底**；页边距是最小值（页眉页脚长过它就把版心顶开） |
 
 `spike:baseline` 现在跑**四份** fixture：04 补的是前三份漏掉的那一格 —— **固定值行距**
 （`w:lineRule="exact"`）下基线 = 行高 × 0.8，与字体、字号都无关。它是被 `spike-page-01`
 逼出来的：那份样本用固定行距 20pt，整页文字比「核心盒居中」的预测低 1.77pt。
 
-`spike:page` 与其余四个不同，它**不反推系数**，而是把整台引擎跑一遍再与真值逐页对：
+`spike:page` 与 `spike:header` 跟其余四个不同，它们**不反推系数**，而是把整台引擎跑一遍再与真值逐页对：
 分页规则不是一个数，是三条互相纠缠的判断，单独反推任何一条都会被另一条污染。
 做法是把 3 × 2 × 3 种组合排开，看哪一组能逐页复现 Word（当前：唯一满分 50/50 页）。
-它也是唯一**不需要 Windows** 的 spike —— docx 与 truth.json 都入库了。
+它们也是**不需要 Windows** 的 spike —— docx 与 truth.json 都入库了。
+
+`spike:header` 的三份样本各占一格，缺一格就分不开：01 的页眉页脚**放得下**（正文一动不动）、
+02 的**放不下**（该顶开正文、一页少排三行）、03 开「首页不同 + 奇偶页不同」并在页脚里放
+**真的** `{ PAGE }` 域。8 种组合（页脚量顶 / 量底 × 挤版心的四种）逐页跑，唯一满分 12/12 页。
+比对时页眉、正文、页脚的行是**混在一起按 y 排**再比的 —— 真值来自 PDF，
+而 PDF 里没有「这是页眉」这回事。
 
 ## preview：用眼睛验收
 
@@ -76,6 +84,9 @@ pnpm preview gongwen-01 -- --truth --debug   # 叠真值基线（红虚线）+ �
 新增 fixture 有两种方式：
 
 1. **写 spec**（推荐用于最小复现）：在 `fixtures/src/` 放一个 JSON，Word 会据此生成 docx。
+   `page` 里可以写 `headerDistMm` / `footerDistMm` / `differentFirstPage` / `differentOddEven`，
+   顶层的 `headers` / `footers` 各接 `default` / `first` / `even` 三份段落列表；
+   段落上写 `"field": "PAGE"` 会在它末尾插入一个**真的**域（不是打上去的数字）。
    文档正文只存在于这个 UTF-8 JSON 里，不写进 `.ps1`，避免 PowerShell 主机编码把中文吃掉。
 2. **直接丢 docx**：把真实公文放进 `fixtures/`，没有同名 spec 也能跑。
 

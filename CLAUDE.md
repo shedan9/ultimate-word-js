@@ -8,19 +8,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 保真度由自己算的排版决定，**不依赖浏览器排版** —— 所以「用 CSS 让它看起来差不多」永远不是正确答案。
 
 当前进度：Phase 0 已完成（地基 + 行高穿刺 + 基线穿刺 + CI），Phase 1 的**解析链已完整**，
-**Phase 2 全部做完了**（DOM 渲染器 v1 已落地），**Phase 3 的分页骨架也做完了** —— `layoutDocument()`
+**Phase 2 全部做完了**（DOM 渲染器 v1 已落地），**Phase 3 除表格拆行外也做完了** —— `layoutDocument()`
 把段落与表格摞进一页页的版心，每一行都有了页号与 y，`LineLayout` 的 `baseline` 终于能拼成
-绝对坐标。**卡口没有了**：横向（断行）与纵向（基线 y）现在都能与真值逐行比。
+绝对坐标；**页眉页脚**（选份 + 定位 + 反过来挤版心）三条几何规则已用真值标定。
+**卡口没有了**：横向（断行）与纵向（基线 y）现在都能与真值逐行比。
 Phase 5 的**列表编号**已经从 `numbering.xml` 一路通到首行几何，
 同阶段的**域**结构还原（界桩配对 + 指令解析 + HYPERLINK）与**求值**（PAGE / NUMPAGES /
 SECTIONPAGES 迭代到自洽）都做完了，TOC / SEQ 的求值还没写。Phase 4 的**表格**：属性 + 级联（含 `w:tblStylePr` 条件格式）在 model 层，
 列宽 + 每格的 x 与可用宽 + 格内段落 + **边框冲突解析**在 layout 层，跨页按**行**拆
 （行是原子的 = 全表 cantSplit，拆行还没做）。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、
-`@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 制表位 + **编号（解析 + 计数器 + 编号文字 + 接进级联）** + **表格（属性 + 级联 + 条件格式）** + **域（界桩配对 + 指令解析 + HYPERLINK）**）、
+`@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 制表位 + **编号（解析 + 计数器 + 编号文字 + 接进级联）** + **表格（属性 + 级联 + 条件格式）** + **域（界桩配对 + 指令解析 + HYPERLINK）** + **页眉页脚部件**）、
 `@uw/fonts`（行高规则 + 脚本分桶 + 度量包 + 注册表 + `TextMeasurer`）、
 `@uw/layout`（item 流 + 断行 + 缩进 / 对齐 / 制表位 / 列表编号 + 行高与网格吸附 + **行内基线** +
-**表格列宽与格内几何 + 边框冲突解析** + **分页** + **域求值**）、
+**表格列宽与格内几何 + 边框冲突解析** + **分页** + **域求值** + **页眉页脚**）、
 `@uw/render-dom`（**元素树 → SVG / DOM**，见下）。
 
 **渲染器**（`packages/render-dom`）是流水线的出口，**px 只在这一步出现**。
@@ -36,7 +37,8 @@ SECTIONPAGES 迭代到自洽）都做完了，TOC / SEQ 的求值还没写。Pha
 后一格的底纹会盖掉先画的半条线；共享的线还按几何位置去重，只画一次。
 渲染层**不回头查模型**：要画的视觉属性由 `LineFragment.style` 从布局带过来
 （包依赖单向，且 Worker 化之后主线程手上只有 `DocumentLayout` 这一份数据）。
-未画：页眉页脚（布局层就没有）、图片、run 级高亮（model 没解析）、可选文本层、增量更新。
+页眉页脚是与版心 `<g>` **平级**的另外两个 `<g>`（坐标相对纸左上角）—— 它们不在版心里，
+版心正是被它们挤出来的。未画：图片、run 级高亮（model 没解析）、可选文本层、增量更新。
 画法里没有真值的常数（下划线 / 删除线的位置粗细、上下标升降量、前导符点距）
 关在 `packages/render-dom/src/uncalibrated.ts` —— **它们一个都不改坐标**，
 所以 L2/L3/L4 全绿也证明不了它们对。
@@ -58,7 +60,22 @@ preview 报的「最大差 x pt」**不是保真度指标** —— 它按行序�
 每行的绝对基线 = `page.geometry.content.y + PlacedLine.y + LineLayout.baseline`，
 gongwen-01 的 18 行与 Word 真值最大差 **0.06pt**（L3 判据 0.5pt），断言在 `fixture.test.ts`。
 逐行累加**不需要**「每页重新对齐网格」的修正 —— 网格吸附已经吸在每一行的行高上了。
-未做：页眉页脚（部件没解析，版心顶固定取 `w:top`）、表格拆行、脚注不占位。
+未做：表格拆行、脚注不占位。
+
+**页眉页脚**（`packages/layout/src/header-footer.ts`）三条几何规则**都已实测**
+（样本 `spike-header-01/02`，跑 `pnpm --filter @uw/fidelity spike:header`，落在 `HEADER_RULES`）：
+① 页眉框顶 = `w:header`（到**纸**顶）；② 页脚量的是框**底**（框底 = 纸高 − `w:footer`）——
+与页眉量顶边**不对称**，按对称写会让页脚整体偏一个页脚高度；③ **页边距是最小值不是固定值**：
+版心顶 = max(`w:top`, 页眉底)、版心底 = min(纸高 − `w:bottom`, 页脚顶)。
+直接后果是 **`PageGeometry` 每页一份**（首页页眉与偶数页页眉长度可以不同），
+`availHeight()` 因此必须看**这一页自己的**版心 —— 原来的写法在 `breakPage()` 之后读的是
+节的纸面几何，页眉进来之前两者恰好相等，这个洞才一直没露出来。
+页脚里的 `{ PAGE }` **一趟就是准的**：它不走正文那张「run id → 文字」表（同一个 run 每页显示的
+不是同一串字，那张表装不下），而走 `LayoutDocumentOptions.headerFields` 里的「怎么算」，
+在开页那一刻算。**选择**规则（奇偶看显示页码、`titlePg` 没定义 first 时首页为空、跨节沿用、
+补出来的空页算不算本节首页）按规范实现但**没有样本**，四问写在 `header-footer.ts` 的文件头。
+三份样本（含 `spike-header-03`：首页 / 奇偶各一份 + 页脚里真的 `{ PAGE }`）进了 CI
+（`header-fixture.test.ts`，跨平台，12 页逐行全对）。
 
 **分页的三条规则已经标定完**（样本 `spike-page-01/02`，跑 `pnpm --filter @uw/fidelity spike:page`，
 落在 `page.ts` 的 `PAGINATION_RULES`）：孤行寡行**保底 2 行**、段前间距落在页首**不算**、
@@ -75,11 +92,16 @@ keepNext 的接缝要留出下一块**「最少能放多少」**（不是它的�
 
 一份 docx 的入口是 `loadDocument(pkg, sink)`（`packages/model/src/load.ts`），产出
 `body`（直接格式，可编辑）、`resolved`（级联完的纯数据，给布局）、`cascade`（上下文，**不可**过 Worker 边界）、
-`fonts`、`numbering`、`fields`（配对好的域，单独一份而不是挂在树上 —— 域跨段落，挂上去就得补反向指针）。
+`fonts`、`numbering`、`fields`（配对好的域，单独一份而不是挂在树上 —— 域跨段落，挂上去就得补反向指针）、
+`headerFooters`（**按关系 id 索引**的页眉页脚内容 —— 同一份常被多节共用，挂在节上要么复制几份、
+要么变成跨节点引用；每份内容的节点 id 各带一个 `rId7:` 前缀，不带就会与正文的 `r0` 撞车，
+页脚的页码会画到正文里去）。
 `resolveBody()` 那一步就是 Worker 边界 —— `StyleSheet` 带方法，级联必须在过界前做完；
 它同时是**编号计数器**跑的地方（编号「第几」只有按文档顺序走一遍才知道），结果落在
 `ResolvedParaProps.numbering.label`（编号文字 + 它自己的字符属性 + `w:suff`）。
-部件一律**按关系类型找**（`RelType.*`），不按 `word/styles.xml` 这种路径惯例猜。
+部件一律**按关系类型找**（`RelType.*`），不按 `word/styles.xml` 这种路径惯例猜；
+页眉页脚是唯一的例外 —— 它们按**引用**（`sectPr` 里的 `r:id`）找，因为包里常留着没人引用的
+旧 `header3.xml`，按类型全捞会把废弃的那些也画上去。
 
 **原来卡在 Windows 的两件事都做完了**（基线穿刺 + 度量包抽取），Windows 侧现在只剩标定样本。
 度量包：`packages/fonts/packs/*.json`，A/B/C/D 四类 17 款，**已入库**，所以消费侧完全跨平台 ——
@@ -132,7 +154,8 @@ L2 剩下那 2 行（真值第 10 / 11 行）是**唯一一个解释不了的反
 12 个接缝已经在常态挤压里各压掉了半个字 —— 「已经压过的行还肯不肯再压」多半另有规则。
 写在 `PUNCT_COMPRESS_STRETCH_K` 的注释里，**没有为它硬凑常数**。
 
-`@uw/layout` 的用法：整份文档走 `layoutDocument(resolved, { measurer, settings })`
+`@uw/layout` 的用法：整份文档走 `layoutDocumentWithFields(resolved, fields, { measurer, settings, headerFooters })`
+（不带域与页眉页脚时等价于 `layoutDocument(resolved, { measurer, settings })`）
 → `DocumentLayout`（`pages → blocks → lines/rows → fragments`，**有 y**）。
 单块的两个入口仍然**不带 y**，它们是分页的输入、也是缓存的单位：
 `layoutParagraph(resolvedParagraph, { measurer, contentWidth, settings, docGrid })`
@@ -251,6 +274,7 @@ pnpm --filter @uw/fidelity spike:baseline  # 基线穿刺（基线在行高里�
 pnpm --filter @uw/fidelity spike:punct     # 标点挤压穿刺（什么时候压、压多少）
 pnpm --filter @uw/fidelity spike:compress  # 临时挤压穿刺（塞不下时肯挤多少才换行）
 pnpm --filter @uw/fidelity spike:page      # 分页穿刺（孤行寡行 / keepNext / 页首段前间距，**不需要 Word**）
+pnpm --filter @uw/fidelity spike:header    # 页眉页脚穿刺（框摆在哪 / 怎么挤版心，**不需要 Word**）
 pnpm --filter @uw/fidelity preview -- --truth  # fixture 画成 out/*.html 并叠真值基线（不需要 Word）
 pnpm --filter @uw/fonts run packs          # 重抽度量包（仅 Windows，产物入库）
 pnpm --filter @uw/fonts run packs:check    # 只校验入库的包与本机字体是否一致
@@ -327,11 +351,17 @@ Times 的 winAscent 更大，若参与就该赢，实测却仍是等线单独的
 孤行寡行保底 **2 行**、段前间距落在页首**不算**、keepNext 的接缝留出下一块**「最少能放多少」**。
 判据不是残差而是「哪一组能逐页复现 Word」：3 × 2 × 3 种组合排开跑，实现的这组唯一满分。
 
+**已定死（页眉页脚穿刺，三份样本 12 页全对）** —— 实现在
+[`packages/layout/src/header-footer.ts`](packages/layout/src/header-footer.ts) 的 `HEADER_RULES`：
+页眉框顶 = `w:header`、页脚量的是框**底**、**页边距是最小值**（页眉页脚长过它就把版心顶开）。
+同样是排组合（8 种）逐页比，唯一满分。**页脚量底边这一条最容易搞反** ——
+量顶边的那四组在三份样本上全军覆没（每份都差一个页脚高度）。
+
 **未决**：混排行的合成规则只有单字体样本 ——
 `composeBaseline()` 的「逐个居中再取 max」是判断，要一份「同一行两款东亚字体、字号不同」的样本才能钉死，
 而 fixture spec 目前一段只有一个字号。
 
-行高与基线之外还有四处未标定（临时挤压那条原来排第一，已经用 `spike-compress-01/02` 做完，见上）。
+行高与基线之外还有五处未标定（临时挤压那条原来排第一，已经用 `spike-compress-01/02` 做完，见上）。
 一是 `splitFontRuns()` 的歧义字符集取的是 Unicode **EastAsianWidth = Ambiguous**
 （`w:hint` 要回答的正是「这份文档算不算东亚环境」，两者同构），但 Word 的实际边界有没有偏差没有真值验证过 ——
 上 Windows 时顺手做一份「① ※ ℃ Ⅰ 在 hint=eastAsia / default 下各占多宽」的样本就能钉死；
@@ -346,6 +376,11 @@ Times 的 winAscent 更大，若参与就该赢，实测却仍是等线单独的
 五是域的 `\* CHINESENUM1|2|3` 各对应哪套中文数字（`FIELD_CHINESE_NUM_FORMATS`）：
 一份三节的 docx，页码跑到 11 与 105，看 Word 显示「十一 / 拾壹 / 一〇五」里的哪一种。
 中文数字比阿拉伯数字宽，猜错了页码那一行的断行点也会跟着错。
+
+六是页眉页脚的**选择**规则四问（几何三条已实测，选择这四条只有规范做依据）：奇偶看的是显示页码
+还是物理页序、`w:titlePg` 开着却没定义 first 时首页是不是空的、本节没写某一类时沿不沿用上一节、
+`evenPage` 补出来的空页算不算「本节首页」。四问都不改坐标，只改「画的是哪一份」，
+写在 `header-footer.ts` 的文件头，每问都带着能钉死它的样本。
 
 另一个反复咬人的点：中文版 Word 的 Normal 模板**默认开着行网格**（linePitch 312 twips = 15.6pt），
 基线会被吸到网格上、把字体度量差异整个盖掉。做度量实验必须显式关网格（`PageSetup.LayoutMode = wdLayoutModeDefault`）。

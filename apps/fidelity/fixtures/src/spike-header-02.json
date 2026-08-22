@@ -1,0 +1,274 @@
+{
+  "name": "spike-header-02",
+  "note": "页眉页脚的几何穿刺（**高**的那一格）：页眉长过上边距时正文让不让路。除页眉页脚各三行（60pt 高）外，与 spike-header-01 逐字相同 —— 两份对着读，差的只有页眉页脚的行数。页眉底 = 28.35+60 = 88.35pt，已经越过上边距 56.69pt；页脚顶 = 311.81−60 = 251.81pt，已经越过下边距 283.46pt。「页边距是最小值」若成立：正文首行基线 104.35pt、版心高 163.46pt = 一页 8 行；若不成立（正文照旧从上边距开始、页脚直接压在正文上）：首行基线 72.69pt、一页 11 行。两个数都差得很远，分得开。",
+  "page": {
+    "widthMm": 120,
+    "heightMm": 120,
+    "marginMm": {
+      "top": 20,
+      "bottom": 20,
+      "left": 20,
+      "right": 20
+    },
+    "headerDistMm": 10,
+    "footerDistMm": 10
+  },
+  "headers": {
+    "default": [
+      {
+        "text": "页眉甲乙丙",
+        "fontEA": "仿宋",
+        "fontLatin": "Times New Roman",
+        "sizePt": 12,
+        "align": "left",
+        "lineSpacingPt": 20
+      },
+      {
+        "text": "页眉丁戊己",
+        "fontEA": "仿宋",
+        "fontLatin": "Times New Roman",
+        "sizePt": 12,
+        "align": "left",
+        "lineSpacingPt": 20
+      },
+      {
+        "text": "页眉庚辛壬",
+        "fontEA": "仿宋",
+        "fontLatin": "Times New Roman",
+        "sizePt": 12,
+        "align": "left",
+        "lineSpacingPt": 20
+      }
+    ]
+  },
+  "footers": {
+    "default": [
+      {
+        "text": "页脚甲乙丙",
+        "fontEA": "仿宋",
+        "fontLatin": "Times New Roman",
+        "sizePt": 12,
+        "align": "left",
+        "lineSpacingPt": 20
+      },
+      {
+        "text": "页脚丁戊己",
+        "fontEA": "仿宋",
+        "fontLatin": "Times New Roman",
+        "sizePt": 12,
+        "align": "left",
+        "lineSpacingPt": 20
+      },
+      {
+        "text": "页脚庚辛壬",
+        "fontEA": "仿宋",
+        "fontLatin": "Times New Roman",
+        "sizePt": 12,
+        "align": "left",
+        "lineSpacingPt": 20
+      }
+    ]
+  },
+  "paragraphs": [
+    {
+      "text": "天地玄黄宇宙",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "洪荒日月盈昃",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "辰宿列张寒来",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "暑往秋收冬藏",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "闰余成岁律吕",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "调阳云腾致雨",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "露结为霜金生",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "丽水玉出昆冈",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "剑号巨阙珠称",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "夜光果珍李柰",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "菜重芥姜海咸",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "河淡鳞潜羽翔",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "龙师火帝鸟官",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "人皇始制文字",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "乃服衣裳推位",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "让国有虞陶唐",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "吊民伐罪周发",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "殷汤坐朝问道",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "垂拱平章爱育",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "黎首臣伏戎羌",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "天地玄黄宇宙",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "洪荒日月盈昃",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "辰宿列张寒来",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "暑往秋收冬藏",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    },
+    {
+      "text": "闰余成岁律吕",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "lineSpacingPt": 20
+    }
+  ]
+}
