@@ -11,7 +11,7 @@
  *    断行算法不必递归下钻（见 nodes.ts 的 `RunNode.hyperlink`）
  * 3. **这里不做级联。** 产出的是直接格式（可缺席），级联在 resolve-body.ts
  */
-import { type DiagnosticSink, emuToTwips, type Twips } from '@uw/core';
+import type { DiagnosticSink } from '@uw/core';
 import type { XmlDocument, XmlElement } from '@uw/ooxml';
 import { attr, child, children, textContent } from '@uw/ooxml';
 import type {
@@ -26,6 +26,7 @@ import type {
   TableCell,
   TableRow,
 } from './nodes.ts';
+import { parseDrawing, parsePict } from './parse-drawing.ts';
 import { parseParaProps, parseRunProps } from './parse-props.ts';
 import { parseCellProps, parseRowProps, parseTableGrid, parseTableProps } from './parse-table-props.ts';
 import type { ParaProps } from './props.ts';
@@ -326,15 +327,15 @@ function collectRunContent(ctx: Ctx, parent: XmlElement, out: RunContent[]): voi
         break;
       }
       case 'w:drawing':
-        out.push({ kind: 'object', objectKind: 'drawing', ...drawingExtent(el) });
+        out.push(parseDrawing(el, ctx.idPrefix));
         break;
       case 'w:pict':
-        // 尺寸藏在 VML 的 style="width:...pt" 里。VML 是非目标，尺寸留 0，
-        // 布局层按零尺寸占位处理 —— 图不见了，但行不会错位
-        out.push({ kind: 'object', objectKind: 'picture', width: 0, height: 0 });
+        out.push(parsePict(el, ctx.idPrefix));
         break;
       case 'w:object':
-        out.push({ kind: 'object', objectKind: 'object', width: 0, height: 0 });
+        // OLE 对象（嵌入的 Excel 表、公式编辑器）在文件里也是一个 VML 形状加一张预览图，
+        // 走同一条路 —— 我们画的就是那张预览图，与 Word 不激活时显示的东西一致
+        out.push({ ...parsePict(el, ctx.idPrefix), objectKind: 'object' });
         break;
       case 'mc:AlternateContent': {
         // Word 2010 之后把图形包在这里：Choice 是新格式，Fallback 是给老版本的 VML。
@@ -366,18 +367,6 @@ function parseSymbol(el: XmlElement): RunContent {
   const code = Number.parseInt(hex, 16);
   // 符号字体的码位通常落在 F000–F0FF 私用区；解不出来就当空字符，别让 NaN 传下去
   return { kind: 'symbol', font, char: Number.isNaN(code) ? '' : String.fromCodePoint(code) };
-}
-
-function drawingExtent(drawing: XmlElement): { width: Twips; height: Twips } {
-  const frame = child(drawing, 'wp:inline') ?? child(drawing, 'wp:anchor');
-  const extent = frame === undefined ? undefined : child(frame, 'wp:extent');
-  const cx = Number.parseInt(attrOf(extent, 'cx') ?? '', 10);
-  const cy = Number.parseInt(attrOf(extent, 'cy') ?? '', 10);
-  // wp:extent 的单位是 EMU，不是 twips
-  return {
-    width: Number.isNaN(cx) ? 0 : emuToTwips(cx),
-    height: Number.isNaN(cy) ? 0 : emuToTwips(cy),
-  };
 }
 
 // ── 表格 ──────────────────────────────────────────────────────────────────────

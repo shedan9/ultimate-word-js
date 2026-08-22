@@ -16,6 +16,8 @@ import type { FieldRegion } from './fields.ts';
 import { fieldHyperlinks, scanFields } from './fields.ts';
 import type { FontTable } from './font-table.ts';
 import { parseFontTable } from './font-table.ts';
+import type { ImageResource } from './images.ts';
+import { collectImages } from './images.ts';
 import type { Block, Body, ResolvedBlock, ResolvedBody, SectionProps } from './nodes.ts';
 import type { Numbering } from './numbering.ts';
 import { parseNumbering } from './numbering.ts';
@@ -89,6 +91,14 @@ export interface LoadedDocument {
    * 按 id 摊平之后，「这一页该用哪一份」是布局层查表的事。
    */
   headerFooters: Record<string, HeaderFooterContent>;
+  /**
+   * 图片字节，按 `ImageRef.id`（部件前缀 + 关系 id）索引。
+   *
+   * 与 `headerFooters` 同样是「摊平成一张表」，理由也同样是**同一份内容被引用很多次**
+   * （images.ts 的文件头）。它**不在** `resolved` 里：布局一个像素都不需要图片内容，
+   * 只需要 `wp:extent` 那个外框；真正要它的是渲染层，而渲染层在主线程这一侧。
+   */
+  images: Record<string, ImageResource>;
 }
 
 /** 一个 header / footer 部件解析完的样子。两棵树的分工与 `LoadedDocument` 一致 */
@@ -123,6 +133,20 @@ export function loadDocument(pkg: OpcPackage, diagnostics: DiagnosticSink): Load
     resolved: resolveBody(cascade, body, { hyperlinks }),
     fields,
     headerFooters,
+    // 图片按**引用**收（与页眉页脚同理，见 images.ts），所以要等页眉页脚解析完 ——
+    // 页眉里的图与正文里的图各按自己那份关系表解引用，rId1 在两边不是同一张
+    images: collectImages(
+      pkg,
+      [
+        { part: partName, idPrefix: '', blocks: body.sections.flatMap((s) => s.blocks) },
+        ...Object.values(headerFooters).map((hf) => ({
+          part: hf.part,
+          idPrefix: `${hf.relId}:`,
+          blocks: hf.blocks,
+        })),
+      ],
+      diagnostics,
+    ),
     fonts: parseFontTable(partXml(pkg, RelType.FONT_TABLE)),
     // 不重新解析一遍：同一份定义解析两次会让 numbering.xml 的诊断也报两次
     numbering: cascade.numbering,

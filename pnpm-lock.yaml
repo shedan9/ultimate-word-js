@@ -161,6 +161,9 @@ importers:
       '@uw/ooxml':
         specifier: workspace:*
         version: link:../ooxml
+      fflate:
+        specifier: ^0.8.3
+        version: 0.8.3
       tsdown:
         specifier: ^0.22.14
         version: 0.22.14(typescript@7.0.2)

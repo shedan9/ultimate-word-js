@@ -25,7 +25,7 @@ import { layoutDocumentWithFields } from '@uw/layout';
 import { fontNameCandidates, loadDocument } from '@uw/model';
 import { OpcPackage } from '@uw/ooxml';
 import type { RElement, RenderOptions } from '@uw/render-dom';
-import { buildDocument, el, fmt, serialize } from '@uw/render-dom';
+import { buildDocument, el, fmt, imageHrefResolver, serialize } from '@uw/render-dom';
 import type { WordTruth } from './truth-types.ts';
 
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -177,7 +177,12 @@ async function preview(name: string, args: Args): Promise<void> {
     headerFooters: doc.headerFooters,
     diagnostics: sink,
   });
-  const opts: RenderOptions = { zoom: args.zoom, debug: args.debug };
+  // 图片走 data URI：产物是一份能直接双击打开的 HTML，外部文件一个都不带
+  const opts: RenderOptions = {
+    zoom: args.zoom,
+    debug: args.debug,
+    imageHref: imageHrefResolver(doc.images),
+  };
   const root = buildDocument(paged, opts);
 
   let note = `${paged.pages.length} 页`;

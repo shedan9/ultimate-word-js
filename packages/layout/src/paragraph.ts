@@ -14,7 +14,15 @@ import { buildItems } from './items.ts';
 import { lineHeight } from './line-height.ts';
 import type { BrokenLine, LineBreakContext } from './linebreak.ts';
 import { breakLines } from './linebreak.ts';
-import type { LayoutItem, LineFragment, LineLayout, ParagraphLayout, TabLeader } from './types.ts';
+import type {
+  LayoutItem,
+  LineFloat,
+  LineFragment,
+  LineLayout,
+  LineObject,
+  ParagraphLayout,
+  TabLeader,
+} from './types.ts';
 import { CHAR_UNIT_EM } from './uncalibrated.ts';
 
 export interface LayoutParagraphOptions {
@@ -178,6 +186,9 @@ function assemble(
     leaders: leadersOf(line, xs, ctx.left + offset),
     isLast: ctx.isLast,
   };
+  const { objects, floats } = objectsOf(line, items, xs, ctx.left + offset);
+  if (objects.length > 0) out.objects = objects;
+  if (floats.length > 0) out.floats = floats;
   if (line.breakAfter !== undefined) out.breakAfter = line.breakAfter;
   return out;
 }
@@ -299,6 +310,51 @@ function fragmentsOf(
     current.width = currentEnd - current.x;
   }
   return out;
+}
+
+/**
+ * 行内的图片 / 图形。
+ *
+ * 与文字分开收，是因为它们在渲染层是完全不同的元素（`<image>` vs `<text>`），
+ * 而且**没有逐字 x** —— 一个对象就是一个矩形，两端对齐拉开的空隙落在它两侧，不落在内部。
+ *
+ * 垂直方向这里不给 y：**对象的底边坐在基线上**（`line-height.ts` 让它整个高度都算进
+ * 基线以上），渲染时 y = 基线 − 高度。⚠️ 这条与「核心盒在行高里居中」一样还没有 Word 真值，
+ * 钉死它的样本写在 `uncalibrated.ts` 的 `OBJECT_SITS_ON_BASELINE`。
+ */
+function objectsOf(
+  line: BrokenLine,
+  items: readonly LayoutItem[],
+  xs: readonly Twips[],
+  lineX: Twips,
+): { objects: LineObject[]; floats: LineFloat[] } {
+  const objects: LineObject[] = [];
+  const floats: LineFloat[] = [];
+  for (let k = 0; k < xs.length; k++) {
+    const item = items[line.start + k];
+    if (item === undefined || item.kind !== 'object') continue;
+    const x = lineX + (xs[k] as Twips);
+    const common = {
+      runId: item.runId,
+      contentIndex: item.contentIndex,
+      x,
+      objectKind: item.objectKind,
+      ...(item.image === undefined ? {} : { image: item.image }),
+      ...(item.alt === undefined ? {} : { alt: item.alt }),
+      ...(item.graphic === undefined ? {} : { graphic: item.graphic }),
+    };
+    if (item.float !== undefined) {
+      floats.push({
+        ...common,
+        width: item.float.width,
+        height: item.float.height,
+        anchor: item.float.anchor,
+      });
+    } else {
+      objects.push({ ...common, width: item.width, height: item.height });
+    }
+  }
+  return { objects, floats };
 }
 
 function leadersOf(line: BrokenLine, xs: readonly Twips[], lineX: Twips): TabLeader[] {

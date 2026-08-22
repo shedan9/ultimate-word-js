@@ -13,7 +13,7 @@
  */
 import type { Twips } from '@uw/core';
 import type { ScriptKind } from '@uw/fonts';
-import type { NodeId, VerticalAlign } from '@uw/model';
+import type { DrawingAnchor, ImageRef, NodeId, ObjectContent, VerticalAlign } from '@uw/model';
 
 /**
  * 一段文字**位置以外**的一切 —— 渲染层照着画，不必回头去查 `ResolvedRunProps`。
@@ -123,7 +123,14 @@ export interface BreakItem {
   breakType: 'line' | 'page' | 'column';
 }
 
-/** 内嵌对象（图片等）。只占位，内容是渲染层的事 */
+/**
+ * 内嵌对象（图片 / 图表 / 形状）。断行只关心它占多宽多高，画什么是渲染层的事。
+ *
+ * 视觉信息（`image` / `alt` / `graphic`）从 model 一路带到这里，与 `LineFragment.style`
+ * 同一个道理：**渲染层不回头查模型**（包依赖单向，Worker 化之后主线程手上只有
+ * `DocumentLayout` 这一份数据）。字节仍然不在这里 —— `image.id` 是把手，
+ * 去 `LoadedDocument.images` 查。
+ */
 export interface ObjectItem {
   kind: 'object';
   runId: NodeId;
@@ -131,6 +138,47 @@ export interface ObjectItem {
   width: Twips;
   height: Twips;
   gapBefore: Twips;
+  objectKind: ObjectContent['objectKind'];
+  image?: ImageRef;
+  alt?: string;
+  graphic?: string;
+  /**
+   * **浮动且不参与文字流**（`wp:anchor` + `wrap="none"`：印章、水印、衬于文字下方的红头）。
+   *
+   * 在场时外层的 `width` / `height` 是 **0** —— 断行、行宽、行高、两端对齐全都当它不存在，
+   * 这正是 Word 的行为；真实外框在这里面。**尺寸分两处不是冗余**：一处回答「占多少地方」，
+   * 另一处回答「画多大」，浮动对象的这两个答案不一样。
+   * 位置要页面几何，所以算在分页那一步（page.ts 的 `hoistFloats`）。
+   *
+   * 其余环绕方式（方形 / 紧密 / 穿越 / 上下）**退化成内嵌**：占位在文字流里。
+   * 紧密型与穿越型是写死的非目标（开发计划 §5）；方形与上下型是「还没做」，
+   * 退化成内嵌至少能保证图在、且大小对，比整个丢掉强。
+   */
+  float?: { anchor: DrawingAnchor; width: Twips; height: Twips };
+}
+
+/** 一个对象落在行里的位置。`x` 与 `LineFragment.x` 同一套坐标（相对版心左边） */
+export interface LineObject {
+  runId: NodeId;
+  contentIndex: number;
+  x: Twips;
+  width: Twips;
+  height: Twips;
+  objectKind: ObjectContent['objectKind'];
+  image?: ImageRef;
+  alt?: string;
+  graphic?: string;
+}
+
+/**
+ * 一个浮动对象**在段落里的锚点**。绝对位置要等分页（page.ts 的 `hoistFloats`）——
+ * 段落自己不知道它排在第几页的哪个高度上，而 `page` / `margin` 这些参照物都是页面级的。
+ *
+ * 留在行上而不是就地算掉，是因为 `ParagraphLayout` 要能缓存复用（types.ts 文件头）：
+ * 同一段排在第 3 页还是第 4 页，锚点数据一个字都不变。
+ */
+export interface LineFloat extends LineObject {
+  anchor: DrawingAnchor;
 }
 
 export type LayoutItem = CharItem | TabItem | BreakItem | ObjectItem;
@@ -193,6 +241,15 @@ export interface LineLayout {
   natural: Twips;
   fragments: LineFragment[];
   leaders: TabLeader[];
+  /** 行内的图片 / 图形。绝大多数行没有，所以是可选的（与 `breakAfter` 同理） */
+  objects?: LineObject[];
+  /**
+   * 锚在这一行上、**不参与文字流**的浮动对象。
+   *
+   * 渲染层**不画它** —— 画的是 `PageLayout.floats`（分页时按页面几何算出绝对坐标的那一份）。
+   * 两处都留着不是冗余：这一份是**输入**（可缓存、与页无关），那一份是**结果**。
+   */
+  floats?: LineFloat[];
   /** 段落的最后一行 —— 两端对齐不拉伸它 */
   isLast: boolean;
   /** 行尾的硬换行（`w:br`）。分页要看 page / column */

@@ -11,7 +11,7 @@
 import type { Twips } from '@uw/core';
 import type { ScriptKind, TextMeasurer } from '@uw/fonts';
 import { bucketFont, neutralTakesEastAsia, splitFontRuns } from '@uw/fonts';
-import type { NodeId, ResolvedParagraph, ResolvedRun, ResolvedRunProps } from '@uw/model';
+import type { DrawingAnchor, NodeId, ResolvedParagraph, ResolvedRun, ResolvedRunProps } from '@uw/model';
 import type { KinsokuSets } from './break-class.ts';
 import {
   isCompressiblePunct,
@@ -20,7 +20,7 @@ import {
   PUNCT_PAIR_COMPRESS_EM,
   punctPairCompressible,
 } from './break-class.ts';
-import type { CharItem, FragmentStyle, LayoutItem } from './types.ts';
+import type { CharItem, FragmentStyle, LayoutItem, ObjectItem } from './types.ts';
 import { AUTO_SPACE_EM, em, SMALL_CAPS_SCALE, VERT_ALIGN_SCALE } from './uncalibrated.ts';
 
 export interface BuildItemsOptions {
@@ -187,16 +187,28 @@ function appendRun(out: LayoutItem[], run: ResolvedRun, opts: BuildItemsOptions,
         out.push(item);
         break;
       }
-      case 'object':
-        out.push({
+      case 'object': {
+        // 不参与文字流的只有「浮动 + 环绕 none」这一种（衬于文字下方 / 浮于文字上方）。
+        // 其余环绕方式退化成内嵌，理由写在 `ObjectItem.float` 上
+        const floating = c.anchor !== undefined && c.anchor.wrap === 'none';
+        const item: ObjectItem = {
           kind: 'object',
           runId: run.id,
           contentIndex: ci,
-          width: c.width,
-          height: c.height,
+          // 浮动对象在文字流里占 0 宽：断行、行宽、两端对齐都当它不存在
+          width: floating ? 0 : c.width,
+          height: floating ? 0 : c.height,
           gapBefore: 0,
-        });
+          objectKind: c.objectKind,
+        };
+        if (c.image !== undefined) item.image = c.image;
+        if (c.alt !== undefined) item.alt = c.alt;
+        if (c.graphic !== undefined) item.graphic = c.graphic;
+        // 真实尺寸不能丢：浮动对象照样要画出来，只是不占文字的地方
+        if (floating) item.float = { anchor: c.anchor as DrawingAnchor, width: c.width, height: c.height };
+        out.push(item);
         break;
+      }
       // fieldChar / fieldInstruction 不占宽度
       default:
         break;

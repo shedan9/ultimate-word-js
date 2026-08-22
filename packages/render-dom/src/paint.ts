@@ -23,8 +23,9 @@
  *
  * ## 已知的洞（写下来免得以为已经画了）
  *
- * - **图片 / 内嵌对象**：`ObjectItem` 在布局里只占位，这里连占位框都不画 ——
- *   画一个空框会让人以为「图加载失败」，比什么都没有更误导
+ * - **图形（图表 / SmartArt / 形状）**：画的是一个虚线占位框加可选文本。图片本身已经画了
+ *   （`paintObject`），画不出来的只剩这些「本来就不是位图」的东西与 EMF / WMF ——
+ *   它们的**尺寸是对的**，所以周围的文字不会跟着错位
  * - **run 级底纹与高亮**（`w:highlight` / `w:shd`）：`ResolvedRunProps` 里就没有这两项，
  *   要先在 model 侧补
  * - **纵向合并区的内容裁剪**：`vMerge="restart"` 那一格的内容整个算在起始行里
@@ -41,8 +42,10 @@ import type {
   DocumentLayout,
   LineFragment,
   LineLayout,
+  LineObject,
   PageLayout,
   PlacedBlock,
+  PlacedFloat,
   PlacedHeaderFooter,
   PlacedParagraph,
   PlacedTable,
@@ -75,6 +78,14 @@ export interface RenderOptions {
   fontFamily?: (family: string) => string;
   /** class 前缀。默认 `uw`，改它是为了同一页面上挂两份互不干扰的样式 */
   classPrefix?: string;
+  /**
+   * 图片 id（`ImageRef.id`）→ `<image href>`。**不传就一张图都不画**（占位框还是画的）。
+   *
+   * 为什么是回调而不是直接收一张图片表：地址怎么来是**宿主**的决定 —— data URI
+   * （`imageHrefResolver(doc.images)`，任何地方都成立）、blob URL（浏览器里省内存）、
+   * 或者一个指向自家 CDN 的链接。渲染层只负责把字符串写进属性。
+   */
+  imageHref?: (id: string) => string | undefined;
   /** 画出版心框与每一行的行盒。调试用，不进产物路径 */
   debug?: boolean;
 }
@@ -83,7 +94,10 @@ interface Ctx {
   zoom: number;
   fontFamily: (family: string) => string;
   cls: (name: string) => string;
+  imageHref: (id: string) => string | undefined;
   debug: boolean;
+  /** 裁剪用的 `clipPath` id 计数器 —— 同一页上两张裁过的图不能共用一个 id */
+  clip: { n: number };
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -94,7 +108,9 @@ function context(opts: RenderOptions): Ctx {
     zoom: opts.zoom ?? 1,
     fontFamily: opts.fontFamily ?? defaultFontFamily,
     cls: (name) => `${prefix}-${name}`,
+    imageHref: opts.imageHref ?? (() => undefined),
     debug: opts.debug === true,
+    clip: { n: 0 },
   };
 }
 
@@ -154,6 +170,13 @@ function buildPageWith(page: PageLayout, ctx: Ctx): RElement {
 
   // 页眉在正文**之前**画、页脚在之后：三者的框在 Word 里就不该重叠（版心是让开了的），
   // 万一重叠了（页眉长到把版心吃光），正文压在页眉上比反过来更容易看出是哪儿排错了
+  // 衬于文字下方的浮动对象在页眉与正文**之前**画（水印、印章的底、红头的花纹）
+  for (const f of page.floats ?? []) {
+    if (!f.behindDoc) continue;
+    const painted = paintObject(f, f.x, f.y, ctx, true);
+    if (painted !== undefined) children.push(painted);
+  }
+
   if (page.header !== undefined) children.push(paintFrame(page.header, ctx));
 
   const inner: RElement[] = [];
@@ -167,6 +190,14 @@ function buildPageWith(page: PageLayout, ctx: Ctx): RElement {
   );
 
   if (page.footer !== undefined) children.push(paintFrame(page.footer, ctx));
+
+  // 浮于文字上方的浮动对象最后画。衬于文字下方的那些已经在正文之前画过了 ——
+  // 「衬于 / 浮于」在 SVG 里就是**画的先后**，没有 z-index 这回事
+  for (const f of page.floats ?? []) {
+    if (f.behindDoc) continue;
+    const painted = paintObject(f, f.x, f.y, ctx, true);
+    if (painted !== undefined) children.push(painted);
+  }
 
   const attrs: Record<string, string> = {
     xmlns: SVG_NS,
@@ -246,6 +277,11 @@ function paintLine(line: LineLayout, x0: Twips, y0: Twips, ctx: Ctx, out: REleme
         'stroke-width': '0.3',
       }),
     );
+  }
+  // 图片在文字之前画：内嵌图与文字本来就不重叠，真重叠时（负缩进之类）文字在上更好认
+  for (const obj of line.objects ?? []) {
+    const painted = paintObject(obj, x0 + obj.x, baseline - obj.height, ctx);
+    if (painted !== undefined) out.push(painted);
   }
   for (const leader of line.leaders) out.push(paintLeader(leader, line, x0, baseline, ctx));
   for (const frag of line.fragments) {
@@ -670,4 +706,165 @@ const HEX6 = /^[0-9A-Fa-f]{6}$/;
 export function cssColor(value: string): string {
   if (HEX6.test(value)) return `#${value.toLowerCase()}`;
   return '#000000';
+}
+
+// ── 图片与内嵌对象 ────────────────────────────────────────────────────────────
+
+/**
+ * 一个对象（图片 / 图表 / 形状）→ `<image>`，画不出来的 → 虚线占位框。
+ *
+ * `x` / `y` 是**左上角**，已经算好：内嵌图的 y = 基线 − 高度（对象的底边坐在基线上，
+ * 见 `uncalibrated.ts` 的 `OBJECT_SITS_ON_BASELINE`），浮动对象的 x / y 是分页算出来的纸坐标。
+ *
+ * 三处值得说清楚的：
+ *
+ * ① **`preserveAspectRatio="none"`**：外框尺寸来自 `wp:extent`，那是用户在 Word 里
+ *    拖出来的显示尺寸，**可以与图片本身的比例不一致**（拖角上是等比，拖边上就不是）。
+ *    默认的 `xMidYMid meet` 会替我们「保持比例」，那正是错的；
+ * ② **裁剪要放大后再切**：`a:srcRect` 说的是「只显示图片的这一块」，那一块被拉伸回整个
+ *    外框。所以做法是把整张图按 1/剩余比例放大、平移到位，再用 `clipPath` 切回外框大小；
+ * ③ **旋转 90° / 270° 时画的矩形要横竖对调**：`wp:extent` 是旋转**之后**的外接矩形
+ *    （见 `@uw/model` 的 `frameExtent`），照它画再转会把图压扁。非直角的旋转这里按外接矩形
+ *    近似 —— 要画准得把 `a:ext` 也带过来，等有真值样本时再说。
+ */
+function paintObject(
+  obj: LineObject | PlacedFloat,
+  x: Twips,
+  y: Twips,
+  ctx: Ctx,
+  floating = false,
+): RElement | undefined {
+  // 零尺寸的对象（`w:pict` 里认不出尺寸的那些）什么都不画：一个 0×0 的框既看不见，
+  // 又会让命中测试多出一个永远命不中的目标
+  if (obj.width <= 0 || obj.height <= 0) return undefined;
+
+  const box = { x: pt(x), y: pt(y), width: pt(obj.width), height: pt(obj.height) };
+  const href = obj.image === undefined ? undefined : ctx.imageHref(obj.image.id);
+  const cls = floating ? ctx.cls('float') : ctx.cls('object');
+  if (href === undefined) return placeholder(box, obj, ctx, cls);
+
+  const crop = obj.image?.crop;
+  const attrs: Record<string, string> = {
+    class: cls,
+    'data-run': obj.runId,
+    href,
+    preserveAspectRatio: 'none',
+    ...cropGeometry(box, crop),
+  };
+  const transform = objectTransform(box, obj.image);
+  if (transform !== undefined) attrs.transform = transform;
+
+  const image: RElement = el('image', attrs, titleOf(obj));
+  if (crop === undefined) return image;
+
+  // 裁剪：放大后的图 + 一个切回外框的 clipPath。id 必须每张图一个 —— 同一页上
+  // 两张裁过的图共用一个 id 时，后一张会按前一张的框去切
+  ctx.clip.n += 1;
+  const id = `${ctx.cls('clip')}-${ctx.clip.n}`;
+  image.attrs['clip-path'] = `url(#${id})`;
+  return el('g', { class: ctx.cls('object-clip') }, [
+    el('clipPath', { id }, [
+      el('rect', {
+        x: fmt(box.x),
+        y: fmt(box.y),
+        width: fmt(box.width),
+        height: fmt(box.height),
+      }),
+    ]),
+    image,
+  ]);
+}
+
+/** 裁剪之后「整张图」该画多大、画在哪 —— 没裁剪时就是外框本身 */
+function cropGeometry(
+  box: { x: number; y: number; width: number; height: number },
+  crop: NonNullable<LineObject['image']>['crop'],
+): Record<string, string> {
+  if (crop === undefined) {
+    return { x: fmt(box.x), y: fmt(box.y), width: fmt(box.width), height: fmt(box.height) };
+  }
+  // 留下来的比例。四条边加起来裁光了（甚至裁过头）时退回不裁，否则会得到无穷大的尺寸
+  const kx = 1 - crop.left - crop.right;
+  const ky = 1 - crop.top - crop.bottom;
+  if (kx <= 0 || ky <= 0) {
+    return { x: fmt(box.x), y: fmt(box.y), width: fmt(box.width), height: fmt(box.height) };
+  }
+  const width = box.width / kx;
+  const height = box.height / ky;
+  return {
+    x: fmt(box.x - crop.left * width),
+    y: fmt(box.y - crop.top * height),
+    width: fmt(width),
+    height: fmt(height),
+  };
+}
+
+/**
+ * 旋转与翻转。两者都绕**外框中心**做，所以顺序不影响结果（都是中心对称的变换）。
+ *
+ * 90° / 270° 那两种要把画的矩形横竖对调 —— 但 `<image>` 的 x/y/width/height 已经写死了，
+ * 所以对调是靠「先转再把长宽比缩回去」实现的：`scale(h/w, w/h)` 绕中心缩放，
+ * 与直接按 `a:ext` 画一张竖图再转 90° 等价。
+ */
+function objectTransform(
+  box: { x: number; y: number; width: number; height: number },
+  image: LineObject['image'],
+): string | undefined {
+  if (image === undefined) return undefined;
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  const parts: string[] = [];
+  const rot = image.rotation ?? 0;
+  if (rot !== 0) {
+    parts.push(`rotate(${fmt(rot)} ${fmt(cx)} ${fmt(cy)})`);
+    const quarter = ((Math.round(rot) % 180) + 180) % 180;
+    if (quarter === 90 && box.width !== 0 && box.height !== 0) {
+      parts.push(
+        `translate(${fmt(cx)} ${fmt(cy)}) scale(${fmt(box.height / box.width)} ${fmt(box.width / box.height)}) translate(${fmt(-cx)} ${fmt(-cy)})`,
+      );
+    }
+  }
+  if (image.flipH === true) parts.push(`translate(${fmt(2 * cx)} 0) scale(-1 1)`);
+  if (image.flipV === true) parts.push(`translate(0 ${fmt(2 * cy)}) scale(1 -1)`);
+  return parts.length === 0 ? undefined : parts.join(' ');
+}
+
+/**
+ * 画不出来的对象：一个虚线框。
+ *
+ * 三类会走到这里：图表 / SmartArt / 纯形状（本来就不是位图，是写死的非目标）、
+ * EMF / WMF（浏览器不认，见 image.ts）、以及宿主没传 `imageHref` 的场合。
+ *
+ * **画框而不是什么都不画**，是因为框的尺寸是对的：读者看到的是「这里有个图没显示出来」，
+ * 而不是一段莫名其妙空着的版面。可选文本进 `<title>`（鼠标悬停能看到，屏幕阅读器能念），
+ * 不画成可见文字 —— 它会溢出框，而且会被当成正文复制走。
+ */
+function placeholder(
+  box: { x: number; y: number; width: number; height: number },
+  obj: LineObject | PlacedFloat,
+  ctx: Ctx,
+  cls: string,
+): RElement {
+  return el(
+    'rect',
+    {
+      class: `${cls} ${ctx.cls('object-placeholder')}`,
+      'data-run': obj.runId,
+      ...(obj.graphic === undefined ? {} : { 'data-graphic': obj.graphic }),
+      x: fmt(box.x),
+      y: fmt(box.y),
+      width: fmt(box.width),
+      height: fmt(box.height),
+      fill: 'none',
+      stroke: '#b0b0b0',
+      'stroke-width': '0.5',
+      'stroke-dasharray': '3 2',
+    },
+    titleOf(obj),
+  );
+}
+
+/** 可选文本 → `<title>`（SVG 的无障碍名，也是鼠标悬停的提示） */
+function titleOf(obj: LineObject | PlacedFloat): RElement[] {
+  return obj.alt === undefined ? [] : [textEl('title', {}, obj.alt)];
 }

@@ -132,3 +132,33 @@ export const FIELD_CHINESE_NUM_FORMATS: Readonly<Record<string, string>> = {
   chinesenum2: 'chineseLegalSimplified',
   chinesenum3: 'ideographDigital',
 };
+
+/**
+ * 内嵌对象（图片）在行盒里怎么摆：**底边坐在基线上**，整个高度都算进基线以上。
+ *
+ * 这是 `line-height.ts` 与 `paragraph.ts` 的 `objectsOf` 共同依赖的那条假设，
+ * 写成常数只是为了有个地方挂说明 —— 它是布尔的，改它要改的是那两处的算法。
+ *
+ * 依据只有观感（Word 里内嵌图看起来就是坐在基线上、行跟着变高），**没有真值**。
+ * 两处存疑：① 图下面有没有一点点空隙（西文的 descender 那一截）；
+ * ② `w:position`（升降）对图片起不起作用。
+ *
+ * 钉死办法：一段「五号字 + 一张 20pt 高的内嵌图 + 五号字」，导出 PDF 后量图的底边 y
+ * 与同行文字的基线 y 差多少；再把同一张图套上 `w:position="-6"` 量一遍。
+ * 一份样本两问全答，顺带还能回答「图片参与不参与网格吸附」。
+ */
+export const OBJECT_SITS_ON_BASELINE = true;
+
+/**
+ * 浮动对象（`wrap="none"`）的定位里，**`relativeFrom` 的六种参照物各是哪个框**。
+ *
+ * `page`（纸）与 `margin`（版心）是明确的，规范也说得清楚；含糊的是另外四种：
+ * `column`（分栏 —— 不做多栏时等于版心）、`character` / `line`（锚点所在的字 / 行）、
+ * `insideMargin` / `outsideMargin`（奇偶页镜像）。现在的实现见 `page.ts` 的 `floatOrigin`，
+ * 一律往「版心」或「锚点行」上靠。
+ *
+ * 钉死办法：一份 docx，同一张 10pt 见方的图复制六份，`positionH/@relativeFrom` 各取一种、
+ * 偏移都写 0，看六个 x 各落在哪条线上。奇偶那两种要排到第 2 页才看得出镜像。
+ * 这一条**只影响浮动对象自己的位置**，不影响任何一行文字的断行与基线。
+ */
+export const FLOAT_RELATIVE_FROM_CALIBRATED = false;

@@ -19,6 +19,7 @@ import { createTextMeasurer, FontRegistry } from '@uw/fonts';
 import { layoutDocumentWithFields } from '@uw/layout';
 import { fontNameCandidates, loadDocument } from '@uw/model';
 import { OpcPackage } from '@uw/ooxml';
+import { imageHrefResolver } from '@uw/render-dom';
 import { mount } from '@uw/render-dom/dom';
 
 const packs = import.meta.glob<MetricsPack>('../../../packages/fonts/packs/*.json', {
@@ -55,16 +56,23 @@ const fileInput = app.querySelector<HTMLInputElement>('input[type=file]') as HTM
 
 /** 当前文档的布局结果。缩放与调试开关只重画，**不重排** —— 架构 §4.1 */
 let current: ReturnType<typeof layoutDocumentWithFields>['layout'] | undefined;
+/** 当前文档的图片解析器（id → data URI）。与布局分开存：换缩放不该重新编码一遍 base64 */
+let images: ((id: string) => string | undefined) | undefined;
 
 function draw(): void {
   if (current === undefined) return;
-  mount(stage, current, { zoom: Number(zoomInput.value) / 100, debug: debugInput.checked });
+  mount(stage, current, {
+    zoom: Number(zoomInput.value) / 100,
+    debug: debugInput.checked,
+    ...(images === undefined ? {} : { imageHref: images }),
+  });
 }
 
 function open(bytes: Uint8Array, name: string): void {
   const t0 = performance.now();
   const sink = createDiagnosticSink();
   const doc = loadDocument(OpcPackage.open(bytes), sink);
+  images = imageHrefResolver(doc.images);
   const measurer = createTextMeasurer(registry, {
     candidates: (family) => fontNameCandidates(doc.fonts, family),
     diagnostics: sink,

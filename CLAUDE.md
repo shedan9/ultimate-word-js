@@ -14,14 +14,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **卡口没有了**：横向（断行）与纵向（基线 y）现在都能与真值逐行比。
 Phase 5 的**列表编号**已经从 `numbering.xml` 一路通到首行几何，
 同阶段的**域**结构还原（界桩配对 + 指令解析 + HYPERLINK）与**求值**（PAGE / NUMPAGES /
-SECTIONPAGES 迭代到自洽）都做完了，TOC / SEQ 的求值还没写。Phase 4 的**表格**：属性 + 级联（含 `w:tblStylePr` 条件格式）在 model 层，
+SECTIONPAGES 迭代到自洽）都做完了，TOC / SEQ 的求值还没写。
+**图片**也通了（解析 → 收字节 → 占位 → 画，四层各一段，见下）。Phase 4 的**表格**：属性 + 级联（含 `w:tblStylePr` 条件格式）在 model 层，
 列宽 + 每格的 x 与可用宽 + 格内段落 + **边框冲突解析**在 layout 层，跨页按**行**拆
 （行是原子的 = 全表 cantSplit，拆行还没做）。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、
-`@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 制表位 + **编号（解析 + 计数器 + 编号文字 + 接进级联）** + **表格（属性 + 级联 + 条件格式）** + **域（界桩配对 + 指令解析 + HYPERLINK）** + **页眉页脚部件**）、
+`@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 制表位 + **编号（解析 + 计数器 + 编号文字 + 接进级联）** + **表格（属性 + 级联 + 条件格式）** + **域（界桩配对 + 指令解析 + HYPERLINK）** + **页眉页脚部件** + **图片（外框 + blip 引用 + 裁剪 / 旋转 + 浮动锚点 + 字节表）**）、
 `@uw/fonts`（行高规则 + 脚本分桶 + 度量包 + 注册表 + `TextMeasurer`）、
 `@uw/layout`（item 流 + 断行 + 缩进 / 对齐 / 制表位 / 列表编号 + 行高与网格吸附 + **行内基线** +
-**表格列宽与格内几何 + 边框冲突解析** + **分页** + **域求值** + **页眉页脚**）、
+**表格列宽与格内几何 + 边框冲突解析** + **分页** + **域求值** + **页眉页脚** + **对象占位与浮动定位**）、
 `@uw/render-dom`（**元素树 → SVG / DOM**，见下）。
 
 **渲染器**（`packages/render-dom`）是流水线的出口，**px 只在这一步出现**。
@@ -38,7 +39,9 @@ SECTIONPAGES 迭代到自洽）都做完了，TOC / SEQ 的求值还没写。Pha
 渲染层**不回头查模型**：要画的视觉属性由 `LineFragment.style` 从布局带过来
 （包依赖单向，且 Worker 化之后主线程手上只有 `DocumentLayout` 这一份数据）。
 页眉页脚是与版心 `<g>` **平级**的另外两个 `<g>`（坐标相对纸左上角）—— 它们不在版心里，
-版心正是被它们挤出来的。未画：图片、run 级高亮（model 没解析）、可选文本层、增量更新。
+版心正是被它们挤出来的。浮动对象（印章 / 水印）同样与版心平级，**衬于文字下方的画在正文之前、
+浮于上方的画在最后** —— SVG 里的「层」就是画的先后。
+未画：run 级高亮（model 没解析）、可选文本层、增量更新。
 画法里没有真值的常数（下划线 / 删除线的位置粗细、上下标升降量、前导符点距）
 关在 `packages/render-dom/src/uncalibrated.ts` —— **它们一个都不改坐标**，
 所以 L2/L3/L4 全绿也证明不了它们对。
@@ -89,6 +92,30 @@ keepNext 的接缝要留出下一块**「最少能放多少」**（不是它的�
 「核心盒在行高里居中」是拿单倍 / 倍数 / 网格三种行距标定的，固定值那一格是空的 ——
 `spike-page-01` 用固定行距 20pt，整页文字低了 1.77pt 才露出来。实现在
 `@uw/fonts` 的 `baselineOffsetExact`，`line-height.ts` 按 `lineRule` 选哪一套。
+
+**图片**横跨四层，每一层只解决一件事，中间只传一个 id：
+① `@uw/model` 的 `parse-drawing.ts` —— **尺寸取 `wp:extent`**（用户拖出来的显示尺寸，
+不是图片的像素尺寸）；`a:blip` 要**深搜**（规范路径 / `mc:AlternateContent` 的 Choice /
+形状的填充三种写法），而图表与 SmartArt 里根本没有 blip，「找不到就是画不出来」正好是
+画占位框的判据；裁剪 `a:srcRect` **不改外框**（裁剩的那块被拉伸回去）。VML（`w:pict`）
+只取「图片引用 + `style` 里的外框」，其中不带单位的数字按 **px** 算（CSS 的默认单位，
+不是 pt）—— 公文的红头与印章大量走 VML 这条路。
+② `@uw/model` 的 `images.ts` —— 字节按**引用**收（包里常留着没人引用的 `media/image3.png`，
+按类型全捞会把几 MB 的废弃扫描件读进内存），摊平成 `LoadedDocument.images`，
+key = **部件前缀 + 关系 id**；前缀省不得：页眉里的 `rId1` 与正文里的 `rId1` 是两张图。
+外链图（`r:link`）只给 URL，**不发网络请求**。
+③ `@uw/layout` —— 内嵌图占宽占高（底边坐在基线上）；**`wrap="none"` 的浮动图在文字流里占 0 宽**，
+一个字都不许被它挤走，位置等整页排完再按 `wp:anchor` 的参照物换算成纸坐标
+（`page.ts` 的 `placeFloats`，产出 `PageLayout.floats`）。其余环绕方式**退化成内嵌**。
+④ `@uw/render-dom` —— `<image>` + 裁剪的 `clipPath` + 旋转翻转的 `transform`，
+`href` 由宿主的 `imageHref(id)` 回调给（`imageHrefResolver(doc.images)` 是 data URI 版），
+**渲染层不认识 OPC 包**。三处容易画错：`preserveAspectRatio="none"`（外框可以与图片不同比例）、
+裁剪要「放大后再切」、旋转 90° 要把长宽比缩回去（extent 是转完的外接矩形）。
+EMF / WMF 与图表画**尺寸正确的**虚线占位框、`alt` 进 `<title>` —— 框对了，周围的文字就不会错位。
+**两条几何假设没有真值**（`OBJECT_SITS_ON_BASELINE` / `FLOAT_RELATIVE_FROM_CALIBRATED`，
+在 layout 的 `uncalibrated.ts`）；结构性的那些由一份合成 docx 端到端兜着
+（`render-dom/src/image-docx.test.ts`，含正文与页眉 `rId1` 撞车的用例）。
+未做：方形 / 上下型环绕（真的绕排）、表格单元格里的浮动对象。
 
 一份 docx 的入口是 `loadDocument(pkg, sink)`（`packages/model/src/load.ts`），产出
 `body`（直接格式，可编辑）、`resolved`（级联完的纯数据，给布局）、`cascade`（上下文，**不可**过 Worker 边界）、
@@ -361,7 +388,7 @@ Times 的 winAscent 更大，若参与就该赢，实测却仍是等线单独的
 `composeBaseline()` 的「逐个居中再取 max」是判断，要一份「同一行两款东亚字体、字号不同」的样本才能钉死，
 而 fixture spec 目前一段只有一个字号。
 
-行高与基线之外还有五处未标定（临时挤压那条原来排第一，已经用 `spike-compress-01/02` 做完，见上）。
+行高与基线之外还有七处未标定（临时挤压那条原来排第一，已经用 `spike-compress-01/02` 做完，见上）。
 一是 `splitFontRuns()` 的歧义字符集取的是 Unicode **EastAsianWidth = Ambiguous**
 （`w:hint` 要回答的正是「这份文档算不算东亚环境」，两者同构），但 Word 的实际边界有没有偏差没有真值验证过 ——
 上 Windows 时顺手做一份「① ※ ℃ Ⅰ 在 hint=eastAsia / default 下各占多宽」的样本就能钉死；
@@ -377,7 +404,13 @@ Times 的 winAscent 更大，若参与就该赢，实测却仍是等线单独的
 一份三节的 docx，页码跑到 11 与 105，看 Word 显示「十一 / 拾壹 / 一〇五」里的哪一种。
 中文数字比阿拉伯数字宽，猜错了页码那一行的断行点也会跟着错。
 
-六是页眉页脚的**选择**规则四问（几何三条已实测，选择这四条只有规范做依据）：奇偶看的是显示页码
+六是图片的两条几何：内嵌图的底边是不是严丝合缝坐在基线上（`OBJECT_SITS_ON_BASELINE`）、
+浮动对象六种 `relativeFrom` 各对应哪个框（`FLOAT_RELATIVE_FROM_CALIBRATED`）。
+两份样本能钉死：「五号字 + 20pt 高的内嵌图 + 五号字」量图底边与基线的差（再套个 `w:position`
+量一遍），以及「同一张 10pt 的图复制六份、`relativeFrom` 各取一种、偏移都写 0」看 x 落在哪。
+前者影响行高与断行，后者只影响图自己的位置。
+
+七是页眉页脚的**选择**规则四问（几何三条已实测，选择这四条只有规范做依据）：奇偶看的是显示页码
 还是物理页序、`w:titlePg` 开着却没定义 first 时首页是不是空的、本节没写某一类时沿不沿用上一节、
 `evenPage` 补出来的空页算不算「本节首页」。四问都不改坐标，只改「画的是哪一份」，
 写在 `header-footer.ts` 的文件头，每问都带着能钉死它的样本。

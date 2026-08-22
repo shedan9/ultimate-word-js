@@ -18,9 +18,10 @@
     "@uw/layout": "workspace:*"
   },
   "devDependencies": {
-    "tsdown": "^0.22.14",
-    "@uw/model": "workspace:*",
     "@uw/fonts": "workspace:*",
-    "@uw/ooxml": "workspace:*"
+    "@uw/model": "workspace:*",
+    "@uw/ooxml": "workspace:*",
+    "fflate": "^0.8.3",
+    "tsdown": "^0.22.14"
   }
 }

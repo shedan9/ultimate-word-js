@@ -87,16 +87,100 @@ export type RunContent =
   | { kind: 'noBreakHyphen' }
   /** `w:softHyphen`：平时不显示，只有在此处断行时才显示出连字符 */
   | { kind: 'softHyphen' }
-  /**
-   * `w:drawing` / `w:pict` / `w:object`。
-   * 只取外框尺寸 —— 内嵌行的行高要它，图形内容本身是 Phase 7 的事。
-   * 尺寸缺失（`w:pict` 常见）时为 0，布局层按「零尺寸占位」处理，不要当成 bug。
-   */
-  | { kind: 'object'; objectKind: 'drawing' | 'picture' | 'object'; width: Twips; height: Twips }
+  /** `w:drawing` / `w:pict` / `w:object`，见 `ObjectContent` */
+  | ObjectContent
   /** `w:fldChar`：域的三个界桩。域的**求值**是后续阶段的事，这里只保留位置 */
   | { kind: 'fieldChar'; charType: 'begin' | 'separate' | 'end' }
   /** `w:instrText`：域代码正文（如 `PAGE`）。不参与排版，但求值要靠它 */
   | { kind: 'fieldInstruction'; text: string };
+
+// ── 内嵌 / 浮动对象 ───────────────────────────────────────────────────────────
+
+/**
+ * `w:drawing` / `w:pict` / `w:object` —— 图片与图形。
+ *
+ * **外框尺寸（`width` / `height`）是必需的**：内嵌图参与行高，缺了整行的基线都会错。
+ * 尺寸取的是 `wp:extent`（**显示**尺寸，不是图片自己的像素尺寸）—— 用户在 Word 里
+ * 拖小的图，extent 就是拖完的那个数，照着画才与 Word 一致。
+ *
+ * 图片**字节不在这里**：`image.id` 是把手，去 `LoadedDocument.images` 查。
+ * 理由与页眉页脚一样（load.ts）—— 同一张图常被引用多次（每页一个页眉 logo），
+ * 挂在节点上要么复制几份字节，要么变成跨节点引用（原则 1.1 挡的正是后者）。
+ *
+ * 没有 `image` 的对象是**画不出来的图形**（图表 / SmartArt / 形状 / OLE），
+ * 它们是非目标（开发计划 §5），渲染层画占位框 —— 但**占位框的尺寸是对的**，
+ * 所以周围的文字不会跟着错位。
+ */
+export interface ObjectContent {
+  kind: 'object';
+  objectKind: 'drawing' | 'picture' | 'object';
+  width: Twips;
+  height: Twips;
+  /** 图片资源引用。非图片图形（图表 / SmartArt / 纯形状）没有它 */
+  image?: ImageRef;
+  /** 可选文本（`wp:docPr` 的 `descr` / `title`，退到 `name`）。占位框上要显示它 */
+  alt?: string;
+  /** `a:graphicData@uri` 的短名（`picture` / `chart` / `diagram` / `wordprocessingShape`…）。
+   *  画不出来时靠它说清楚「这是张图表」，而不是笼统的「有个对象」 */
+  graphic?: string;
+  /** 浮动对象（`wp:anchor`）的定位与环绕。内嵌（`wp:inline`）时缺席 */
+  anchor?: DrawingAnchor;
+}
+
+/**
+ * 图片资源引用。
+ *
+ * `id` 是**部件前缀 + 关系 id**，与节点 id 同一套前缀（见 parse-body.ts 的 `Ctx.idPrefix`）：
+ * 页眉部件里的 `rId1` 与正文里的 `rId1` 是两张不同的图，不带前缀会互相顶掉 ——
+ * 与页脚页码画进正文那个坑是同一个成因。
+ */
+export interface ImageRef {
+  /** 在 `LoadedDocument.images` 里查字节用的 key */
+  id: string;
+  /** 关系 id 原文，回写 docx 要它 */
+  relId: string;
+  /** `r:link`（外链图片）：字节不在包里，`ImageResource.url` 才是地址 */
+  linked?: true;
+  /**
+   * `a:srcRect` 裁剪：四边**各裁掉的比例**（0–1，已从千分之一百分点换算）。
+   * 注意它裁的是图片，不是外框 —— 外框尺寸不变，所以裁剪只改「画哪一块」。
+   */
+  crop?: { left: number; top: number; right: number; bottom: number };
+  /** `a:xfrm@rot`，度（已从 1/60000 度换算）。正值顺时针 */
+  rotation?: number;
+  flipH?: true;
+  flipV?: true;
+}
+
+/**
+ * 浮动对象的定位与环绕（`wp:anchor`）。
+ *
+ * 现在**只有 `wrap: 'none'` 被当真**（衬于文字下方 / 浮于文字上方：印章、水印、红头章），
+ * 它不参与文字流，位置按下面的 `h` / `v` 算。其余环绕方式一律退化成内嵌
+ * （开发计划 §5 写死的非目标里只有紧密型 / 穿越型，方形与上下型是「还没做」）。
+ */
+export interface DrawingAnchor {
+  wrap: 'none' | 'square' | 'tight' | 'through' | 'topAndBottom';
+  /** 衬于文字下方（`behindDoc="1"`）。false = 浮于文字上方 */
+  behindDoc: boolean;
+  /** z 序（`relativeHeight`）。同一页上几个浮动对象的叠放顺序 */
+  z: number;
+  h: AnchorPos;
+  v: AnchorPos;
+  /** 与正文的间距（EMU 已换算成 twips）。`wrap: 'none'` 用不上，方形环绕做进来时要 */
+  dist: { top: Twips; bottom: Twips; left: Twips; right: Twips };
+}
+
+/**
+ * 一个方向上的定位。`offset` 与 `align` **二选一**（规范里是 choice）：
+ * 前者是「距参照物 x twips」，后者是「靠参照物的左/中/右」。
+ */
+export interface AnchorPos {
+  /** 参照物：`page` / `margin` / `column` / `character` / `paragraph` / `line` … */
+  relativeFrom: string;
+  offset?: Twips;
+  align?: string;
+}
 
 // ── 节点 ──────────────────────────────────────────────────────────────────────
 

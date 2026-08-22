@@ -35,6 +35,7 @@
 import type { DiagnosticSink, Twips } from '@uw/core';
 import type { TextMeasurer } from '@uw/fonts';
 import type {
+  AnchorPos,
   DocumentSettings,
   NodeId,
   ResolvedBlock,
@@ -55,7 +56,7 @@ import {
 import { layoutParagraph } from './paragraph.ts';
 import type { RowLayout, TableLayout } from './table.ts';
 import { layoutTable } from './table.ts';
-import type { LineLayout, ParagraphLayout } from './types.ts';
+import type { LineFloat, LineLayout, LineObject, ParagraphLayout } from './types.ts';
 
 // ── 输出的数据形状 ────────────────────────────────────────────────────────────
 
@@ -133,8 +134,39 @@ export interface PageLayout {
   /** 这一页的页眉 / 页脚。没有引用、或者内容是空的时候缺席 */
   header?: PlacedHeaderFooter;
   footer?: PlacedHeaderFooter;
+  /**
+   * 这一页上**不参与文字流**的浮动对象（印章、水印、衬在文字下的红头），
+   * 坐标相对**纸左上角**、已按 z 序排好。渲染层画的是这一份，不是 `LineLayout.floats`
+   * （那一份是输入：与页无关、可缓存，见 types.ts）。
+   */
+  floats?: PlacedFloat[];
   /** `evenPage` / `oddPage` 为了凑奇偶补出来的空页 */
   filler?: true;
+}
+
+/**
+ * 一个浮动对象在纸上的位置。
+ *
+ * 与 `PlacedBlock` 不同，它的坐标**不相对版心**：`wp:anchor` 的参照物可以是纸、页边距、
+ * 段落…… 换算完统一落到纸坐标上，渲染层才不必认识那六种参照物（它也不该认识 ——
+ * 那是布局）。
+ */
+export interface PlacedFloat {
+  runId: NodeId;
+  contentIndex: number;
+  /** 相对**纸左上角** */
+  x: Twips;
+  y: Twips;
+  width: Twips;
+  height: Twips;
+  objectKind: LineObject['objectKind'];
+  image?: LineObject['image'];
+  alt?: string;
+  graphic?: string;
+  /** 衬于文字下方。渲染层据此决定画在正文之前还是之后 */
+  behindDoc: boolean;
+  /** z 序（`wp:anchor@relativeHeight`），同一页内已按它升序排好 */
+  z: number;
 }
 
 export interface DocumentLayout {
@@ -318,6 +350,10 @@ export function layoutDocument(body: ResolvedBody, opts: LayoutDocumentOptions):
 
   // 空文档也得有一页 —— 渲染层拿到 pages: [] 只能画白屏，那与「文档是空的」不是一回事
   if (flow.pages.length === 0) currentPage(flow);
+  // 浮动对象等**整页排完**再算：它的参照物可以是「纸」「页边距」，那两样要等这一页的
+  // 版心定下来（页眉长度会挤窄版心，见文件头）。反过来它不影响任何一行的位置，
+  // 所以放在最后一趟是安全的
+  for (const page of flow.pages) placeFloats(page);
   return { pages: flow.pages };
 }
 
@@ -888,4 +924,168 @@ function emitRows(
     first: from === 0,
     last: from + count >= b.layout.rows.length,
   });
+}
+
+// ── 浮动对象 ──────────────────────────────────────────────────────────────────
+
+/**
+ * 把锚在各行上的浮动对象换算成**纸坐标**。
+ *
+ * 只处理 `wrap="none"`（items.ts 已经把别的环绕方式退化成内嵌了），也就是
+ * 「衬于文字下方 / 浮于文字上方」这一类：印章、水印、红头的花纹。它们不参与文字流，
+ * 所以整页排完再算，算错也只是它自己歪，一行文字都不会跟着动。
+ *
+ * **表格单元格里的浮动对象没做**：格子的纸坐标要连着行高与合并区一起算，
+ * 而公文里浮动对象几乎都锚在正文段落上。漏掉的那些不会消失得无声无息 ——
+ * 它们仍然在 `LineLayout.floats` 里，将来接上就是多走一层遍历。
+ *
+ * ⚠️ 六种参照物的对应关系没有 Word 真值，见 `uncalibrated.ts` 的
+ * `FLOAT_RELATIVE_FROM_CALIBRATED`。
+ */
+function placeFloats(page: PageLayout): void {
+  const out: PlacedFloat[] = [];
+  const g = page.geometry;
+  collectFloats(page.blocks, g.content.x, g.content.y, page, out);
+  // 页眉页脚里的浮动对象锚在**框**上（框自己的坐标已经是纸坐标了）
+  if (page.header !== undefined) collectFloats(page.header.blocks, page.header.x, page.header.y, page, out);
+  if (page.footer !== undefined) collectFloats(page.footer.blocks, page.footer.x, page.footer.y, page, out);
+  if (out.length === 0) return;
+  // 稳定排序：z 相同的按文档顺序，与 Word 「后插入的盖在上面」一致
+  out.sort((a, b) => a.z - b.z);
+  page.floats = out;
+}
+
+function collectFloats(
+  blocks: readonly PlacedBlock[],
+  originX: Twips,
+  originY: Twips,
+  page: PageLayout,
+  out: PlacedFloat[],
+): void {
+  for (const block of blocks) {
+    if (block.kind !== 'paragraph') continue;
+    for (const placed of block.lines) {
+      const floats = placed.line.floats;
+      if (floats === undefined) continue;
+      for (const f of floats) {
+        out.push(
+          resolveFloat(f, page, {
+            originX,
+            originY,
+            paraTop: originY + block.y,
+            lineTop: originY + placed.y,
+            lineHeight: placed.line.height,
+          }),
+        );
+      }
+    }
+  }
+}
+
+/** 锚点周围那几个「参照物」的纸坐标。`page` / `margin` 之外的四种都要它 */
+interface FloatContext {
+  originX: Twips;
+  originY: Twips;
+  paraTop: Twips;
+  lineTop: Twips;
+  lineHeight: Twips;
+}
+
+function resolveFloat(f: LineFloat, page: PageLayout, ctx: FloatContext): PlacedFloat {
+  const out: PlacedFloat = {
+    runId: f.runId,
+    contentIndex: f.contentIndex,
+    x: axisPosition(hBox(f, page, ctx), f.anchor.h, f.width, page.number),
+    y: axisPosition(vBox(f, page, ctx), f.anchor.v, f.height, page.number),
+    width: f.width,
+    height: f.height,
+    objectKind: f.objectKind,
+    behindDoc: f.anchor.behindDoc,
+    z: f.anchor.z,
+  };
+  if (f.image !== undefined) out.image = f.image;
+  if (f.alt !== undefined) out.alt = f.alt;
+  if (f.graphic !== undefined) out.graphic = f.graphic;
+  return out;
+}
+
+/** 一个方向上的参照框：从哪儿起、有多长 */
+interface AxisBox {
+  start: Twips;
+  size: Twips;
+}
+
+function hBox(f: LineFloat, page: PageLayout, ctx: FloatContext): AxisBox {
+  const g = page.geometry;
+  const content = g.content;
+  const rightMargin: AxisBox = {
+    start: content.x + content.width,
+    size: g.width - content.x - content.width,
+  };
+  const leftMargin: AxisBox = { start: 0, size: content.x };
+  const odd = page.number % 2 === 1;
+  switch (f.anchor.h.relativeFrom) {
+    case 'page':
+      return { start: 0, size: g.width };
+    case 'leftMargin':
+      return leftMargin;
+    case 'rightMargin':
+      return rightMargin;
+    case 'insideMargin':
+      return odd ? leftMargin : rightMargin;
+    case 'outsideMargin':
+      return odd ? rightMargin : leftMargin;
+    case 'character':
+      // 锚点所在的那个字。宽度为 0，所以 align 的居中 / 右对齐在这里退化成同一个点
+      return { start: ctx.originX + f.x, size: 0 };
+    default:
+      // margin / column / 认不出的：单栏文档里分栏框就是版心
+      return { start: content.x, size: content.width };
+  }
+}
+
+function vBox(f: LineFloat, page: PageLayout, ctx: FloatContext): AxisBox {
+  const g = page.geometry;
+  const content = g.content;
+  switch (f.anchor.v.relativeFrom) {
+    case 'page':
+      return { start: 0, size: g.height };
+    case 'topMargin':
+      return { start: 0, size: content.y };
+    case 'bottomMargin':
+      return { start: content.y + content.height, size: g.height - content.y - content.height };
+    case 'paragraph':
+      return { start: ctx.paraTop, size: 0 };
+    case 'line':
+      return { start: ctx.lineTop, size: ctx.lineHeight };
+    default:
+      // margin / insideMargin / outsideMargin：纵向上镜像页边距与普通页边距同一个框
+      return { start: content.y, size: content.height };
+  }
+}
+
+/**
+ * 偏移与对齐**二选一**（规范里是 choice）：两个都没有时落在参照框的起点。
+ *
+ * `inside` / `outside` 在**奇数页**是「左 / 右」，偶数页反过来 —— 这是装订成册的书页方向，
+ * 与页边距的镜像同源。用的是**显示页码**而不是物理页序：`w:pgNumType w:start` 让某一节
+ * 从 5 起算时，Word 的奇偶是跟着页码走的（与页眉的奇偶同一条判据，见 header-footer.ts）。
+ */
+function axisPosition(box: AxisBox, pos: AnchorPos, size: Twips, pageNumber: number): Twips {
+  if (pos.offset !== undefined) return box.start + pos.offset;
+  const odd = pageNumber % 2 === 1;
+  switch (pos.align) {
+    case 'center':
+      return box.start + (box.size - size) / 2;
+    case 'right':
+    case 'bottom':
+      return box.start + box.size - size;
+    case 'inside':
+      return odd ? box.start : box.start + box.size - size;
+    case 'outside':
+      return odd ? box.start + box.size - size : box.start;
+    default:
+      // left / top / 认不出的对齐值
+      return box.start;
+  }
 }
