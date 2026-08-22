@@ -231,6 +231,14 @@ export interface SectionProps {
   footers: HeaderFooterRef[];
   /** `w:pgNumType w:start`：本节页码起始值 */
   pageNumStart?: number;
+  /**
+   * `w:pgNumType w:fmt`：本节页码用哪种数字格式（取值就是 `w:numFmt` 那一套，
+   * `upperRoman` / `chineseCounting` …）。缺席按 `decimal`。
+   *
+   * 它只管**页码**：PAGE 域没写 `\*` 开关时跟着它走（前言用罗马数字、正文用阿拉伯数字
+   * 就是靠分节 + 这个字段实现的），页眉里的页码同理。域自己写了 `\*` 的以域为准。
+   */
+  pageNumFormat?: string;
 }
 
 /**

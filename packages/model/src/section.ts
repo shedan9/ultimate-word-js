@@ -71,7 +71,9 @@ export function parseSectionProps(sectPr: XmlElement | undefined): SectionProps 
     footers: hfRefs(sectPr, 'w:footerReference'),
   };
 
-  put(out, 'pageNumStart', attrInt(child(sectPr, 'w:pgNumType'), 'w:start'));
+  const pgNumType = child(sectPr, 'w:pgNumType');
+  put(out, 'pageNumStart', attrInt(pgNumType, 'w:start'));
+  put(out, 'pageNumFormat', attrOf(pgNumType, 'w:fmt'));
   return out;
 }
 

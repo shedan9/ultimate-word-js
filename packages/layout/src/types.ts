@@ -92,6 +92,15 @@ export interface CharItem {
    * 命中测试与 `DocPosition` 反查必须跳过它，两端对齐也不许在它内部张开。
    */
   numbering?: true;
+  /**
+   * 域求值算出来的文字（PAGE / NUMPAGES …，见 `fields.ts`）。
+   *
+   * 与 `numbering` **不是一回事**：编号连复制都不该带上，域结果是要复制、要能被
+   * Ctrl+F 搜到的正文；但它同样**不是文件里那串字符**（文件里存的是上次算出来的旧值），
+   * 所以 `contentIndex` / `offset` 一律 -1，拿去反查 `DocPosition` 只会指到别处。
+   * 排版行为与普通文字完全相同 —— 两端对齐照样在它内部张开，Word 就是这么排的。
+   */
+  field?: true;
 }
 
 export interface TabItem {
@@ -157,6 +166,8 @@ export interface LineFragment {
    * `runId` 也不指向任何真实节点，见 `CharItem.numbering`。
    */
   numbering?: true;
+  /** 域求值的结果文字。可选文本层**要**收它，但它不可编辑，见 `CharItem.field` */
+  field?: true;
 }
 
 export interface LineLayout {

@@ -334,7 +334,7 @@ view.on('viewport:change', ({ visiblePages, zoom }) => {});
 
 | 事件 | 时机 | 典型用途 |
 |---|---|---|
-| `layout:done` | 排版完成（含域收敛的全部迭代） | 隐藏 loading、上报耗时 |
+| `layout:done` | 排版完成（含域求值的全部迭代，见架构 §6） | 隐藏 loading、上报耗时 |
 | `document:change` | 事务提交后 | 标记「未保存」、协同同步 |
 | `diagnostic` | 解析/布局期发现内容问题 | 收集上报 |
 | `selection:change` | 选区变化 | 联动工具栏 |
@@ -385,6 +385,9 @@ interface Diagnostic {
 | `missing-body` / `styles-missing` / `theme-missing` | 诊断 | 可选部件缺席，按默认值继续 |
 | `numbering-missing-abstract` | 诊断 | `numId` 指向了不存在的 `abstractNumId` |
 | `field-unbalanced` / `field-unclosed` | 诊断 | 域界桩配不上对，该域按「不显示」处理 |
+| `field-no-result` | 诊断（info） | 域缺 `w:fldChar separate`，Word 里它什么都不显示，因此也不求值 |
+| `field-nested-eval` | 诊断 | 两个可求值的域抢同一片结果区（嵌套域），内层已跳过 |
+| `field-not-converged` | 诊断 | 域求值 5 趟仍未自洽，已冻结在页数最多的那一趟 |
 | `revision-deleted` | 诊断（info） | 修订痕迹里被删除的文字，不参与排版 |
 
 **规则**：能画出**任何**有意义的东西，就不要抛。

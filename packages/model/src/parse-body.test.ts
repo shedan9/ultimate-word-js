@@ -195,6 +195,15 @@ describe('分节', () => {
     });
   });
 
+  it('w:pgNumType 的起始页码与数字格式都收 —— 「前言罗马数字、正文阿拉伯数字」靠它', () => {
+    const { body } = parse(`<w:p/><w:sectPr><w:pgNumType w:start="3" w:fmt="upperRoman"/></w:sectPr>`);
+    expect(body.sections[0]?.props.pageNumStart).toBe(3);
+    expect(body.sections[0]?.props.pageNumFormat).toBe('upperRoman');
+    // 缺席就是缺席：写成 'decimal' 会让「域自己没写 \* 时用谁的格式」分不出「没配置」与「配了十进制」
+    const bare = parse(`<w:p/><w:sectPr/>`);
+    expect(bare.body.sections[0]?.props.pageNumFormat).toBeUndefined();
+  });
+
   it('页眉页脚引用按类型收，没有 r:id 的丢掉', () => {
     const { body } = parse(
       `<w:p/><w:sectPr>

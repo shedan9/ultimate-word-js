@@ -118,7 +118,7 @@ flowchart TB
 | `ooxml` | 字节 | `OpcPackage` | zip 损坏 / 不是 OOXML → **抛异常** | 解包后 part 清单快照 |
 | `model` | `OpcPackage` | `LoadedDocument`（`loadDocument()`） | `basedOn` 成环、引用缺失 → **诊断，不抛** | 属性树 dump 与 Word「显示格式」面板抽查一致 |
 | `fonts` | 字体字节 / 度量包 | `FontMetrics` · `TextMeasurer` | 字体缺失 → **三级降级**（见 §5.3） | 硬编码实测值的单测（跨平台可跑） |
-| `layout` | `ResolvedBody`（或单个 `ResolvedParagraph` / `ResolvedTable`）+ `TextMeasurer` | `DocumentLayout`（pages → blocks → lines → fragments，**有 y**）；单块入口仍产出不带 y 的 `ParagraphLayout` / `TableLayout` | 域不收敛 → **振荡检测后冻结** | 与 `*.truth.json` 逐行 diff（L0–L4 分级） |
+| `layout` | `ResolvedBody`（或单个 `ResolvedParagraph` / `ResolvedTable`）+ `TextMeasurer` + 域（`FieldRegion[]`） | `DocumentLayout`（pages → blocks → lines → fragments，**有 y**）；单块入口仍产出不带 y 的 `ParagraphLayout` / `TableLayout` | 域不收敛 → 撞上迭代上限后**取页数最多的那一趟冻结** + 诊断 | 与 `*.truth.json` 逐行 diff（L0–L4 分级） |
 | `render-dom` | `DocumentLayout` | 元素树（纯数据）→ 标记文本 / 真 DOM | —— | **属性里的坐标与 `*.truth.json` 逐行 diff**（比 `LayoutResult` 又晚一步，能照出「翻译」阶段丢的偏移）+ 截图回归 |
 | `serialize` | `Document` | `.docx` | —— | round-trip：加载→导出→Word 打开无修复提示 |
 
@@ -188,7 +188,7 @@ flowchart BT
 
 **域解析劈成两半。**
 域的**语法**（`{ PAGE \* MERGEFORMAT }` 怎么解析）属于 model；
-域的**求值**（PAGE 等于几）依赖布局结果，属于 layout 的收敛循环。
+域的**求值**（PAGE 等于几）依赖布局结果，属于 layout 的收敛循环（`layout/src/fields.ts`）。
 把这两件事放一起，会让 model 反向依赖 layout，破坏单向依赖。
 
 **`view` 依赖 `render-*` 而不是与之并列。**
@@ -206,8 +206,8 @@ flowchart BT
 | `@uw/core` | 🟢 `units.ts` · `errors.ts`（`UwError`）· `diagnostics.ts`（`Diagnostic` / `DiagnosticSink`） |
 | `@uw/fonts` | 🟢 行高规则 + 基线位置（两次穿刺实测标定）· 脚本分桶（含**中性字符随邻居**：空格挨着东亚字就用东亚字体）· 度量包（**17 款已抽取入库**）· 注册表（三级降级）· `TextMeasurer` + 两级缓存 |
 | `@uw/ooxml` | 🟢 OPC 解包 · 内容类型 · 关系 · 保序 XML 纯数据树 + 反向序列化 |
-| `@uw/model` | 🟢 样式级联（含编号层与表格样式层）· 主题字体 · 正文节点树 · 分节 · 设置 · 字体表 · 编号（解析 + 计数器 + 编号文字）· 表格（属性 + 级联 + `w:tblStylePr` 条件格式）· 域的结构还原（界桩配对 + 指令解析 + HYPERLINK，**求值要等分页**） |
-| `@uw/layout` | 🟢 断行（禁则 / 挤压 / 悬挂，四条补救顺序与三个常数全部实测标定）· 缩进（含字符单位）· 对齐 · 制表位 · 列表编号 · 行高 + 网格吸附 + **行内基线** · 表格列宽与格内几何 + 边框冲突解析 · **分页**（`layoutDocument()`：页面几何 · 分节 · 孤行寡行 · keepNext / keepLines · 硬分页符 · 表格按行拆页 · 页码，见 §5.4）· ⏸ 页眉页脚与表格拆行未做 |
+| `@uw/model` | 🟢 样式级联（含编号层与表格样式层）· 主题字体 · 正文节点树 · 分节 · 设置 · 字体表 · 编号（解析 + 计数器 + 编号文字）· 表格（属性 + 级联 + `w:tblStylePr` 条件格式）· 域的结构还原（界桩配对 + 指令解析 + HYPERLINK；**求值在 layout 那一侧**，见 §6） |
+| `@uw/layout` | 🟢 断行（禁则 / 挤压 / 悬挂，四条补救顺序与三个常数全部实测标定）· 缩进（含字符单位）· 对齐 · 制表位 · 列表编号 · 行高 + 网格吸附 + **行内基线** · 表格列宽与格内几何 + 边框冲突解析 · **分页**（`layoutDocument()`：页面几何 · 分节 · 孤行寡行 · keepNext / keepLines · 硬分页符 · 表格按行拆页 · 页码，见 §5.4）· **域求值**（`layoutDocumentWithFields()`：PAGE / NUMPAGES / SECTIONPAGES 迭代到自洽，见 §6）· ⏸ 页眉页脚与表格拆行未做 |
 | `@uw/render-dom` | 🟢 v1：一页一个 `<svg>`（viewBox 单位 **pt**）· 逐字 x 走 `<text x="…">` · 下划线 / 删除线 / 上下标 / 横向缩放 · 制表位前导符 · 表格底纹 + 格线（共享的线只画一次）· 缩放只改 `<svg>` 尺寸不重排 · ⏸ 页眉页脚 / 图片 / 可选文本层 / 增量更新 |
 | `@uw/render-canvas` `@uw/view` `@uw/editor` `@uw/serialize` `ultimate-word` `@uw/react` | ⚪ 未创建 |
 
@@ -431,25 +431,36 @@ keepNext 的接缝又得看下一段肯不肯拆），单独反推任何一条�
 
 页码依赖布局 → 目录长度依赖页码 → 目录变长又改变布局。这是个不动点问题。
 
+已实现：`layoutDocumentWithFields(resolved, fields, opts)`（`layout/src/fields.ts`），
+认 **PAGE / NUMPAGES / SECTIONPAGES**；TOC / SEQ / STYLEREF 还没做，它们照旧显示
+文件里存着的旧结果（那正是 Word 打开时的样子）。
+
 ```mermaid
 flowchart TB
-  s(["pass 0：域取占位值或上次结果"]) --> r["resolveFields<br/>用上一趟的布局结果算 PAGE / NUMPAGES / TOC"]
-  r --> l["layout"]
-  l --> c{"页数与域文本<br/>都没变？"}
-  c -->|是| done(["收敛（Word 实际 2–3 趟）"])
-  c -->|否| o{"检测到 A→B→A 振荡？"}
-  o -->|是| f(["取页数较大者冻结退出"])
-  o -->|否| i{"i 小于 MAX_ITER (=5)？"}
-  i -->|是| r
-  i -->|否| f
+  s(["pass 1：域取文件里存着的旧结果"]) --> l["layoutDocument"]
+  l --> r["evaluate<br/>用这一趟的页码算 PAGE / NUMPAGES / SECTIONPAGES"]
+  r --> c{"算出来的那张<br/>values 表变了吗？"}
+  c -->|没变| done(["收敛（一般 2–3 趟）"])
+  c -->|变了| i{"趟数 < MAX_FIELD_PASSES (=5)？"}
+  i -->|是| l
+  i -->|否| f(["取页数最多的那一趟冻结 + 诊断"])
 
-  style o fill:#cf222e22,stroke:#cf222e
   style f fill:#cf222e22,stroke:#cf222e
 ```
 
-**振荡检测是必需品不是保险**：存在临界文档，目录多一行就多一页、多一页目录就少一行，
-没有这个分支就是死循环。同理，目录项文本长度在同一趟内只允许增长（阻尼策略），
-否则收敛判据会在两个状态之间反复横跳。
+两处与本文档**原先写的不一样**，都是实现时才想清楚的：
+
+- **收敛判据是「入参那张表不再变」，不是「页数与域文本都没变」。** 求值结果不写回模型，
+  而是外挂一张「run id → 显示的文字」交给排版当入参（写回去要每趟克隆一棵树，
+  而且模型里就有了两份真相）。既然 `layout = L(values)` 与 `values' = E(layout)` 都是确定性的，
+  `E(L(values)) === values` 就是自洽的充要条件 —— 比原来那个判据更严，
+  「页数没变但某个 PAGE 域从 3 变 4」（内容在页之间挪了位置）不会被误判成收敛
+- **A→B→A 的振荡检测没有实现**，原文说它「是必需品不是保险」，就现在这三个域而言说反了：
+  域文字只会变宽、分页的每条规则又只会把内容**往后**推，于是页数对域文字宽度**单调不减**，
+  回不了头。写了也是永远跑不到的死代码（跑不到 = 测不了 = 会烂）。防线是
+  `MAX_FIELD_PASSES` 这个上限，撞上去就按「取页数较大者冻结」退出并记诊断。
+  等 TOC 进来（目录能**变短**，单调性就没了）再补，那时才有样本能验证它 ——
+  连同「目录项文本同一趟内只允许增长」的阻尼策略一起
 
 ---
 

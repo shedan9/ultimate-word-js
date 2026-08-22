@@ -37,6 +37,15 @@ export interface BuildItemsOptions {
    * 缺省按开着算 —— 关掉它的文档极少，而漏传导致「不压」是**看得见**的错版。
    */
   compressPunctuation?: boolean;
+  /**
+   * 域求值的结果：**run id → 这个 run 显示的文字**，盖掉它自己 content 里那串旧值。
+   *
+   * 为什么走「外挂一张表」而不是先改一遍 `ResolvedBody` 再排：域求值要迭代
+   * （页码变宽 → 断行变 → 页数变 → 页码又变，见 fields.ts），每一趟都克隆一棵树太贵，
+   * 而且克隆完就有两份真相 —— `resolved` 仍是唯一的模型，这张表只是排版的一个入参，
+   * 同样可结构化克隆（原则 1.1），Worker 化时跟着一起过去就行。
+   */
+  fieldValues?: ReadonlyMap<NodeId, string>;
 }
 
 /**
@@ -125,6 +134,24 @@ export function numberingRunId(paragraphId: NodeId): NodeId {
 function appendRun(out: LayoutItem[], run: ResolvedRun, opts: BuildItemsOptions, spaces: SpaceRef[]): void {
   const props = run.props;
   const size = effectiveSize(props);
+
+  // 求值过的域：整个 run 的可见内容换成算出来的那串字。**换掉整个 run 而不是某个片段**，
+  // 是因为域结果区里的旧值常被 Word 切成好几个 `w:t`，只换第一个会把剩下的旧数字留在页面上
+  const value = opts.fieldValues?.get(run.id);
+  if (value !== undefined) {
+    const start = out.length;
+    appendText(out, run.id, props, -1, transformCase(value, props), value, size, opts, spaces);
+    for (let i = start; i < out.length; i++) {
+      const item = out[i] as LayoutItem;
+      if (item.kind !== 'char') continue;
+      item.field = true;
+      // 这串字不在 document.xml 里（文件里存的是上次算出来的旧值），
+      // 位置抹平成 -1 让「拿它反查 DocPosition」一眼可见地错，见 CharItem.field
+      item.offset = -1;
+    }
+    return;
+  }
+
   for (let ci = 0; ci < run.content.length; ci++) {
     const c = run.content[ci] as (typeof run.content)[number];
     switch (c.kind) {

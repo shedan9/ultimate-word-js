@@ -9,7 +9,10 @@
  * 摞进一页页的版心，每一行都拿到了页号与页内的 y。gongwen-01 的 18 行基线 y 与 Word
  * 真值最大差 0.06pt（L3 的判据是 0.5pt）。
  *
- * **还没有的**：页眉页脚（部件没解析）、表格拆行（行是原子的）、域求值（PAGE / TOC）。
+ * **域求值**（`fields.ts`）也接上了：`layoutDocumentWithFields()` 把「排版 → 算页码 → 再排版」
+ * 迭代到自洽，PAGE / NUMPAGES / SECTIONPAGES 已经是算出来的而不是文件里存的旧值。
+ *
+ * **还没有的**：页眉页脚（部件没解析）、表格拆行（行是原子的）、TOC / SEQ 的求值。
  *
  * 约束（从第一天就守住，否则后面搬不动）：
  * - 本包**不得** import 任何 DOM API，度量能力靠注入的 `TextMeasurer` 传进来 ——
@@ -20,6 +23,7 @@
 export const PACKAGE_NAME = '@uw/layout';
 
 export * from './break-class.ts';
+export * from './fields.ts';
 export * from './items.ts';
 export * from './line-height.ts';
 export * from './linebreak.ts';

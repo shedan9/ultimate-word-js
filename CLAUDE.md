@@ -12,15 +12,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 把段落与表格摞进一页页的版心，每一行都有了页号与 y，`LineLayout` 的 `baseline` 终于能拼成
 绝对坐标。**卡口没有了**：横向（断行）与纵向（基线 y）现在都能与真值逐行比。
 Phase 5 的**列表编号**已经从 `numbering.xml` 一路通到首行几何，
-同阶段的**域**做完了结构还原（界桩配对 + 指令解析 + HYPERLINK），**求值**还没做（不再是被挡着，
-是还没写）。Phase 4 的**表格**：属性 + 级联（含 `w:tblStylePr` 条件格式）在 model 层，
+同阶段的**域**结构还原（界桩配对 + 指令解析 + HYPERLINK）与**求值**（PAGE / NUMPAGES /
+SECTIONPAGES 迭代到自洽）都做完了，TOC / SEQ 的求值还没写。Phase 4 的**表格**：属性 + 级联（含 `w:tblStylePr` 条件格式）在 model 层，
 列宽 + 每格的 x 与可用宽 + 格内段落 + **边框冲突解析**在 layout 层，跨页按**行**拆
 （行是原子的 = 全表 cantSplit，拆行还没做）。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、
 `@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 制表位 + **编号（解析 + 计数器 + 编号文字 + 接进级联）** + **表格（属性 + 级联 + 条件格式）** + **域（界桩配对 + 指令解析 + HYPERLINK）**）、
 `@uw/fonts`（行高规则 + 脚本分桶 + 度量包 + 注册表 + `TextMeasurer`）、
 `@uw/layout`（item 流 + 断行 + 缩进 / 对齐 / 制表位 / 列表编号 + 行高与网格吸附 + **行内基线** +
-**表格列宽与格内几何 + 边框冲突解析** + **分页**）、
+**表格列宽与格内几何 + 边框冲突解析** + **分页** + **域求值**）、
 `@uw/render-dom`（**元素树 → SVG / DOM**，见下）。
 
 **渲染器**（`packages/render-dom`）是流水线的出口，**px 只在这一步出现**。
@@ -165,11 +165,27 @@ L2 剩下那 2 行（真值第 10 / 11 行）是**唯一一个解释不了的反
 ① 域**跨段落**（TOC 能跨几十段），所以 `scanFields()` 先把整份 body 拉平成一条 run 流再配对 ——
 按段落扫永远配不上，这也是它必须在 `resolveBody()` **之前**跑的原因；
 ② **没有 separate 的域什么都不显示**，不是「显示指令」；结果区里存的是 Word 上次算出来的文字，
-直接显示就是「打开即所见」——**本阶段不做求值**（PAGE / TOC 要分页）；
+直接显示就是「打开即所见」（求值见下，没有 separate 的域**也不求值**）；
 ③ 嵌套域的 `instrText` 归内层（靠栈分家），外层的指令文字因此**缺一块**（`IF { PAGE } = 1` 只看得到 `IF  = 1`），
 回填是求值期的事。另外 `w:fldSimple`（压缩写法）走的是「压平成 run 上的标记」那条路，与 `w:hyperlink` 同理，
 标记**带 id** —— 挨着的两个 `w:instr="PAGE"` 是两个域。`w:instrText` 与 `w:t` 相反，**不去首尾空白**：
 去掉再拼会把 ` IF ` + ` = 1 ` 接成 `IF= 1`。
+
+**域求值**在 layout 那一侧（`packages/layout/src/fields.ts`），不在 model —— 求值要页码，
+页码是分页的产物。入口 `layoutDocumentWithFields(resolved, fields, opts)`，认
+**PAGE / NUMPAGES / SECTIONPAGES**（TOC / SEQ 没做，照旧显示文件里存的旧结果）。四处要点：
+① 结果**不写回模型**，而是外挂一张「run id → 显示的文字」的表当排版入参
+（`LayoutDocumentOptions.fieldValues`）—— 写回去要每趟迭代克隆一棵树，模型里还会有两份真相；
+② **收敛判据是那张表不再变**，不是「页数没变」：页数一样、某个 PAGE 从 3 变 4（内容在页之间挪位）
+完全可能，架构 §6 原来写的判据是错的；
+③ **没写 A→B→A 振荡检测**，开发计划 §2.4 说它「是必需品」，就这三个域而言说反了 ——
+域文字只会变宽、分页规则只会把内容往后推，页数**单调不减**，回不了头。防线是
+`MAX_FIELD_PASSES = 5`，撞上去按「取页数较大者冻结」退出 + 诊断。TOC（目录能变短）进来再补；
+④ 没写 `\*` 的 PAGE 跟着**本节**的 `w:pgNumType w:fmt`（`SectionProps.pageNumFormat`，
+顺手补进 model）—— 「前言罗马数字、正文阿拉伯数字」就是靠它。`\* CHINESENUM1|2|3`
+的映射没有 Word 样本，关在 `uncalibrated.ts` 的 `FIELD_CHINESE_NUM_FORMATS`。
+渲染出来的域结果带 `data-field="1"`：与编号相反，它**要**能被复制与 Ctrl+F 搜到，
+但它不在 document.xml 里，反查不到 `DocPosition`。
 
 表格那一层（`table-props.ts` / `parse-table-props.ts` / `cascade-table.ts`）也有四处容易搞反：
 ① 级联层序是「样式链自身属性 → 命中的条件格式（按 `CONDITIONAL_ORDER`）→ 直接格式」，
@@ -327,6 +343,9 @@ Times 的 winAscent 更大，若参与就该赢，实测却仍是等线单独的
 四是表格边框冲突：一张 2×2 的表、四条内部边分别让相邻两格写不同的 `w:val` / `w:sz` / `nil`，
 一份就能钉死「比宽度还是比样式」「平局取左上还是右下」「nil 在竞争里强不强」三问。
 它只改画法不改坐标，所以优先级低于上面几条。
+五是域的 `\* CHINESENUM1|2|3` 各对应哪套中文数字（`FIELD_CHINESE_NUM_FORMATS`）：
+一份三节的 docx，页码跑到 11 与 105，看 Word 显示「十一 / 拾壹 / 一〇五」里的哪一种。
+中文数字比阿拉伯数字宽，猜错了页码那一行的断行点也会跟着错。
 
 另一个反复咬人的点：中文版 Word 的 Normal 模板**默认开着行网格**（linePitch 312 twips = 15.6pt），
 基线会被吸到网格上、把字体度量差异整个盖掉。做度量实验必须显式关网格（`PageSetup.LayoutMode = wdLayoutModeDefault`）。

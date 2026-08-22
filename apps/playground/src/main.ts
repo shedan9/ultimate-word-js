@@ -2,7 +2,7 @@
  * 调试台：把一份 docx 拖进来，看引擎把它画成什么样。
  *
  * 整条链全在浏览器里跑，一个后端调用都没有：
- * `OpcPackage.open` → `loadDocument` → `layoutDocument` → `mount`。
+ * `OpcPackage.open` → `loadDocument` → `layoutDocumentWithFields` → `mount`。
  *
  * 字体度量走随库分发的**度量包**（`packages/fonts/packs/*.json`），不是浏览器的
  * `measureText` —— 所以本机装没装仿宋、黑体**不影响排版**，只影响字形好不好看。
@@ -16,7 +16,7 @@
 import { createDiagnosticSink, twipsToPt } from '@uw/core';
 import type { MetricsPack } from '@uw/fonts';
 import { createTextMeasurer, FontRegistry } from '@uw/fonts';
-import { layoutDocument } from '@uw/layout';
+import { layoutDocumentWithFields } from '@uw/layout';
 import { fontNameCandidates, loadDocument } from '@uw/model';
 import { OpcPackage } from '@uw/ooxml';
 import { mount } from '@uw/render-dom/dom';
@@ -54,7 +54,7 @@ const debugInput = app.querySelector<HTMLInputElement>('.debug') as HTMLInputEle
 const fileInput = app.querySelector<HTMLInputElement>('input[type=file]') as HTMLInputElement;
 
 /** 当前文档的布局结果。缩放与调试开关只重画，**不重排** —— 架构 §4.1 */
-let current: ReturnType<typeof layoutDocument> | undefined;
+let current: ReturnType<typeof layoutDocumentWithFields>['layout'] | undefined;
 
 function draw(): void {
   if (current === undefined) return;
@@ -69,11 +69,11 @@ function open(bytes: Uint8Array, name: string): void {
     candidates: (family) => fontNameCandidates(doc.fonts, family),
     diagnostics: sink,
   });
-  current = layoutDocument(doc.resolved, {
+  current = layoutDocumentWithFields(doc.resolved, doc.fields, {
     measurer,
     settings: doc.cascade.settings,
     diagnostics: sink,
-  });
+  }).layout;
   const ms = performance.now() - t0;
 
   const first = current.pages[0]?.geometry;

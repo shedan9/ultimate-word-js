@@ -112,3 +112,23 @@ const BORDER_STYLE_RANK: Record<string, number> = {
 export function borderStyleRank(style: string): number {
   return BORDER_STYLE_RANK[style] ?? BORDER_STYLE_RANK.single ?? 2;
 }
+
+/**
+ * `\* CHINESENUMn` 三个开关各对应哪套中文数字。
+ *
+ * 前面几个数字格式开关（`\* Arabic` / `\* roman` / `\* alphabetic` / `\* Ordinal`）是
+ * Word 域参考里写死的，算不上「拍脑袋」，所以留在 `fields.ts`；中文这三个**只有中文版
+ * Word 帮助里的一句话**，没有样本，所以关在这里：CHINESENUM1 按「一、二、十一」，
+ * CHINESENUM2 按法定大写「壹、贰」，CHINESENUM3 按「〇一二」逐位念。
+ *
+ * 猜错的代价不只是难看：中文数字比阿拉伯数字宽，页码宽度变了断行点就可能变。
+ *
+ * 钉死办法：一份三节的 docx，页眉里分别放 `{ PAGE \* CHINESENUM1|2|3 }`，
+ * 页码跑到 11 与 105，看 Word 显示的是「十一 / 拾壹 / 一〇五」里的哪一种。
+ * （其中 `ideographDigital` 自己的读法也还没标定，见 `@uw/model` 的 number-format.ts）
+ */
+export const FIELD_CHINESE_NUM_FORMATS: Readonly<Record<string, string>> = {
+  chinesenum1: 'chineseCounting',
+  chinesenum2: 'chineseLegalSimplified',
+  chinesenum3: 'ideographDigital',
+};

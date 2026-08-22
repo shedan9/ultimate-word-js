@@ -243,6 +243,9 @@ function paintFragment(frag: LineFragment, x0: Twips, baseline: Twips, ctx: Ctx)
   if (scale !== 1 && scale !== 0) attrs.transform = `scale(${fmt(scale)} 1)`;
   // 编号文字不在 document.xml 里：可选文本层与复制要跳过它（见 CharItem.numbering）
   if (frag.numbering === true) attrs['data-numbering'] = '1';
+  // 域求值的结果：与编号相反，它**要**能被复制与 Ctrl+F 搜到，标出来是因为它不可编辑 ——
+  // 文件里存的是上次算出来的旧值，这串字反查不到 DocPosition（见 CharItem.field）
+  if (frag.field === true) attrs['data-field'] = '1';
   return textEl('text', attrs, frag.text);
 }
 

@@ -7,7 +7,7 @@
  */
 import type { Twips } from '@uw/core';
 import type { TextMeasurer } from '@uw/fonts';
-import type { DocGrid, DocumentSettings, ResolvedParagraph, ResolvedParaProps } from '@uw/model';
+import type { DocGrid, DocumentSettings, NodeId, ResolvedParagraph, ResolvedParaProps } from '@uw/model';
 import type { KinsokuSets } from './break-class.ts';
 import { isNumberingItem, kinsokuFrom } from './break-class.ts';
 import { buildItems } from './items.ts';
@@ -25,6 +25,8 @@ export interface LayoutParagraphOptions {
   docGrid: DocGrid;
   /** 四个字体桶全空时用哪款字体 */
   defaultFont?: string;
+  /** 域求值的结果（run id → 显示的文字），见 `BuildItemsOptions.fieldValues` */
+  fieldValues?: ReadonlyMap<NodeId, string>;
 }
 
 export function layoutParagraph(p: ResolvedParagraph, opts: LayoutParagraphOptions): ParagraphLayout {
@@ -35,6 +37,7 @@ export function layoutParagraph(p: ResolvedParagraph, opts: LayoutParagraphOptio
     // 相邻标点挤压是**常态排版**，所以在 item 流那一步就做掉，不等断行
     compressPunctuation: opts.settings.characterSpacingControl !== 'doNotCompress',
     ...(opts.defaultFont === undefined ? {} : { defaultFont: opts.defaultFont }),
+    ...(opts.fieldValues === undefined ? {} : { fieldValues: opts.fieldValues }),
   };
   const items = buildItems(p, itemOpts);
 
@@ -284,6 +287,8 @@ function fragmentsOf(
         glyphX: [x],
         // 编号自成片段（runId 不同，天然分开），标出来让渲染层别把它算进可选文本
         ...(item.numbering === true ? { numbering: true as const } : {}),
+        // 域结果同理自成片段（整个 run 都被换掉了），标记的用途见 CharItem.field
+        ...(item.field === true ? { field: true as const } : {}),
       };
       out.push(current);
     } else {

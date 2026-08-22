@@ -333,18 +333,36 @@ A 类与 C 类字体在 Linux/Mac 上缺失。关键认识：**我们需要的�
 
 **解法：迭代到收敛。**
 
+#### ✅ 已实现（2026-08-22）：`@uw/layout` 的 `fields.ts`
+
 ```
-layout()                        // pass 0：域取上次结果或占位值
-for i in 1..MAX_ITER (=5):
-    resolveFields()             // 用 pass i-1 的布局结果算 PAGE/TOC
-    layout()
-    if pageCount 与 field 文本均未变化: break
-    if 检测到 A→B→A 振荡: 取页数较大者冻结，退出
+values = {}                                  // pass 1：域取文件里存着的旧结果
+layout = layoutDocument(body, { fieldValues: values })
+loop:
+    next = evaluate(fields, layout)          // 用这一趟的页码算 PAGE / NUMPAGES / SECTIONPAGES
+    if next 与 values 逐项相等: 收敛，返回 layout
+    if 已经排满 MAX_FIELD_PASSES (=5) 趟: 取页数最多的那一趟冻结 + 诊断
+    values = next
+    layout = layoutDocument(body, { fieldValues: values })
 ```
 
-- `MAX_ITER = 5`（Word 实际 2–3 次收敛）
-- 必须有**振荡检测**，否则遇到临界文档会死循环
-- 目录项文本长度变化要走「同一次 pass 内只允许增长」的阻尼策略
+- 认 **PAGE / NUMPAGES / SECTIONPAGES**；TOC / SEQ 还没做，照旧显示文件里存的旧结果
+- **求值结果不写回模型**，外挂一张「run id → 显示的文字」的表当排版入参：
+  写回去要每趟克隆一棵树，而且模型里就有了两份真相（旧值 vs 新值），回写时不知道听谁的
+
+原文里有**两处被实现推翻**，连同「原来为什么错」一起留在这里：
+
+- 「`if pageCount 与 field 文本均未变化: break`」—— **判据应当是入参那张表不再变**。
+  `layout = L(values)` 与 `values' = E(layout)` 都是确定性的，`E(L(values)) === values`
+  才是自洽的充要条件。按页数判会把「页数没变、但某个 PAGE 域从 3 变成 4」（内容在页之间
+  挪了位置）误判成收敛；而「域文本没变」本身就等价于新判据，写页数那一半是多余且有害的
+- 「**必须有振荡检测**，否则遇到临界文档会死循环」—— 就 PAGE / NUMPAGES / SECTIONPAGES
+  而言**说反了**：域文字只会变宽，分页的每条规则（孤行寡行、keepNext 的接缝）又只会把内容
+  **往后**推，于是页数对域文字宽度**单调不减**，A→B→A 回不了头。防死循环的是
+  `MAX_FIELD_PASSES` 这个上限，撞上去按原文说的「取页数较大者冻结」退出。
+  振荡检测要等 TOC（目录能**变短**，单调性没了）才成为必需品 —— 那时也才有样本能验证它，
+  现在写了就是永远跑不到、因而也测不了的死代码。同理，「目录项文本同一趟内只允许增长」
+  的阻尼策略也留到那时
 
 ### 2.5 增量排版
 
@@ -569,7 +587,9 @@ await view.toPNG(3);     // 第 3 页
 - ⏸ 表格**拆行**（一行内部跨页）与 `w:cantSplit`
 - ⏸ 页眉页脚：首页不同、奇偶不同、`linkToPrevious`。部件还没解析，
   现在版心顶固定取 `w:top`；页眉内容过深时 Word 会把正文往下顶，那时 `content.y` 要改
-- ⏸ PAGE / NUMPAGES 域 + 收敛循环（§2.4）—— 结构还原早就做完了，就等这一步
+- ~~PAGE / NUMPAGES 域 + 收敛循环（§2.4）~~ ✅（2026-08-22）`@uw/layout` 的 `fields.ts`：
+  `layoutDocumentWithFields()` 把「排版 → 算页码 → 再排版」迭代到自洽，认
+  PAGE / NUMPAGES / SECTIONPAGES。详见 Phase 5 的对应条目
 - ⏸ 页面虚拟化
 - **DoD**：20 页真实公文，总页数与 Word 一致，每页首末字一致（**语料库里还没有多页样本**，
   见第 9 步）
@@ -640,7 +660,30 @@ await view.toPNG(3);     // 第 3 页
     去掉空白再拼会得到 `IF= 1`，域名当场变成 `IF=`
   - 已知简化：「开关后面那个词是它的值」是启发式（Word 用的是每种域一张开关表）；
     嵌套域的结果不回填进外层指令 —— 那是求值期的事
-- 域的**求值**：TOC（含收敛）、SEQ、STYLEREF、DATE ⏸ 要分页
+- ~~域的**求值**：PAGE / NUMPAGES / SECTIONPAGES + 收敛循环~~ ✅（2026-08-22）
+  `@uw/layout` 的 `fields.ts`（求值要页码，页码是分页的产物，所以它在 layout 这一侧，
+  与 model 里的结构还原分家）
+  - **求值结果不写回模型**，而是外挂一张「run id → 显示的文字」的表当排版入参
+    （`LayoutDocumentOptions.fieldValues`）。写回去要每趟迭代克隆一棵树，而且模型里
+    就有了两份真相（文件存的旧值 vs 我们算的新值），回写 docx 时不知道听谁的
+  - **收敛判据是那张表不再变**，不是原先 §2.4 写的「页数与域文本都没变」：
+    `layout = L(values)` 与 `values' = E(layout)` 都是确定性的，`E(L(values)) === values`
+    才是自洽的充要条件。原来那个判据会把「页数没变、但某个 PAGE 从 3 变成 4」误判成收敛
+  - **A→B→A 的振荡检测没写**，§2.4 说它「是必需品不是保险」，就这三个域而言说反了：
+    域文字只会变宽、分页规则又只会把内容往后推 → 页数对域文字宽度**单调不减**，回不了头。
+    防线是 `MAX_FIELD_PASSES = 5` 这个上限，撞上去按「取页数较大者冻结」退出 + 诊断。
+    TOC 进来（目录能变短）才需要它，那时也才有样本能验证它
+  - **没有 separate 的域不求值**（记 `field-no-result`）：它在 Word 里就是什么都不显示，
+    我们凭空往 begin 那个 run 上塞一串数字等于替 Word 决定它显示什么 —— 留洞不猜（原则 1.5）
+  - `\* ROMAN` / `\* roman` / `\* alphabetic` / `\* Arabic` / `\* Ordinal` 走
+    `formatNumber()`；没写 `\*` 的 PAGE 跟着本节的 `w:pgNumType w:fmt`（顺手补进 `@uw/model`
+    的 `SectionProps.pageNumFormat`）—— 「前言罗马数字、正文阿拉伯数字」就是靠这个。
+    `\* CHINESENUM1|2|3` 三个的映射没有 Word 样本，关在 `uncalibrated.ts` 的
+    `FIELD_CHINESE_NUM_FORMATS`，写了钉死它的样本
+  - 渲染出来的域结果片段带 `field` 标记（`data-field="1"`）：与编号相反，它**要**能被复制、
+    被 Ctrl+F 搜到，但它不在 document.xml 里，反查不到 `DocPosition`
+- 域的**求值**：TOC（含收敛）、SEQ、STYLEREF、DATE ⏸ TOC 要先有大纲级别与书签，
+  DATE / TIME 与布局无关但要一套 Word 的日期格式串解析
 - 图片：inline 为主，anchor 只做「上下型环绕」，其余环绕类型退化为 inline（明确写进非目标）
 - **DoD**：带自动目录的报告，目录页码正确且跳转可用
 
@@ -789,6 +832,14 @@ CI 上无 Word，所以真值 PDF 与抽取结果**提交进仓库**（`fixtures
     上下边距 / `vAlign` / `shd` —— 都是布局早就算过、只是没带出来的数。
     **它不是新的标定**：坐标全来自已经标定完的布局，端到端测试证明的是「翻译没丢东西」
 
+12i. ~~**Phase 5 的域求值**~~ ✅（2026-08-22）`@uw/layout` 的 `fields.ts`：
+    `layoutDocumentWithFields()` = 「排版 → 算页码 → 再排版」迭代到自洽，认
+    PAGE / NUMPAGES / SECTIONPAGES。它是分页解锁的第二件事（第一件是渲染器）。
+    结论与被本文档 §2.4 说反的两处见 Phase 5 的条目；18 个单测在 `layout/src/fields.test.ts`。
+    **它不是标定**：页码本身准不准由分页那边的 50 页真值兜着，这里只测规则与迭代。
+    两个「看得见」的出口（preview / 调试台）都已改走这条路 —— 否则 PAGE 显示的
+    是文件里存的旧值，叠真值时会以为是分页错了
+
 13. **上 Windows 之后按这个顺序补**：~~① 基线穿刺（第 6 步，解锁行盒与分页）~~ ✅
     ~~② A/C 类字体的度量包抽取~~ ✅ A/B/C/D 共 17 款已入库，L2 断言随之上线
     ③ `uncalibrated.ts` 里那几个常数的样本。**「标点挤压」这一条已经做完**（2026-08-17，
@@ -814,13 +865,15 @@ CI 上无 Word，所以真值 PDF 与抽取结果**提交进仓库**（`fixtures
 它做完之后的卡口是分页，分页现在也做完了（第 12f 步），于是**没有卡口了**：
 每一行都有页号与 y，横向与纵向都能与真值逐行比。
 
-接着做什么，按投入产出排（**DOM 渲染器 v1 已经做完**，见 Phase 2）：
+接着做什么，按投入产出排（**DOM 渲染器 v1 与域求值都已做完**，见 Phase 2 / Phase 5）：
 
 1. **多页的真实公文语料**（第 9 步）：分页规则本身已经用合成样本标定完（第 12g 步），
    但 Phase 3 的 DoD 说的是「20 页**真实**公文页数与 Word 一致」—— 真实文档里段落长度、
    字号、表格混在一起，规则之间的相互作用是合成样本覆盖不到的。造样本要 Windows + Word。
    现在多了一条便宜的辅助手段：`preview --truth` 一眼能看出是哪一页开始整体挪歪的
-2. **域求值**（PAGE / NUMPAGES + 收敛循环）：结构还原早就做完，分页也给出了页码
+2. **页眉页脚**：现在最大的一个洞 —— 部件没解析，版心顶固定取 `w:top`，而公文的页码
+   几乎全在页脚里。域求值刚做完，页脚里的 `{ PAGE }` 一接上就能用；顺带能验证
+   「页眉过深要把正文往下顶」那条（`content.y` 要改）
 3. 第 13 步 ③–⑥ 的宽度类标定，影响的是 L2/L4 的精度
 4. **可选文本层**（Ctrl+F / 划词复制 / 屏幕阅读器）：数据早就齐了 —— 每个片段都带
    `runId` 与逐字 x，编号片段还带着 `data-numbering` 让复制跳过它。但它属于 `@uw/view`

@@ -125,6 +125,12 @@ export interface LayoutDocumentOptions {
   settings: DocumentSettings;
   /** 四个字体桶全空时用哪款字体 */
   defaultFont?: string;
+  /**
+   * 域求值的结果（run id → 显示的文字）。**这里只是照着用**，算它是
+   * `layoutDocumentWithFields()` 的事（fields.ts）—— 页码依赖分页、分页又依赖页码的宽度，
+   * 那个循环必须在分页**外面**转，否则这一趟排版就得递归调用自己。
+   */
+  fieldValues?: ReadonlyMap<NodeId, string>;
   diagnostics?: DiagnosticSink;
   /**
    * 分页规则。**标定用的接缝** —— 正常调用不要传，默认值就是实测出来的那一套
@@ -374,6 +380,7 @@ function prepare(b: ResolvedBlock, section: SectionProps, opts: LayoutDocumentOp
     settings: opts.settings,
     docGrid: section.docGrid,
     ...(opts.defaultFont === undefined ? {} : { defaultFont: opts.defaultFont }),
+    ...(opts.fieldValues === undefined ? {} : { fieldValues: opts.fieldValues }),
   };
   const width = pageGeometry(section, opts).content.width;
   if (b.kind === 'paragraph') {

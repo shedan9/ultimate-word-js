@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { createDiagnosticSink } from '@uw/core';
 import { createTextMeasurer, FontRegistry } from '@uw/fonts';
 import { loadBundledPacks } from '@uw/fonts/node';
-import { layoutDocument } from '@uw/layout';
+import { layoutDocumentWithFields } from '@uw/layout';
 import { fontNameCandidates, loadDocument } from '@uw/model';
 import { OpcPackage } from '@uw/ooxml';
 import type { RElement, RenderOptions } from '@uw/render-dom';
@@ -178,7 +178,9 @@ async function preview(name: string, args: Args): Promise<void> {
     diagnostics: sink,
   });
 
-  const paged = layoutDocument(doc.resolved, {
+  // 走带域求值的那条：PAGE / NUMPAGES 要是显示成文件里存的旧值，
+  // 叠真值时会以为是分页错了
+  const { layout: paged } = layoutDocumentWithFields(doc.resolved, doc.fields, {
     measurer,
     settings: doc.cascade.settings,
     diagnostics: sink,
