@@ -46,6 +46,22 @@ SECTIONPAGES 迭代到自洽）都做完了，TOC / SEQ 的求值还没写。
 拆行接缝上画不画横线）关在 `packages/render-dom/src/uncalibrated.ts` ——
 **它们一个都不改坐标**，所以 L2/L3/L4 全绿也证明不了它们对。
 
+**语料体检**（`apps/fidelity/src/corpus-report.ts`，`pnpm --filter @uw/fidelity corpus`）：
+把 `fixtures/` 里非 spike 的文档整份排一遍，与它的 `truth.json` 比 L0（页数）/ 每页行数 /
+L2（每行文字），并把诊断按 code 汇总。**它不是测试** —— 新语料进来时页数对不上是常态，
+它的用处是「差在哪」一眼看清。它要**自己重做一遍分行**：真值的一「行」是按 y 分桶拼出来的，
+不认识段落也不认识表格，所以这边也得把正文 + 表格 + 页眉页脚一起摊平再按同样的规则分桶
+（只收正文段落的话表格类文档会得出「我们 234 行 / Word 505 行」这种毫无意义的数字）。
+表格类文档的 L2 百分比**不可信**：pdf.js 不吐连续空格，「版    本：」与「版 本：」比不上。
+
+它照出来的两条**制表位**结论（都在 `linebreak.ts` / `items.ts`）：
+① **非左对齐制表位的推进量要减去它后面那段**（`alignedTabWidth`，往后看到下一个制表位或段末为止）。
+Word 的目录条目是「标题 → 右对齐制表位 → 页码」，那个停靠点**正好等于版心宽** ——
+按「推进到停靠点」估宽的话这一行到此已经吃满，页码只能换行，每条目录都排成两行；
+② **制表位也有字体**（`TabItem.font`，按 ASCII 桶取）。它不占字形却**参与行高** ——
+只有一个制表位的那一行（目录、签发人栏）行高全靠它，缺了就拿空字体名去问度量器、
+退到等宽近似，顺带每份文档报一条 `font-missing 字体「」`。
+
 **两个「看得见」的出口**（改完布局或画法值得跑一眼）：
 `pnpm --filter @uw/fidelity preview [name] -- --truth --debug` 把 fixture 画成
 `apps/fidelity/out/*.html`（真值基线红虚线、我们的蓝实线，重合即对；产物不入库）；
@@ -117,9 +133,13 @@ keepNext 的接缝要留出下一块**「最少能放多少」**（不是它的�
 按类型全捞会把几 MB 的废弃扫描件读进内存），摊平成 `LoadedDocument.images`，
 key = **部件前缀 + 关系 id**；前缀省不得：页眉里的 `rId1` 与正文里的 `rId1` 是两张图。
 外链图（`r:link`）只给 URL，**不发网络请求**。
-③ `@uw/layout` —— 内嵌图占宽占高，行盒三条规则已实测（见下段）；**`wrap="none"` 的浮动图在文字流里占 0 宽**，
+③ `@uw/layout` —— 内嵌图占宽占高，行盒三条规则已实测（见下段）；**带 `wp:anchor` 的图在文字流里占 0 宽**，
 一个字都不许被它挤走，位置等整页排完再按 `wp:anchor` 的参照物换算成纸坐标
-（`page.ts` 的 `placeFloats`，产出 `PageLayout.floats`）。其余环绕方式**退化成内嵌**。
+（`page.ts` 的 `placeFloats`，产出 `PageLayout.floats`）。**环绕方式不参与这个判断** ——
+它回答的是「文字怎么让开」，没做的正是「让开」那一半（方形 / 上下型的对象位置与大小都对，
+只是文字不绕着它走）。原来按 `wrap="none"` 判断、其余**退化成内嵌**，那是错的：
+内嵌意味着它撑高所在的行，真实语料里页脚一个 144pt 的 `topAndBottom` 文本框
+就这么把页脚撑到 145.9pt、再顺着「页边距是最小值」把版心挤掉 66pt，19 页排成 28 页。
 ④ `@uw/render-dom` —— `<image>` + 裁剪的 `clipPath` + 旋转翻转的 `transform`，
 `href` 由宿主的 `imageHref(id)` 回调给（`imageHrefResolver(doc.images)` 是 data URI 版），
 **渲染层不认识 OPC 包**。三处容易画错：`preserveAspectRatio="none"`（外框可以与图片不同比例）、
@@ -274,6 +294,10 @@ L2 剩下那 2 行（真值第 10 / 11 行）是**唯一一个解释不了的反
 段落自己的样式要能盖掉表头行的加粗；
 ④ 单元格左右各 108 twips 的默认边距来自**默认表格样式**（`Normal Table`）而不是什么规范常数 ——
 `w:tcMar` 缺席退到表级 `w:tblCellMar`，不是退到 0。
+`w:tblPrEx`（**行级表格属性例外**，Word 从别处粘一行进来时写的，真实公文里很常见）盖在
+**已级联完**的表级结果上（`applyRowExceptions`）—— 它是直接格式，插进样式链里反而要为它排新层序；
+被它改过的表级边框经 `ResolvedRowProps.tableBorders` 带到布局层，
+因为边框冲突解析的第一级「单元格没写就退到表级」对这一行说的是它。
 未标定：隔行带（`band1Horz` 那四种）的**序号算法**只有规范做依据，没有 Word 样本，见 `cascade-table.ts` 文件头。
 
 边框冲突解析（`layout/src/table-borders.ts`）是**两级模型，顺序不能反**：
@@ -333,6 +357,8 @@ pnpm --filter @uw/fidelity spike:page      # 分页穿刺（孤行寡行 / keepN
 pnpm --filter @uw/fidelity spike:header    # 页眉页脚穿刺（框摆在哪 / 怎么挤版心，**不需要 Word**）
 pnpm --filter @uw/fidelity spike:image     # 图片穿刺（内嵌图的行盒 / 浮动图的参照框，**不需要 Word**）
 pnpm --filter @uw/fidelity preview -- --truth  # fixture 画成 out/*.html 并叠真值基线（不需要 Word）
+pnpm --filter @uw/fidelity corpus          # 语料体检：整份文档与 truth.json 比页数 / 每页行数 / 每行文字 + 汇总诊断
+pnpm --filter @uw/fidelity corpus 名字 -- --diff   # 逐行看差异
 pnpm --filter @uw/fonts run packs          # 重抽度量包（仅 Windows，产物入库）
 pnpm --filter @uw/fonts run packs:check    # 只校验入库的包与本机字体是否一致
 ```

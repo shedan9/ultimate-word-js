@@ -110,7 +110,14 @@ function appendNumbering(
   appendText(out, runId, props, -1, label.text, label.text, size, opts, spaces);
 
   if (label.suffix === 'tab') {
-    out.push({ kind: 'tab', runId, contentIndex: -1, fontSize: size, numbering: true });
+    out.push({
+      kind: 'tab',
+      runId,
+      contentIndex: -1,
+      font: fontFor(props, 0x09, opts),
+      fontSize: size,
+      numbering: true,
+    });
   } else if (label.suffix === 'space') {
     out.push(single(runId, props, -1, 0x20, fontFor(props, 0x20, opts), size, opts));
     // 编号后的分隔空格与正文里的空格同一条规则：正文首字是汉字时它就该按东亚字体量
@@ -159,7 +166,13 @@ function appendRun(out: LayoutItem[], run: ResolvedRun, opts: BuildItemsOptions,
         appendText(out, run.id, props, ci, transformCase(c.text, props), c.text, size, opts, spaces);
         break;
       case 'tab':
-        out.push({ kind: 'tab', runId: run.id, contentIndex: ci, fontSize: size });
+        out.push({
+          kind: 'tab',
+          runId: run.id,
+          contentIndex: ci,
+          font: fontFor(props, 0x09, opts),
+          fontSize: size,
+        });
         break;
       case 'break':
         out.push({ kind: 'break', runId: run.id, contentIndex: ci, breakType: c.breakType });
@@ -188,9 +201,12 @@ function appendRun(out: LayoutItem[], run: ResolvedRun, opts: BuildItemsOptions,
         break;
       }
       case 'object': {
-        // 不参与文字流的只有「浮动 + 环绕 none」这一种（衬于文字下方 / 浮于文字上方）。
-        // 其余环绕方式退化成内嵌，理由写在 `ObjectItem.float` 上
-        const floating = c.anchor !== undefined && c.anchor.wrap === 'none';
+        // **有 `wp:anchor` 就是浮动的**，与环绕方式无关 —— 环绕决定的是「文字怎么让开」，
+        // 不是「它在不在文字流里」。按 `wrap === 'none'` 判断会把方形 / 上下型环绕的对象
+        // 当成内嵌，于是它把整行撑高：真实语料里页脚的一个 144pt 文本框（`topAndBottom`）
+        // 就这么把页脚撑到 145.9pt，再顺着「页边距是最小值」把版心挤掉 66pt，
+        // 每页少三行、19 页排成 28 页。让开文字那部分没做，理由写在 `ObjectItem.float` 上
+        const floating = c.anchor !== undefined;
         const item: ObjectItem = {
           kind: 'object',
           runId: run.id,

@@ -139,6 +139,37 @@ export function resolveTableProps(ctx: CascadeContext, direct: TableProps | unde
   };
 }
 
+/**
+ * `w:tblPrEx`：本行专有的表级属性，盖在**已级联完**的表级结果上。
+ *
+ * 为什么盖在结果上而不是插进级联链里：它是**直接格式**（Word 粘贴一行时写的），
+ * 按规范它就该赢过样式链上的一切，插进链里反而要为它排一个新的层序。
+ *
+ * 真正起作用的是**逐格用得上**的那几项 —— 边框、单元格边距、底纹、`w:tblLook`
+ * （look 变了命中的条件格式就变）。宽度 / 缩进 / 对齐这几项一并盖上，
+ * 但布局层算列宽读的是整表那一份，所以现在还看不出效果；行级列宽要等
+ * 「一张表里各行宽度不同」的样本，那也是 autofit 的邻居问题。
+ */
+export function applyRowExceptions(table: ResolvedTableProps, ex: TableProps): ResolvedTableProps {
+  const acc: TableProps = {};
+  applyTableLevel(acc, ex);
+  return {
+    ...table,
+    ...definedOnly({
+      width: acc.width,
+      justification: acc.justification,
+      indent: acc.indent,
+      shading: acc.shading,
+      cellSpacing: acc.cellSpacing,
+      layout: acc.layout,
+      look: acc.look,
+    }),
+    // 边框与边距逐边合并 —— 例外只写了 insideH 时，其余七条仍是整表那一份
+    borders: { ...table.borders, ...definedOnly(acc.borders ?? {}) },
+    cellMargins: { ...table.cellMargins, ...definedOnly(acc.cellMargins ?? {}) },
+  };
+}
+
 // ── 条件格式的命中 ────────────────────────────────────────────────────────────
 
 /**

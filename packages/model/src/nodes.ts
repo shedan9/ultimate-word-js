@@ -155,9 +155,9 @@ export interface ImageRef {
 /**
  * 浮动对象的定位与环绕（`wp:anchor`）。
  *
- * 现在**只有 `wrap: 'none'` 被当真**（衬于文字下方 / 浮于文字上方：印章、水印、红头章），
- * 它不参与文字流，位置按下面的 `h` / `v` 算。其余环绕方式一律退化成内嵌
- * （开发计划 §5 写死的非目标里只有紧密型 / 穿越型，方形与上下型是「还没做」）。
+ * **有 anchor 就不参与文字流**，位置一律按下面的 `h` / `v` 算 —— 环绕方式回答的是
+ * 「文字怎么让开」，不是「它在不在文字流里」。没做的是「让开」那一半：方形与上下型
+ * 环绕的对象位置对、大小对，但文字不绕着它走（紧密型 / 穿越型是开发计划 §5 写死的非目标）。
  */
 export interface DrawingAnchor {
   wrap: 'none' | 'square' | 'tight' | 'through' | 'topAndBottom';
@@ -237,6 +237,16 @@ export interface TableRowNode<S extends PropSet> {
   kind: 'row';
   id: NodeId;
   props: S['row'];
+  /**
+   * `w:tblPrEx`：**本行专有的表级属性**（边框 / 单元格边距 / 底纹 / `w:tblLook`）。
+   * Word 在「从另一张表粘过来一行」时写它，真实公文里很常见。
+   *
+   * 它是**直接格式**，级联时就吃掉了（`cascade-table.ts` 的 `applyRowExceptions`），
+   * 所以只出现在直接格式那棵树上，`ResolvedTable` 上永远是 undefined ——
+   * 类型写成部分属性而不是 `S['table']` 正是这个意思。
+   * 漏解析的后果是这一行的格线与格内边距沿用整表的，与 Word 差一整条边框宽。
+   */
+  propsEx?: TableProps;
   cells: TableCellNode<S>[];
 }
 

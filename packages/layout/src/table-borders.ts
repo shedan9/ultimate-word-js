@@ -84,6 +84,14 @@ export interface BorderCell {
 export interface BorderRow {
   gridBefore: number;
   cells: BorderCell[];
+  /**
+   * 本行专有的表级边框（`w:tblPrEx`，见 model 的 `ResolvedRowProps.tableBorders`）。
+   * 缺席表示用整表那一份 —— 「层级覆盖」里的「表级」对这一行说的就是它。
+   *
+   * 共享的那条线上两侧各按**自己那一行**的表级边框出候选：例外只改了这一行，
+   * 用它去替对面那一行发言就把例外的作用范围扩大了一行。
+   */
+  tableBorders?: TableBorders;
 }
 
 /** 从模型的行结构里取出边框解析要的那几项 */
@@ -95,7 +103,13 @@ export function borderRowsOf(rows: readonly ResolvedTableRow[]): BorderRow[] {
       vMerge: c.vMerge,
       borders: c.props.borders,
     })),
+    ...(r.props.tableBorders === undefined ? {} : { tableBorders: r.props.tableBorders }),
   }));
+}
+
+/** 这一行「退到表级」时用哪一份边框：例外改过就用例外的 */
+function tableAt(rows: readonly BorderRow[], r: number, table: TableBorders): TableBorders {
+  return rows[r]?.tableBorders ?? table;
 }
 
 /**
@@ -202,7 +216,7 @@ function horizontalEdge(
 ): BorderSegment[] {
   const otherRow = side === 'top' ? r - 1 : r + 1;
   const outer = side === 'top' ? r === 0 : r === rows.length - 1;
-  const mine = candidate(cell.borders, table, side, outer);
+  const mine = candidate(cell.borders, tableAt(rows, r, table), side, outer);
   const opposite = side === 'top' ? 'bottom' : 'top';
 
   const out: BorderSegment[] = [];
@@ -250,7 +264,7 @@ function verticalEdge(
 ): Border | undefined {
   const colCount = grid[r]?.length ?? 0;
   const outer = side === 'left' ? col === 0 : col + span >= colCount;
-  const mine = candidate(cell.borders, table, side, outer);
+  const mine = candidate(cell.borders, tableAt(rows, r, table), side, outer);
   const neighbor = grid[r]?.[side === 'left' ? col - 1 : col + span];
   const opposite = side === 'left' ? 'right' : 'left';
   // 左边那格是左上者：解析本格 `left` 时邻格就在左边，平局让它赢
@@ -264,9 +278,9 @@ function neighborCandidate(
   side: 'top' | 'bottom' | 'left' | 'right',
 ): Border | undefined {
   const cell = cellAt(rows, ref);
-  if (cell === undefined) return undefined;
+  if (cell === undefined || ref === undefined) return undefined;
   // 邻格存在就说明这条线不在表格外沿上，一律走 inside*
-  return candidate(cell.borders, table, side, false);
+  return candidate(cell.borders, tableAt(rows, ref.row, table), side, false);
 }
 
 function cellAt(rows: readonly BorderRow[], ref: CellRef | undefined): BorderCell | undefined {

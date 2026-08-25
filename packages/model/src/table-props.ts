@@ -223,6 +223,14 @@ export interface ResolvedRowProps {
   gridAfter: number;
   widthBefore: TableWidth;
   widthAfter: TableWidth;
+  /**
+   * **本行专有的表级边框**，只有 `w:tblPrEx` 改过整表边框时才有（见 nodes.ts 的 `propsEx`）。
+   *
+   * 边框冲突解析的第一级是「单元格没写就退到表级」，而「表级」对这一行来说
+   * 是被例外改过的那一份 —— 缺了这个字段，粘进来的那一行会沿用整表的线宽。
+   * 缺席表示「就用整表那一份」，不是「没有边框」。
+   */
+  tableBorders?: TableBorders;
 }
 
 export interface ResolvedCellProps {

@@ -11,7 +11,13 @@
 import type { CascadeContext } from './cascade.ts';
 import { resolveParaProps, resolveRunProps } from './cascade.ts';
 import type { CellPosition } from './cascade-table.ts';
-import { gridColumnCount, resolveCellProps, resolveRowProps, resolveTableProps } from './cascade-table.ts';
+import {
+  applyRowExceptions,
+  gridColumnCount,
+  resolveCellProps,
+  resolveRowProps,
+  resolveTableProps,
+} from './cascade-table.ts';
 import type { FieldHyperlink } from './fields.ts';
 import type {
   Block,
@@ -141,10 +147,15 @@ function table(pass: Pass, t: Table): ResolvedTable {
     props,
     grid: [...t.grid],
     rows: t.rows.map((r, rowIndex): ResolvedTableRow => {
-      const rowProps = resolveRowProps(pass.ctx, props, t.props, r.props, {
+      // 本行的 `w:tblPrEx` 盖在表级结果上，只影响这一行的行 / 格（见 applyRowExceptions）
+      const rowTable = r.propsEx === undefined ? props : applyRowExceptions(props, r.propsEx);
+      const resolvedRow = resolveRowProps(pass.ctx, rowTable, t.props, r.props, {
         row: rowIndex,
         rowCount,
       });
+      // 例外改过的表级边框要带到布局层去：冲突解析的「退到表级」对这一行说的是它
+      const rowProps =
+        r.propsEx === undefined ? resolvedRow : { ...resolvedRow, tableBorders: rowTable.borders };
       // 本行被 w:gridBefore 跳掉的那几列也占位置，列号要从它之后开始数
       let col = rowProps.gridBefore;
       return {
@@ -154,7 +165,7 @@ function table(pass: Pass, t: Table): ResolvedTable {
         cells: r.cells.map((c): ResolvedTableCell => {
           const pos: CellPosition = { row: rowIndex, rowCount, col, span: c.gridSpan, colCount };
           col += c.gridSpan;
-          const { props: cellProps, layers } = resolveCellProps(pass.ctx, props, t.props, c.props, pos);
+          const { props: cellProps, layers } = resolveCellProps(pass.ctx, rowTable, t.props, c.props, pos);
           // 格内的段落 / run 走同一条级联，只是多了这几层前置样式
           const inner: Pass = { ...pass, ctx: { ...pass.ctx, tableStyleLayers: layers } };
           return {

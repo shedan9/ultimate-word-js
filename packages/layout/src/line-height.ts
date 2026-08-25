@@ -142,7 +142,8 @@ export function lineHeight(
       continue;
     }
     if (item.kind === 'break') continue;
-    const font = item.kind === 'char' ? item.font : '';
+    // 制表位也有字体（见 `TabItem.font`）：只有一个制表位的那一行行高全靠它
+    const font = item.font === '' ? (ctx.defaultFont ?? '') : item.font;
     const key = `${font}|${item.fontSize}`;
     if (seen.has(key)) continue;
     seen.add(key);

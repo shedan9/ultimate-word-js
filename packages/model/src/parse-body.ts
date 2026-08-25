@@ -402,11 +402,21 @@ function parseRow(ctx: Ctx, tr: XmlElement): TableRow {
     else if (el.name === 'w:sdt') {
       const content = child(el, 'w:sdtContent');
       if (content !== undefined) for (const tc of children(content, 'w:tc')) cells.push(parseCell(ctx, tc));
-    } else if (el.name !== 'w:trPr' && !IGNORED.has(el.name)) {
+    } else if (el.name !== 'w:trPr' && el.name !== 'w:tblPrEx' && !IGNORED.has(el.name)) {
       unknown(ctx, el, 'w:tr');
     }
   }
-  return { kind: 'row', id: nextId(ctx, 'tr'), props: parseRowProps(child(tr, 'w:trPr')), cells };
+  const row: TableRow = {
+    kind: 'row',
+    id: nextId(ctx, 'tr'),
+    props: parseRowProps(child(tr, 'w:trPr')),
+    cells,
+  };
+  // `w:tblPrEx` 是 `w:tblPr` 的子集（边框 / 边距 / 底纹 / look / 宽度），同一个解析器就够；
+  // 里面的 `w:tblPrExChange`（修订痕迹）不在解析表里，自动被忽略
+  const ex = child(tr, 'w:tblPrEx');
+  if (ex !== undefined) row.propsEx = parseTableProps(ex);
+  return row;
 }
 
 const V_MERGE = ['restart', 'continue'] as const;

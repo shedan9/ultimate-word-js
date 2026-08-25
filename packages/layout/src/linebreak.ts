@@ -249,7 +249,7 @@ export function breakLines(items: readonly LayoutItem[], ctx: LineBreakContext):
     }
 
     const gap = i === start ? 0 : gapOf(item);
-    const width = widthOf(item, x + gap, ctx, lineIndex);
+    const width = widthOf(item, x + gap, ctx, lineIndex, items, i);
     if (item.kind === 'tab') recordTab(tabs, i, x + gap, ctx, lineIndex, item.numbering === true);
 
     if (x + gap + width <= avail || i === start) {
@@ -342,12 +342,53 @@ function gapOf(item: LayoutItem): Twips {
   return item.kind === 'char' || item.kind === 'object' ? item.gapBefore : 0;
 }
 
-function widthOf(item: LayoutItem, x: Twips, ctx: LineBreakContext, lineIndex: number): Twips {
+function widthOf(
+  item: LayoutItem,
+  x: Twips,
+  ctx: LineBreakContext,
+  lineIndex: number,
+  items?: readonly LayoutItem[],
+  index?: number,
+): Twips {
   if (item.kind === 'tab') {
-    return tabAdvance(ctx.lineLeft(lineIndex) + x, ctx, item.numbering === true).width;
+    const hit = tabAdvance(ctx.lineLeft(lineIndex) + x, ctx, item.numbering === true);
+    if (items === undefined || index === undefined) return hit.width;
+    return alignedTabWidth(hit, ctx.lineLeft(lineIndex) + x, items, index);
   }
   if (item.kind === 'break') return 0;
   return item.width;
+}
+
+/**
+ * 非左对齐制表位的**推进量**：停靠点减去它后面那段文字的宽度（居中减一半、
+ * 小数点对齐减到小数点为止），而不是「推进到停靠点」。
+ *
+ * 按后者估宽会**必然断错目录**：Word 的目录条目是「标题 → 右对齐制表位 → 页码」，
+ * 那个停靠点的位置正好等于版心宽（真实语料里 8312 = 8312）。推进到 8312 就已经吃满整行，
+ * 后面的页码只能换行 —— 每一条目录都排成两行。而右对齐的本意是让页码**结束**在 8312，
+ * 它本来就该放得下。原来的注释说估宽偏大「只会让行断得略早」，在这一种情形下是错的。
+ *
+ * 往后看到**下一个制表位或段落末尾**为止：段落里的一段文字只对着一个停靠点，
+ * 再往后是下一个停靠点的事。这一段自己放不下时推进量退到 0，文字紧跟制表位排、
+ * 照常断行 —— 与 `alignTabTargets` 里「挤不下时停靠点失效」是同一条退路。
+ */
+function alignedTabWidth(
+  hit: { width: Twips; alignment: TabStop['alignment']; pos: Twips },
+  absolute: Twips,
+  items: readonly LayoutItem[],
+  index: number,
+): Twips {
+  if (hit.alignment === 'left' || hit.alignment === 'bar' || hit.alignment === 'clear') return hit.width;
+  let seg = 0;
+  for (let j = index + 1; j < items.length; j++) {
+    const it = items[j] as LayoutItem;
+    if (it.kind === 'tab' || it.kind === 'break') break;
+    // 小数点对齐：停靠点上放的是小数点，它之后的宽度不算
+    if (hit.alignment === 'decimal' && it.kind === 'char' && (it.cp === 0x2e || it.cp === 0xff0e)) break;
+    seg += it.width + gapOf(it);
+  }
+  if (hit.alignment === 'center') seg /= 2;
+  return Math.max(0, hit.pos - absolute - seg);
 }
 
 function recordTab(
@@ -392,10 +433,9 @@ function tabAdvance(
 /**
  * 右对齐 / 居中 / 小数点对齐的制表位：**断完行之后**再把它后面那段拉到位。
  *
- * 断行时一律按「推进到停靠点」估宽（也就是当成左对齐），因为那时还不知道这一段
- * 后面会跟多少字。估宽偏大而不偏小，所以只会让行断得略早，不会让文字溢出版心 ——
- * 公文里靠右对齐制表位排的是「签发人」「页码」这种短内容，差异到不了一个字。
- * 真要消除，得像 Word 那样对含非左对齐制表位的行多跑一轮，等有真值样本了再说。
+ * 断行时的估宽已经把后面那段算进去了（`alignedTabWidth`），所以这里通常只是微调 ——
+ * 两处不一致的只有「这一段被断到了下一行」那种，那时估的是整段、这里量的是留在本行的部分。
+ * 挤不下时停靠点失效、文字紧跟制表位排，与估宽那边退到 0 是同一条退路。
  */
 function alignTabTargets(line: BrokenLine, items: readonly LayoutItem[], lineLeft: Twips): void {
   for (const hit of line.tabs) {

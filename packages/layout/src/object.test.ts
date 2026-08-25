@@ -120,14 +120,17 @@ describe('浮动对象（wrap="none"）', () => {
     expect(p.lines[0]?.floats?.[0]?.width).toBe(SIZE_5 * 5);
   });
 
-  it('其余环绕方式退化成内嵌 —— 占位在文字流里，宁可挤走文字也不丢图', () => {
+  it('其余环绕方式照样浮动 —— 没做的是「文字让开」，不是「它在行里」', () => {
+    // 3 个字宽、比正文高的一张 square 环绕图：当成内嵌就会挤掉 3 个字并把行撑高，
+    // 而 Word 里它根本不在这一行上。真实语料里页脚的 topAndBottom 文本框就是这么错的
     const p = layoutParagraph(
-      para([pic(SIZE_5 * 3, SIZE_5, anchorOf({ wrap: 'square' })), run(TEN)]),
+      para([pic(SIZE_5 * 3, SIZE_5 * 3, anchorOf({ wrap: 'square' })), run(TEN)]),
       paraOpts,
     );
-    expect(p.lines).toHaveLength(2);
-    expect(p.lines[0]?.objects).toHaveLength(1);
-    expect(p.lines[0]?.floats).toBeUndefined();
+    expect(p.lines).toHaveLength(1);
+    expect(p.lines[0]?.height).toBe(EA_LINE);
+    expect(p.lines[0]?.objects).toBeUndefined();
+    expect(p.lines[0]?.floats?.[0]?.width).toBe(SIZE_5 * 3);
   });
 });
 

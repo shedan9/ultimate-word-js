@@ -340,3 +340,52 @@ describe('格级级联与格内段落', () => {
     expect(props?.bold).toBe(false); // 外层 firstRow 的加粗没有跟进来
   });
 });
+
+describe('w:tblPrEx（行级表格属性例外）', () => {
+  /** 表级 insideH 半磅、左边距 108；第二行用例外改成 3 磅 + 400 */
+  const TBL = `<w:tbl>
+    <w:tblPr>
+      <w:tblBorders><w:insideH w:val="single" w:sz="4"/></w:tblBorders>
+      <w:tblCellMar><w:left w:w="108" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar>
+    </w:tblPr>
+    <w:tr><w:tc><w:p/></w:tc></w:tr>
+    <w:tr>
+      <w:tblPrEx>
+        <w:tblBorders><w:insideH w:val="single" w:sz="24"/></w:tblBorders>
+        <w:tblCellMar><w:left w:w="400" w:type="dxa"/></w:tblCellMar>
+      </w:tblPrEx>
+      <w:tc><w:p/></w:tc>
+    </w:tr>
+  </w:tbl>`;
+
+  function rows(): ResolvedTable['rows'] {
+    const t = resolveBody(ctxFrom(NORMAL_TABLE), bodyOf(TBL)).sections[0]?.blocks[0];
+    if (t?.kind !== 'table') throw new Error('第一个块不是表格');
+    return t.rows;
+  }
+
+  it('例外只作用于本行，别的行照旧用整表那一份', () => {
+    const [first, second] = rows();
+    expect(first?.cells[0]?.props.margins.left).toEqual({ value: 108, type: 'dxa' });
+    expect(second?.cells[0]?.props.margins.left).toEqual({ value: 400, type: 'dxa' });
+  });
+
+  it('例外里没写的项逐边留着 —— 只改了 left，right 仍是整表的 108', () => {
+    expect(rows()[1]?.cells[0]?.props.margins.right).toEqual({ value: 108, type: 'dxa' });
+  });
+
+  it('例外改过的表级边框带到布局层去 —— 冲突解析的「退到表级」对这一行说的是它', () => {
+    const [first, second] = rows();
+    expect(first?.props.tableBorders).toBeUndefined(); // 缺席 = 用整表那一份
+    expect(second?.props.tableBorders?.insideH?.size).toBe(ptToTwips(3)); // 24/8 磅
+  });
+
+  it('不再报 unknown-element —— 漏解析时这一行的格线会沿用整表的宽度', () => {
+    const sink = createDiagnosticSink();
+    parseBody(
+      parseXml(`<w:document ${W_NS}><w:body>${TBL}<w:sectPr/></w:body></w:document>`, 'document.xml'),
+      sink,
+    );
+    expect(sink.list()).toEqual([]);
+  });
+});

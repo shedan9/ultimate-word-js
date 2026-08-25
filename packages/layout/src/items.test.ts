@@ -43,6 +43,12 @@ describe('分桶与度量', () => {
     expect(items.map((i) => i.fontSize)).toEqual([SIZE_5, SIZE_5 * SMALL_CAPS_SCALE]);
   });
 
+  it('制表位带着所在 run 的字体 —— 只有一个制表位的那一行行高全靠它', () => {
+    const items = buildItems(para([runOf([{ kind: 'tab' }])]), M);
+    // 没有这个字段就会拿空字体名去问度量器：退到等宽近似，行高整行错
+    expect(items[0]).toMatchObject({ kind: 'tab', font: 'Times New Roman', fontSize: SIZE_5 });
+  });
+
   it('域代码与域界桩不占宽度', () => {
     const items = buildItems(
       para([

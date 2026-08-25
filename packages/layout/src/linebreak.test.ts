@@ -197,6 +197,29 @@ describe('制表位', () => {
     expect((line?.xs[3] as number) + SIZE_5).toBe(2000);
   });
 
+  it('停靠点正好在版心右边缘时页码仍留在本行 —— 目录就是这么排的', () => {
+    // Word 的目录条目：标题 → 右对齐制表位（停靠点 = 版心宽）→ 页码。
+    // 按「推进到停靠点」估宽的话这一行到此已经吃满，页码只能换行，每条目录都排成两行
+    const items = buildItems(
+      para([runOf([{ kind: 'text', text: '一二' }, { kind: 'tab' }, { kind: 'text', text: '三' }])]),
+      M,
+    );
+    const avail = SIZE_5 * 10;
+    const lines = breakLines(items, ctx(10, { tabs: [{ pos: avail, alignment: 'right', leader: 'dot' }] }));
+    expect(lines).toHaveLength(1);
+    expect((lines[0]?.xs[3] as number) + SIZE_5).toBe(avail); // 页码结束在停靠点上
+  });
+
+  it('后面那段比停靠点还宽时推进量退到 0，文字紧跟制表位照常断行', () => {
+    const items = buildItems(para([runOf([{ kind: 'tab' }, { kind: 'text', text: '一二三四' }])]), M);
+    const line = breakLines(
+      items,
+      ctx(10, { tabs: [{ pos: SIZE_5 * 2, alignment: 'right', leader: 'none' }] }),
+    )[0];
+    expect(line?.ws[0]).toBe(0);
+    expect(line?.xs[1]).toBe(0);
+  });
+
   it('制表位按版心的绝对坐标算，不是按行首 —— 缩进过的行同样对得齐', () => {
     const items = tabbed();
     const line = breakLines(items, ctx(10, { lineLeft: () => 500 }))[0];
