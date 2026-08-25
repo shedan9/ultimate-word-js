@@ -10,6 +10,7 @@ import type {
   LineFragment,
   LineLayout,
   PageLayout,
+  PlacedRow,
   PlacedTable,
   RowLayout,
 } from '@uw/layout';
@@ -330,6 +331,41 @@ describe('表格', () => {
     };
     // 行高 480、可用高 1480-200=1280，居中要往下挪 (1280-480)/2 = 400 twips = 20pt
     expect(yOf(mid) - yOf(top)).toBeCloseTo(20, 3);
+  });
+
+  it('拆行的接缝上不画横线，竖边照旧两片各画各的', () => {
+    const c = cell({
+      borders: {
+        ...cell().borders,
+        top: [{ col: 0, span: 1, border: SINGLE }],
+        bottom: [{ col: 0, span: 1, border: SINGLE }],
+        left: SINGLE,
+      },
+    });
+    const row: RowLayout = { rowId: 'r1', cells: [c], height: 480 };
+    const slice = (over: Partial<PlacedRow>): RElement => {
+      const t: PlacedTable = {
+        kind: 'table',
+        id: 't1',
+        x: 0,
+        y: 0,
+        width: 4000,
+        columns: [4000],
+        rows: [{ index: 0, y: 0, height: 480, row, ...over }],
+        first: true,
+        last: true,
+      };
+      return buildPage(page([t]));
+    };
+    const horizontals = (svg: RElement): number =>
+      collect(svg, 'line').filter((l) => l.attrs.y1 === l.attrs.y2).length;
+
+    expect(horizontals(slice({}))).toBe(2); // 整行：上下两条都是真边界
+    expect(horizontals(slice({ splitAfter: true }))).toBe(1); // 底是切口
+    expect(horizontals(slice({ continued: true }))).toBe(1); // 顶是切口
+    expect(horizontals(slice({ continued: true, splitAfter: true }))).toBe(0);
+    // 竖边不受影响：哪一片都要画自己那一截
+    expect(collect(slice({ continued: true, splitAfter: true }), 'line')).toHaveLength(1);
   });
 
   it('vMerge=continue 的格子不画内容，但格线照旧参与', () => {

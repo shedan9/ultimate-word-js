@@ -25,11 +25,14 @@
  * 才知道，`currentPage()` 是唯一有资格算它的地方（首页 / 偶数页用的页眉长度可以不同，
  * 同一节里各页的版心因此可以不一样高）。实测见 `header-footer.ts` 的 `HEADER_RULES`。
  *
- * ## 两件**没做**的（写下来免得以为已经做了）
+ * ## 表格拆行
  *
- * - **表格拆行**：行是原子的（一行放不下就整行挪到下一页）。Word 默认会把一行**内部**
- *   拆开，`w:cantSplit` 才禁止 —— 所以现在的行为等价于「全表 cantSplit」。
- *   只有单行高过剩余版心时才看得出差别，公文表格基本不会，但它是个洞
+ * 一行放不下时会从**行间**切开（`table-split.ts`），本页留一片、下一页接一片；
+ * `w:cantSplit` 与表头行（`w:tblHeader`，它每页都要重复一遍）除外，那些仍然整行挪走。
+ * 切法与几处没有真值的判断写在 `table-split.ts` 的文件头。
+ *
+ * ## 一件**没做**的（写下来免得以为已经做了）
+ *
  * - **脚注 / 尾注 / 浮动对象**：完全不参与占位
  */
 import type { DiagnosticSink, Twips } from '@uw/core';
@@ -58,6 +61,7 @@ import { OBJECT_RULES } from './line-height.ts';
 import { layoutParagraph } from './paragraph.ts';
 import type { RowLayout, TableLayout } from './table.ts';
 import { layoutTable } from './table.ts';
+import { splitRow } from './table-split.ts';
 import type { LineFloat, LineLayout, LineObject, ParagraphLayout } from './types.ts';
 
 // ── 输出的数据形状 ────────────────────────────────────────────────────────────
@@ -104,6 +108,16 @@ export interface PlacedRow {
    * 命中测试与可选文本层必须跳过重复的那些，否则复制出来会多一遍表头。
    */
   repeated?: true;
+  /**
+   * 拆开的行（`table-split.ts`）：这一片前面还有 / 后面还有。同一个 `index` 因此
+   * 会在相邻两页各出现一次，且两片的 `row` 是**各自独立**的 `RowLayout`
+   * （各带自己那几行内容），不是同一份的两个窗口。
+   *
+   * 渲染层拿它决定接缝上画不画横线（`SPLIT_ROW_SEAM_BORDER`）；
+   * 命中测试与可选文本层不用管 —— 内容本来就分在两片里，不会重复。
+   */
+  continued?: true;
+  splitAfter?: true;
 }
 
 export interface PlacedTable {
@@ -677,7 +691,10 @@ function joinHeight(blocks: readonly Prepared[], i: number, rules: PaginationRul
   if (rules.keepNextJoin === 'whole-block') return blockHeight(next) + gapBetween(self, next);
 
   if (next.kind === 'table') {
-    // 表格按行分页，最少能放的就是第一行（`w:cantSplit` 与拆行都还没做，见文件头）
+    // 表格最少能放的按**第一行整行**算。拆行做完之后严格说还能更少（第一行里的第一行文字），
+    // 但那一步没有真值：keepNext 的接缝规则是拿 `spike-page-02` 的纯段落样本标定的，
+    // 表格那一格从来没测过。往少了算会让本页多收内容、整篇跟着错位；
+    // 往多了算最多是提前换一页 —— 没样本的时候选后者
     return next.layout.rows[0]?.height ?? 0;
   }
   const lines = next.layout.lines;
@@ -850,7 +867,9 @@ function emitLines(
  * 判断「这一页还能放几行」时先把重复表头的高度扣掉，否则续页会多收一行、溢出版心。
  */
 function placeTable(flow: Flow, b: Extract<Prepared, { kind: 'table' }>, join: Twips): void {
-  const rows = b.layout.rows;
+  // 拆行会把某一行**换成**它剩下的那一片，所以这里在一份可变的副本上做；
+  // `b.layout.rows` 是缓存的布局结果，动它等于污染下一趟排版
+  const rows = [...b.layout.rows];
   if (rows.length === 0) return;
 
   // 表头只认**开头连续**的那几行：中间某行写了 tblHeader 是无效的（Word 也这么处理）
@@ -863,24 +882,51 @@ function placeTable(flow: Flow, b: Extract<Prepared, { kind: 'table' }>, join: T
   currentPage(flow);
 
   let i = 0;
+  let carried = false; // rows[i] 是上一页切剩下的那一片
   while (i < rows.length) {
     const repeat = i >= headerCount && i > 0 ? headerCount : 0;
     const avail = availHeight(flow) - (repeat > 0 ? headerHeight : 0);
     let count = fitRows(rows, i, avail, join);
 
     if (count === 0) {
+      // 整行放不下：先试着把它**内部**切开（`w:cantSplit` 与表头行不许切）
+      const row = rows[i];
+      const split = row !== undefined && rowSplittable(b, i, headerCount) ? splitRow(row, avail) : undefined;
+      if (split !== undefined) {
+        // 先把头片摆上去再把尾片换进 `rows` —— `emitRows` 读的就是 `rows[i]`，
+        // 顺序反了本页画的就成了尾片，头片那几行凭空消失
+        rows[i] = split.head;
+        emitRows(flow, b, rows, i, 1, repeat, carried, true);
+        rows[i] = split.tail;
+        breakPage(flow);
+        carried = true;
+        continue;
+      }
       if (pageHasContent(flow)) {
         breakPage(flow);
         currentPage(flow);
         continue;
       }
-      count = 1; // 一行高过一整页：先硬塞，等表格拆行做了再谈
+      // 空页上都切不开（`cantSplit` 的行高过一整页）：硬塞，否则这个循环换页换不完
+      count = 1;
     }
 
-    emitRows(flow, b, i, count, repeat);
+    emitRows(flow, b, rows, i, count, repeat, carried, false);
     i += count;
+    carried = false;
     if (i < rows.length) breakPage(flow);
   }
+}
+
+/**
+ * 这一行许不许从内部切开。
+ *
+ * 表头行不许：它每页都要重复一遍，切开的表头在续页上重复出「半行」没有意义。
+ * `w:cantSplit` 是 Word 自己的开关（默认允许拆），级联已经在 model 那边做完了。
+ */
+function rowSplittable(b: Extract<Prepared, { kind: 'table' }>, i: number, headerCount: number): boolean {
+  if (i < headerCount) return false;
+  return b.rows[i]?.props.cantSplit !== true;
 }
 
 function fitRows(rows: readonly RowLayout[], from: number, avail: Twips, join: Twips): number {
@@ -900,14 +946,18 @@ function fitRows(rows: readonly RowLayout[], from: number, avail: Twips, join: T
 function emitRows(
   flow: Flow,
   b: Extract<Prepared, { kind: 'table' }>,
+  rows: readonly RowLayout[],
   from: number,
   count: number,
   repeat: number,
+  continued: boolean,
+  splitAfter: boolean,
 ): void {
   const page = currentPage(flow);
   const placed: PlacedRow[] = [];
   const top = flow.y;
 
+  // 重复表头取的是**原始**的那几行：表头不许拆，`rows` 里它们也没被换过
   for (let k = 0; k < repeat; k++) {
     const row = b.layout.rows[k];
     if (row === undefined) continue;
@@ -915,9 +965,17 @@ function emitRows(
     flow.y += row.height;
   }
   for (let k = from; k < from + count; k++) {
-    const row = b.layout.rows[k];
+    const row = rows[k];
     if (row === undefined) break;
-    placed.push({ index: k, y: flow.y, height: row.height, row });
+    placed.push({
+      index: k,
+      y: flow.y,
+      height: row.height,
+      row,
+      // 两个标记只属于这一批的**第一行 / 最后一行**：中间那些是整行，两头都是真边界
+      ...(continued && k === from ? { continued: true as const } : {}),
+      ...(splitAfter && k === from + count - 1 ? { splitAfter: true as const } : {}),
+    });
     flow.y += row.height;
   }
 
@@ -929,8 +987,8 @@ function emitRows(
     width: b.layout.width,
     columns: [...b.layout.columns],
     rows: placed,
-    first: from === 0,
-    last: from + count >= b.layout.rows.length,
+    first: from === 0 && !continued,
+    last: from + count >= rows.length && !splitAfter,
   });
 }
 
