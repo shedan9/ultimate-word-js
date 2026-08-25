@@ -15,6 +15,7 @@
     "spike:page": "node src/spike-page.ts",
     "spike:header": "node src/spike-header.ts",
     "preview": "node src/preview.ts",
+    "corpus": "node src/corpus-report.ts",
     "spike:image": "node src/spike-image.ts"
   },
   "dependencies": {
