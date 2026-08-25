@@ -17,6 +17,78 @@ export interface LineHeightContext {
   measurer: TextMeasurer;
   docGrid: DocGrid;
   defaultFont?: string;
+  /** 内嵌对象的行盒规则。**标定用的接缝**，正常调用不要传，见 `OBJECT_RULES` */
+  objectRules?: ObjectRules;
+}
+
+/**
+ * 内嵌对象（图片）在行盒里怎么摆。三条都是实测的，留成接缝只为了让
+ * `apps/fidelity` 的 `spike:image` 能把八种组合各跑一遍，证明实现的这一组是唯一能复现 Word 的。
+ */
+export interface ObjectRules {
+  /** 对象把行撑高之后，文字的下伸还留不留在基线以下 */
+  keepDescent: boolean;
+  /** `w:position` 对内嵌对象起不起作用 */
+  raise: 'apply' | 'ignore';
+  /** 对象在行盒里占的高度要不要按 1.5pt 量化（见 `objectBoxHeight`） */
+  boxQuantum: 'round' | 'none';
+}
+
+/**
+ * 内嵌对象行盒规则的实测值。样本 `spike-image-01`
+ * （`pnpm --filter @uw/fidelity spike:image`）：仿宋 12pt 单倍行距，图高排成三条阶梯 ——
+ * 粗的 4→60pt 十三档、细的 30→36pt 步长 0.5pt、微的 30.0→31.5pt 步长 0.1pt，
+ * 另有 22pt 字号的两档对照与 `w:position` ±6pt 的两行。**44 个样本，最大偏差 0.140pt**。
+ *
+ * ① **盒底坐在基线上**：对象不留西文 descender 的那一截（`OBJECT_RULES` 之外的判据是
+ *    ④ 的量化 —— 严格说坐在基线上的是**盒**，图在盒里靠上放）。
+ *
+ * ② **文字的下伸留着**（`keepDescent`）：图比文字高时，行高 = 盒高 + **文字自己的下伸**，
+ *    不是盒高本身。仿宋 12pt 的下伸是 3.52pt：40pt 的图那一行，行高实测 43.95pt。
+ *    22pt 字号的对照行给的是 6.41pt（= 22pt 仿宋的下伸），所以下伸跟着**字号**走，
+ *    不是一个常数。原来的实现让对象把整行吃掉（行高 = 图高），每有一张图就少 3.5pt，
+ *    这个错会一路累积到后面每一行的基线上。
+ *
+ * ③ **`w:position` 对图片起作用**（`raise`）：±6pt 的两行里，图整个跟着升降
+ *    （实测 +5.95 / −6.09pt），且行盒跟着变：压低 6pt 的那一行下伸变成 6pt（实测 6.04），
+ *    抬高 6pt 的那一行上伸变成 26pt（实测 26.0）。
+ *
+ * ④ **盒高按 1.5pt 四舍五入**（`boxQuantum`）：见下面的 `objectBoxHeight`。最早只取偶数 pt
+ *    的粗阶梯里，这条表现为「图高 ≡ 4 (mod 6) 的那几档凭空多抬半磅」，看着像噪声；
+ *    补一条 0.1pt 步长的微阶梯才看出是台阶（30.7pt → 30.77，30.8pt → 31.52，此后一路平到
+ *    31.5pt）。**没有它，一页里每有一张图就可能偏 0.75pt，且往下累积** ——
+ *    十三张图的阶梯样本上累计到了 1.5pt，早已越过 L3 判据。
+ */
+export const OBJECT_RULES: ObjectRules = {
+  keepDescent: true,
+  raise: 'apply',
+  boxQuantum: 'round',
+};
+
+/**
+ * 对象在行盒里占的高度的量化刻度：**1.5pt**（= 30 twips = 96dpi 下的 2 个像素 = 1/48 英寸）。
+ * 机理不明（Word 大概是在某个设备单位上取整），规律本身见 `objectBoxHeight`。
+ */
+const OBJECT_BOX_QUANTUM: Twips = 30;
+
+/**
+ * 对象在行盒里占的高度 = 图高**四舍五入**到 1.5pt 的整数倍，且**不小于图高本身**。
+ *
+ * 两半都是实测的：
+ * - 四舍五入而不是向上取整：30.0–30.7pt 的图占的就是它自己那么高（余数不到半格不进位），
+ *   30.8pt 起整个跳到 31.5pt 并一路平到 31.5pt —— 台阶边落在 30.75pt，正好是半格
+ * - `max`：舍去的那一半会让图沉到基线以下，实测没有发生（8 / 20 / 32 / 35pt 这几档
+ *   舍完的格子比图矮，量到的上伸仍是图高本身）
+ *
+ * 直接后果：图的**底边不总是严丝合缝坐在基线上**，盒底才是 —— 进位的那一档里图会浮在
+ * 基线以上最多 0.75pt。所以 `LineObject.raise` 带的是「盒底减图底」加上 `w:position`。
+ *
+ * ⚠️ 恰好落在半格上（余数正好 0.5，如 30.75pt）舍向哪边没有样本 ——
+ * 0.1pt 的阶梯跨过了 30.7 与 30.8，正好漏掉中间那一点。按 `Math.round` 的「.5 进位」处理。
+ */
+export function objectBoxHeight(height: Twips, rules: ObjectRules = OBJECT_RULES): Twips {
+  if (rules.boxQuantum === 'none') return height;
+  return Math.max(height, Math.round(height / OBJECT_BOX_QUANTUM) * OBJECT_BOX_QUANTUM);
 }
 
 export interface LineHeight {
@@ -49,18 +121,24 @@ export function lineHeight(
   props: ResolvedParaProps,
   ctx: LineHeightContext,
 ): LineHeight {
+  const rules = ctx.objectRules ?? OBJECT_RULES;
   const eastAsian = hasEastAsia(items, range);
   /** 定行盒的那些字体：东亚行里只有东亚桶，拉丁行里就是全部 */
   const box: LineMetrics[] = [];
   /** 不定行盒但也不能被切掉的那些（东亚行里的拉丁 run），只用来兜底 */
   const passenger: LineMetrics[] = [];
   const seen = new Set<string>();
-  let objectHeight = 0;
+  /** 对象要占的基线**以上** / **以下**各多少（`w:position` 已经算进去了） */
+  let objectAbove = 0;
+  let objectBelow = 0;
 
   for (let i = range.start; i < range.end; i++) {
     const item = items[i] as LayoutItem;
     if (item.kind === 'object') {
-      if (item.height > objectHeight) objectHeight = item.height;
+      const raise = rules.raise === 'apply' ? (item.raise ?? 0) : 0;
+      // 撑起行的是**盒**不是图：盒高按 1.5pt 四舍五入，图在盒里靠上放（见 `objectBoxHeight`）
+      objectAbove = Math.max(objectAbove, objectBoxHeight(item.height, rules) + raise);
+      objectBelow = Math.max(objectBelow, -raise);
       continue;
     }
     if (item.kind === 'break') continue;
@@ -79,12 +157,17 @@ export function lineHeight(
     box.push(markMetrics(props, ctx));
   }
 
-  // 内嵌对象坐在基线上，整个高度都算进基线以上 —— 所以它进「行至少这么高」与
-  // 「基线至少这么低」两处，但**不参与居中**：核心盒居中那条规则是给文字量的，
-  // 把图片也居中会让它凭空浮起来。
-  // ⚠️ 未标定：一份「一行里一张 20pt 高的图 + 五号字」的样本能钉死它，优先级低于文字。
+  // 内嵌对象坐在基线上（实测，见 `OBJECT_RULES`），所以它撑的是基线**以上**那一截；
+  // 文字自己的下伸照旧留在基线以下 —— 行高 = 图高 + 文字下伸，不是图高。
+  // 对象**不参与居中**：核心盒居中那条规则是给文字量的，把图片也居中会让它凭空浮起来。
   const floor = floorBox(passenger);
-  const natural = Math.max(naturalLineHeight(box), objectHeight, floor.height);
+  const textNatural = naturalLineHeight(box);
+  const textAbove = composeBaseline(box, textNatural);
+  const below = Math.max(rules.keepDescent ? textNatural - textAbove : 0, objectBelow);
+  // 基线在**自然行高**下的位置：对象撑出来的高度是硬的，不许被「多出来的空间上下均分」摊掉，
+  // 否则压低 6pt 的那一行会把基线又往下推半截（实测差 0.28pt）
+  const above = Math.max(textAbove, objectAbove, floor.above);
+  const natural = Math.max(textNatural, above + below, floor.height);
   const height = applyLineRule(applyGrid(natural, props, ctx.docGrid), props);
   return { height, baseline: baselineIn(height, props), natural };
 
@@ -97,7 +180,10 @@ export function lineHeight(
    */
   function baselineIn(h: Twips, p: ResolvedParaProps): Twips {
     if (p.spacing.lineRule === 'exact') return baselineOffsetExact(h);
-    return Math.min(h, Math.max(composeBaseline(box, h), objectHeight, floor.above));
+    // 行距倍数与网格吸附**多出来**的那部分才上下均分（基线穿刺的结论）。
+    // 纯文字行里 `above + (h − natural) / 2` 与原来的 `composeBaseline(box, h)` 恒等 ——
+    // `composeBaseline` 本身就是「核心盒在 h 里居中」，两种写法只在有对象时才分岔
+    return Math.min(h, above + (h - natural) / 2);
   }
 }
 

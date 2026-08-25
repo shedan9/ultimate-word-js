@@ -11,7 +11,8 @@ import type { DocGrid, DocumentSettings, NodeId, ResolvedParagraph, ResolvedPara
 import type { KinsokuSets } from './break-class.ts';
 import { isNumberingItem, kinsokuFrom } from './break-class.ts';
 import { buildItems } from './items.ts';
-import { lineHeight } from './line-height.ts';
+import type { ObjectRules } from './line-height.ts';
+import { lineHeight, OBJECT_RULES, objectBoxHeight } from './line-height.ts';
 import type { BrokenLine, LineBreakContext } from './linebreak.ts';
 import { breakLines } from './linebreak.ts';
 import type {
@@ -35,6 +36,8 @@ export interface LayoutParagraphOptions {
   defaultFont?: string;
   /** 域求值的结果（run id → 显示的文字），见 `BuildItemsOptions.fieldValues` */
   fieldValues?: ReadonlyMap<NodeId, string>;
+  /** 内嵌对象的行盒规则。**标定用的接缝**，正常调用不要传，见 `OBJECT_RULES` */
+  objectRules?: ObjectRules;
 }
 
 export function layoutParagraph(p: ResolvedParagraph, opts: LayoutParagraphOptions): ParagraphLayout {
@@ -72,6 +75,7 @@ export function layoutParagraph(p: ResolvedParagraph, opts: LayoutParagraphOptio
       measurer: opts.measurer,
       docGrid: opts.docGrid,
       ...(opts.defaultFont === undefined ? {} : { defaultFont: opts.defaultFont }),
+      ...(opts.objectRules === undefined ? {} : { objectRules: opts.objectRules }),
     }),
   );
 
@@ -156,6 +160,7 @@ interface AssembleContext {
   measurer: TextMeasurer;
   docGrid: DocGrid;
   defaultFont?: string;
+  objectRules?: ObjectRules;
 }
 
 function assemble(
@@ -168,6 +173,7 @@ function assemble(
     measurer: ctx.measurer,
     docGrid: ctx.docGrid,
     ...(ctx.defaultFont === undefined ? {} : { defaultFont: ctx.defaultFont }),
+    ...(ctx.objectRules === undefined ? {} : { objectRules: ctx.objectRules }),
   });
 
   const xs = line.xs.slice();
@@ -186,7 +192,7 @@ function assemble(
     leaders: leadersOf(line, xs, ctx.left + offset),
     isLast: ctx.isLast,
   };
-  const { objects, floats } = objectsOf(line, items, xs, ctx.left + offset);
+  const { objects, floats } = objectsOf(line, items, xs, ctx.left + offset, ctx.objectRules);
   if (objects.length > 0) out.objects = objects;
   if (floats.length > 0) out.floats = floats;
   if (line.breakAfter !== undefined) out.breakAfter = line.breakAfter;
@@ -327,6 +333,7 @@ function objectsOf(
   items: readonly LayoutItem[],
   xs: readonly Twips[],
   lineX: Twips,
+  rules: ObjectRules = OBJECT_RULES,
 ): { objects: LineObject[]; floats: LineFloat[] } {
   const objects: LineObject[] = [];
   const floats: LineFloat[] = [];
@@ -334,11 +341,16 @@ function objectsOf(
     const item = items[line.start + k];
     if (item === undefined || item.kind !== 'object') continue;
     const x = lineX + (xs[k] as Twips);
+    // 盒底坐在基线上、图在盒里靠上放，所以图底比基线高出「盒高 − 图高」那一截；
+    // `w:position` 再叠上去。渲染层只认这一个数（见 `LineObject.raise`）
+    const boxLift = item.float === undefined ? objectBoxHeight(item.height, rules) - item.height : 0;
+    const raise = boxLift + (rules.raise === 'apply' ? (item.raise ?? 0) : 0);
     const common = {
       runId: item.runId,
       contentIndex: item.contentIndex,
       x,
       objectKind: item.objectKind,
+      ...(raise === 0 ? {} : { raise }),
       ...(item.image === undefined ? {} : { image: item.image }),
       ...(item.alt === undefined ? {} : { alt: item.alt }),
       ...(item.graphic === undefined ? {} : { graphic: item.graphic }),
@@ -349,6 +361,9 @@ function objectsOf(
         width: item.float.width,
         height: item.float.height,
         anchor: item.float.anchor,
+        // `relativeFrom="character"` 参照的是锚点**前一个**字（实测，见 LineFloat.anchorX）。
+        // 行首就没有前一个字了 —— 那时退到行的左边缘，这一种没有样本
+        anchorX: lineX + (k > 0 ? (xs[k - 1] as Twips) : 0),
       });
     } else {
       objects.push({ ...common, width: item.width, height: item.height });

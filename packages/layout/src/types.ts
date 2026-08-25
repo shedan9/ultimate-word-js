@@ -139,6 +139,13 @@ export interface ObjectItem {
   height: Twips;
   gapBefore: Twips;
   objectKind: ObjectContent['objectKind'];
+  /**
+   * `w:position`（基线升降）—— 对象底边**高于基线**多少 twips，负数是压到基线以下。
+   *
+   * 实测它对图片照样起作用（`spike-image-01` 的末两行：`w:position` ±6pt 让图整个跟着升降，
+   * 且行盒跟着长高 / 长出下伸），所以它不是「只有文字才有」的属性。缺省 0 = 底边坐在基线上。
+   */
+  raise?: Twips;
   image?: ImageRef;
   alt?: string;
   graphic?: string;
@@ -164,6 +171,15 @@ export interface LineObject {
   x: Twips;
   width: Twips;
   height: Twips;
+  /**
+   * 对象**底边高于基线**多少 twips。渲染时 y = 基线 − 高 − raise。
+   *
+   * 两样东西加在一起：`w:position`（基线升降），以及「盒高 − 图高」——
+   * 坐在基线上的是**盒**，盒高按 1.5pt 四舍五入，图在盒里靠上放（实测，见
+   * `line-height.ts` 的 `objectBoxHeight`）。渲染层只该拿到最终那一个数：
+   * 它没有行盒，也不该知道量化这回事。
+   */
+  raise?: Twips;
   objectKind: ObjectContent['objectKind'];
   image?: ImageRef;
   alt?: string;
@@ -179,6 +195,14 @@ export interface LineObject {
  */
 export interface LineFloat extends LineObject {
   anchor: DrawingAnchor;
+  /**
+   * `relativeFrom="character"` 参照的那个字的左边缘（相对版心左边，与 `x` 同一套坐标）。
+   *
+   * 实测参照的是锚点**前一个**字而不是锚点自己（`spike-image-02` 的三级阶梯：锚在第
+   * 1 / 5 / 9 个字之后，x 分别落在第 0 / 4 / 8 个字的左边缘上）。所以它必须在**行内**算 ——
+   * 到了分页那一层只剩下对象自己的 x，前一个字是谁已经看不见了。
+   */
+  anchorX?: Twips;
 }
 
 export type LayoutItem = CharItem | TabItem | BreakItem | ObjectItem;

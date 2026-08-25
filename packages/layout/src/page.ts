@@ -53,6 +53,8 @@ import {
   pickHeaderFooter,
   stackBlocks,
 } from './header-footer.ts';
+import type { ObjectRules } from './line-height.ts';
+import { OBJECT_RULES } from './line-height.ts';
 import { layoutParagraph } from './paragraph.ts';
 import type { RowLayout, TableLayout } from './table.ts';
 import { layoutTable } from './table.ts';
@@ -228,6 +230,11 @@ export interface LayoutDocumentOptions {
    * `apps/fidelity` 的 `spike:header` 靠它把 8 组假设各跑一遍，见 `HEADER_RULES`
    */
   headerRules?: Partial<HeaderRules>;
+  /**
+   * 内嵌对象的行盒规则。同样是**标定用的接缝**，正常调用不要传 ——
+   * `apps/fidelity` 的 `spike:image` 靠它把 4 组假设各跑一遍，见 `OBJECT_RULES`
+   */
+  objectRules?: Partial<ObjectRules>;
 }
 
 export interface PaginationRules {
@@ -630,6 +637,7 @@ function prepare(b: ResolvedBlock, section: SectionProps, opts: LayoutDocumentOp
     docGrid: section.docGrid,
     ...(opts.defaultFont === undefined ? {} : { defaultFont: opts.defaultFont }),
     ...(opts.fieldValues === undefined ? {} : { fieldValues: opts.fieldValues }),
+    ...(opts.objectRules === undefined ? {} : { objectRules: { ...OBJECT_RULES, ...opts.objectRules } }),
   };
   const width = pageGeometry(section, opts).content.width;
   if (b.kind === 'paragraph') {
@@ -939,8 +947,34 @@ function emitRows(
  * 而公文里浮动对象几乎都锚在正文段落上。漏掉的那些不会消失得无声无息 ——
  * 它们仍然在 `LineLayout.floats` 里，将来接上就是多走一层遍历。
  *
- * ⚠️ 六种参照物的对应关系没有 Word 真值，见 `uncalibrated.ts` 的
- * `FLOAT_RELATIVE_FROM_CALIBRATED`。
+ * 参照物的对应关系已经实测，见 `FLOAT_ORIGIN_RULES`。
+ */
+/**
+ * 浮动对象的参照框（`wp:positionH/V @relativeFrom`）各是哪个框 —— **全部实测**。
+ *
+ * 样本 `spike-image-02`（`pnpm --filter @uw/fidelity spike:image`）：同一张图复制十三份，
+ * 八种横向 × 八种纵向配对着取，**偏移一律写 0**，于是量到的 x / y 就是那个框的起点本身，
+ * 不用反推。页边距四边故意各不相同（上 25 / 下 20 / 左 30 / 右 20mm）—— 四边一样的话
+ * 「版心」「上页边距框」「纸」三个答案会撞在一起，样本就分不开了。十三张图的高各不相同
+ * （11…23pt），因为 PDF 只按绘制顺序给图，靠尺寸认人才不依赖那个顺序。
+ *
+ * ① `page` → 纸的左上角（实测 0, 0）
+ * ② `margin` / `column` → 版心左上角（实测 85.05, 70.85；版心算出来是 85.04, 70.87）。
+ *    单栏文档里分栏框就是版心，这一份分不开这两个 —— 也不需要分开
+ * ③ `leftMargin` → x = 0、`topMargin` → y = 0：**左 / 上页边距框是从纸边起算的**
+ * ④ `rightMargin` → x = 版心右边（538.60）、`bottomMargin` → y = 版心底（785.20）：
+ *    右 / 下页边距框从版心的边起算，与 ③ 对称
+ * ⑤ `insideMargin` / `outsideMargin` 按**显示页码**的奇偶镜像。横向镜像左右页边距
+ *    （奇数页 inside = 左、偶数页 inside = 右），**纵向镜像的是上下页边距**：
+ *    奇数页 inside = 上（y=0）、偶数页 inside = 下（y=785.20）。
+ *    原来纵向退到「版心」，差着整整一个上页边距（这份样本里 70.87pt）
+ * ⑥ `character` → 锚点**前一个**字的左边缘。三级阶梯（锚在第 1 / 5 / 9 个字之后）
+ *    量到的 x 分别落在第 0 / 4 / 8 个字上，所以不是「锚点那个字」。
+ *    ⚠️ 锚在段首（前面一个字都没有）没有样本，那时退到行的左边缘
+ * ⑦ `line` → 行顶、`paragraph` → 段顶（各差 0.11 与 0.22pt，是 Word 自己的行位置抖动）
+ *
+ * 没有样本的只剩「同一根轴上 align（left/center/right）与 offset 并存时谁赢」——
+ * 规范里那是个 choice，Word 也只写一个，所以造不出样本。
  */
 function placeFloats(page: PageLayout): void {
   const out: PlacedFloat[] = [];
@@ -1036,8 +1070,9 @@ function hBox(f: LineFloat, page: PageLayout, ctx: FloatContext): AxisBox {
     case 'outsideMargin':
       return odd ? rightMargin : leftMargin;
     case 'character':
-      // 锚点所在的那个字。宽度为 0，所以 align 的居中 / 右对齐在这里退化成同一个点
-      return { start: ctx.originX + f.x, size: 0 };
+      // 参照的是锚点**前一个**字的左边缘（实测，见 `FLOAT_ORIGIN_RULES` ⑥ 与 `LineFloat.anchorX`）。
+      // 宽度为 0，所以 align 的居中 / 右对齐在这里退化成同一个点
+      return { start: ctx.originX + (f.anchorX ?? f.x), size: 0 };
     default:
       // margin / column / 认不出的：单栏文档里分栏框就是版心
       return { start: content.x, size: content.width };
@@ -1047,19 +1082,31 @@ function hBox(f: LineFloat, page: PageLayout, ctx: FloatContext): AxisBox {
 function vBox(f: LineFloat, page: PageLayout, ctx: FloatContext): AxisBox {
   const g = page.geometry;
   const content = g.content;
+  const topMargin: AxisBox = { start: 0, size: content.y };
+  const bottomMargin: AxisBox = {
+    start: content.y + content.height,
+    size: g.height - content.y - content.height,
+  };
+  const odd = page.number % 2 === 1;
   switch (f.anchor.v.relativeFrom) {
     case 'page':
       return { start: 0, size: g.height };
     case 'topMargin':
-      return { start: 0, size: content.y };
+      return topMargin;
     case 'bottomMargin':
-      return { start: content.y + content.height, size: g.height - content.y - content.height };
+      return bottomMargin;
+    // 纵向的 inside / outside 镜像的是**上下**页边距，不是版心（实测，见 `FLOAT_ORIGIN_RULES` ⑤）。
+    // 原来退到版心，差着整整一个上页边距（样本里 70.87pt）
+    case 'insideMargin':
+      return odd ? topMargin : bottomMargin;
+    case 'outsideMargin':
+      return odd ? bottomMargin : topMargin;
     case 'paragraph':
       return { start: ctx.paraTop, size: 0 };
     case 'line':
       return { start: ctx.lineTop, size: ctx.lineHeight };
     default:
-      // margin / insideMargin / outsideMargin：纵向上镜像页边距与普通页边距同一个框
+      // margin / 认不出的
       return { start: content.y, size: content.height };
   }
 }

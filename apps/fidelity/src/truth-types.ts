@@ -69,6 +69,29 @@ export interface TruthItem {
   text: string;
 }
 
+/**
+ * 一张画在页面上的图片 —— PDF 里一次 image XObject 绘制，坐标是**外接矩形**。
+ *
+ * 与文字片段分开收：图片不经过 `getTextContent()`（那一路只吐 show-text 的产物），
+ * 只能从算子表里连着 CTM 一起读出来。旋转过的图取外接矩形，正是 `wp:extent` 的语义
+ * ——「用户拖出来的那个框」，所以两边可以直接比。
+ */
+export interface TruthImage {
+  /** 外接矩形左上角 x（pt，页面左上角原点） */
+  x: number;
+  /** 外接矩形**顶边** y（pt，从页顶向下） */
+  y: number;
+  w: number;
+  h: number;
+  /**
+   * 底边 y（= y + h）。冗余，但「图的底边坐在基线上没有」是图片这一类真值的头号问题，
+   * 让它与 `TruthLine.y`（基线）能直接相减，比每次自己加一遍少一处出错的机会。
+   */
+  yBottom: number;
+  /** pdf.js 的 XObject 名（`img_p0_1`）；同一张图重复引用时相同，用来认「这是第几张」 */
+  name: string;
+}
+
 /** 按基线聚合出的一行 —— L1/L2 级断言（每页首末行、每行断行点）直接用这个 */
 export interface TruthLine {
   /** 该行基线 y（pt） */
@@ -93,6 +116,11 @@ export interface TruthPage {
   rotate: number;
   items: TruthItem[];
   lines: TruthLine[];
+  /**
+   * 本页画到的图片，按绘制顺序。**没有图片时整个字段不出现** —— 这样已入库的十几份
+   * 纯文字真值重抽一遍仍然逐字节相同，加这个字段不会污染它们的 diff。
+   */
+  images?: TruthImage[];
 }
 
 export interface WordTruth {

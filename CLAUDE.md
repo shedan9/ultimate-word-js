@@ -15,7 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Phase 5 的**列表编号**已经从 `numbering.xml` 一路通到首行几何，
 同阶段的**域**结构还原（界桩配对 + 指令解析 + HYPERLINK）与**求值**（PAGE / NUMPAGES /
 SECTIONPAGES 迭代到自洽）都做完了，TOC / SEQ 的求值还没写。
-**图片**也通了（解析 → 收字节 → 占位 → 画，四层各一段，见下）。Phase 4 的**表格**：属性 + 级联（含 `w:tblStylePr` 条件格式）在 model 层，
+**图片**也通了（解析 → 收字节 → 占位 → 画，四层各一段，见下），**几何也用真值标定完了**。Phase 4 的**表格**：属性 + 级联（含 `w:tblStylePr` 条件格式）在 model 层，
 列宽 + 每格的 x 与可用宽 + 格内段落 + **边框冲突解析**在 layout 层，跨页按**行**拆
 （行是原子的 = 全表 cantSplit，拆行还没做）。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、
@@ -104,7 +104,7 @@ keepNext 的接缝要留出下一块**「最少能放多少」**（不是它的�
 按类型全捞会把几 MB 的废弃扫描件读进内存），摊平成 `LoadedDocument.images`，
 key = **部件前缀 + 关系 id**；前缀省不得：页眉里的 `rId1` 与正文里的 `rId1` 是两张图。
 外链图（`r:link`）只给 URL，**不发网络请求**。
-③ `@uw/layout` —— 内嵌图占宽占高（底边坐在基线上）；**`wrap="none"` 的浮动图在文字流里占 0 宽**，
+③ `@uw/layout` —— 内嵌图占宽占高，行盒三条规则已实测（见下段）；**`wrap="none"` 的浮动图在文字流里占 0 宽**，
 一个字都不许被它挤走，位置等整页排完再按 `wp:anchor` 的参照物换算成纸坐标
 （`page.ts` 的 `placeFloats`，产出 `PageLayout.floats`）。其余环绕方式**退化成内嵌**。
 ④ `@uw/render-dom` —— `<image>` + 裁剪的 `clipPath` + 旋转翻转的 `transform`，
@@ -112,10 +112,26 @@ key = **部件前缀 + 关系 id**；前缀省不得：页眉里的 `rId1` 与�
 **渲染层不认识 OPC 包**。三处容易画错：`preserveAspectRatio="none"`（外框可以与图片不同比例）、
 裁剪要「放大后再切」、旋转 90° 要把长宽比缩回去（extent 是转完的外接矩形）。
 EMF / WMF 与图表画**尺寸正确的**虚线占位框、`alt` 进 `<title>` —— 框对了，周围的文字就不会错位。
-**两条几何假设没有真值**（`OBJECT_SITS_ON_BASELINE` / `FLOAT_RELATIVE_FROM_CALIBRATED`，
-在 layout 的 `uncalibrated.ts`）；结构性的那些由一份合成 docx 端到端兜着
-（`render-dom/src/image-docx.test.ts`，含正文与页眉 `rId1` 撞车的用例）。
-未做：方形 / 上下型环绕（真的绕排）、表格单元格里的浮动对象。
+结构性的那些由一份合成 docx 端到端兜着（`render-dom/src/image-docx.test.ts`，
+含正文与页眉 `rId1` 撞车的用例）。未做：方形 / 上下型环绕（真的绕排）、表格单元格里的浮动对象。
+
+**图片的几何也标定完了**（样本 `spike-image-01/02`，跑 `pnpm --filter @uw/fidelity spike:image`，
+44 张图最大偏差 0.140pt）。为它给真值管线加了一路新数据：`truth.json` 的 `pages[].images[]`，
+从 PDF **算子表**里连着 CTM 演出来的图片落点 —— 图片在 PDF 里没有自己的坐标，
+位置与大小全在矩阵里，`getTextContent()` 那一路根本看不见它。四条结论：
+① **坐在基线上的是「盒」不是图**：盒高 = 图高**四舍五入到 1.5pt**（`objectBoxHeight`），
+图在盒里靠上放，于是图底最多浮在基线以上 0.75pt。这条是被 0.1pt 步长的微阶梯逼出来的 ——
+粗阶梯（只取偶数 pt）里它伪装成「h ≡ 4 (mod 6) 的那几档凭空多抬半磅」的噪声；
+② **文字自己的下伸留着**：行高 = 盒高 + 文字下伸（仿宋 12pt 是 3.52pt、22pt 是 6.41pt，
+跟着字号走）。**原来的实现让图把整行吃掉，每有一张图就少 3.5pt 并一路累积**，
+这是这次标定照出来的最大的一个错；③ **`w:position` 对图片照样起作用**，行盒跟着变；
+④ 浮动图的八种参照框（`page.ts` 的 `FLOAT_ORIGIN_RULES`）：两条与照规范猜的不一样 ——
+**纵向的 inside/outside 镜像的是上下页边距**（不是版心，差着一整个上边距）、
+**`character` 参照的是锚点前一个字**的左边缘。三条合起来落到数据上只剩一个数：
+`LineObject.raise` = 对象底边高于基线多少，渲染层拿它一个就够，不必知道量化这回事。
+两份样本进了 CI（`layout/src/image-fixture.test.ts`），那里**行比的是逐行增量而不是绝对 y** ——
+Word 自己的行位置带着 ±0.12pt 抖动，44 行图叠起来累到 1.5pt。
+剩一问没答：**图片参不参与行网格吸附**（两份样本都关着网格，而公文都开着）。
 
 一份 docx 的入口是 `loadDocument(pkg, sink)`（`packages/model/src/load.ts`），产出
 `body`（直接格式，可编辑）、`resolved`（级联完的纯数据，给布局）、`cascade`（上下文，**不可**过 Worker 边界）、
@@ -302,6 +318,7 @@ pnpm --filter @uw/fidelity spike:punct     # 标点挤压穿刺（什么时候�
 pnpm --filter @uw/fidelity spike:compress  # 临时挤压穿刺（塞不下时肯挤多少才换行）
 pnpm --filter @uw/fidelity spike:page      # 分页穿刺（孤行寡行 / keepNext / 页首段前间距，**不需要 Word**）
 pnpm --filter @uw/fidelity spike:header    # 页眉页脚穿刺（框摆在哪 / 怎么挤版心，**不需要 Word**）
+pnpm --filter @uw/fidelity spike:image     # 图片穿刺（内嵌图的行盒 / 浮动图的参照框，**不需要 Word**）
 pnpm --filter @uw/fidelity preview -- --truth  # fixture 画成 out/*.html 并叠真值基线（不需要 Word）
 pnpm --filter @uw/fonts run packs          # 重抽度量包（仅 Windows，产物入库）
 pnpm --filter @uw/fonts run packs:check    # 只校验入库的包与本机字体是否一致
@@ -378,6 +395,15 @@ Times 的 winAscent 更大，若参与就该赢，实测却仍是等线单独的
 孤行寡行保底 **2 行**、段前间距落在页首**不算**、keepNext 的接缝留出下一块**「最少能放多少」**。
 判据不是残差而是「哪一组能逐页复现 Word」：3 × 2 × 3 种组合排开跑，实现的这组唯一满分。
 
+**已定死（图片穿刺，两份样本 44 张图最大偏差 0.140pt）** —— 实现在
+[`packages/layout/src/line-height.ts`](packages/layout/src/line-height.ts) 的 `OBJECT_RULES`
+与 [`packages/layout/src/page.ts`](packages/layout/src/page.ts) 的 `FLOAT_ORIGIN_RULES`：
+内嵌图占的高度 = 图高**四舍五入到 1.5pt**（坐在基线上的是这个盒，图在盒里靠上放）、
+文字的下伸留着（行高 = 盒高 + 文字下伸）、`w:position` 对图片起作用；
+浮动图纵向的 inside/outside 镜像**上下页边距**、`character` 参照锚点**前一个**字。
+判据同样是排组合（8 种）逐行逐图比，唯一满分。**「图的底边坐在基线上」这句原话是错的** ——
+它在偶数 pt 的粗阶梯上看着成立（偏差被伪装成噪声），0.1pt 步长的微阶梯才照出那是个台阶。
+
 **已定死（页眉页脚穿刺，三份样本 12 页全对）** —— 实现在
 [`packages/layout/src/header-footer.ts`](packages/layout/src/header-footer.ts) 的 `HEADER_RULES`：
 页眉框顶 = `w:header`、页脚量的是框**底**、**页边距是最小值**（页眉页脚长过它就把版心顶开）。
@@ -404,11 +430,10 @@ Times 的 winAscent 更大，若参与就该赢，实测却仍是等线单独的
 一份三节的 docx，页码跑到 11 与 105，看 Word 显示「十一 / 拾壹 / 一〇五」里的哪一种。
 中文数字比阿拉伯数字宽，猜错了页码那一行的断行点也会跟着错。
 
-六是图片的两条几何：内嵌图的底边是不是严丝合缝坐在基线上（`OBJECT_SITS_ON_BASELINE`）、
-浮动对象六种 `relativeFrom` 各对应哪个框（`FLOAT_RELATIVE_FROM_CALIBRATED`）。
-两份样本能钉死：「五号字 + 20pt 高的内嵌图 + 五号字」量图底边与基线的差（再套个 `w:position`
-量一遍），以及「同一张 10pt 的图复制六份、`relativeFrom` 各取一种、偏移都写 0」看 x 落在哪。
-前者影响行高与断行，后者只影响图自己的位置。
+六是**图片参不参与行网格吸附**：图片的其余几何已经标定完（见上面的「图片的几何也标定完了」），
+但那两份样本都是关着网格量的，而公文都开着网格。一份「开行网格 + 一张比网格高的内嵌图」
+就能钉死它。原先排在这一格的两条（`OBJECT_SITS_ON_BASELINE` / `FLOAT_RELATIVE_FROM_CALIBRATED`）
+已经作废 —— 前者的说法本身就是错的，坐在基线上的是盒不是图。
 
 七是页眉页脚的**选择**规则四问（几何三条已实测，选择这四条只有规范做依据）：奇偶看的是显示页码
 还是物理页序、`w:titlePg` 开着却没定义 first 时首页是不是空的、本节没写某一类时沿不沿用上一节、

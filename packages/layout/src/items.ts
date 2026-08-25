@@ -201,6 +201,9 @@ function appendRun(out: LayoutItem[], run: ResolvedRun, opts: BuildItemsOptions,
           gapBefore: 0,
           objectKind: c.objectKind,
         };
+        // `w:position` 对图片照样起作用（实测，见 ObjectItem.raise）。浮动对象不看它 ——
+        // 它的位置由 wp:anchor 定，升降在那条路上没有意义
+        if (!floating && props.position !== 0) item.raise = props.position;
         if (c.image !== undefined) item.image = c.image;
         if (c.alt !== undefined) item.alt = c.alt;
         if (c.graphic !== undefined) item.graphic = c.graphic;

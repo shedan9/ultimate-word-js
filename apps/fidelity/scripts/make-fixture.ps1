@@ -28,6 +28,13 @@ $wdHeaderFooterPrimary   = 1
 $wdHeaderFooterFirstPage = 2
 $wdHeaderFooterEvenPages = 3
 $align = @{ left = 0; center = 1; right = 2; justify = 3; distribute = 4 }
+$wdWrapNone          = 3
+$msoFalse            = 0
+$msoSendBehindText   = 5
+# wdRelativeHorizontalPosition / wdRelativeVerticalPosition。两张表的键**不一样**
+# （横向有 column / character，纵向有 paragraph / line），照抄一份会静默取到错的框。
+$relH = @{ margin = 0; page = 1; column = 2; character = 3; leftMargin = 4; rightMargin = 5; insideMargin = 6; outsideMargin = 7 }
+$relV = @{ margin = 0; page = 1; paragraph = 2; line = 3; topMargin = 4; bottomMargin = 5; insideMargin = 6; outsideMargin = 7 }
 
 # ConvertFrom-Json gives PSCustomObject, where a missing property silently reads
 # as $null -- indistinguishable from an explicit 0 / $false. Specs stay terse by
@@ -101,6 +108,50 @@ function Set-StoryContent($word, $hf, $paras) {
   }
 }
 
+# Insert pictures into one paragraph.
+#
+# `afterChars` means "after the Nth character of the paragraph text", and the pictures are
+# inserted BACK TO FRONT: each insertion adds one character, so doing the earlier offsets
+# first would silently shift every later one.
+#
+# Width and height are always written explicitly with LockAspectRatio off first -- the
+# pixel size of the file and `wp:extent` are two different things, and with the ratio
+# locked Word adjusts the other dimension behind your back, so the sample would no longer
+# measure the number the spec asked for.
+#
+# A `float` block converts it to a floating shape (wdWrapNone = the "in front of / behind
+# text" family). **RelativeHorizontalPosition has to be set before Left**: Left is measured
+# against whatever frame is currently selected, so the other order makes Word reinterpret
+# an already-written coordinate against a new frame and every measured position is wrong.
+function Add-ParaImages($doc, $para, $p, $specDir) {
+  if (-not (Test-Prop $p 'images')) { return }
+  $imgs = @($p.images) | Sort-Object -Property @{ Expression = { [int]$_.afterChars } } -Descending
+  foreach ($img in $imgs) {
+    $file = [System.IO.Path]::GetFullPath((Join-Path $specDir ([string]$img.file)))
+    $start = $para.Range.Start + [int]$img.afterChars
+    $at = $doc.Range($start, $start)
+    $shape = $doc.InlineShapes.AddPicture($file, $false, $true, $at)
+    $shape.LockAspectRatio = $msoFalse
+    $shape.Width  = [double]$img.widthPt
+    $shape.Height = [double]$img.heightPt
+    if (Test-Prop $img 'positionPt') { $shape.Range.Font.Position = [double]$img.positionPt }
+    if (Test-Prop $img 'float') {
+      $f = $img.float
+      $sh = $shape.ConvertToShape()
+      $sh.WrapFormat.Type = $wdWrapNone
+      $sh.WrapFormat.AllowOverlap = $true
+      $sh.LockAspectRatio = $msoFalse
+      $sh.RelativeHorizontalPosition = $relH[[string]$f.relativeH]
+      $sh.RelativeVerticalPosition   = $relV[[string]$f.relativeV]
+      $sh.Left = [double]$f.leftPt
+      $sh.Top  = [double]$f.topPt
+      $sh.Width  = [double]$img.widthPt
+      $sh.Height = [double]$img.heightPt
+      if ((Test-Prop $f 'behindDoc') -and [bool]$f.behindDoc) { $sh.ZOrder($msoSendBehindText) }
+    }
+  }
+}
+
 $Spec = (Resolve-Path -LiteralPath $Spec).ProviderPath
 $outDir = Split-Path -Parent $Output
 if ($outDir -and -not (Test-Path -LiteralPath $outDir)) {
@@ -108,6 +159,7 @@ if ($outDir -and -not (Test-Path -LiteralPath $outDir)) {
 }
 $Output = [System.IO.Path]::GetFullPath($Output)
 
+$specDir = Split-Path -Parent $Spec
 $json = [System.IO.File]::ReadAllText($Spec, [System.Text.Encoding]::UTF8)
 $s = $json | ConvertFrom-Json
 
@@ -185,6 +237,11 @@ try {
     # filler must not drift apart, or a fixture's header would silently get a different
     # line spacing rule from its body and the geometry it measures would mean nothing.
     Set-ParaFormat $word $para $p
+
+    # Pictures go in after the formatting: the paragraph's font size defines the line box and
+    # a picture merely drops a taller box into it. The other order would let Set-ParaFormat
+    # spread the run properties over the picture's own character as well.
+    Add-ParaImages $doc $para $p $specDir
   }
 
   # --- headers / footers ----------------------------------------------------

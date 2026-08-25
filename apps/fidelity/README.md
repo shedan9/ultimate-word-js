@@ -28,12 +28,13 @@ pnpm spike:punct           # 标点挤压穿刺：什么时候压、压多少
 pnpm spike:compress        # 临时挤压穿刺：塞不下时肯挤多少才换行
 pnpm spike:page            # 分页穿刺：孤行寡行 / keepNext / 页首段前间距
 pnpm spike:header          # 页眉页脚穿刺：框摆在哪、怎么反过来挤版心
+pnpm spike:image           # 图片穿刺：内嵌图在行盒里怎么摆、浮动图的参照框是哪个
 
 pnpm preview                     # 全部 fixture → out/*.html，用眼睛看引擎画成什么样
 pnpm preview gongwen-01 -- --truth --debug   # 叠真值基线（红虚线）+ 画版心与行盒
 ```
 
-这六个 spike 脚本是**标定工具**，不是单测：它们从真值反推系数、打出残差表，
+这七个 spike 脚本是**标定工具**，不是单测：它们从真值反推系数、打出残差表，
 并在「最优假设不是代码里实现的那个」时以退出码 1 失败。跨平台的回归由单测兜着 ——
 `@uw/fonts` 的 `metrics.test.ts` / `metrics-pack.test.ts` 与 `@uw/layout` 的
 `items.test.ts` 里的期望值，就是这些脚本打出来的实测值。
@@ -48,12 +49,13 @@ pnpm preview gongwen-01 -- --truth --debug   # 叠真值基线（红虚线）+ �
 | `spike:compress` | `spike-compress-01/02` | 临时挤压只在两端对齐的行里发生；一个标点最多让 0.48 em；挤到什么程度就宁可换行（`挤压量 × 字距数 ≤ 30.6 × 标点数 × 拉伸量`） |
 | `spike:page` | `spike-page-01/02` | 孤行寡行保底 2 行；段前间距落在页首不算；keepNext 的接缝要留出下一块「最少能放多少」 |
 | `spike:header` | `spike-header-01/02/03` | 页眉框顶 = `w:header`；页脚量的是框**底**；页边距是最小值（页眉页脚长过它就把版心顶开） |
+| `spike:image` | `spike-image-01/02` | 内嵌图占的高度 = 图高四舍五入到 1.5pt（坐在基线上的是这个**盒**，图在盒里靠上放）；文字的下伸留着；`w:position` 对图片起作用；浮动图八种参照框各是哪个（纵向的 inside/outside 镜像的是**上下页边距**、`character` 参照的是锚点**前一个**字） |
 
 `spike:baseline` 现在跑**四份** fixture：04 补的是前三份漏掉的那一格 —— **固定值行距**
 （`w:lineRule="exact"`）下基线 = 行高 × 0.8，与字体、字号都无关。它是被 `spike-page-01`
 逼出来的：那份样本用固定行距 20pt，整页文字比「核心盒居中」的预测低 1.77pt。
 
-`spike:page` 与 `spike:header` 跟其余四个不同，它们**不反推系数**，而是把整台引擎跑一遍再与真值逐页对：
+`spike:page` / `spike:header` / `spike:image` 跟其余四个不同，它们**不反推系数**，而是把整台引擎跑一遍再与真值逐页对：
 分页规则不是一个数，是三条互相纠缠的判断，单独反推任何一条都会被另一条污染。
 做法是把 3 × 2 × 3 种组合排开，看哪一组能逐页复现 Word（当前：唯一满分 50/50 页）。
 它们也是**不需要 Windows** 的 spike —— docx 与 truth.json 都入库了。
@@ -63,6 +65,17 @@ pnpm preview gongwen-01 -- --truth --debug   # 叠真值基线（红虚线）+ �
 **真的** `{ PAGE }` 域。8 种组合（页脚量顶 / 量底 × 挤版心的四种）逐页跑，唯一满分 12/12 页。
 比对时页眉、正文、页脚的行是**混在一起按 y 排**再比的 —— 真值来自 PDF，
 而 PDF 里没有「这是页眉」这回事。
+
+`spike:image` 是唯一要用到真值里 `images[]` 那一路的脚本，另有两处与别的 spike 不同：
+
+- **行比的是逐行增量，不是累加的绝对 y**。Word 自己的行位置带着 ±0.12pt 抖动
+  （01 里纯文字参照行的行距在 15.48–15.62pt 之间跳），44 行图叠起来累到 1.5pt，
+  早已越过 L3 —— 那是 Word 内部取整的锅，不是行盒规则的锅，而规则决定的恰好是增量
+- **内嵌图比的是它相对本行基线的抬升**，浮动图才比纸坐标，理由同上
+
+01 的图高排成三条阶梯：粗的 4→60pt 十三档、细的 30→36pt 步长 0.5pt、微的 30.0→31.5pt
+步长 0.1pt。三条不是冗余 —— 粗阶梯只取偶数 pt 时，1.5pt 量化那条规则表现为
+「h ≡ 4 (mod 6) 的那几档凭空多抬半磅」，看着像噪声，微阶梯才看得出是台阶。
 
 ## preview：用眼睛验收
 
@@ -96,6 +109,14 @@ pnpm preview gongwen-01 -- --truth --debug   # 叠真值基线（红虚线）+ �
 （`{ linesPage }` = 只吸基线的行网格；再给 `charsLine` 就升级成连汉字也吸到列上的字符网格）。
 **没写 `grid` 就显式关掉网格** —— 中文版 Word 的 Normal 模板默认是开着的。
 
+段落还可以带 `images`：`{ file, widthPt, heightPt, afterChars, positionPt?, float? }`。
+`file` 相对 spec 所在目录（标定用的 8×8 纯黑 PNG 由 `scripts/make-png.ts` 生成 ——
+图片是二进制，扔进仓库就没人说得清它有几个像素，而「像素数与显示尺寸无关」正是要证明的事）；
+`afterChars` 是「插在第几个字之后」；`float` 给 `{ relativeH, relativeV, leftPt, topPt, behindDoc? }`
+就转成 `wrap="none"` 的浮动图。**同一段里的多张图是倒序插的**（每插一张就多一个字符，
+正序会把后面的偏移顶歪），`RelativeHorizontalPosition` **必须在 `Left` 之前设**
+（`Left` 是相对当前参照框量的，顺序反了 Word 会按新框重新解释已经写好的坐标）。
+
 段落：`text`（可以是空串，用来量空段落的行高）、`fontEA` / `fontLatin` / `sizePt` / `bold` /
 `align` / `firstLineChars` / `leftIndentPt` / `rightIndentPt` / `spaceBeforePt` / `spaceAfterPt`，行距二选一
 （`lineSpacingPt` = 固定值，`lineSpacingMultiple` = 倍数），以及
@@ -115,6 +136,10 @@ pnpm preview gongwen-01 -- --truth --debug   # 叠真值基线（红虚线）+ �
 - `pages[].items[]`：一个 PDF show-text 片段 ≈「同字体的连续字符段」，`y` 是**基线**
 - `pages[].lines[]`：按基线容差 0.6pt 聚合出的行，`first` / `last` 是行首末**码点** ——
   L1（每页首末行）、L2（每行断行点）级断言直接用它
+- `pages[].images[]`：**图片的落点**（外接矩形，`yBottom` 是底边）。它不走
+  `getTextContent()`（那一路只吐 show-text 的产物），而是照着算子表把 `q` / `Q` / `cm`
+  演一遍 CTM 读出来的 —— PDF 里图片没有自己的坐标，位置与大小全在矩阵里。
+  **没有图片的页整个字段不出现**，所以十几份纯文字真值重抽一遍仍逐字节相同
 - `fonts`：pdf.js 从字体表读出的归一化 `ascent` / `descent`（已除以 unitsPerEm）。
   这正是 Word 算行高的输入，Phase 0 的行高验证拿它对
 - `sections` / `wordPageCount`：来自 Word COM 自述，不是从 PDF 反推的，用于交叉校验

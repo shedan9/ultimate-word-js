@@ -9,7 +9,15 @@ import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import type { TruthFont, TruthItem, TruthLine, TruthPage, WordMeta, WordTruth } from './truth-types.ts';
+import type {
+  TruthFont,
+  TruthImage,
+  TruthItem,
+  TruthLine,
+  TruthPage,
+  WordMeta,
+  WordTruth,
+} from './truth-types.ts';
 
 const require = createRequire(import.meta.url);
 const PDFJS_ROOT = path.dirname(require.resolve('pdfjs-dist/package.json'));
@@ -65,9 +73,11 @@ export async function extractTruth(pdfPath: string, opts: ExtractOptions = {}): 
     const pageHeight = viewport.height;
 
     // 先跑一遍算子表：字体对象要等它跑完才进 commonObjs，
-    // 否则 TextItem.fontName 只能拿到 "g_d0_f1" 这类内部名
+    // 否则 TextItem.fontName 只能拿到 "g_d0_f1" 这类内部名。
+    // 图片也只有这一路能拿到 —— getTextContent() 吐的是 show-text 的产物，图片不在里面
+    let images: TruthImage[] = [];
     try {
-      await page.getOperatorList();
+      images = collectImages(await page.getOperatorList(), pageHeight, pdfjs.OPS);
     } catch {
       // 字体名拿不到不影响坐标真值，降级即可
     }
@@ -99,6 +109,7 @@ export async function extractTruth(pdfPath: string, opts: ExtractOptions = {}): 
       rotate: page.rotate,
       items,
       lines: groupLines(items, tol),
+      ...(images.length > 0 ? { images } : {}),
     });
     page.cleanup();
   }
@@ -162,6 +173,91 @@ function fontResolver(
     cache.set(internalName, name);
     return name;
   };
+}
+
+/**
+ * 从算子表里读出图片的落点。
+ *
+ * PDF 里图片**没有自己的坐标**：`Do` 把图片铺满**当前变换矩阵下的单位正方形**，
+ * 位置与大小全在 CTM 里。所以只能照着 `q` / `Q` / `cm` 把 CTM 演一遍 ——
+ * 少演一个 `q`，后面所有图片的坐标都会偏。
+ *
+ * Form XObject（Word 导出的图常裹一层）自带一个矩阵，进出各是一次隐式的 `q` / `Q`，
+ * 与 `save` / `restore` 一样要压栈。
+ *
+ * 结果取**外接矩形**并翻成左上原点：旋转过的图在 PDF 里是斜的，而我们要比的是
+ * `wp:extent` 那个正的外框。
+ */
+function collectImages(
+  opList: { fnArray: ArrayLike<number>; argsArray: unknown[] },
+  pageHeight: number,
+  OPS: Record<string, number>,
+): TruthImage[] {
+  const out: TruthImage[] = [];
+  let ctm: Matrix = [1, 0, 0, 1, 0, 0];
+  const stack: Matrix[] = [];
+  const paint = new Set([
+    OPS.paintImageXObject,
+    OPS.paintImageMaskXObject,
+    OPS.paintInlineImageXObject,
+    OPS.paintImageXObjectRepeat,
+  ]);
+
+  for (let i = 0; i < opList.fnArray.length; i++) {
+    const fn = opList.fnArray[i] as number;
+    const args = opList.argsArray[i] as unknown[] | null;
+    if (fn === OPS.save) {
+      stack.push(ctm);
+    } else if (fn === OPS.restore) {
+      ctm = stack.pop() ?? [1, 0, 0, 1, 0, 0];
+    } else if (fn === OPS.transform) {
+      ctm = mul(ctm, args as unknown as Matrix);
+    } else if (fn === OPS.paintFormXObjectBegin) {
+      stack.push(ctm);
+      const m = (args as unknown[] | null)?.[0];
+      if (Array.isArray(m)) ctm = mul(ctm, m as unknown as Matrix);
+    } else if (fn === OPS.paintFormXObjectEnd) {
+      ctm = stack.pop() ?? [1, 0, 0, 1, 0, 0];
+    } else if (paint.has(fn)) {
+      const name = typeof args?.[0] === 'string' ? (args[0] as string) : '';
+      out.push(unitSquareRect(ctm, pageHeight, name));
+    }
+  }
+  return out;
+}
+
+type Matrix = [number, number, number, number, number, number];
+
+/** `m1` 之上再叠一个 `m2`（PDF 的 `cm` 语义：新矩阵先作用，再套原来的） */
+function mul(m1: Matrix, m2: Matrix): Matrix {
+  return [
+    m1[0] * m2[0] + m1[2] * m2[1],
+    m1[1] * m2[0] + m1[3] * m2[1],
+    m1[0] * m2[2] + m1[2] * m2[3],
+    m1[1] * m2[2] + m1[3] * m2[3],
+    m1[0] * m2[4] + m1[2] * m2[5] + m1[4],
+    m1[1] * m2[4] + m1[3] * m2[5] + m1[5],
+  ];
+}
+
+function unitSquareRect(m: Matrix, pageHeight: number, name: string): TruthImage {
+  const xs: number[] = [];
+  const ys: number[] = [];
+  for (const [u, v] of [
+    [0, 0],
+    [1, 0],
+    [1, 1],
+    [0, 1],
+  ] as const) {
+    xs.push(m[0] * u + m[2] * v + m[4]);
+    ys.push(m[1] * u + m[3] * v + m[5]);
+  }
+  const x = Math.min(...xs);
+  const w = Math.max(...xs) - x;
+  // PDF 的 y 向上：图的**顶**边是 y 最大的那条
+  const top = pageHeight - Math.max(...ys);
+  const h = Math.max(...ys) - Math.min(...ys);
+  return { x: r3(x), y: r3(top), w: r3(w), h: r3(h), yBottom: r3(top + h), name };
 }
 
 /** 按基线把片段聚合成行；同基线内按 x 排序，得到稳定的行首/行末字符 */

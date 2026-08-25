@@ -79,13 +79,15 @@ describe('内嵌对象', () => {
     expect(p.lines[0]?.fragments[0]?.text).toBe('一二三四五六七');
   });
 
-  it('占高度：图比行高时行跟着变高，图的底边坐在基线上', () => {
+  it('占高度：图比行高时行跟着变高，图的底边坐在基线上，文字的下伸还留着', () => {
     const tall = SIZE_5 * 4;
+    const plain = layoutParagraph(para([run('一')]), paraOpts);
+    const textBelow = (plain.lines[0]?.height ?? 0) - (plain.lines[0]?.baseline ?? 0);
     const p = layoutParagraph(para([pic(SIZE_5, tall), run('一')]), paraOpts);
     const line = p.lines[0];
-    expect(line?.height).toBe(tall);
-    // 整个高度都算进基线以上（line-height.ts），所以基线至少落在图的底边
-    expect(line?.baseline).toBeGreaterThanOrEqual(tall);
+    // 图撑的是基线**以上**那一截，文字自己的下伸照旧留在基线以下（实测，见 OBJECT_RULES ②）
+    expect(line?.baseline).toBe(tall);
+    expect(line?.height).toBe(tall + textBelow);
     expect(line?.objects).toEqual([
       {
         runId: expect.any(String),
@@ -196,8 +198,9 @@ describe('浮动对象的纸坐标', () => {
       opts(),
     );
     const [f] = doc.pages[0]?.floats ?? [];
-    // 版心左 600 + 两个五号字
-    expect(f?.x).toBe(600 + SIZE_5 * 2);
+    // 版心左 600 + **一个**五号字：character 参照的是锚点前一个字的左边缘（实测，
+    // 见 FLOAT_ORIGIN_RULES ⑥）—— 图排在「一二」之后，参照的是「二」
+    expect(f?.x).toBe(600 + SIZE_5);
     // 版心顶 600 + 上面那一段的一行
     expect(f?.y).toBe(600 + EA_LINE);
   });

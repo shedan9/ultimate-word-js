@@ -280,7 +280,9 @@ function paintLine(line: LineLayout, x0: Twips, y0: Twips, ctx: Ctx, out: REleme
   }
   // 图片在文字之前画：内嵌图与文字本来就不重叠，真重叠时（负缩进之类）文字在上更好认
   for (const obj of line.objects ?? []) {
-    const painted = paintObject(obj, x0 + obj.x, baseline - obj.height, ctx);
+    // 底边坐在基线上，`raise`（w:position）把它整个抬起来 —— 两条都是实测的，
+    // 见 `@uw/layout` 的 `OBJECT_RULES`
+    const painted = paintObject(obj, x0 + obj.x, baseline - obj.height - (obj.raise ?? 0), ctx);
     if (painted !== undefined) out.push(painted);
   }
   for (const leader of line.leaders) out.push(paintLeader(leader, line, x0, baseline, ctx));

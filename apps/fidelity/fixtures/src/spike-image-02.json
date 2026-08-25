@@ -1,0 +1,430 @@
+{
+  "name": "spike-image-02",
+  "note": "浮动对象的参照框穿刺（`uncalibrated.ts` 的 FLOAT_RELATIVE_FROM_CALIBRATED）：`wp:positionH/@relativeFrom` 的八种参照物各是哪个框。做法是同一张图复制十份，**偏移一律写 0**，于是量到的 x / y 就是那个框的起点本身，不用反推。横向八种（margin / page / column / character / leftMargin / rightMargin / insideMargin / outsideMargin）与纵向八种（margin / page / paragraph / line / topMargin / bottomMargin / insideMargin / outsideMargin）配对着用，一份样本同时回答两条轴。页边距四边**故意各不相同**（上 25 / 下 20 / 左 30 / 右 20mm）—— 四边一样的话「版心」「上页边距框」「纸」三个答案会撞在一起，样本就分不开了。每张图的**高各不相同**（11、12、…、20pt）：PDF 只按绘制顺序给图，靠尺寸认人才不依赖那个顺序。inside / outside 在第 1 页与第 2 页各放一份，镜像只有在偶数页才看得出来。环绕方式是 `wrap=\"none\"`（浮于文字上方），所以它们在文字流里占 0 宽，一行文字都不该被挤走 —— 这一条顺带也被这份样本验证了：正文每一行的断点与基线都该与没有图时一样。另加三段 `character` 锚点阶梯（锚在第 1 / 5 / 9 个字之后）：一个数据点分不出「参照的是锚点那个字」还是「它前面那个字」，三个就分得出。",
+  "page": {
+    "widthMm": 210,
+    "heightMm": 297,
+    "marginMm": {
+      "top": 25,
+      "bottom": 20,
+      "left": 30,
+      "right": 20
+    }
+  },
+  "paragraphs": [
+    {
+      "text": "甲乙丙丁戊己庚辛第1段",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 10,
+          "heightPt": 11,
+          "afterChars": 3,
+          "float": {
+            "relativeH": "margin",
+            "relativeV": "margin",
+            "leftPt": 0,
+            "topPt": 0
+          }
+        }
+      ]
+    },
+    {
+      "text": "垫行甲乙丙丁戊己庚辛壬癸",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left"
+    },
+    {
+      "text": "垫行甲乙丙丁戊己庚辛壬癸",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left"
+    },
+    {
+      "text": "甲乙丙丁戊己庚辛第2段",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 10,
+          "heightPt": 12,
+          "afterChars": 3,
+          "float": {
+            "relativeH": "page",
+            "relativeV": "page",
+            "leftPt": 0,
+            "topPt": 0
+          }
+        }
+      ]
+    },
+    {
+      "text": "垫行甲乙丙丁戊己庚辛壬癸",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left"
+    },
+    {
+      "text": "垫行甲乙丙丁戊己庚辛壬癸",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left"
+    },
+    {
+      "text": "甲乙丙丁戊己庚辛第3段",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 10,
+          "heightPt": 13,
+          "afterChars": 3,
+          "float": {
+            "relativeH": "column",
+            "relativeV": "paragraph",
+            "leftPt": 0,
+            "topPt": 0
+          }
+        }
+      ]
+    },
+    {
+      "text": "垫行甲乙丙丁戊己庚辛壬癸",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left"
+    },
+    {
+      "text": "垫行甲乙丙丁戊己庚辛壬癸",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left"
+    },
+    {
+      "text": "甲乙丙丁戊己庚辛第4段",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 10,
+          "heightPt": 14,
+          "afterChars": 3,
+          "float": {
+            "relativeH": "character",
+            "relativeV": "line",
+            "leftPt": 0,
+            "topPt": 0
+          }
+        }
+      ]
+    },
+    {
+      "text": "垫行甲乙丙丁戊己庚辛壬癸",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left"
+    },
+    {
+      "text": "垫行甲乙丙丁戊己庚辛壬癸",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left"
+    },
+    {
+      "text": "甲乙丙丁戊己庚辛第5段",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 10,
+          "heightPt": 15,
+          "afterChars": 3,
+          "float": {
+            "relativeH": "leftMargin",
+            "relativeV": "topMargin",
+            "leftPt": 0,
+            "topPt": 0
+          }
+        }
+      ]
+    },
+    {
+      "text": "垫行甲乙丙丁戊己庚辛壬癸",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left"
+    },
+    {
+      "text": "垫行甲乙丙丁戊己庚辛壬癸",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left"
+    },
+    {
+      "text": "甲乙丙丁戊己庚辛第6段",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 10,
+          "heightPt": 16,
+          "afterChars": 3,
+          "float": {
+            "relativeH": "rightMargin",
+            "relativeV": "bottomMargin",
+            "leftPt": 0,
+            "topPt": 0
+          }
+        }
+      ]
+    },
+    {
+      "text": "垫行甲乙丙丁戊己庚辛壬癸",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left"
+    },
+    {
+      "text": "垫行甲乙丙丁戊己庚辛壬癸",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left"
+    },
+    {
+      "text": "甲乙丙丁戊己庚辛第7段",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 10,
+          "heightPt": 17,
+          "afterChars": 3,
+          "float": {
+            "relativeH": "insideMargin",
+            "relativeV": "insideMargin",
+            "leftPt": 0,
+            "topPt": 0
+          }
+        }
+      ]
+    },
+    {
+      "text": "垫行甲乙丙丁戊己庚辛壬癸",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left"
+    },
+    {
+      "text": "垫行甲乙丙丁戊己庚辛壬癸",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left"
+    },
+    {
+      "text": "甲乙丙丁戊己庚辛第8段",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 10,
+          "heightPt": 18,
+          "afterChars": 3,
+          "float": {
+            "relativeH": "outsideMargin",
+            "relativeV": "outsideMargin",
+            "leftPt": 0,
+            "topPt": 0
+          }
+        }
+      ]
+    },
+    {
+      "text": "垫行甲乙丙丁戊己庚辛壬癸",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left"
+    },
+    {
+      "text": "垫行甲乙丙丁戊己庚辛壬癸",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left"
+    },
+    {
+      "text": "第二页甲乙丙丁戊己庚",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "pageBreakBefore": true,
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 10,
+          "heightPt": 19,
+          "afterChars": 3,
+          "float": {
+            "relativeH": "insideMargin",
+            "relativeV": "insideMargin",
+            "leftPt": 0,
+            "topPt": 0
+          }
+        }
+      ]
+    },
+    {
+      "text": "垫行甲乙丙丁戊己庚辛壬癸",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left"
+    },
+    {
+      "text": "第二页甲乙丙丁戊己庚",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 10,
+          "heightPt": 20,
+          "afterChars": 3,
+          "float": {
+            "relativeH": "outsideMargin",
+            "relativeV": "outsideMargin",
+            "leftPt": 0,
+            "topPt": 0
+          }
+        }
+      ]
+    },
+    {
+      "text": "甲乙丙丁戊己庚辛壬癸子丑寅卯",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 10,
+          "heightPt": 21,
+          "afterChars": 1,
+          "float": {
+            "relativeH": "character",
+            "relativeV": "line",
+            "leftPt": 0,
+            "topPt": 0
+          }
+        }
+      ]
+    },
+    {
+      "text": "垫行甲乙丙丁戊己庚辛壬癸",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left"
+    },
+    {
+      "text": "甲乙丙丁戊己庚辛壬癸子丑寅卯",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 10,
+          "heightPt": 22,
+          "afterChars": 5,
+          "float": {
+            "relativeH": "character",
+            "relativeV": "line",
+            "leftPt": 0,
+            "topPt": 0
+          }
+        }
+      ]
+    },
+    {
+      "text": "垫行甲乙丙丁戊己庚辛壬癸",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left"
+    },
+    {
+      "text": "甲乙丙丁戊己庚辛壬癸子丑寅卯",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 10,
+          "heightPt": 23,
+          "afterChars": 9,
+          "float": {
+            "relativeH": "character",
+            "relativeV": "line",
+            "leftPt": 0,
+            "topPt": 0
+          }
+        }
+      ]
+    },
+    {
+      "text": "垫行甲乙丙丁戊己庚辛壬癸",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left"
+    }
+  ]
+}
