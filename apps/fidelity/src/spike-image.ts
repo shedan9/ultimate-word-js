@@ -7,12 +7,15 @@
  * 见 `extract-truth.ts` 的 `collectImages`）。没有它就只能靠「图把行撑高多少」间接推，
  * 而那条路把「图摆在哪」与「行盒怎么算」两件事搅在一起。
  *
- * 两份样本：
+ * 三份样本：
  * - `spike-image-01`：仿宋 12pt 单倍行距，图高 4→60pt 十三档 + 22pt 字号两档 + `w:position` ±6pt 两行。
  *   回答「底边坐在基线上没有」「文字的下伸留不留」「w:position 对图片起不起作用」。
  * - `spike-image-02`：同一张图复制十三份，`positionH/V @relativeFrom` 各取一种、**偏移一律写 0**，
  *   于是量到的 x / y 就是那个框的起点本身。inside / outside 在奇偶页各放一份看镜像，
  *   `character` 排成三级阶梯看它参照的是锚点自己还是前一个字。
+ * - `spike-image-03`：**开行网格**（每页 22 行 → 31.8pt）的同一条阶梯，外加倍数行距七档。
+ *   01 / 02 都是关着网格量的，而中文公文一律开着网格 —— 这一份回答「含图的行吸不吸网格」，
+ *   顺带把「倍数行距乘不乘在图撑起来的那一截上」照了出来（旧实现乘了，Word 没乘）。
  *
  * 这个脚本**不需要 Word**：docx 与 truth.json 都入库了，度量走随库的度量包。
  * 重新造样本才要 Windows（`pnpm truth spike-image-01 spike-image-02`）。
@@ -39,6 +42,7 @@ const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const FIXTURES = [
   { name: 'spike-image-01', mode: 'inline' as const },
   { name: 'spike-image-02', mode: 'float' as const },
+  { name: 'spike-image-03', mode: 'inline' as const },
 ];
 /** 文字基线的判据（L3） */
 const TOLERANCE_PT = 0.5;
@@ -52,6 +56,7 @@ const CANDIDATES = {
   keepDescent: [true, false],
   raise: ['apply', 'ignore'],
   boxQuantum: ['round', 'none'],
+  grid: ['apart', 'together', 'ignore'],
 } as const satisfies { [K in keyof ObjectRules]: readonly ObjectRules[K][] };
 
 interface Rect {
@@ -261,27 +266,68 @@ function floatTable(fixture: Loaded): void {
   });
 }
 
+/**
+ * 开网格的样本逐行看：这一行占了多高、基线离行顶多远。两个数都是**反推**的 ——
+ * 真值里只有基线的绝对 y，行高只能从「下一行基线 − 本行基线」连着基线偏移一起解出来，
+ * 所以这张表直接打印我们与 Word 的**相邻基线之差**，差多少一目了然。
+ */
+function gridTable(fixture: Loaded): void {
+  console.log(`
+③ ${fixture.name} · 开行网格（每页 22 行 = 31.8pt）· 相邻基线之差
+`);
+  const out = layoutOf(fixture, OBJECT_RULES);
+  console.log('  页 行   Word 增量   我们 增量     差pt   图高pt');
+  console.log(`  ${'-'.repeat(48)}`);
+  fixture.truth.pages.forEach((page, i) => {
+    const theirs = page.lines.map((l) => l.y);
+    const ours = baselines(out.pages[i] as PageLayout);
+    const imgs = truthRects(page.images);
+    theirs.forEach((y, k) => {
+      const mine = ours[k];
+      const prevMine = ours[k - 1];
+      const prevTheirs = theirs[k - 1];
+      if (mine === undefined) return;
+      const dTheirs = prevTheirs === undefined ? Number.NaN : y - prevTheirs;
+      const dMine = prevMine === undefined ? Number.NaN : mine - prevMine;
+      const d = Number.isNaN(dTheirs) ? Math.abs(mine - y) : Math.abs(dMine - dTheirs);
+      const im = imgs.find((r) => Math.abs(r.y + r.h - y) < 3);
+      console.log(
+        `  ${String(i + 1).padStart(2)}${String(k).padStart(3)} ${(Number.isNaN(dTheirs) ? y : dTheirs)
+          .toFixed(2)
+          .padStart(10)} ${(Number.isNaN(dMine) ? mine : dMine).toFixed(2).padStart(10)} ${d
+          .toFixed(3)
+          .padStart(8)}${d > TOLERANCE_PT ? ' ✗' : '  '} ${im === undefined ? '' : im.h.toFixed(1)}`,
+      );
+    });
+  });
+}
+
 const fixtures = await Promise.all(FIXTURES.map(load));
 measureTable(fixtures[0] as Loaded);
 floatTable(fixtures[1] as Loaded);
+gridTable(fixtures[2] as Loaded);
 
 const combos: ObjectRules[] = [];
 for (const keepDescent of CANDIDATES.keepDescent) {
   for (const raise of CANDIDATES.raise) {
-    for (const boxQuantum of CANDIDATES.boxQuantum) combos.push({ keepDescent, raise, boxQuantum });
+    for (const boxQuantum of CANDIDATES.boxQuantum) {
+      for (const grid of CANDIDATES.grid) combos.push({ keepDescent, raise, boxQuantum, grid });
+    }
   }
 }
+const GRID_LABEL = { apart: '两侧分算', together: '合成一个', ignore: '不吸网格' } as const;
 const label = (r: ObjectRules): string =>
   `下伸 ${r.keepDescent ? '留  ' : '不留'} · w:position ${r.raise === 'apply' ? '认  ' : '不认'} · 盒高 ${
     r.boxQuantum === 'round' ? '量化到 1.5pt' : '照原样   '
-  }`;
+  } · 网格 ${GRID_LABEL[r.grid]}`;
 const isDefault = (r: ObjectRules): boolean =>
   r.keepDescent === OBJECT_RULES.keepDescent &&
   r.raise === OBJECT_RULES.raise &&
-  r.boxQuantum === OBJECT_RULES.boxQuantum;
+  r.boxQuantum === OBJECT_RULES.boxQuantum &&
+  r.grid === OBJECT_RULES.grid;
 
 console.log(`\n③ 行盒规则 · ${combos.length} 种组合 × ${fixtures.length} 份样本，逐行 + 逐图比对\n`);
-const LABEL_W = 40;
+const LABEL_W = 56;
 console.log(`${'组合'.padEnd(LABEL_W)}${'行（基线）'.padStart(14)}${'图（外框）'.padStart(14)}`);
 console.log('-'.repeat(LABEL_W + 28));
 
@@ -342,5 +388,7 @@ console.log(
     '  · 浮动图：page=纸、margin/column=版心、left/topMargin 从纸边起、right/bottomMargin 从版心边起、',
     '    inside/outside 按页码奇偶镜像（**纵向镜像的是上下页边距，不是版心**）、',
     '    character=锚点前一个字的左边缘、line=行顶、paragraph=段顶',
+    '  · 含图的行**参与网格吸附**（吸的是盒高 + 文字下伸），但**倍数行距不乘在图撑起来的那一截上** ——',
+    '    文字侧「吸附 → 乘倍数」与对象侧「对象要的高 + 倍数多留的空白 → 吸附」各算各的，取大者',
   ].join('\n'),
 );

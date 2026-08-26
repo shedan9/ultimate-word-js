@@ -32,6 +32,13 @@ export interface ObjectRules {
   raise: 'apply' | 'ignore';
   /** 对象在行盒里占的高度要不要按 1.5pt 量化（见 `objectBoxHeight`） */
   boxQuantum: 'round' | 'none';
+  /**
+   * 含内嵌对象的行怎么跟**行网格**与**倍数行距**打交道：
+   * - `apart`：文字与对象**各算各的**再取大（实测，见 `lineHeight` 的两侧分算）
+   * - `together`：两者合成一个自然行高，一起吸附、一起乘倍数（**旧实现**）
+   * - `ignore`：含对象的行不吸网格
+   */
+  grid: 'apart' | 'together' | 'ignore';
 }
 
 /**
@@ -58,11 +65,25 @@ export interface ObjectRules {
  *    补一条 0.1pt 步长的微阶梯才看出是台阶（30.7pt → 30.77，30.8pt → 31.52，此后一路平到
  *    31.5pt）。**没有它，一页里每有一张图就可能偏 0.75pt，且往下累积** ——
  *    十三张图的阶梯样本上累计到了 1.5pt，早已越过 L3 判据。
+ *
+ * ⑤ **文字与对象各算各的再取大**（`grid`）：样本 `spike-image-03`（同一个 spike 脚本，
+ *    每页 22 行 → 网格 31.8pt，图高 10→90pt 十二档 + 倍数行距七档，43 行）。两条：
+ *    - 含图的行**参与网格吸附**：吸的是「盒高 + 文字下伸」，吸到网格行的整数倍，
+ *      富余照旧上下均分（与纯文字行同一条规则）。28pt 的图（盒 28.5 + 下伸 3.52 = 32.02）
+ *      吸成两个网格行 63.6pt，60pt 那一档（63.52，比两行只矮 0.12pt）仍是两行 ——
+ *      边界落在 ceil 上，不是四舍五入
+ *    - **倍数行距不乘在图撑起来的那一截上**：网格 31.8pt + 1.5 倍 + 40pt 的图，
+ *      按「合成一个自然行高再乘」（旧实现）得 95.4pt，Word 给的是 63.6pt。
+ *      实测的算法是两侧分算：文字侧 = 吸附 → 乘倍数，对象侧 = 「对象要的高 + 倍数在文字侧
+ *      多留的那段空白」再吸附，取大者为行的推进量；基线在**赢的那一侧的行盒**里居中
+ *      （对象侧的行盒**不含**那段空白 —— 关掉网格的两档里图底严丝合缝坐在基线上，
+ *      多留的空白整个落在基线以下）
  */
 export const OBJECT_RULES: ObjectRules = {
   keepDescent: true,
   raise: 'apply',
   boxQuantum: 'round',
+  grid: 'apart',
 };
 
 /**
@@ -131,6 +152,8 @@ export function lineHeight(
   /** 对象要占的基线**以上** / **以下**各多少（`w:position` 已经算进去了） */
   let objectAbove = 0;
   let objectBelow = 0;
+  /** 这一行有没有**撑得起高度**的内嵌对象。浮动对象在文字流里高宽都是 0，不算 */
+  let hasObject = false;
 
   for (let i = range.start; i < range.end; i++) {
     const item = items[i] as LayoutItem;
@@ -139,6 +162,7 @@ export function lineHeight(
       // 撑起行的是**盒**不是图：盒高按 1.5pt 四舍五入，图在盒里靠上放（见 `objectBoxHeight`）
       objectAbove = Math.max(objectAbove, objectBoxHeight(item.height, rules) + raise);
       objectBelow = Math.max(objectBelow, -raise);
+      if (item.height > 0 || raise !== 0) hasObject = true;
       continue;
     }
     if (item.kind === 'break') continue;
@@ -169,8 +193,51 @@ export function lineHeight(
   // 否则压低 6pt 的那一行会把基线又往下推半截（实测差 0.28pt）
   const above = Math.max(textAbove, objectAbove, floor.above);
   const natural = Math.max(textNatural, above + below, floor.height);
-  const height = applyLineRule(applyGrid(natural, props, ctx.docGrid), props);
-  return { height, baseline: baselineIn(height, props), natural };
+  const { height, box: baselineBox } = advance();
+  return { height, baseline: baselineIn(height, baselineBox, props), natural };
+
+  /**
+   * 行的**推进量**与「基线在哪个盒子里居中」。没有内嵌对象时两者相等，就是老式子；
+   * 有对象时分两侧算，这是 `spike-image-03` 量出来的（见 `OBJECT_RULES` 第 ⑤ 条）：
+   *
+   * - **文字侧**：吸附 → 乘倍数（顺序见 `applyGrid`，纯文字行的老规则）
+   * - **对象侧**：对象要的高（盒高 + 文字下伸）**不乘倍数**，但倍数在文字侧多留的那段空白
+   *   `extra` 会挂在它下面，然后一起吸附
+   * - 取大者作推进量；基线在**赢的那一侧的行盒**里居中，而对象侧的行盒**不含** `extra`
+   *
+   * 最后那半句是关网格的两档逼出来的：1.5 倍 + 40pt 的图，图底严丝合缝坐在基线上
+   * （实测 40.53 vs 盒高 40.5），多留的 7.8pt 整个落在基线以下 —— 把 `extra` 算进
+   * 居中的盒子会让基线再往下沉 3.9pt。开着网格时这段空白被吸附吃掉了，所以只有关网格的
+   * 样本能把它照出来。
+   *
+   * 平局归**文字侧**（`>` 而不是 `>=`）：2 倍行距 + 20pt 图那一档两侧都得 63.6pt，
+   * 而基线实测在 40.06pt —— 那是文字侧的盒（63.6）算出来的，对象侧的盒（31.8）给的是 24.14。
+   */
+  function advance(): { height: Twips; box: Twips } {
+    const snapped = applyGrid(natural, props, ctx.docGrid);
+    // 固定值行距下 Word 就是**切**（见 `baselineIn`），对象不许把行撑开，也就没有两侧之说
+    if (!hasObject || rules.grid === 'together' || props.spacing.lineRule === 'exact') {
+      const h = applyLineRule(snapped, props);
+      return { height: h, box: h };
+    }
+    const textSnapped = rules.grid === 'ignore' ? textNatural : applyGrid(textNatural, props, ctx.docGrid);
+    const text = applyLineRule(textSnapped, props);
+    const objectNatural = objectAbove + below;
+    if (rules.grid === 'ignore') {
+      return text > objectNatural
+        ? { height: text, box: text }
+        : { height: objectNatural, box: objectNatural };
+    }
+    // `extra` = 倍数**按文字的自然行高**多留出来的那段空白（单倍行距下就是 0，
+    // 于是整个分支退化成老式子）。量的是**没吸附过的** `textNatural` —— 用吸附后的
+    // 31.8pt 去乘，1.5 倍 + 20pt 图那一档会多算 8.1pt，正好把对象侧从 31.8 顶到 63.6，
+    // 实测 Word 给的是文字侧的 47.7pt（`spike-image-03` 第 3 页第 2 行）。
+    // 负数（倍数小于 1）夹到 0：对象要的高是硬下限，倍数不该把图压扁，这一半没有样本
+    const extra = Math.max(0, applyLineRule(textNatural, props) - textNatural);
+    const objectAdvance = applyGrid(objectNatural + extra, props, ctx.docGrid);
+    if (objectAdvance <= text) return { height: text, box: text };
+    return { height: objectAdvance, box: applyGrid(objectNatural, props, ctx.docGrid) };
+  }
 
   /**
    * 固定值行距**不看字体**：基线就在行高的 80% 处（实测，见 `baselineOffsetExact`）。
@@ -179,12 +246,14 @@ export function lineHeight(
    * Word 的行为就是**切**（这正是「固定值」与「最小值」的区别）。在这里替他撑开，
    * 得到的页面会比 Word 少排几行，错得比切字更远。
    */
-  function baselineIn(h: Twips, p: ResolvedParaProps): Twips {
+  function baselineIn(h: Twips, boxHeight: Twips, p: ResolvedParaProps): Twips {
     if (p.spacing.lineRule === 'exact') return baselineOffsetExact(h);
     // 行距倍数与网格吸附**多出来**的那部分才上下均分（基线穿刺的结论）。
     // 纯文字行里 `above + (h − natural) / 2` 与原来的 `composeBaseline(box, h)` 恒等 ——
-    // `composeBaseline` 本身就是「核心盒在 h 里居中」，两种写法只在有对象时才分岔
-    return Math.min(h, above + (h - natural) / 2);
+    // `composeBaseline` 本身就是「核心盒在 h 里居中」，两种写法只在有对象时才分岔。
+    // 居中用的是 `boxHeight` 而不是推进量 `h`：两者只在「对象侧赢 + 倍数行距」时不等，
+    // 见 `advance()`
+    return Math.min(h, above + (boxHeight - natural) / 2);
   }
 }
 

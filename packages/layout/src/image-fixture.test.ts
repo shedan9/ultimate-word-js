@@ -1,5 +1,7 @@
 /**
- * 图片几何的真值回归：`spike-image-01/02` 两份样本，**逐行 + 逐图**与 Word 对。
+ * 图片几何的真值回归：`spike-image-01/02/03` 三份样本，**逐行 + 逐图**与 Word 对。
+ * 01 关着网格量行盒、02 量浮动图的参照框、**03 开着网格**（每页 22 行 = 31.8pt，公文的配置）
+ * 兼量倍数行距 —— 含图的行参不参与吸附、倍数乘不乘在图撑起来的那一截上，都在 03 里。
  *
  * 与别的 fixture 测试有两处差别，都是被样本逼出来的：
  *
@@ -9,7 +11,7 @@
  *    恰好是**增量**：一行有多高、一张图把行撑高多少。每页第一行仍按绝对 y 比。
  * ② **内嵌图比的是它相对本行基线的抬升**，浮动图才比纸坐标。理由同 ①。
  *
- * 规则怎么标定出来的见 `apps/fidelity` 的 `spike:image`（8 种组合逐行逐图跑，唯一满分）。
+ * 规则怎么标定出来的见 `apps/fidelity` 的 `spike:image`（24 种组合逐行逐图跑，唯一满分）。
  * 跨平台：docx 与 truth.json 都入库，度量走随库的度量包，所以 CI 上也跑得了。
  */
 import { readFileSync } from 'node:fs';
@@ -133,6 +135,7 @@ function lineDeltas(ours: readonly number[], theirs: readonly number[]): number[
 describe.each([
   { name: 'spike-image-01', mode: 'inline' as const },
   { name: 'spike-image-02', mode: 'float' as const },
+  { name: 'spike-image-03', mode: 'inline' as const },
 ])('$name 与 Word 真值', ({ name, mode }) => {
   const { doc, truth, diagnostics } = layout(name);
 

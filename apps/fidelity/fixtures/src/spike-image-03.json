@@ -1,0 +1,663 @@
+{
+  "name": "spike-image-03",
+  "note": "内嵌图片与**行网格**的穿刺（第 13 步剩下的最后一问，`uncalibrated.ts` 的 OBJECT_GRID_SNAP）：spike-image-01 把内嵌图的行盒量准了，但那份样本**关着网格**，而中文公文一律开着网格（每页 22 行）。问三件事：① 含内嵌图的那一行吸不吸网格；② 吸的话，吸出来的富余加在基线以上还是上下均分 ——前者等于「基线仍落在网格线上」，后者会让基线整体下沉半截富余，两者在 90pt 的图上差着 14pt；③ 段落关掉 w:snapToGrid 之后含图的行退不退回自然行高。判据是拿三种假设各排一遍整份文档，逐行比基线、逐图比外框（与 spike:image 同一套打分）。页面照抄 spike-baseline-03 的 25mm 四边 + 每页 22 行（linePitch 636 twips = 31.8pt），这样网格行距 31.8pt 比 12pt 仿宋的自然行高 15.6pt 大一倍 —— 「吸」与「不吸」在**每一行**上都差得出来，不必等到图比网格高。图高排成 10 → 90pt 的阶梯，跨过 1 / 2 / 3 个网格行：60pt 那一档是**边界**（盒 60 + 仿宋 12pt 的下伸 3.52 = 63.52，比两个网格行 63.64 只矮 0.12pt），向上取整与四舍五入在这一档分岔。每张图后面跟一行纯文字参照：含图那一行占了几个网格行，只能从它与下一行基线之差看出来。末尾两组对照：段落关网格的一张 40pt 图（该退回自然行高 43.5pt），以及**网格 + 倍数行距**的五档（1.5×40 / 1.5×10 / 1.5×20 / 2×20 / 3×10pt）。最后这五档是第一版样本逼出来的：spike-baseline-03 定死了纯文字行「先吸附再乘倍数」，按同一条顺序算含图的行会得出 95.4pt，Word 给的是 63.6pt —— 倍数没有乘在图撑起来的那一截上。四种候选（倍数乘完再吸附 / 倍数只乘文字那一截再与图取大 / 含图的行倍数一概不起作用 / 两边各自吸附再取大）在 40pt 那一档上给的都是 63.6，分不开，所以补了「图小到倍数说了算」的四档：1.5×10 与 1.5×20 分开「倍数乘的是吸附后的 31.8 还是自然的 15.6」，3×10 再把「倍数一概不起作用」剔掉。最后两段是同一问的**关网格**版（1.5×40 / 2×25pt）：网格开着时「乘完再取大」与「取大再乘」常常撞在同一个格子上，关掉网格两者差 22 与 27pt，分得干干净净。",
+  "page": {
+    "widthMm": 210,
+    "heightMm": 297,
+    "marginMm": {
+      "top": 25,
+      "bottom": 25,
+      "left": 25,
+      "right": 25
+    },
+    "grid": {
+      "linesPage": 22
+    }
+  },
+  "paragraphs": [
+    {
+      "text": "参照甲乙丙丁",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "参照甲乙丙丁",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "前后",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 20,
+          "heightPt": 10,
+          "afterChars": 1
+        }
+      ]
+    },
+    {
+      "text": "参照甲乙丙丁",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "前后",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 20,
+          "heightPt": 20,
+          "afterChars": 1
+        }
+      ]
+    },
+    {
+      "text": "参照甲乙丙丁",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "前后",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 20,
+          "heightPt": 25,
+          "afterChars": 1
+        }
+      ]
+    },
+    {
+      "text": "参照甲乙丙丁",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "前后",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 20,
+          "heightPt": 28,
+          "afterChars": 1
+        }
+      ]
+    },
+    {
+      "text": "参照甲乙丙丁",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "前后",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 20,
+          "heightPt": 30,
+          "afterChars": 1
+        }
+      ]
+    },
+    {
+      "text": "参照甲乙丙丁",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "前后",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 20,
+          "heightPt": 35,
+          "afterChars": 1
+        }
+      ]
+    },
+    {
+      "text": "参照甲乙丙丁",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "前后",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 20,
+          "heightPt": 40,
+          "afterChars": 1
+        }
+      ]
+    },
+    {
+      "text": "参照甲乙丙丁",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "前后",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 20,
+          "heightPt": 50,
+          "afterChars": 1
+        }
+      ]
+    },
+    {
+      "text": "参照甲乙丙丁",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "前后",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 20,
+          "heightPt": 60,
+          "afterChars": 1
+        }
+      ]
+    },
+    {
+      "text": "参照甲乙丙丁",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "前后",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 20,
+          "heightPt": 63,
+          "afterChars": 1
+        }
+      ]
+    },
+    {
+      "text": "参照甲乙丙丁",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "前后",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 20,
+          "heightPt": 70,
+          "afterChars": 1
+        }
+      ]
+    },
+    {
+      "text": "参照甲乙丙丁",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "前后",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 20,
+          "heightPt": 90,
+          "afterChars": 1
+        }
+      ]
+    },
+    {
+      "text": "参照甲乙丙丁",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "前后",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 20,
+          "heightPt": 40,
+          "afterChars": 1
+        }
+      ],
+      "snapToGrid": false
+    },
+    {
+      "text": "参照甲乙丙丁",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "snapToGrid": false
+    },
+    {
+      "text": "参照甲乙丙丁",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "前后",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 20,
+          "heightPt": 40,
+          "afterChars": 1
+        }
+      ],
+      "lineSpacingMultiple": 1.5
+    },
+    {
+      "text": "参照甲乙丙丁",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "前后",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 20,
+          "heightPt": 10,
+          "afterChars": 1
+        }
+      ],
+      "lineSpacingMultiple": 1.5
+    },
+    {
+      "text": "参照甲乙丙丁",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "前后",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 20,
+          "heightPt": 20,
+          "afterChars": 1
+        }
+      ],
+      "lineSpacingMultiple": 1.5
+    },
+    {
+      "text": "参照甲乙丙丁",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "前后",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 20,
+          "heightPt": 20,
+          "afterChars": 1
+        }
+      ],
+      "lineSpacingMultiple": 2
+    },
+    {
+      "text": "参照甲乙丙丁",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "前后",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 20,
+          "heightPt": 10,
+          "afterChars": 1
+        }
+      ],
+      "lineSpacingMultiple": 3
+    },
+    {
+      "text": "参照甲乙丙丁",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "前后",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 20,
+          "heightPt": 40,
+          "afterChars": 1
+        }
+      ],
+      "lineSpacingMultiple": 1.5,
+      "snapToGrid": false
+    },
+    {
+      "text": "参照甲乙丙丁",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    },
+    {
+      "text": "前后",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0,
+      "images": [
+        {
+          "file": "square.png",
+          "widthPt": 20,
+          "heightPt": 25,
+          "afterChars": 1
+        }
+      ],
+      "lineSpacingMultiple": 2,
+      "snapToGrid": false
+    },
+    {
+      "text": "参照甲乙丙丁",
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "firstLineChars": 0,
+      "spaceBeforePt": 0,
+      "spaceAfterPt": 0,
+      "lineSpacingPt": 0
+    }
+  ]
+}

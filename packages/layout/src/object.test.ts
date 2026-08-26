@@ -13,7 +13,7 @@ import { describe, expect, it } from 'vitest';
 import type { LayoutDocumentOptions } from './page.ts';
 import { layoutDocument } from './page.ts';
 import { layoutParagraph } from './paragraph.ts';
-import { fakeMeasurer, NO_GRID, para, run, runOf, SIZE_5 } from './test-fixtures.ts';
+import { fakeMeasurer, NO_GRID, para, paraProps, run, runOf, SIZE_5 } from './test-fixtures.ts';
 
 const EA_LINE = SIZE_5 * 1.3;
 const TEN = '一二三四五六七八九十';
@@ -105,6 +105,42 @@ describe('内嵌对象', () => {
   it('对象排在文字后面时 x 是累加出来的，不是行首', () => {
     const p = layoutParagraph(para([run('一二'), pic(SIZE_5, SIZE_5)]), paraOpts);
     expect(p.lines[0]?.objects?.[0]?.x).toBe(SIZE_5 * 2);
+  });
+});
+
+/**
+ * 内嵌对象 × 行网格 / 倍数行距（`spike-image-03` 标定，见 `OBJECT_RULES` 第 ⑤ 条）。
+ * 期望值全部手算：网格 400、东亚行自然行高 273（= 210 × 1.3）、基线在自然行高里 199.5、
+ * 下伸 73.5；图高 480 是 30 的整数倍，绕开盒高量化那一条。
+ */
+describe('内嵌对象 × 行网格与倍数行距', () => {
+  const PITCH = 400;
+  const IMG = 480;
+  /** 图撑起来的那一截：盒高 + 文字自己的下伸 = 480 + 73.5 */
+  const OBJ_NATURAL = IMG + EA_LINE - 199.5;
+  const gridOpts = { ...paraOpts, docGrid: { type: 'lines' as const, linePitch: PITCH, charSpace: 0 } };
+  const multiple = { spacing: { ...paraProps().spacing, line: 360 } };
+
+  it('含图的行照样吸网格：吸的是「盒高 + 文字下伸」，富余上下均分', () => {
+    const line = layoutParagraph(para([pic(SIZE_5, IMG), run('一')]), gridOpts).lines[0];
+    // 553.5 要两个网格行
+    expect(line?.height).toBe(PITCH * 2);
+    expect(line?.baseline).toBeCloseTo(IMG + (PITCH * 2 - OBJ_NATURAL) / 2, 6);
+  });
+
+  it('倍数行距**不乘在图撑起来的那一截上**：两侧各算各的再取大', () => {
+    const line = layoutParagraph(para([pic(SIZE_5, IMG), run('一')], multiple), gridOpts).lines[0];
+    // 文字侧 400 × 1.5 = 600，对象侧 (553.5 + 倍数多留的 136.5) 吸成 800 —— 取 800。
+    // 旧实现（两者合成一个自然行高再乘）给的是 800 × 1.5 = 1200，实测 Word 不是那样
+    expect(line?.height).toBe(PITCH * 2);
+  });
+
+  it('关网格 + 倍数行距：多留出来的空白整个落在基线以下，图底仍坐在基线上', () => {
+    const line = layoutParagraph(para([pic(SIZE_5, IMG), run('一')], multiple), paraOpts).lines[0];
+    // 对象侧 = 553.5 + 136.5 = 690，文字侧只有 409.5
+    expect(line?.height).toBeCloseTo(OBJ_NATURAL + (EA_LINE * 1.5 - EA_LINE), 6);
+    // 居中用的是**对象侧的行盒**（553.5），不是推进量 690 —— 否则基线还要往下沉 68.25
+    expect(line?.baseline).toBe(IMG);
   });
 });
 
