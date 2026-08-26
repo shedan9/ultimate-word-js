@@ -16,7 +16,8 @@
     "spike:header": "node src/spike-header.ts",
     "preview": "node src/preview.ts",
     "corpus": "node src/corpus-report.ts",
-    "spike:image": "node src/spike-image.ts"
+    "spike:image": "node src/spike-image.ts",
+    "spike:table": "node src/spike-table.ts"
   },
   "dependencies": {
     "@uw/core": "workspace:*",

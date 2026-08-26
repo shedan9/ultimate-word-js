@@ -64,6 +64,28 @@ export const AUTO_SPACE_EM = 1 / 8;
  */
 export const CHAR_UNIT_EM = 1.0;
 
+/**
+ * 格内文字在单元格左边缘之外**额外**的一点右移，twips。
+ *
+ * `spike-table-01` 量出来的**残差**，不是推出来的规则：Word 把格内文字放在
+ * 「格左边 + `w:tcMar`」再往右一点点，而那一点点跟边距对不上号 ——
+ *
+ * | 那一格的 `w:tcMar` 左边距 | Word 比「格边 + 边距」多出 |
+ * |---|---|
+ * | 5.4pt（默认的 108 twips） | 0.32pt |
+ * | 20pt | 0.24pt |
+ * | 0 | **0.59pt** |
+ *
+ * 三个数凑不出一条规则（不是常数、不是比例、也不是「至少多少」加常数），
+ * 所以这里留 0，**不为它硬凑**。前两档都在 L4 判据（0.5pt）以内，只有零边距那一格
+ * 越了线 —— 那也是 `spike:table` 唯一对不上的一项。
+ *
+ * 钉死办法：一张表，同一列上把 `w:tcMar` 的左边距排成 0 / 1 / 2 / 4 / 8 / 16 / 32pt
+ * 七级阶梯，再复制一份把边框宽度从 0.5 换成 4pt。两份一比，就知道那一点点是跟着边距走、
+ * 跟着边框走，还是一个下限。
+ */
+export const TABLE_CELL_TEXT_INSET: Twips = 0;
+
 /** 把「em 的倍数」换成 twips。字号本身就是 twips，所以是一次乘法 */
 export function em(fontSize: Twips, ratio: number): Twips {
   return fontSize * ratio;

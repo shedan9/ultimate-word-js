@@ -70,7 +70,7 @@ export function splitRow(row: RowLayout, avail: Twips): RowSplit | undefined {
       tails.push(sliceCell(cell, [], 'tail'));
       continue;
     }
-    const cut = splitBlocks(cell.blocks, avail - cell.paddingTop);
+    const cut = splitBlocks(cell.blocks, avail - row.gridAbove - cell.paddingTop);
     if (cut.head.length > 0) placed = true;
     if (cut.tail.length > 0) leftover = true;
     heads.push(sliceCell(cell, cut.head, 'head'));
@@ -79,11 +79,20 @@ export function splitRow(row: RowLayout, avail: Twips): RowSplit | undefined {
 
   if (!placed || !leftover) return undefined;
 
-  // `w:trHeight` 比内容高出来的那一截：整个记在尾片（见文件头）
-  const surplus = Math.max(0, row.height - maxContentHeight(row.cells));
+  // `w:trHeight` 比内容高出来的那一截：整个记在尾片（见文件头）。
+  // 减 `gridAbove` 是因为 `row.height` 含着上边那条格线，而 `w:trHeight` 量的是
+  // **格线以内**那一段（见 table.ts 的证据表）—— 不减的话每切一行就凭空多出一条线的高。
+  const surplus = Math.max(0, row.height - row.gridAbove - maxContentHeight(row.cells));
+  // 头片保留上边那条格线（它是真格线，本页画得出来）；尾片的上边是**接缝**不是格线，
+  // 高度按 0 算 —— 接缝上画不画线是文件头第四问，没有 Word 样本，那一问只改画法不改高度。
   return {
-    head: { rowId: row.rowId, cells: heads, height: maxContentHeight(heads) },
-    tail: { rowId: row.rowId, cells: tails, height: maxContentHeight(tails) + surplus },
+    head: {
+      rowId: row.rowId,
+      cells: heads,
+      gridAbove: row.gridAbove,
+      height: row.gridAbove + maxContentHeight(heads),
+    },
+    tail: { rowId: row.rowId, cells: tails, gridAbove: 0, height: maxContentHeight(tails) + surplus },
   };
 }
 

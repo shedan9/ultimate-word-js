@@ -268,7 +268,9 @@ describe('表格', () => {
       width: 5000,
       borders: { ...cell().borders, left: SINGLE },
     });
-    const svg = buildPage(tablePage({ rowId: 'r1', cells: [left, right], height: 480 }, [4000, 5000]));
+    const svg = buildPage(
+      tablePage({ rowId: 'r1', cells: [left, right], gridAbove: 0, height: 480 }, [4000, 5000]),
+    );
     const lines = collect(svg, 'line');
     expect(lines).toHaveLength(1);
     expect(lines[0]?.attrs.x1).toBe('200');
@@ -283,7 +285,7 @@ describe('表格', () => {
         right: { ...SINGLE, size: 0 },
       },
     });
-    const svg = buildPage(tablePage({ rowId: 'r1', cells: [c], height: 480 }, [4000]));
+    const svg = buildPage(tablePage({ rowId: 'r1', cells: [c], gridAbove: 0, height: 480 }, [4000]));
     expect(collect(svg, 'line')).toHaveLength(0);
   });
 
@@ -299,7 +301,7 @@ describe('表格', () => {
         ],
       },
     });
-    const svg = buildPage(tablePage({ rowId: 'r1', cells: [c], height: 480 }, [4000, 5000]));
+    const svg = buildPage(tablePage({ rowId: 'r1', cells: [c], gridAbove: 0, height: 480 }, [4000, 5000]));
     const lines = collect(svg, 'line');
     expect(lines).toHaveLength(1);
     expect([lines[0]?.attrs.x1, lines[0]?.attrs.x2]).toEqual(['0', '200']);
@@ -307,14 +309,14 @@ describe('表格', () => {
 
   it('底纹取 fill 不取 color，clear 以外的图案也只铺纯色', () => {
     const c = cell({ shading: { pattern: 'clear', color: 'FF0000', fill: 'D9D9D9' } });
-    const svg = buildPage(tablePage({ rowId: 'r1', cells: [c], height: 480 }, [4000]));
+    const svg = buildPage(tablePage({ rowId: 'r1', cells: [c], gridAbove: 0, height: 480 }, [4000]));
     const bg = collect(svg, 'rect').find((r) => r.attrs.class === 'uw-cell-bg');
     expect(bg?.attrs.fill).toBe('#d9d9d9');
   });
 
   it('auto / nil 的底纹不铺 —— 铺了会把页面背景压成白块', () => {
     const c = cell({ shading: { pattern: 'clear', color: 'auto', fill: 'auto' } });
-    const svg = buildPage(tablePage({ rowId: 'r1', cells: [c], height: 480 }, [4000]));
+    const svg = buildPage(tablePage({ rowId: 'r1', cells: [c], gridAbove: 0, height: 480 }, [4000]));
     expect(collect(svg, 'rect').filter((r) => r.attrs.class === 'uw-cell-bg')).toHaveLength(0);
   });
 
@@ -326,7 +328,7 @@ describe('表格', () => {
     const top = cell({ blocks: [para], paddingTop: 100, paddingBottom: 100 });
     const mid = cell({ ...top, verticalAlign: 'center' });
     const yOf = (c: CellLayout): number => {
-      const svg = buildPage(tablePage({ rowId: 'r1', cells: [c], height: 1480 }, [4000]));
+      const svg = buildPage(tablePage({ rowId: 'r1', cells: [c], gridAbove: 0, height: 1480 }, [4000]));
       return Number((collect(svg, 'text')[0] as RElement).attrs.y);
     };
     // 行高 480、可用高 1480-200=1280，居中要往下挪 (1280-480)/2 = 400 twips = 20pt
@@ -342,7 +344,7 @@ describe('表格', () => {
         left: SINGLE,
       },
     });
-    const row: RowLayout = { rowId: 'r1', cells: [c], height: 480 };
+    const row: RowLayout = { rowId: 'r1', cells: [c], gridAbove: 0, height: 480 };
     const slice = (over: Partial<PlacedRow>): RElement => {
       const t: PlacedTable = {
         kind: 'table',
@@ -374,7 +376,7 @@ describe('表格', () => {
       layout: { paragraphId: 'p1', lines: [line()], spaceBefore: 0, spaceAfter: 0, contentWidth: 3784 },
     };
     const c = cell({ vMerge: 'continue', blocks: [para], borders: { ...cell().borders, left: SINGLE } });
-    const svg = buildPage(tablePage({ rowId: 'r1', cells: [c], height: 480 }, [4000]));
+    const svg = buildPage(tablePage({ rowId: 'r1', cells: [c], gridAbove: 0, height: 480 }, [4000]));
     expect(collect(svg, 'text')).toHaveLength(0);
     expect(collect(svg, 'line')).toHaveLength(1);
   });

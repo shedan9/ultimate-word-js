@@ -297,21 +297,33 @@ export const AUTO_WIDTH: TableWidth = { value: 0, type: 'auto' };
 export const NIL_WIDTH: TableWidth = { value: 0, type: 'nil' };
 
 /**
- * 条件格式的**应用顺序**（ECMA-376 §17.7.6，后面的覆盖前面的）。
+ * 条件格式的**应用顺序**（后面的覆盖前面的）。**已用 Word 真值标定**
+ * （`spike-table-02`，跑 `pnpm --filter @uw/fidelity spike:table`）。
  *
- * 两处反直觉、也是自己实现时最容易搞错的：
- * 1. **行带在列带之后** —— 两者都命中时行带赢
- * 2. **首末行在首末列之后** —— 所以「表头行整行加粗」会盖住「首列不加粗」，
- *    这正是 Word 里表头行左上角那格跟着表头走的原因
+ * 标定方式：一份自定义表格样式，**每个条件设一个独一无二的字号**，于是「这一格最终几号字」
+ * 就等于「层序里最后一个命中它的条件是谁」，从 PDF 真值的 `size` 直接读得出来 ——
+ * 不必从字形宽度反推（那是拿一个未知量去解另一个未知量）。
  *
- * 角单元格排最后，它们是四个角上的最终裁决。
+ * 三处反直觉，前两处此前是**照规范猜的、其中一处猜反了**：
+ * 1. **列带在行带之后** —— 两者都命中时**列带赢**（实测：表甲 R2C2 同时是 band1Horz
+ *    与 band1Vert，显示的是 band1Vert 的字号）。原来写的是「行带在列带之后」，
+ *    错的来源是把规范里那句「banded columns，然后 banded rows」当成了应用顺序；
+ * 2. **首末行在首末列之后** —— 两者都命中时**首末行赢**（实测：表乙去掉角格定义后，
+ *    左上角显示 firstRow 的字号而不是 firstCol 的）。这一条原来就是对的。
+ *    注意它与第 1 条**方向相反**：带那一组是列压行，首末那一组是行压列，
+ *    不是一句「行优先」或「列优先」能概括的，只能照实测写；
+ * 3. **角单元格排最后**，是四个角上的最终裁决（实测：表甲四角显示的是 nw/ne/sw/se 的字号，
+ *    盖过了同时命中的 firstRow / firstCol）。
+ *
+ * 「一格命中哪些条件」是另一回事（`cascade-table.ts` 的 `conditionsAt`），同一份样本
+ * 用 Word 自己写在 `w:cnfStyle` 上的归属标记验过了，与实现一致。
  */
 export const CONDITIONAL_ORDER: readonly TableStyleOverrideType[] = [
   'wholeTable',
-  'band1Vert',
-  'band2Vert',
   'band1Horz',
   'band2Horz',
+  'band1Vert',
+  'band2Vert',
   'firstCol',
   'lastCol',
   'firstRow',

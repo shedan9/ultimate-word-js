@@ -59,8 +59,8 @@ import {
 import type { ObjectRules } from './line-height.ts';
 import { OBJECT_RULES } from './line-height.ts';
 import { layoutParagraph } from './paragraph.ts';
-import type { RowLayout, TableLayout } from './table.ts';
-import { layoutTable } from './table.ts';
+import type { RowLayout, TableLayout, TableRules } from './table.ts';
+import { layoutTable, TABLE_RULES } from './table.ts';
 import { splitRow } from './table-split.ts';
 import type { LineFloat, LineLayout, LineObject, ParagraphLayout } from './types.ts';
 
@@ -249,6 +249,8 @@ export interface LayoutDocumentOptions {
    * `apps/fidelity` 的 `spike:image` 靠它把 4 组假设各跑一遍，见 `OBJECT_RULES`
    */
   objectRules?: Partial<ObjectRules>;
+  /** 表格格线的几何规则。同上，标定用的接缝，见 `TABLE_RULES` */
+  tableRules?: Partial<TableRules>;
 }
 
 export interface PaginationRules {
@@ -652,6 +654,7 @@ function prepare(b: ResolvedBlock, section: SectionProps, opts: LayoutDocumentOp
     ...(opts.defaultFont === undefined ? {} : { defaultFont: opts.defaultFont }),
     ...(opts.fieldValues === undefined ? {} : { fieldValues: opts.fieldValues }),
     ...(opts.objectRules === undefined ? {} : { objectRules: { ...OBJECT_RULES, ...opts.objectRules } }),
+    ...(opts.tableRules === undefined ? {} : { tableRules: { ...TABLE_RULES, ...opts.tableRules } }),
   };
   const width = pageGeometry(section, opts).content.width;
   if (b.kind === 'paragraph') {
@@ -979,6 +982,14 @@ function emitRows(
     flow.y += row.height;
   }
 
+  const last = from + count >= rows.length && !splitAfter;
+  // 表格最下面那条格线不属于任何一行（`TableLayout.gridBelow`，spike-table-01 实测），
+  // 整表排完了才加。漏了它，表后面的第一段会往上贴一条线的宽度，而且每张表各贴一次 ——
+  // 一份十张表的公文就是 5pt 的累积偏差。
+  // `fitRows()` 里**没有**为它预留：它比一行小两个数量级，够不够放不影响挑哪一行断，
+  // 真放不下时不过是最后一条线压在版心底线上。
+  if (last) flow.y += b.layout.gridBelow;
+
   page.blocks.push({
     kind: 'table',
     id: b.id,
@@ -988,7 +999,7 @@ function emitRows(
     columns: [...b.layout.columns],
     rows: placed,
     first: from === 0 && !continued,
-    last: from + count >= rows.length && !splitAfter,
+    last,
   });
 }
 

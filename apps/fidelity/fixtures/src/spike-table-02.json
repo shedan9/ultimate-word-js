@@ -1,0 +1,674 @@
+{
+  "name": "spike-table-02",
+  "note": "表格条件格式（w:tblStylePr）的**命中**与**层序**穿刺 —— 钉死两组至今只有规范做依据的判断：\n① 隔行带的序号算法（cascade-table.ts 的 conditionsAt / bandOf）：首行首列算不算进带、\n   带从第几条开始数、rowBandSize / colBandSize > 1 时怎么分组；\n② CONDITIONAL_ORDER 的层序：一格同时命中好几个条件时谁盖谁。\n\n这份样本有**两路证据**，互相独立：\n- **归属**直接从生成的 docx 里读：Word 把它自己算出来的条件写在每个 w:tr / w:tc 的\n  `w:cnfStyle` 上（fR / lR / fC / lC / b1V / b2V / b1H / b2H / nw / ne / sw / se）。\n  这比从渲染结果反推硬得多 —— 它是 Word 的**输入**，不是渲染的副产物；\n- **层序**从 PDF 真值的字号读：每个条件设一个独一无二的字号（wholeTable 9、band1Vert 10、\n  band2Vert 11、band1Horz 12、band2Horz 13、firstCol 14、lastCol 15、firstRow 16、\n  lastRow 17、nwCell 18、neCell 19、swCell 20、seCell 21），于是「这一格最终几号字」\n  = 「层序里最后一个命中的条件是谁」，直接读得出来，不必从字形宽度反推 ——\n  反推是拿一个未知量（度量）去解另一个未知量。\n\n三张表各自隔离一组问题，因为它们在同一张表上会互相遮蔽：\n- **表甲**（7 行 × 6 列，rowBandSize=2 / colBandSize=1，tblLook 六个开关全开）：\n  行数取奇数、列带一条一列而行带一条两行，于是「按 0 起数」与「按 1 起数」\n  给出的答案不会因为对称而重合。它同时给出「行带 × 列带」在同一格上谁赢；\n- **表乙**（5 行 × 4 列，样式**不定义角格**，隔行带关掉）：角格一定义就把\n  firstRow 与 firstCol 的比较遮住了（角上永远是 nwCell 赢），去掉角格才问得出\n  「首行与首列撞在一起谁赢」；\n- **表丙**（5 行 × 5 列，firstRow / lastRow / firstColumn / lastColumn **全关**，\n  rowBandSize = colBandSize = 2）：首行首列不再被排除，于是「首行算不算进带」\n  与「size>1 时从哪一行开始分组」两问只剩一个答案。",
+  "page": {
+    "widthMm": 210,
+    "heightMm": 297,
+    "marginMm": {
+      "top": 20,
+      "bottom": 20,
+      "left": 20,
+      "right": 20
+    }
+  },
+  "paragraphs": [
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "表甲"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [70, 70, 70, 70, 70, 70],
+      "borderWidthPt": 0.5,
+      "style": {
+        "name": "UWCondA",
+        "sizePt": 9,
+        "rowBandSize": 2,
+        "colBandSize": 1,
+        "conditions": {
+          "band1Vert": {
+            "sizePt": 10
+          },
+          "band2Vert": {
+            "sizePt": 11
+          },
+          "band1Horz": {
+            "sizePt": 12
+          },
+          "band2Horz": {
+            "sizePt": 13
+          },
+          "firstCol": {
+            "sizePt": 14
+          },
+          "lastCol": {
+            "sizePt": 15
+          },
+          "firstRow": {
+            "sizePt": 16
+          },
+          "lastRow": {
+            "sizePt": 17
+          },
+          "nwCell": {
+            "sizePt": 18
+          },
+          "neCell": {
+            "sizePt": 19
+          },
+          "swCell": {
+            "sizePt": 20
+          },
+          "seCell": {
+            "sizePt": 21
+          }
+        }
+      },
+      "look": {
+        "firstRow": true,
+        "lastRow": true,
+        "firstColumn": true,
+        "lastColumn": true,
+        "rowBands": true,
+        "colBands": true
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "align": "left",
+              "text": "一子",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "一丑",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "一寅",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "一卯",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "一辰",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "一巳",
+              "inheritFont": true
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "align": "left",
+              "text": "二子",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "二丑",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "二寅",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "二卯",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "二辰",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "二巳",
+              "inheritFont": true
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "align": "left",
+              "text": "三子",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "三丑",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "三寅",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "三卯",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "三辰",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "三巳",
+              "inheritFont": true
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "align": "left",
+              "text": "四子",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "四丑",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "四寅",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "四卯",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "四辰",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "四巳",
+              "inheritFont": true
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "align": "left",
+              "text": "五子",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "五丑",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "五寅",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "五卯",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "五辰",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "五巳",
+              "inheritFont": true
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "align": "left",
+              "text": "六子",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "六丑",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "六寅",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "六卯",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "六辰",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "六巳",
+              "inheritFont": true
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "align": "left",
+              "text": "七子",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "七丑",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "七寅",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "七卯",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "七辰",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "七巳",
+              "inheritFont": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "表乙"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [60, 60, 60, 60],
+      "borderWidthPt": 0.5,
+      "style": {
+        "name": "UWCondB",
+        "sizePt": 9,
+        "conditions": {
+          "firstCol": {
+            "sizePt": 14
+          },
+          "lastCol": {
+            "sizePt": 15
+          },
+          "firstRow": {
+            "sizePt": 16
+          },
+          "lastRow": {
+            "sizePt": 17
+          }
+        }
+      },
+      "look": {
+        "firstRow": true,
+        "lastRow": true,
+        "firstColumn": true,
+        "lastColumn": true,
+        "rowBands": false,
+        "colBands": false
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "align": "left",
+              "text": "甲東",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "甲西",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "甲南",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "甲北",
+              "inheritFont": true
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "align": "left",
+              "text": "乙東",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "乙西",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "乙南",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "乙北",
+              "inheritFont": true
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "align": "left",
+              "text": "丙東",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "丙西",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "丙南",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "丙北",
+              "inheritFont": true
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "align": "left",
+              "text": "丁東",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "丁西",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "丁南",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "丁北",
+              "inheritFont": true
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "align": "left",
+              "text": "戊東",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "戊西",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "戊南",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "戊北",
+              "inheritFont": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "表丙"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [50, 50, 50, 50, 50],
+      "borderWidthPt": 0.5,
+      "style": {
+        "name": "UWCondC",
+        "sizePt": 9,
+        "rowBandSize": 2,
+        "colBandSize": 2,
+        "conditions": {
+          "band1Vert": {
+            "sizePt": 10
+          },
+          "band2Vert": {
+            "sizePt": 11
+          },
+          "band1Horz": {
+            "sizePt": 12
+          },
+          "band2Horz": {
+            "sizePt": 13
+          }
+        }
+      },
+      "look": {
+        "firstRow": false,
+        "lastRow": false,
+        "firstColumn": false,
+        "lastColumn": false,
+        "rowBands": true,
+        "colBands": true
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "align": "left",
+              "text": "春金",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "春木",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "春水",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "春火",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "春土",
+              "inheritFont": true
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "align": "left",
+              "text": "夏金",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "夏木",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "夏水",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "夏火",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "夏土",
+              "inheritFont": true
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "align": "left",
+              "text": "秋金",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "秋木",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "秋水",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "秋火",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "秋土",
+              "inheritFont": true
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "align": "left",
+              "text": "冬金",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "冬木",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "冬水",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "冬火",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "冬土",
+              "inheritFont": true
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "align": "left",
+              "text": "梅金",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "梅木",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "梅水",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "梅火",
+              "inheritFont": true
+            },
+            {
+              "align": "left",
+              "text": "梅土",
+              "inheritFont": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "末尾"
+    }
+  ]
+}

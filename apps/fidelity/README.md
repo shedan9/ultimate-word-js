@@ -29,6 +29,7 @@ pnpm spike:compress        # 临时挤压穿刺：塞不下时肯挤多少才换
 pnpm spike:page            # 分页穿刺：孤行寡行 / keepNext / 页首段前间距
 pnpm spike:header          # 页眉页脚穿刺：框摆在哪、怎么反过来挤版心
 pnpm spike:image           # 图片穿刺：内嵌图在行盒里怎么摆、浮动图的参照框是哪个、含图的行怎么吸网格
+pnpm spike:table           # 表格穿刺：格线占不占高 / 吃不吃宽、条件格式命中谁、层序谁盖谁
 
 pnpm preview                     # 全部 fixture → out/*.html，用眼睛看引擎画成什么样
 pnpm preview gongwen-01 -- --truth --debug   # 叠真值基线（红虚线）+ 画版心与行盒
@@ -49,13 +50,14 @@ pnpm preview gongwen-01 -- --truth --debug   # 叠真值基线（红虚线）+ �
 | `spike:compress` | `spike-compress-01/02` | 临时挤压只在两端对齐的行里发生；一个标点最多让 0.48 em；挤到什么程度就宁可换行（`挤压量 × 字距数 ≤ 30.6 × 标点数 × 拉伸量`） |
 | `spike:page` | `spike-page-01/02` | 孤行寡行保底 2 行；段前间距落在页首不算；keepNext 的接缝要留出下一块「最少能放多少」 |
 | `spike:header` | `spike-header-01/02/03` | 页眉框顶 = `w:header`；页脚量的是框**底**；页边距是最小值（页眉页脚长过它就把版心顶开） |
+| `spike:table` | `spike-table-01/02` | **水平格线占纵向的高、竖格线不吃横向的宽**（宽度是 `w:tblGrid` 给定的，边框没地方可占；高度是算出来的，边框就加得进去）；`w:trHeight` 与 `w:vAlign` 量的是**格线以内**那一段；默认单元格边距真的是 108 twips；条件格式的层序里**列带盖行带**、**首末行盖首末列**、角格最后；隔行带的归属与实现一致 |
 | `spike:image` | `spike-image-01/02/03` | 内嵌图占的高度 = 图高四舍五入到 1.5pt（坐在基线上的是这个**盒**，图在盒里靠上放）；文字的下伸留着；`w:position` 对图片起作用；浮动图八种参照框各是哪个（纵向的 inside/outside 镜像的是**上下页边距**、`character` 参照的是锚点**前一个**字）；**含图的行照样吸行网格**，但**倍数行距不乘在图撑起来的那一截上**（03，两侧分算再取大） |
 
 `spike:baseline` 现在跑**四份** fixture：04 补的是前三份漏掉的那一格 —— **固定值行距**
 （`w:lineRule="exact"`）下基线 = 行高 × 0.8，与字体、字号都无关。它是被 `spike-page-01`
 逼出来的：那份样本用固定行距 20pt，整页文字比「核心盒居中」的预测低 1.77pt。
 
-`spike:page` / `spike:header` / `spike:image` 跟其余四个不同，它们**不反推系数**，而是把整台引擎跑一遍再与真值逐页对：
+`spike:page` / `spike:header` / `spike:image` / `spike:table` 跟其余四个不同，它们**不反推系数**，而是把整台引擎跑一遍再与真值逐页对：
 分页规则不是一个数，是三条互相纠缠的判断，单独反推任何一条都会被另一条污染。
 做法是把 3 × 2 × 3 种组合排开，看哪一组能逐页复现 Word（当前：唯一满分 50/50 页）。
 它们也是**不需要 Windows** 的 spike —— docx 与 truth.json 都入库了。
@@ -75,6 +77,20 @@ pnpm preview gongwen-01 -- --truth --debug   # 叠真值基线（红虚线）+ �
 - 03 那一份**开着行网格**（每页 22 行 = 31.8pt，公文的配置），而 01 / 02 都是关着的。
   它里面留了两段 `w:snapToGrid=false` 的对照 —— 「倍数行距多留出来的空白落在基线上边还是下边」
   开着网格时被吸附吃掉了，只有关网格的行能把它分开
+
+`spike:table` 的两份样本分工：01 **不带表格样式**（格式全是直接格式，于是量到的差只可能出在
+几何上），三张表分别问「格内边距 / 跨列可用宽 / `w:vAlign` / 6pt 粗边框吃不吃宽 / 多段格的行高」、
+「表级 `w:tblCellMar`＋居中」、「`w:tblInd`」；02 **只问条件格式**，用三张表把互相遮蔽的问题隔开
+（角格一定义就把 firstRow 与 firstCol 的比较遮住了，所以第二张表的样式故意不定义角格）。
+
+02 里有两处是踩过坑才那么写的：
+- **格子一律 `inheritFont`**。写一个字号上去就是直接格式，会把整套条件格式安静地盖光 ——
+  第一版整张表显示成同一个字号，看上去像是条件根本没生效。而且「什么都不写」也不够：
+  新表的格子**继承插入点那一段的直接格式**，所以 `inheritFont` 的语义是一次 `Font.Reset()`
+- **格子的文字必须是汉字**。写成 `R3C4` 那样的 ASCII 时，格子的字体是文档默认的等线，
+  而 Word 对「东亚字体里的纯 ASCII 行」用的是**东亚**行高规则（15pt 字给 20.32pt），
+  我们按「行里有没有东亚字」判、给 15.63pt —— 每行差 30%，把要量的条件格式整个淹掉。
+  那条规则另有样本要造，见 `packages/fonts/src/metrics.ts` 的文件头
 
 01 的图高排成三条阶梯：粗的 4→60pt 十三档、细的 30→36pt 步长 0.5pt、微的 30.0→31.5pt
 步长 0.1pt。三条不是冗余 —— 粗阶梯只取偶数 pt 时，1.5pt 量化那条规则表现为
@@ -119,6 +135,15 @@ pnpm preview gongwen-01 -- --truth --debug   # 叠真值基线（红虚线）+ �
 就转成 `wrap="none"` 的浮动图。**同一段里的多张图是倒序插的**（每插一张就多一个字符，
 正序会把后面的偏移顶歪），`RelativeHorizontalPosition` **必须在 `Left` 之前设**
 （`Left` 是相对当前参照框量的，顺序反了 Word 会按新框重新解释已经写好的坐标）。
+
+**表格**：`paragraphs` 里带 `"kind": "table"` 的块就是一张表（不带 `kind` 的一律当段落，
+所以表格进来之前写的十八份 spec 一个字都不用改）。字段：`widthsPt`（列宽，同时决定 `w:tblGrid`）、
+`align` / `indentPt`（`w:jc` / `w:tblInd`）、`cellMarginPt`（表级 `w:tblCellMar`）、
+`borderWidthPt`（内外框线宽）、`style`（自定义表格样式：`name` / `sizePt` /
+`rowBandSize` / `colBandSize` / `conditions`，条件名用 OOXML 那一套 `firstRow` / `band1Horz` …）、
+`look`（`w:tblLook` 的六个开关）、`rows`。行上可写 `heightPt` + `heightRule`、`header`、
+`cantSplit`；格上可写 `span`（跨几列）、`vAlign`、`marginPt`、`borderWidthPt`、
+`paras`（多段）、`inheritFont`（字体交给样式，量条件格式时必开）。
 
 段落：`text`（可以是空串，用来量空段落的行高）、`fontEA` / `fontLatin` / `sizePt` / `bold` /
 `align` / `firstLineChars` / `leftIndentPt` / `rightIndentPt` / `spaceBeforePt` / `spaceAfterPt`，行距二选一

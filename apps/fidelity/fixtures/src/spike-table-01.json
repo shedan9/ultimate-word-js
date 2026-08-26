@@ -1,0 +1,305 @@
+{
+  "name": "spike-table-01",
+  "note": "表格几何的第一份真值样本 —— 在它之前 @uw/layout 的整个表格层（列宽、格内边距、行高、\nw:vAlign、跨列的可用宽）**一行都没有跟 Word 比过**，全部照规范推。这里不引入表格样式：\n所有格式都是直接格式，于是量到的差只可能出在几何上，不会与条件格式那套（spike-table-02）\n纠缠。行网格显式关掉（spec 不写 grid），否则基线会被吸到 15.6pt 的整数倍上，\n把「格内第一行从哪儿起排」整个盖掉。字全是汉字、不含标点与西文：标点会牵进悬挂与挤压\n那两套已经标定完的规则，混进来就分不开是谁错了。\n\n表 A（3 列 120/90/60pt）六行各问一件事：\n① 基准行 —— 三格各两个字，量三列的 x 与**默认单元格左边距**。108 twips = 5.4pt 这个数\n   来自默认表格样式（Normal Table）而不是什么规范常数，此前只有推断；\n② 边距行 —— 格 1 左边距 20pt、格 2 左边距 0、格 3 默认，量 w:tcMar 覆盖表级的效果；\n③ 跨列行 —— 格 1 跨 2 列，文字 20 个汉字。可用宽 = 120+90-2×5.4 = 199.2pt，仿宋 12pt\n   一字一 em，于是每行 16 字，第二行 4 字。可用宽若差 5.4pt 断点就变成 17 字，够分辨；\n④ 垂直对齐行 —— 行高 60pt（atLeast），三格分别 top / center / bottom，量三条基线的 y。\n   这一条现在纯是猜的：ResolvedCellProps.verticalAlign 带到了布局层，摆法没有真值；\n⑤ 粗边框行 —— 格 1 四条边各 6pt。文字 12 个汉字，可用宽 109.2pt → 每行 9 字；\n   边框若吃进可用宽则剩 97.2pt → 每行 8 字。table.ts 的文件头把「边框宽度不吃可用宽」\n   列为「没有真值」，这一行就是那条真值；\n⑥ 多段行 —— 格 1 三段、格 2 一段，行高按最高那一格算。\n\n表 B（2 列）把**表级** w:tblCellMar 的四个方向一起开（上 10 左 15 下 8 右 15），\n于是「上下边距只改内容的 y、不改断行」与「左右边距改 x 也改可用宽」两件事各有一条证据；\n同时 align=center，量表格居中时表左边落在哪。\n表 C 只有一行，indentPt 30 —— w:tblInd 是从版心左边起算还是从别处，一量就知道。",
+  "page": {
+    "widthMm": 160,
+    "heightMm": 250,
+    "marginMm": {
+      "top": 20,
+      "bottom": 20,
+      "left": 20,
+      "right": 20
+    }
+  },
+  "paragraphs": [
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "表甲"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [120, 90, 60],
+      "borderWidthPt": 0.5,
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "甲一"
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "甲二"
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "甲三"
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "乙一",
+              "marginPt": {
+                "left": 20
+              }
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "乙二",
+              "marginPt": {
+                "left": 0
+              }
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "乙三"
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "丙一二三四五六七八九十子丑寅卯辰巳午未申",
+              "span": 2
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "丙三"
+            }
+          ]
+        },
+        {
+          "heightPt": 60,
+          "heightRule": "atLeast",
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "丁一",
+              "vAlign": "top"
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "丁二",
+              "vAlign": "center"
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "丁三",
+              "vAlign": "bottom"
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "戊一二三四五六七八九十子丑",
+              "borderWidthPt": 6
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "戊二"
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "戊三"
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "paras": [
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "己甲"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "己乙"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "己丙"
+                }
+              ]
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "己二"
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "己三"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "表乙"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [100, 80],
+      "align": "center",
+      "borderWidthPt": 0.5,
+      "cellMarginPt": {
+        "top": 10,
+        "left": 15,
+        "bottom": 8,
+        "right": 15
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "庚一二三四五六七"
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "庚二"
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "辛一"
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "辛二"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "表丙"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [90, 90],
+      "indentPt": 30,
+      "borderWidthPt": 0.5,
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "壬一"
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "壬二"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "表丁"
+    }
+  ]
+}

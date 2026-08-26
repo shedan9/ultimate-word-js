@@ -89,8 +89,18 @@ export interface CellLayout {
 export interface RowLayout {
   rowId: NodeId;
   cells: CellLayout[];
-  /** 本行最高那一格的内容高度。行高规则（`w:trHeight`）已经并进来 */
+  /**
+   * 本行占的**总**高度 = `gridAbove` + 最高那一格的内容高度（行高规则 `w:trHeight`
+   * 已经并进来）。摞行的地方直接 `y += height` 就对，不必知道格线这回事。
+   */
   height: Twips;
+  /**
+   * 本行**上边**那条水平格线的宽度，已经含在 `height` 里。
+   *
+   * 格内的内容从 `rowTop + gridAbove + paddingTop` 起排 —— `w:trHeight` 与
+   * `w:vAlign` 量的都是**格线以内**那一段（实测见 `layoutTable` 的证据表）。
+   */
+  gridAbove: Twips;
 }
 
 export interface TableLayout {
@@ -102,11 +112,46 @@ export interface TableLayout {
   /** 每个网格列的宽度，与 `w:tblGrid` 一一对应 */
   columns: Twips[];
   rows: RowLayout[];
+  /**
+   * 表格**最下面**那条格线的宽度。它不属于任何一行（每行带的是自己**上边**那条），
+   * 所以整表的高度 = Σ 行高 + 这一条。漏了它，表后面的第一段会往上贴一条线的宽度。
+   */
+  gridBelow: Twips;
 }
 
 export interface LayoutTableOptions extends Omit<LayoutParagraphOptions, 'contentWidth'> {
   /** 表格能用的宽度：版心宽，嵌套时是外层单元格的 `contentWidth` */
   availWidth: Twips;
+  /** 格线几何规则。**标定用的接缝**，正常调用不要传，见 `TABLE_RULES` */
+  tableRules?: TableRules;
+}
+
+/**
+ * 表格格线的几何规则。两条都由 `spike-table-01` 实测（证据表见 `layoutTable`）。
+ */
+export interface TableRules {
+  /**
+   * 一条水平格线占多少纵向高度，按线宽的倍数算：
+   * - `full`（**实测**）：整条线的宽度都占。一行带着自己**上边**那条，
+   *   表格最下面那条挂在 `TableLayout.gridBelow` 上；
+   * - `half`：只占一半（把线想成骑在边界上、两边各一半的话就会这么写）；
+   * - `none`：一点不占（改这条之前的实现）。
+   *
+   * 「一行带上边那条」与「一行带下边那条」是**同一个答案**，不是两个候选 ——
+   * Word 存盘时总把共享的那条线在相邻两格上各写一份，两种记法算出来的
+   * 行间距一模一样，只有表格最外面那两条能分辨，而那两条两种记法也一致。
+   */
+  gridline: 'full' | 'half' | 'none';
+  /** 竖格线吃不吃格内的可用宽（吃的话断行点会往前挪） */
+  eatsWidth: boolean;
+}
+
+export const TABLE_RULES: TableRules = { gridline: 'full', eatsWidth: false };
+
+/** 一条格线按规则折算出来的占位高度 */
+function gridlineAdvance(width: Twips, rules: TableRules): Twips {
+  if (rules.gridline === 'none') return 0;
+  return rules.gridline === 'half' ? width / 2 : width;
 }
 
 /**
@@ -129,7 +174,50 @@ function marginOf(m: CellMargins[keyof CellMargins]): Twips {
   return m.type === 'dxa' ? m.value : 0;
 }
 
+/**
+ * 一条水平格线的宽度 —— 这一行所有格子在这条边上解析出来的**最粗**的那一条。
+ *
+ * 「格线占纵向的高、不占横向的宽」是 `spike-table-01` 实测的（证据见 `layoutTable`）。
+ * 取 max 也是实测的：样本第 5 行只有第一格是 6pt 边框，整行三格的基线一起下沉 6pt，
+ * 不是只有那一格下沉。`border === undefined` 是「这一段不画线」，一点都不占。
+ */
+function gridlineWidth(cells: readonly CellLayout[], side: 'top' | 'bottom'): Twips {
+  let w = 0;
+  for (const c of cells) {
+    for (const seg of c.borders[side]) {
+      const s = seg.border?.size ?? 0;
+      if (s > w) w = s;
+    }
+  }
+  return w;
+}
+
+/**
+ * ## 边框在纵向占位、在横向不占（`spike-table-01` 实测）
+ *
+ * 这是个**不对称**的规则，而且原来两边都按「不占」实现，于是每张带框的表都偏高不足：
+ * 一张 20 行、0.5pt 框线的表少算 10pt，1pt 框线少 20pt，跨页位置一路错下去。
+ *
+ * 为什么会不对称，看一眼就明白了：**宽度是给定的**（`w:tblGrid` 是 Word 存盘时算完写下的），
+ * 边框没地方可占；**高度是算出来的**，边框就能加进去。
+ *
+ * 证据（样本页 1，仿宋 12pt 单倍行距 = 15.6pt，表 A 框线 0.5pt，第 5 行第一格 6pt）：
+ *
+ * | 量的东西 | Word | 模型 |
+ * |---|---|---|
+ * | 第 1 行 → 第 2 行 基线差 | 16.08pt | 15.6 内容 + 0.5 格线 |
+ * | 第 4 行（`w:trHeight` 60pt）→ 第 5 行 基线差 | 66.00pt | 60 + 6.0 格线 |
+ * | 第 5 行末行 → 第 6 行 基线差 | 21.60pt | 15.6 + 6.0 格线 |
+ * | 表前一段 → 第 1 行 基线差 | 16.08pt | 15.6 + 0.5（表**顶**那条也占） |
+ * | 表末行 → 表后一段 基线差 | 16.08pt | 15.6 + 0.5（表**底**那条也占） |
+ * | 6pt 边框那一格的断行 | 9 字/行 | 可用宽 109.2pt 未被边框吃掉（吃了只剩 8 字） |
+ * | 6pt 边框那一格的文字 x | 与同列其余行**相同** | 横向一点不占 |
+ *
+ * `w:trHeight` 与 `w:vAlign` 量的都是**格线以内**那一段：第 4 行 `w:trHeight` = 60pt，
+ * 三格的基线差实测 0 / 22.20 / 44.52pt，正是 (60 − 15.6) 的 0 / 一半 / 全部。
+ */
 export function layoutTable(t: ResolvedTable, opts: LayoutTableOptions): TableLayout {
+  const rules = opts.tableRules ?? TABLE_RULES;
   const columns = columnWidths(t, opts.availWidth);
   const width = columns.reduce((a, b) => a + b, 0);
 
@@ -144,10 +232,19 @@ export function layoutTable(t: ResolvedTable, opts: LayoutTableOptions): TableLa
       col += c.gridSpan;
       return cell;
     });
-    return { rowId: r.id, cells, height: rowHeight(r.props.height, cells) };
+    const gridAbove = gridlineAdvance(gridlineWidth(cells, 'top'), rules);
+    return { rowId: r.id, cells, gridAbove, height: gridAbove + rowHeight(r.props.height, cells) };
   });
 
-  return { tableId: t.id, x: tableX(t, width, opts.availWidth), width, columns, rows };
+  const last = rows[rows.length - 1];
+  return {
+    tableId: t.id,
+    x: tableX(t, width, opts.availWidth),
+    width,
+    columns,
+    rows,
+    gridBelow: last === undefined ? 0 : gridlineAdvance(gridlineWidth(last.cells, 'bottom'), rules),
+  };
 }
 
 /**
@@ -234,8 +331,12 @@ function layoutCell(
   const paddingRight = marginOf(c.props.margins.right);
   const paddingTop = marginOf(c.props.margins.top);
   const paddingBottom = marginOf(c.props.margins.bottom);
+  // 竖格线默认**不吃**可用宽（实测，见 `TableRules.eatsWidth`）—— 宽度是 `w:tblGrid`
+  // 给定的，线没地方可占。这里留着接缝只为让穿刺能把另一种可能跑一遍。
+  const rules = opts.tableRules ?? TABLE_RULES;
+  const eaten = rules.eatsWidth ? (borders.left?.size ?? 0) + (borders.right?.size ?? 0) : 0;
   // 边距比格子还宽时可用宽度会变负 —— 夹到 0，别让负宽度传进断行算法
-  const contentWidth = Math.max(0, width - paddingLeft - paddingRight);
+  const contentWidth = Math.max(0, width - paddingLeft - paddingRight - eaten);
 
   const blocks = c.blocks.map((b) => blockLayout(b, contentWidth, opts));
   return {
@@ -277,6 +378,7 @@ export function contentHeightOf(blocks: readonly BlockLayout[]): Twips {
   for (const b of blocks) {
     if (b.kind === 'table') {
       for (const r of b.layout.rows) h += r.height;
+      h += b.layout.gridBelow;
       continue;
     }
     h += b.layout.spaceBefore + b.layout.spaceAfter;

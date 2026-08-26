@@ -23,14 +23,14 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { Twips } from '@uw/core';
 import { createDiagnosticSink } from '@uw/core';
 import { createTextMeasurer, FontRegistry } from '@uw/fonts';
 import { loadBundledPacks } from '@uw/fonts/node';
-import type { BlockLayout, CellLayout, PageLayout, PlacedBlock } from '@uw/layout';
-import { contentHeightOf, layoutDocumentWithFields } from '@uw/layout';
+import { layoutDocumentWithFields } from '@uw/layout';
 import { fontNameCandidates, loadDocument } from '@uw/model';
 import { OpcPackage } from '@uw/ooxml';
+import type { Piece } from './flatten.ts';
+import { piecesOf } from './flatten.ts';
 
 const FIXTURES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures');
 
@@ -42,81 +42,7 @@ interface TruthFile {
   pages: { lines: { text: string; y: number; x: number }[] }[];
 }
 
-interface Piece {
-  x: number;
-  y: number;
-  text: string;
-}
-
-const pt = (t: Twips): number => t / 20;
 const trim = (s: string): string => s.replace(/\s+$/u, '');
-
-// ── 把一页摊平成「绝对坐标 + 文字」的片段 ────────────────────────────────────
-
-/** 一摞块（格内 / 页眉里）从 (x0, y0) 往下排。累加规则与渲染层的 `paintBlockStack` 一致 */
-function collectStack(blocks: readonly BlockLayout[], x0: Twips, y0: Twips, out: Piece[]): void {
-  let y = y0;
-  for (const b of blocks) {
-    if (b.kind === 'table') {
-      for (const row of b.layout.rows) {
-        for (const cell of row.cells) collectCell(cell, x0 + b.layout.x, y, row.height, out);
-        y += row.height;
-      }
-      continue;
-    }
-    y += b.layout.spaceBefore;
-    for (const line of b.layout.lines) {
-      for (const f of line.fragments) {
-        if (f.text !== '') out.push({ x: pt(x0 + f.x), y: pt(y + line.baseline), text: f.text });
-      }
-      y += line.height;
-    }
-    y += b.layout.spaceAfter;
-  }
-}
-
-/** 一格的内容。起始 y 由 `w:vAlign` 决定 —— 与渲染层的 `paintCellContent` 同一套算法 */
-function collectCell(cell: CellLayout, tableX: Twips, rowTop: Twips, rowHeight: Twips, out: Piece[]): void {
-  if (cell.vMerge === 'continue') return; // 内容由上面那个 restart 撑着，这一格不画
-  const inner = contentHeightOf(cell.blocks);
-  const avail = rowHeight - cell.paddingTop - cell.paddingBottom;
-  let y = rowTop + cell.paddingTop;
-  if (cell.verticalAlign === 'center') y += Math.max(0, (avail - inner) / 2);
-  else if (cell.verticalAlign === 'bottom') y += Math.max(0, avail - inner);
-  collectStack(cell.blocks, tableX + cell.x + cell.paddingLeft, y, out);
-}
-
-/** 一批已分页的块（正文 / 页眉页脚），坐标相对给定的框左上角 */
-function collectBlocks(blocks: readonly PlacedBlock[], x0: Twips, y0: Twips, out: Piece[]): void {
-  for (const b of blocks) {
-    if (b.kind === 'paragraph') {
-      for (const placed of b.lines) {
-        for (const f of placed.line.fragments) {
-          if (f.text !== '') {
-            out.push({ x: pt(x0 + f.x), y: pt(y0 + placed.y + placed.line.baseline), text: f.text });
-          }
-        }
-      }
-      continue;
-    }
-    for (const placed of b.rows) {
-      for (const cell of placed.row.cells) {
-        collectCell(cell, x0 + b.x, y0 + b.y + placed.y, placed.height, out);
-      }
-    }
-  }
-}
-
-/** 一整页（版心 + 页眉 + 页脚）的全部文字片段，坐标相对**纸**左上角 */
-function piecesOf(page: PageLayout): Piece[] {
-  const out: Piece[] = [];
-  const c = page.geometry.content;
-  collectBlocks(page.blocks, c.x, c.y, out);
-  for (const hf of [page.header, page.footer]) {
-    if (hf !== undefined) collectBlocks(hf.blocks, hf.x, hf.y, out);
-  }
-  return out;
-}
 
 /** 按 y 分桶 → 桶内按 x 排 → 拼成一行。与 `extract-truth.ts` 的 `groupLines()` 同构 */
 function groupLines(pieces: Piece[]): { y: number; x: number; text: string }[] {

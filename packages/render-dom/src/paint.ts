@@ -468,10 +468,16 @@ function paintPlacedTable(t: PlacedTable, ctx: Ctx): RElement {
       top: SPLIT_ROW_SEAM_BORDER || placed.continued !== true,
       bottom: SPLIT_ROW_SEAM_BORDER || placed.splitAfter !== true,
     };
+    // 行的上边那条格线**占着高度**（layout 的 `RowLayout.gridAbove`，spike-table-01 实测），
+    // 内容要从格线**以内**起排；格线自己仍旧画在行盒的外边界上，于是相邻两行画在同一个 y、
+    // 去重照旧生效。线宽是绕着那个 y 居中描的，所以它有一半落在带外 —— 0.5pt 的框线差
+    // 0.25pt，与改这条之前一样，不值得为它换一套画法。
+    const inner = rowTop + placed.row.gridAbove;
+    const innerHeight = placed.height - placed.row.gridAbove;
     for (const cell of placed.row.cells) {
       if (cell.vMerge !== 'continue') {
-        paintCellShading(cell, rowTop, placed.height, ctx, shading);
-        paintCellContent(cell, rowTop, placed.height, ctx, content);
+        paintCellShading(cell, inner, innerHeight, ctx, shading);
+        paintCellContent(cell, inner, innerHeight, ctx, content);
       }
       paintCellBorders(cell, t.columns, rowTop, placed.height, ctx, seen, borders, edges);
     }
@@ -557,6 +563,9 @@ function paintBlockStack(
         paintNestedRow(row, x0 + b.layout.x, y, ctx, out);
         y += row.height;
       }
+      // 表底那条格线不属于任何一行，得单独加 —— 与 `contentHeightOf` 必须一字不差，
+      // 否则嵌套表格后面的块会往上贴一条线的宽度
+      y += b.layout.gridBelow;
       continue;
     }
     y += b.layout.spaceBefore;
@@ -578,8 +587,8 @@ function paintNestedRow(row: RowLayout, x0: Twips, y: Twips, ctx: Ctx, out: REle
   const children: RElement[] = [];
   for (const cell of row.cells) {
     if (cell.vMerge === 'continue') continue;
-    paintCellShading(cell, 0, row.height, ctx, children);
-    paintCellContent(cell, 0, row.height, ctx, children);
+    paintCellShading(cell, row.gridAbove, row.height - row.gridAbove, ctx, children);
+    paintCellContent(cell, row.gridAbove, row.height - row.gridAbove, ctx, children);
     paintCellBorders(cell, [], 0, row.height, ctx, seen, children);
   }
   out.push(
