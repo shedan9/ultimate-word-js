@@ -17,7 +17,6 @@
  * 跨平台：docx 与 truth.json 都入库，度量走随库的度量包，所以 CI 上也跑得了。
  */
 import { readFileSync } from 'node:fs';
-import type { Twips } from '@uw/core';
 import { createDiagnosticSink } from '@uw/core';
 import { createTextMeasurer, FontRegistry } from '@uw/fonts';
 import { loadBundledPacks } from '@uw/fonts/node';
@@ -25,9 +24,9 @@ import { fontNameCandidates, loadDocument } from '@uw/model';
 import { OpcPackage } from '@uw/ooxml';
 import { describe, expect, it } from 'vitest';
 import { layoutDocumentWithFields } from './fields.ts';
-import type { PageLayout, PlacedBlock } from './page.ts';
-import type { BlockLayout, CellLayout } from './table.ts';
-import { contentHeightOf } from './table.ts';
+import type { PageLayout } from './page.ts';
+import type { Chunk } from './test-flatten.ts';
+import { chunksOf } from './test-flatten.ts';
 
 const FIXTURES = new URL('../../../apps/fidelity/fixtures/', import.meta.url);
 /** L3 / L4 的判据 */
@@ -55,16 +54,6 @@ interface Truth {
   pages: { items: TruthItem[] }[];
 }
 
-interface Chunk {
-  x: number;
-  y: number;
-  right: number;
-  size: number;
-  text: string;
-}
-
-const pt = (t: Twips): number => t / 20;
-
 /**
  * 同一基线上、x 首尾相接的片段并成一段。两侧共用同一套并法，切法才对得上 ——
  * pdf.js 按字体子集切，我们按 run 切，逐片段配对是配不上的。
@@ -84,86 +73,9 @@ function merge(pieces: readonly Chunk[]): Chunk[] {
   return out;
 }
 
-/** 一摞块（格内）从 (x0, y0) 往下排。累加规则与渲染层的 `paintBlockStack` 一致 */
-function collectStack(blocks: readonly BlockLayout[], x0: Twips, y0: Twips, out: Chunk[]): void {
-  let y = y0;
-  for (const b of blocks) {
-    if (b.kind === 'table') {
-      for (const row of b.layout.rows) {
-        for (const cell of row.cells) {
-          collectCell(cell, x0 + b.layout.x, y + row.gridAbove, row.height - row.gridAbove, out);
-        }
-        y += row.height;
-      }
-      y += b.layout.gridBelow;
-      continue;
-    }
-    y += b.layout.spaceBefore;
-    for (const line of b.layout.lines) {
-      for (const f of line.fragments) {
-        if (f.text === '') continue;
-        out.push({
-          x: pt(x0 + f.x),
-          y: pt(y + line.baseline),
-          right: pt(x0 + f.x + f.width),
-          size: pt(f.fontSize),
-          text: f.text,
-        });
-      }
-      y += line.height;
-    }
-    y += b.layout.spaceAfter;
-  }
-}
-
-/** 一格的内容。起始 y 由 `w:vAlign` 决定 —— 与渲染层的 `paintCellContent` 同一套算法 */
-function collectCell(cell: CellLayout, tableX: Twips, rowTop: Twips, rowHeight: Twips, out: Chunk[]): void {
-  if (cell.vMerge === 'continue') return;
-  const inner = contentHeightOf(cell.blocks);
-  const avail = rowHeight - cell.paddingTop - cell.paddingBottom;
-  let y = rowTop + cell.paddingTop;
-  if (cell.verticalAlign === 'center') y += Math.max(0, (avail - inner) / 2);
-  else if (cell.verticalAlign === 'bottom') y += Math.max(0, avail - inner);
-  collectStack(cell.blocks, tableX + cell.x + cell.paddingLeft, y, out);
-}
-
-/** 一页的全部文字片段，坐标相对**纸**左上角 */
-function chunksOf(page: PageLayout): Chunk[] {
-  const out: Chunk[] = [];
-  const c = page.geometry.content;
-  // `PlacedRow.y` / `PlacedLine.y` 都已经是**相对版心**的绝对 y，别再加块自己的 y
-  const walk = (blocks: readonly PlacedBlock[], x0: Twips, y0: Twips): void => {
-    for (const b of blocks) {
-      if (b.kind === 'paragraph') {
-        for (const placed of b.lines) {
-          for (const f of placed.line.fragments) {
-            if (f.text === '') continue;
-            out.push({
-              x: pt(x0 + f.x),
-              y: pt(y0 + placed.y + placed.line.baseline),
-              right: pt(x0 + f.x + f.width),
-              size: pt(f.fontSize),
-              text: f.text,
-            });
-          }
-        }
-        continue;
-      }
-      for (const placed of b.rows) {
-        for (const cell of placed.row.cells) {
-          collectCell(
-            cell,
-            x0 + b.x,
-            y0 + placed.y + placed.row.gridAbove,
-            placed.height - placed.row.gridAbove,
-            out,
-          );
-        }
-      }
-    }
-  };
-  walk(page.blocks, c.x, c.y);
-  return merge(out);
+/** 一页的全部文字片段，坐标相对**纸**左上角，并完段 */
+function pageChunks(page: PageLayout): Chunk[] {
+  return merge(chunksOf(page));
 }
 
 function truthChunks(truth: Truth, page: number): Chunk[] {
@@ -210,7 +122,7 @@ describe.each(['spike-table-01', 'spike-table-02'])('%s 逐格与 Word 对', (na
       const want = truthChunks(truth, p).map((c) => c.text);
       const page = pages[p];
       expect(page).toBeDefined();
-      expect(chunksOf(page as PageLayout).map((c) => c.text)).toEqual(want);
+      expect(pageChunks(page as PageLayout).map((c) => c.text)).toEqual(want);
     }
   });
 
@@ -218,7 +130,7 @@ describe.each(['spike-table-01', 'spike-table-02'])('%s 逐格与 Word 对', (na
     const misses: string[] = [];
     for (let p = 0; p < truth.pageCount; p++) {
       const want = truthChunks(truth, p);
-      const got = chunksOf(pages[p] as PageLayout);
+      const got = pageChunks(pages[p] as PageLayout);
       for (let i = 0; i < want.length; i++) {
         const w = want[i] as Chunk;
         const m = got[i] as Chunk;
@@ -241,7 +153,7 @@ describe.each(['spike-table-01', 'spike-table-02'])('%s 逐格与 Word 对', (na
 
 describe('spike-table-01 的几条几何结论各留一条断言', () => {
   const { pages, truth } = layout('spike-table-01');
-  const got = chunksOf(pages[0] as PageLayout);
+  const got = pageChunks(pages[0] as PageLayout);
   const want = truthChunks(truth, 0);
   const find = (list: readonly Chunk[], text: string): Chunk => {
     const c = list.find((x) => x.text === text);

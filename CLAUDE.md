@@ -17,9 +17,10 @@ Phase 5 的**列表编号**已经从 `numbering.xml` 一路通到首行几何，
 SECTIONPAGES 迭代到自洽）都做完了，TOC / SEQ 的求值还没写。
 **图片**也通了（解析 → 收字节 → 占位 → 画，四层各一段，见下），**几何也用真值标定完了**。Phase 4 的**表格**：属性 + 级联（含 `w:tblStylePr` 条件格式）在 model 层，
 列宽 + 每格的 x 与可用宽 + 格内段落 + **边框冲突解析**在 layout 层，跨页按**行**拆，
-一行放不下时还会从**行间**切开（**拆行**，见下）。**表格的几何、条件格式与格线冲突都用真值
-标定完了** —— 造样本的工具从此会造表（`make-fixture.ps1` 的 `kind: "table"`），
-真值也从此读得到**画出来的线**（`truth.json` 的 `pages[].rules[]`），见下。
+一行放不下时还会从**行间**切开（**拆行**，见下）。**表格这一层全部标定完了** ——
+几何、条件格式、格线冲突、拆行四问都有了真值。造样本的工具从此会造表
+（`make-fixture.ps1` 的 `kind: "table"`），真值也从此读得到**画出来的线**
+（`truth.json` 的 `pages[].rules[]`），见下。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、
 `@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 制表位 + **编号（解析 + 计数器 + 编号文字 + 接进级联）** + **表格（属性 + 级联 + 条件格式）** + **域（界桩配对 + 指令解析 + HYPERLINK）** + **页眉页脚部件** + **图片（外框 + blip 引用 + 裁剪 / 旋转 + 浮动锚点 + 字节表）**）、
 `@uw/fonts`（行高规则 + 脚本分桶 + 度量包 + 注册表 + `TextMeasurer`）、
@@ -44,8 +45,8 @@ SECTIONPAGES 迭代到自洽）都做完了，TOC / SEQ 的求值还没写。
 版心正是被它们挤出来的。浮动对象（印章 / 水印）同样与版心平级，**衬于文字下方的画在正文之前、
 浮于上方的画在最后** —— SVG 里的「层」就是画的先后。
 未画：run 级高亮（model 没解析）、可选文本层、增量更新。
-画法里没有真值的常数（下划线 / 删除线的位置粗细、上下标升降量、前导符点距、
-拆行接缝上画不画横线）关在 `packages/render-dom/src/uncalibrated.ts` ——
+画法里没有真值的常数（下划线 / 删除线的位置粗细、上下标升降量、前导符点距）
+关在 `packages/render-dom/src/uncalibrated.ts` ——
 **它们一个都不改坐标**，所以 L2/L3/L4 全绿也证明不了它们对。
 
 **语料体检**（`apps/fidelity/src/corpus-report.ts`，`pnpm --filter @uw/fidelity corpus`）：
@@ -112,12 +113,24 @@ gongwen-01 的 18 行与 Word 真值最大差 **0.06pt**（L3 判据 0.5pt），
 这一片的高度按**最高那一格**算 —— 与不拆行时 `rowHeight()` 取 max 是同一条规则。
 切出来的是**两份各自自洽的 `RowLayout`**，不是「一份 + 裁剪窗口」：后者要渲染层加
 `clipPath`、要命中测试知道「这一片只露出第几行」、还要一套行内局部坐标。
-渲染层只多认两个标记（`PlacedRow.continued` / `splitAfter`），用来决定接缝上画不画横线
-（`@uw/render-dom` 的 `SPLIT_ROW_SEAM_BORDER`，没有真值）。
 它修掉的是一个**真会错位**的洞：一行高过整页版心时，原来只能硬塞、内容溢出版心且
-后面每页跟着错。四问没有 Word 样本、写在 `table-split.ts` 的文件头：边距在两片上怎么分、
-`w:trHeight` 的富余归哪片、头片的 `w:vAlign`、接缝上画不画线 —— **它们一个都不改断行**，
-所以 L2/L3/L4 全绿证明不了它们对。没做：嵌套表格的行不再往下切、格内不管孤行寡行。
+后面每页跟着错。
+
+**拆行的四问也标定完了**（样本 `spike-table-04`，跑 `pnpm --filter @uw/fidelity spike:table-split`，
+落在 `TABLE_SPLIT_RULES`）。四条原来全是「哪种最省地方」猜的，**三条猜反了**：
+① **就地切**（本页剩下多少用多少），不是「整行挪到下一页顶上再切」—— 后者白扔掉本页剩下的
+一整块地方，表甲那一页扔掉了十行；② **上下边距两片各补一整份**，不是「上归头片、下归尾片」；
+③ **`w:trHeight` 每一片各要一份**，不是「整行算完把富余留给尾片」；
+④ 猜对的那条是**头片照样认 `w:vAlign`**（原来一律按 top 摆，是错的）。
+第三条顺手解释了另外两件本来要单独写规则的事：**一片都满足不了 `trHeight` 时整行挪走**
+（表乙要 420pt、本页只剩 266pt，Word 挪了），以及**要的高度大过整页版心时续页顶上不重复表头**
+（表乙的两片各占满一整页，两页顶上都没有表头；表丁的尾片只要 200pt，页顶就照常重复）。
+第四问「接缝上画不画线」的答案是**画**，而且画的是**表级** `w:tblBorders` 的上下边 ——
+不是这一行自己的（表己的第二行后面还跟着一行，它自己的下边框是 3pt 绿线，
+接缝上画出来的却是 0.5pt 的黑外框）。也就是说 Word 把每一页上的表格片段**当成一张自己封口的表**画。
+接缝线由布局层写进切片的 `cell.borders`（`seamBorders()`），**渲染层因此一个字都不用改**，
+原来那个 `SPLIT_ROW_SEAM_BORDER` 开关连同它的猜测一起删了。尾片顶上那条线像正常格线一样占高度。
+没做：嵌套表格的行不再往下切、格内不管孤行寡行。
 
 **页眉页脚**（`packages/layout/src/header-footer.ts`）三条几何规则**都已实测**
 （样本 `spike-header-01/02`，跑 `pnpm --filter @uw/fidelity spike:header`，落在 `HEADER_RULES`）：
@@ -398,6 +411,7 @@ pnpm --filter @uw/fidelity spike:header    # 页眉页脚穿刺（框摆在哪 /
 pnpm --filter @uw/fidelity spike:image     # 图片穿刺（内嵌图的行盒 / 浮动图的参照框 / 行网格与倍数行距，**不需要 Word**）
 pnpm --filter @uw/fidelity spike:table     # 表格穿刺（格线占不占高 / 吃不吃宽 + 条件格式的命中与层序，**不需要 Word**）
 pnpm --filter @uw/fidelity spike:table-border  # 格线冲突穿刺（相邻两格各写一条边，Word 画哪一条，**不需要 Word**）
+pnpm --filter @uw/fidelity spike:table-split   # 拆行穿刺（切在哪一页 / 边距怎么分 / trHeight 归谁 / 头片 vAlign，**不需要 Word**）
 pnpm --filter @uw/fidelity preview -- --truth  # fixture 画成 out/*.html 并叠真值基线（不需要 Word）
 pnpm --filter @uw/fidelity corpus          # 语料体检：整份文档与 truth.json 比页数 / 每页行数 / 每行文字 + 汇总诊断
 pnpm --filter @uw/fidelity corpus 名字 -- --diff   # 逐行看差异
@@ -507,6 +521,16 @@ Times 的 winAscent 更大，若参与就该赢，实测却仍是等线单独的
 读数靠**颜色**：竞争两侧各给一个独一无二的颜色，画出来的线是什么颜色就是谁赢 ——
 与条件格式那份拿字号认层序同一招。**Word 自己造不出这个局面**（对象模型里一条共享边
 只有一个 Border 对象），所以冲突是改 XML 写进去的，见 `apps/fidelity/src/patch-docx.ts`。
+
+**已定死（拆行穿刺，一份样本 14 页逐行全对）** —— 实现在
+[`packages/layout/src/table-split.ts`](packages/layout/src/table-split.ts) 的
+`TABLE_SPLIT_RULES` 与 [`packages/layout/src/page.ts`](packages/layout/src/page.ts) 的 `placeTable()`：
+**就地切**、**上下边距两片各补一整份**、**`w:trHeight` 每一片各要一份**、
+**头片照样认 `w:vAlign`**；接缝上那两条线**画**，取的是表级 `w:tblBorders` 的上下边。
+排组合（16 种）逐页比，唯一满分。四条里**三条原来是反的**，而且每一条都改分页 ——
+「挪到下一页再切」那一版整份样本 14 页里只对上 3 页。
+判页的方式与别处不同：Word 自己的行距带着 ±0.12pt 抖动、十八行能累到 0.58pt，
+所以比的是**首行绝对 y + 逐行增量**（与 `spike-image` 同一个理由）。
 
 **未决**：混排行的合成规则只有单字体样本 ——
 `composeBaseline()` 的「逐个居中再取 max」是判断，要一份「同一行两款东亚字体、字号不同」的样本才能钉死，

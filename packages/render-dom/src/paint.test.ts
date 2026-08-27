@@ -335,7 +335,7 @@ describe('表格', () => {
     expect(yOf(mid) - yOf(top)).toBeCloseTo(20, 3);
   });
 
-  it('拆行的接缝上不画横线，竖边照旧两片各画各的', () => {
+  it('拆行的两片照常画四条边 —— 接缝上那条线由布局层换好了，画法不认识「切口」', () => {
     const c = cell({
       borders: {
         ...cell().borders,
@@ -362,12 +362,14 @@ describe('表格', () => {
     const horizontals = (svg: RElement): number =>
       collect(svg, 'line').filter((l) => l.attrs.y1 === l.attrs.y2).length;
 
-    expect(horizontals(slice({}))).toBe(2); // 整行：上下两条都是真边界
-    expect(horizontals(slice({ splitAfter: true }))).toBe(1); // 底是切口
-    expect(horizontals(slice({ continued: true }))).toBe(1); // 顶是切口
-    expect(horizontals(slice({ continued: true, splitAfter: true }))).toBe(0);
+    // `spike-table-04` 实测：接缝上那两条线 Word **是**画的（取表级的上下边框），
+    // 而换成哪一条是 `table-split.ts` 的活 —— 这边拿到 `cell.borders` 里是什么就画什么，
+    // 于是三种标记画出来的横线一样多。原来这里按 `SPLIT_ROW_SEAM_BORDER` 少画一条
+    for (const over of [{}, { splitAfter: true as const }, { continued: true as const }]) {
+      expect(horizontals(slice(over))).toBe(2);
+    }
     // 竖边不受影响：哪一片都要画自己那一截
-    expect(collect(slice({ continued: true, splitAfter: true }), 'line')).toHaveLength(1);
+    expect(collect(slice({ continued: true, splitAfter: true }), 'line')).toHaveLength(3);
   });
 
   it('vMerge=continue 的格子不画内容，但格线照旧参与', () => {

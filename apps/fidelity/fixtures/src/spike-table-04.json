@@ -1,0 +1,1562 @@
+{
+  "name": "spike-table-04",
+  "note": "表格**拆行**的四问 —— 一行放不下时从行间切开，本页一片、下一页接一片。\n这四问写在 packages/layout/src/table-split.ts 的文件头，实现按「哪种最省地方」猜的，\n一条都没跟 Word 比过。它们不改断行（切口只落在行间），但整片的位置与画出来的线全靠它们。\n\n四问与它们各自的样本：\n① **接缝上画不画横线** —— 头片的底边、尾片的顶边，Word 到底画不画。读 pages[].rules[]\n   里那条横线在不在，与表甲的两条真边框（表顶、表底）对照就分得清；\n② **单元格边距在两片上怎么分** —— 表甲把上下边距都放大到 20pt（默认 5.4pt 差得太小，\n   一行 15.6pt 的文字盖得住）。头片留不留下边距，从「最后一个甲NN 是第几条」读得出：\n   留则少放一行；尾片补不补上边距，从「第一个甲NN 的基线离顶上那条横线多远」读得出；\n③ **w:trHeight 的富余落在哪一片** —— 表乙第二行 atLeast 420pt、内容只有 20 行（约 322pt），\n   富余约 98pt。它落在头片就是本页多空一截，落在尾片就是下一页的表尾往下挪。\n   第三行「乙尾」的基线一量就知道。表乙第一行同时开着 header=true，\n   顺手验一遍**表头行每页重复**（实现里有，也没跟 Word 比过）；\n④ **头片的 w:vAlign** —— 表丙第二行第一格塞 24 段逼它拆，第二、三格各只有一行短文字、\n   分别 vAlign=bottom 与 center。这两格的那一行落在头片的顶上还是底下 / 中间，\n   信号是整个头片的高度（一百多 pt），不是「不足一行的富余」那种量级。\n   顺带看得出头片撑不撑到版心底：撑了的话 bottom 那一格会贴到页脚线上。\n\n表丁再问两件表甲答不了的：**接缝那条线是哪一条边**（外框 2.25pt 红、insideH 0.5pt 蓝，\n   画出来是什么颜色就是哪一条；行二是最后一行，于是它的下边是外框、上边是 insideH，\n   两侧分得开），以及 **atLeast 是按整行算还是按每一片算**（atLeast 200pt、内容 25 行约 390pt：\n   按整行算的话尾片只有内容那么高，按每片算则尾片被撑到 200pt）。它的第一行也开着 header，\n   与表乙那份对照 —— 表乙的拆行片上头 Word **没有**重复表头。\n\n表戊是表丁的**第二个刻度**：同样是 atLeast，但换成 100pt、内容 22 段。\n   一个数据点分不开「每片各要一份 trHeight」与「每片要的是 trHeight 加个常数」，\n   两个不同的 atLeast 才看得出富余是常数还是跟着 trHeight 走。\n\n表己是第三个刻度，问的是**富余到底跟谁走**：与表戊同为 atLeast 100pt、同为 22 段，\n   只把 insideH 换成 3pt 绿线。表丁（下边是 2.25pt 的外框）的尾片比 trHeight 高出 1.89pt，\n   表戊（下边是 0.5pt）只高出 0.11pt —— 差的那 1.78 恰好是两条下边线的差，\n   于是「行的下边线算不算在 trHeight 里」这一问只有再来一条 3pt 的下边线才分得开。\n   它同时第三次验接缝那条线是**行自己的下边框**：表丁的接缝是外框（2.25pt），\n   这里行二后面还有一行，接缝该是 insideH（3pt 绿）。\n\n表庚是**对照**，一行都不拆：atLeast 100pt 的行放在第一行，上边是 0.5pt 的外框、\n   下边是 3pt 的 insideH。「trHeight 量的是格线以内」（已定死的那条）预测行框高\n   100 + 0.5，「trHeight 之外还要加上行自己的下边线」预测 100 + 3 —— 两条差 2.5pt。\n   之所以要它：spike-table-01 那份样本四条边全是 0.5pt，上下一样厚，两种说法给的数一模一样，\n   那条结论其实没被分辨过；表丁的尾片比 trHeight 高出的 1.89pt 正好把这个洞照了出来。\n\n页面故意做小（160 × 140mm、四边 20mm），版心 340 × 283pt —— 一页十八行，\n一格塞二十几段就必然跨页，样本才不必造几十页。字全是汉字加数字编号：\n编号是为了在真值里认出「这是第几行」，不参与任何判据。行网格不开（spec 不写 grid），\n否则基线被吸到网格上，边距差的那 20pt 会被整行吞掉。",
+  "page": {
+    "widthMm": 160,
+    "heightMm": 140,
+    "marginMm": {
+      "top": 20,
+      "bottom": 20,
+      "left": 20,
+      "right": 20
+    }
+  },
+  "paragraphs": [
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "表甲"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [170, 120],
+      "borderWidthPt": 0.5,
+      "cellMarginPt": {
+        "top": 20,
+        "left": 6,
+        "bottom": 20,
+        "right": 6
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "甲首左"
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "甲首右"
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "paras": [
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "甲01"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "甲02"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "甲03"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "甲04"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "甲05"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "甲06"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "甲07"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "甲08"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "甲09"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "甲10"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "甲11"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "甲12"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "甲13"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "甲14"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "甲15"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "甲16"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "甲17"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "甲18"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "甲19"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "甲20"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "甲21"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "甲22"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "甲23"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "甲24"
+                }
+              ]
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "甲身右"
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "甲尾左"
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "甲尾右"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "表乙"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [170, 120],
+      "borderWidthPt": 0.5,
+      "rows": [
+        {
+          "header": true,
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "乙表头左"
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "乙表头右"
+            }
+          ]
+        },
+        {
+          "heightPt": 420,
+          "heightRule": "atLeast",
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "paras": [
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "乙01"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "乙02"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "乙03"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "乙04"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "乙05"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "乙06"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "乙07"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "乙08"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "乙09"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "乙10"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "乙11"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "乙12"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "乙13"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "乙14"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "乙15"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "乙16"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "乙17"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "乙18"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "乙19"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "乙20"
+                }
+              ]
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "乙身右"
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "乙尾左"
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "乙尾右"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "表丙"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [160, 90, 90],
+      "borderWidthPt": 0.5,
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "丙首左"
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "丙首中"
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "丙首右"
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "paras": [
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丙01"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丙02"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丙03"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丙04"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丙05"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丙06"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丙07"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丙08"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丙09"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丙10"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丙11"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丙12"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丙13"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丙14"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丙15"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丙16"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丙17"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丙18"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丙19"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丙20"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丙21"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丙22"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丙23"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丙24"
+                }
+              ]
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "vAlign": "bottom",
+              "text": "丙贴底"
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "vAlign": "center",
+              "text": "丙居中"
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "丙尾左"
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "丙尾中"
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "丙尾右"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "表丁"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [170, 120],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 2.25,
+          "color": "#ff0000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 2.25,
+          "color": "#ff0000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 2.25,
+          "color": "#ff0000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 2.25,
+          "color": "#ff0000"
+        },
+        "insideH": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#0000ff"
+        },
+        "insideV": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        }
+      },
+      "rows": [
+        {
+          "header": true,
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "丁表头左"
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "丁表头右"
+            }
+          ]
+        },
+        {
+          "heightPt": 200,
+          "heightRule": "atLeast",
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "paras": [
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丁01"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丁02"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丁03"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丁04"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丁05"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丁06"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丁07"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丁08"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丁09"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丁10"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丁11"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丁12"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丁13"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丁14"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丁15"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丁16"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丁17"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丁18"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丁19"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丁20"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丁21"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丁22"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丁23"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丁24"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "丁25"
+                }
+              ]
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "丁身右"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "表戊"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [170, 120],
+      "borderWidthPt": 0.5,
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "戊首左"
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "戊首右"
+            }
+          ]
+        },
+        {
+          "heightPt": 100,
+          "heightRule": "atLeast",
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "paras": [
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "戊01"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "戊02"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "戊03"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "戊04"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "戊05"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "戊06"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "戊07"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "戊08"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "戊09"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "戊10"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "戊11"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "戊12"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "戊13"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "戊14"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "戊15"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "戊16"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "戊17"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "戊18"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "戊19"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "戊20"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "戊21"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "戊22"
+                }
+              ]
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "戊身右"
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "戊尾左"
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "戊尾右"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "表己"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [170, 120],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideH": {
+          "style": "single",
+          "widthPt": 3,
+          "color": "#008000"
+        },
+        "insideV": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "己首左"
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "己首右"
+            }
+          ]
+        },
+        {
+          "heightPt": 100,
+          "heightRule": "atLeast",
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "paras": [
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "己01"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "己02"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "己03"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "己04"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "己05"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "己06"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "己07"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "己08"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "己09"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "己10"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "己11"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "己12"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "己13"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "己14"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "己15"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "己16"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "己17"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "己18"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "己19"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "己20"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "己21"
+                },
+                {
+                  "fontEA": "仿宋",
+                  "fontLatin": "Times New Roman",
+                  "sizePt": 12,
+                  "align": "left",
+                  "text": "己22"
+                }
+              ]
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "己身右"
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "己尾左"
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "己尾右"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "表庚"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [170, 120],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideH": {
+          "style": "single",
+          "widthPt": 3,
+          "color": "#008000"
+        },
+        "insideV": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        }
+      },
+      "rows": [
+        {
+          "heightPt": 100,
+          "heightRule": "atLeast",
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "庚首左"
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "庚首右"
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "庚尾左"
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "庚尾右"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "表辛"
+    }
+  ]
+}

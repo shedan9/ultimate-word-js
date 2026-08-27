@@ -5,8 +5,9 @@
  * 一页 3 行（819 = 273 × 3）。期望值因此能数着行写出来 —— 「头片 3 行、尾片 2 行」
  * 失败时一眼看得出是差了一行还是差了一整页。
  *
- * 这里测的是**规则**，不是保真度：拆行的几处判断（边距记在哪一片、`w:trHeight`
- * 的富余归谁）都还没有 Word 真值，写在 `table-split.ts` 的文件头。
+ * 这里测的是**规则**，不是保真度。规则本身由 `spike-table-04` 实测（见
+ * `table-split.ts` 的 `TABLE_SPLIT_RULES`），与真值逐页对的那一份回归在
+ * `table-split-fixture.test.ts`；这里只钉住「规则落到代码上是不是这个意思」。
  */
 import type { ResolvedBlock, ResolvedBody, SectionProps } from '@uw/model';
 import { DEFAULT_SECTION_PROPS, DEFAULT_SETTINGS } from '@uw/model';
@@ -24,6 +25,7 @@ import {
   run,
   SIZE_5,
   table,
+  tableProps,
 } from './test-fixtures.ts';
 
 const EA_LINE = SIZE_5 * 1.3;
@@ -120,39 +122,90 @@ describe('表格拆行', () => {
     expect(rowShape(first)).toEqual([4]); // 整行硬塞（空页上没有别处可挪）
   });
 
-  it('w:trHeight 撑出来的富余记在尾片', () => {
+  it('w:trHeight 每一片各要一份，要不到就夹在这一页能给的高度里', () => {
     const tall = row([lines(5)], { props: rowProps({ height: { value: 2000, rule: 'atLeast' } }) });
     const doc = layoutDocument(body([table([2100], [tall])]), opts());
     const head = tableOf(doc, 0).rows[0] as PlacedRow;
     const tail = tableOf(doc, 1).rows[0] as PlacedRow;
+    // 两片都要 2000，而一页只有 819 —— 于是两片各占满一整页（Word 的表乙就是这样）。
+    // 按「整行算完富余归尾片」的老写法，头片只有 3 行高、尾片会长出 2000 − 5 行那一截
     expect(head.height).toBe(3 * EA_LINE);
-    // 富余 = 2000 − 5 行内容；记在头片的话本页会平白多占一截空白
-    expect(tail.height).toBe(2 * EA_LINE + (2000 - 5 * EA_LINE));
+    expect(tail.height).toBe(3 * EA_LINE);
+    expect(rowShape(tail)).toEqual([2]);
   });
 
-  it('单元格边距：上边距只算头片、下边距只算尾片', () => {
+  it('w:trHeight 要的高度大过本页剩下的地方时整行挪走，不在这一页切', () => {
+    const short = row([lines(1)]);
+    const tall = row([lines(2)], { props: rowProps({ height: { value: 600, rule: 'atLeast' } }) });
+    const doc = layoutDocument(body([table([2100], [short, tall])]), opts());
+    // 首行占掉 273，只剩 546 < 600 —— 一片都满足不了下限，切了也白切
+    expect(tableOf(doc, 0).rows.map((r) => r.index)).toEqual([0]);
+    expect(tableOf(doc, 1).rows[0]).toMatchObject({ index: 1 });
+    expect(tableOf(doc, 1).rows[0]?.continued).toBeUndefined();
+  });
+
+  it('单元格上下边距两片各补一整份', () => {
     const margins = cellProps({
       margins: {
-        top: { value: 400, type: 'dxa' },
+        top: { value: 200, type: 'dxa' },
         left: { value: 108, type: 'dxa' },
-        bottom: { value: 300, type: 'dxa' },
+        bottom: { value: 100, type: 'dxa' },
         right: { value: 108, type: 'dxa' },
       },
     });
     const c = cell(
-      Array.from({ length: 4 }, (_, i) => para([run(`文${i}`)])),
+      Array.from({ length: 2 }, (_, i) => para([run(`文${i}`)])),
       { props: margins },
     );
     const doc = layoutDocument(body([table([2100], [row([c])])]), opts());
     const head = tableOf(doc, 0).rows[0] as PlacedRow;
     const tail = tableOf(doc, 1).rows[0] as PlacedRow;
-    // 上边距 400 之后只剩 419，装得下 1 行
+    // 上下边距各占一份之后只剩 519，装得下 1 行 —— 按「只补上边距」算能装下 2 行，
+    // 那正是这条规则在真值里露馅的地方（Word 的表甲首页少放了整整两行）
     expect(rowShape(head)).toEqual([1]);
-    expect(head.height).toBe(400 + EA_LINE);
-    expect(head.row.cells[0]?.paddingBottom).toBe(0);
-    expect(rowShape(tail)).toEqual([3]);
-    expect(tail.row.cells[0]?.paddingTop).toBe(0);
-    expect(tail.height).toBe(3 * EA_LINE + 300);
+    expect(rowShape(tail)).toEqual([1]);
+    expect(head.row.cells[0]).toMatchObject({ paddingTop: 200, paddingBottom: 100 });
+    expect(tail.row.cells[0]).toMatchObject({ paddingTop: 200, paddingBottom: 100 });
+    expect(head.height).toBe(200 + EA_LINE + 100);
+    expect(tail.height).toBe(200 + EA_LINE + 100);
+  });
+
+  it('头片照样认 w:vAlign', () => {
+    const c = cell([para([run('乙')])], { props: cellProps({ verticalAlign: 'bottom' }) });
+    const doc = layoutDocument(body([table([2100, 2100], [row([lines(5, '甲'), c])])]), opts());
+    const head = tableOf(doc, 0).rows[0] as PlacedRow;
+    // 一律按 top 摆是原来的写法：真值里那一格的字落在片底，不在片顶
+    expect(head.row.cells[1]?.verticalAlign).toBe('bottom');
+  });
+
+  it('接缝上那两条线取的是表级的上下边框，不是这一行自己的', () => {
+    const borders = {
+      top: { style: 'single' as const, size: 40, space: 0, color: '000000', shadow: false, frame: false },
+      bottom: {
+        style: 'single' as const,
+        size: 60,
+        space: 0,
+        color: '000000',
+        shadow: false,
+        frame: false,
+      },
+      insideH: {
+        style: 'single' as const,
+        size: 8,
+        space: 0,
+        color: '000000',
+        shadow: false,
+        frame: false,
+      },
+    };
+    const t = table([2100], [row([lines(1)]), row([lines(5)])], { props: tableProps({ borders }) });
+    const doc = layoutDocument(body([t]), opts());
+    const head = tableOf(doc, 1).rows[0] as PlacedRow; // 首页只放得下第一行
+    const tail = tableOf(doc, 2).rows[0] as PlacedRow;
+    expect(head.row.cells[0]?.borders.bottom[0]?.border?.size).toBe(60); // 表级 bottom
+    expect(tail.row.cells[0]?.borders.top[0]?.border?.size).toBe(40); // 表级 top
+    // 尾片顶上那条线像正常格线一样占高度
+    expect(tail.row.gridAbove).toBe(40);
   });
 
   it('一行文字都放不下时不切，整行挪到下一页', () => {

@@ -46,6 +46,7 @@ import type {
   ResolvedParaProps,
   ResolvedTableRow,
   SectionProps,
+  TableBorders,
 } from '@uw/model';
 import { formatNumber, walkBlocks } from '@uw/model';
 import type { HeaderFooterSource, HeaderRules, PlacedHeaderFooter, StackResult } from './header-footer.ts';
@@ -61,7 +62,8 @@ import { OBJECT_RULES } from './line-height.ts';
 import { layoutParagraph } from './paragraph.ts';
 import type { RowLayout, TableLayout, TableRules } from './table.ts';
 import { layoutTable, TABLE_RULES } from './table.ts';
-import { splitRow } from './table-split.ts';
+import type { SplitRowOptions, TableSplitRules } from './table-split.ts';
+import { splitRow, TABLE_SPLIT_RULES } from './table-split.ts';
 import type { LineFloat, LineLayout, LineObject, ParagraphLayout } from './types.ts';
 
 // ── 输出的数据形状 ────────────────────────────────────────────────────────────
@@ -113,8 +115,10 @@ export interface PlacedRow {
    * 会在相邻两页各出现一次，且两片的 `row` 是**各自独立**的 `RowLayout`
    * （各带自己那几行内容），不是同一份的两个窗口。
    *
-   * 渲染层拿它决定接缝上画不画横线（`SPLIT_ROW_SEAM_BORDER`）；
-   * 命中测试与可选文本层不用管 —— 内容本来就分在两片里，不会重复。
+   * 渲染层**不用**管这两个标记（接缝上那两条线由布局层写进切片的 `cell.borders`，
+   * 见 `table-split.ts` 的 `seamBorders()`）；命中测试与可选文本层也不用管 ——
+   * 内容本来就分在两片里，不会重复。留着它们是给「这一片是切出来的」这件事一个说法：
+   * 同一个 `index` 在相邻两页各出现一次，不标出来就分不清是拆行还是排重了。
    */
   continued?: true;
   splitAfter?: true;
@@ -251,6 +255,8 @@ export interface LayoutDocumentOptions {
   objectRules?: Partial<ObjectRules>;
   /** 表格格线的几何规则。同上，标定用的接缝，见 `TABLE_RULES` */
   tableRules?: Partial<TableRules>;
+  /** 表格**拆行**的规则。同上，标定用的接缝，见 `TABLE_SPLIT_RULES` */
+  splitRules?: Partial<TableSplitRules>;
 }
 
 export interface PaginationRules {
@@ -309,6 +315,7 @@ interface Flow {
   opts: LayoutDocumentOptions;
   rules: PaginationRules;
   headerRules: HeaderRules;
+  splitRules: TableSplitRules;
   pages: PageLayout[];
   page: PageLayout | undefined;
   /** 游标：下一块内容的顶，相对版心顶 */
@@ -337,7 +344,14 @@ interface Flow {
 /** 排完行、还没分页的中间形态。分页只关心高度，所以两种块在这里被拉平成同一个层级 */
 type Prepared =
   | { kind: 'paragraph'; id: NodeId; layout: ParagraphLayout; props: ResolvedParaProps }
-  | { kind: 'table'; id: NodeId; layout: TableLayout; rows: ResolvedTableRow[] };
+  | {
+      kind: 'table';
+      id: NodeId;
+      layout: TableLayout;
+      rows: ResolvedTableRow[];
+      /** 表级 `w:tblBorders`：拆行时接缝上那两条线取的是它的上下边（`table-split.ts` 实测） */
+      borders: TableBorders | undefined;
+    };
 
 export function layoutDocument(body: ResolvedBody, opts: LayoutDocumentOptions): DocumentLayout {
   const first = body.sections[0];
@@ -345,6 +359,7 @@ export function layoutDocument(body: ResolvedBody, opts: LayoutDocumentOptions):
     opts,
     rules: { ...PAGINATION_RULES, ...opts.rules },
     headerRules: { ...HEADER_RULES, ...opts.headerRules },
+    splitRules: { ...TABLE_SPLIT_RULES, ...opts.splitRules },
     pages: [],
     page: undefined,
     y: 0,
@@ -670,6 +685,7 @@ function prepare(b: ResolvedBlock, section: SectionProps, opts: LayoutDocumentOp
     id: b.id,
     layout: layoutTable(b, { ...shared, availWidth: width }),
     rows: b.rows,
+    borders: b.props.borders,
   };
 }
 
@@ -864,16 +880,24 @@ function emitLines(
 // ── 表格 ──────────────────────────────────────────────────────────────────────
 
 /**
- * 表格按**行**分页：一行放不下就整行挪到下一页（差别见文件头）。
+ * 表格按**行**分页：整行放不下就从**行间**切开（`table-split.ts`），切不动才整行挪走。
  *
  * `w:tblHeader` 的重复表头是真的要在每一续页顶部再画一遍，所以它**占高度**：
  * 判断「这一页还能放几行」时先把重复表头的高度扣掉，否则续页会多收一行、溢出版心。
+ *
+ * 两条与直觉相反、都由 `spike-table-04` 实测的规则：
+ * ① **就地切**（`TableSplitRules.place`）：本页剩下多少就先用多少，不是「先整行挪到
+ *    下一页顶上再切」。后者会白扔掉本页剩下的一整块地方 —— 表甲那一页扔掉了十行；
+ * ② **要的高度大过整页版心时不重复表头**：表乙那一行 `w:trHeight` 要 420pt、版心只有
+ *    283pt，两片各占满一整页，两页顶上 Word 都没画表头。判据是「这一行要的高度大过
+ *    这一页能给的高度」，不是「这一片是不是切出来的」—— 表丁的尾片照样有表头。
  */
 function placeTable(flow: Flow, b: Extract<Prepared, { kind: 'table' }>, join: Twips): void {
   // 拆行会把某一行**换成**它剩下的那一片，所以这里在一份可变的副本上做；
   // `b.layout.rows` 是缓存的布局结果，动它等于污染下一趟排版
   const rows = [...b.layout.rows];
   if (rows.length === 0) return;
+  const splitRules = flow.splitRules;
 
   // 表头只认**开头连续**的那几行：中间某行写了 tblHeader 是无效的（Word 也这么处理）
   let headerCount = 0;
@@ -887,31 +911,70 @@ function placeTable(flow: Flow, b: Extract<Prepared, { kind: 'table' }>, join: T
   let i = 0;
   let carried = false; // rows[i] 是上一页切剩下的那一片
   while (i < rows.length) {
-    const repeat = i >= headerCount && i > 0 ? headerCount : 0;
+    const page = availHeight(flow);
+    // 这一行要的高度大过整页版心时不重复表头（实测，见函数头 ②）
+    const repeat =
+      i >= headerCount && i > 0 && requestedHeight(b, i) + headerHeight <= page ? headerCount : 0;
     const avail = availHeight(flow) - (repeat > 0 ? headerHeight : 0);
     let count = fitRows(rows, i, avail, join);
 
+    // 整行放不下的那一行从内部切开（`w:cantSplit` 与表头行不许切）。
+    // `place: 'inPlace'`（实测）连**本页还剩的那一块**也用上：整行放得下的先摆着，
+    // 紧跟着的那一行切一片进剩下的地方。`nextPage` 是原来的写法，留给标定脚本排组合。
+    const k = i + count;
+    const rest = avail - usedHeight(rows, i, count);
+    const row = rows[k];
+    // 每一片各要一份 `w:trHeight`（实测）：剩下的地方连一片的下限都够不着就别切 ——
+    // 表乙那一行要 420pt，本页只剩 266pt，Word 把整行挪到了下一页。
+    // 下限本身还要夹在「一整页能给多少」以内，否则要 420pt 而版心只有 283pt 的行永远切不了 ——
+    // 空页上（本页一行都还没摆）只好切，那时它爱要多高都只能给一页。
+    const wants = splitRules.trHeight === 'perPiece' ? requestedHeight(b, k) : 0;
+    const need = Math.min(wants, currentPage(flow).geometry.content.height - (repeat > 0 ? headerHeight : 0));
+    const split =
+      (splitRules.place === 'inPlace' || count === 0) &&
+      k < rows.length &&
+      row !== undefined &&
+      rowSplittable(b, k, headerCount) &&
+      (rest >= need || (count === 0 && !pageHasContent(flow)))
+        ? splitRow(row, rest, splitOptions(b, k, splitRules))
+        : undefined;
+    if (split !== undefined) {
+      // 先把头片换进 `rows` 再摆上去 —— `emitRows` 读的就是 `rows[k]`，
+      // 顺序反了本页画的就成了尾片，头片那几行凭空消失
+      rows[k] = split.head;
+      emitRows(flow, b, rows, i, count + 1, repeat, carried, true);
+      rows[k] = split.tail;
+      i = k;
+      breakPage(flow);
+      carried = true;
+      continue;
+    }
+
     if (count === 0) {
-      // 整行放不下：先试着把它**内部**切开（`w:cantSplit` 与表头行不许切）
-      const row = rows[i];
-      const split = row !== undefined && rowSplittable(b, i, headerCount) ? splitRow(row, avail) : undefined;
-      if (split !== undefined) {
-        // 先把头片摆上去再把尾片换进 `rows` —— `emitRows` 读的就是 `rows[i]`，
-        // 顺序反了本页画的就成了尾片，头片那几行凭空消失
-        rows[i] = split.head;
-        emitRows(flow, b, rows, i, 1, repeat, carried, true);
-        rows[i] = split.tail;
-        breakPage(flow);
-        carried = true;
-        continue;
-      }
       if (pageHasContent(flow)) {
         breakPage(flow);
         currentPage(flow);
         continue;
       }
-      // 空页上都切不开（`cantSplit` 的行高过一整页）：硬塞，否则这个循环换页换不完
+      // 空页上都切不开（`cantSplit` 的行、或者内容只有两行却要 420pt 高的那一片）：
+      // 硬塞，否则这个循环换页换不完。要多高是 `w:trHeight` 说的、内容却装不满时，
+      // 把它压到这一页那么高 —— Word 的表乙尾片正是这样占满一页而不是溢出去
       count = 1;
+      const only = rows[i];
+      if (only !== undefined && only.height > avail) {
+        const floor = only.gridAbove + rowContentHeight(only);
+        if (floor < only.height) rows[i] = { ...only, height: Math.max(floor, avail) };
+      }
+    }
+
+    // 表头行**粘着下一行**：只放得下表头、下一行还要挪走时，表头跟着一起走 ——
+    // 续页顶上本来就要再画一遍表头，把它孤零零留在页底毫无意义（Word 的表乙 / 表丁都这样）。
+    // 只在本页已经有别的内容时才让：页首就这样的话让下去会换页换不完，
+    // 那正是 Word 自己的收场 —— 表乙的表头就孤零零占了一整页的顶。
+    if (i === 0 && headerCount > 0 && count === headerCount && count < rows.length && pageHasContent(flow)) {
+      breakPage(flow);
+      currentPage(flow);
+      continue;
     }
 
     emitRows(flow, b, rows, i, count, repeat, carried, false);
@@ -919,6 +982,46 @@ function placeTable(flow: Flow, b: Extract<Prepared, { kind: 'table' }>, join: T
     carried = false;
     if (i < rows.length) breakPage(flow);
   }
+}
+
+/** 一行里最高那一格的内容高（`w:trHeight` 撑出来的那一截不算在内） */
+function rowContentHeight(row: RowLayout): Twips {
+  let h: Twips = 0;
+  for (const c of row.cells) {
+    if (c.vMerge === 'continue') continue;
+    if (c.contentHeight > h) h = c.contentHeight;
+  }
+  return h;
+}
+
+/** `rows[from]` 起 `count` 行占的高度 */
+function usedHeight(rows: readonly RowLayout[], from: number, count: number): Twips {
+  let used: Twips = 0;
+  for (let k = from; k < from + count; k++) used += rows[k]?.height ?? 0;
+  return used;
+}
+
+/**
+ * 这一行 `w:trHeight` 要的高度（`auto` 是 0）。
+ *
+ * 拆行时每一片各要一份（`TableSplitRules.trHeight`），所以它不能从 `RowLayout.height`
+ * 反推 —— 那个数已经与内容取过 max 了，内容比它高的时候反推出来的是内容的高。
+ */
+function requestedHeight(b: Extract<Prepared, { kind: 'table' }>, i: number): Twips {
+  const h = b.rows[i]?.props.height;
+  return h === undefined || h.rule === 'auto' ? 0 : h.value;
+}
+
+function splitOptions(
+  b: Extract<Prepared, { kind: 'table' }>,
+  i: number,
+  rules: TableSplitRules,
+): SplitRowOptions {
+  return {
+    rules,
+    requested: requestedHeight(b, i),
+    ...(b.borders === undefined ? {} : { tableBorders: b.borders }),
+  };
 }
 
 /**

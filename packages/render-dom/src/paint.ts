@@ -61,7 +61,6 @@ import {
   LEADER_DOT_PITCH_EM,
   LEADER_FALLBACK_SIZE,
   LEADER_THICKNESS_EM,
-  SPLIT_ROW_SEAM_BORDER,
   STRIKE_POSITION_EM,
   SUBSCRIPT_DROP_EM,
   SUPERSCRIPT_RAISE_EM,
@@ -463,11 +462,9 @@ function paintPlacedTable(t: PlacedTable, ctx: Ctx): RElement {
 
   for (const placed of t.rows) {
     const rowTop = placed.y;
-    // 拆开的行：切口那一侧不是行的真边界，横边画不画由 SPLIT_ROW_SEAM_BORDER 定
-    const edges = {
-      top: SPLIT_ROW_SEAM_BORDER || placed.continued !== true,
-      bottom: SPLIT_ROW_SEAM_BORDER || placed.splitAfter !== true,
-    };
+    // 拆开的行不在这里特殊处理：接缝上那两条线**是** Word 画的（`spike-table-04` 实测），
+    // 而且取的是表级的上下边框 —— 布局层已经把它们写进了切片的 `cell.borders`，
+    // 这边照常画就对。原来这里靠 `SPLIT_ROW_SEAM_BORDER` 决定画不画，那是没有真值时的猜测
     // 行的上边那条格线**占着高度**（layout 的 `RowLayout.gridAbove`，spike-table-01 实测），
     // 内容要从格线**以内**起排；格线自己仍旧画在行盒的外边界上，于是相邻两行画在同一个 y、
     // 去重照旧生效。线宽是绕着那个 y 居中描的，所以它有一半落在带外 —— 0.5pt 的框线差
@@ -479,7 +476,7 @@ function paintPlacedTable(t: PlacedTable, ctx: Ctx): RElement {
         paintCellShading(cell, inner, innerHeight, ctx, shading);
         paintCellContent(cell, inner, innerHeight, ctx, content);
       }
-      paintCellBorders(cell, t.columns, rowTop, placed.height, ctx, seen, borders, edges);
+      paintCellBorders(cell, t.columns, rowTop, placed.height, ctx, seen, borders);
     }
   }
 
@@ -603,11 +600,9 @@ function paintNestedRow(row: RowLayout, x0: Twips, y: Twips, ctx: Ctx, out: REle
  * 见 `table-borders.ts`），所以要拿网格列宽把段号换算回 x。`columns` 为空时
  * 退成整格一条 —— 嵌套表格走的就是这条（那里没有外层网格）。
  *
- * `edges` 关掉的是**拆行接缝**上那条横边（见 `SPLIT_ROW_SEAM_BORDER`）。竖边不受影响：
- * 一行拆成两片，左右两条竖线在两片上都得画，只是各画各的那一截。
+ * 拆开的行不用特殊照顾：接缝那一侧的横边已经被布局层换成了表级的上下边框
+ * （`table-split.ts` 的 `seamBorders()`），竖边本来就是两片各画各的那一截。
  */
-const BOTH_EDGES = { top: true, bottom: true };
-
 function paintCellBorders(
   cell: CellLayout,
   columns: readonly Twips[],
@@ -616,21 +611,16 @@ function paintCellBorders(
   ctx: Ctx,
   seen: Set<string>,
   out: RElement[],
-  edges: { top: boolean; bottom: boolean } = BOTH_EDGES,
 ): void {
   const top = rowTop;
   const bottom = rowTop + rowHeight;
-  if (edges.top) {
-    for (const seg of cell.borders.top) {
-      const [x1, x2] = segmentRange(cell, columns, seg.col, seg.span);
-      pushLine(ctx, seen, out, x1, top, x2, top, seg.border);
-    }
+  for (const seg of cell.borders.top) {
+    const [x1, x2] = segmentRange(cell, columns, seg.col, seg.span);
+    pushLine(ctx, seen, out, x1, top, x2, top, seg.border);
   }
-  if (edges.bottom) {
-    for (const seg of cell.borders.bottom) {
-      const [x1, x2] = segmentRange(cell, columns, seg.col, seg.span);
-      pushLine(ctx, seen, out, x1, bottom, x2, bottom, seg.border);
-    }
+  for (const seg of cell.borders.bottom) {
+    const [x1, x2] = segmentRange(cell, columns, seg.col, seg.span);
+    pushLine(ctx, seen, out, x1, bottom, x2, bottom, seg.border);
   }
   pushLine(ctx, seen, out, cell.x, top, cell.x, bottom, cell.borders.left);
   const right = cell.x + cell.width;

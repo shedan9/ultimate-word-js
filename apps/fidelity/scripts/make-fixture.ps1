@@ -86,10 +86,12 @@ function Test-Prop($obj, [string]$name) {
 # 是什么颜色，就直接说出「赢的是哪一侧」—— 与 spike-table-02 拿字号认条件格式同一招，
 # 不必从线宽反推（相邻两格可以配成同宽不同样式，线宽根本分不开）。
 #
-# Border.Color 的字节序**实测过**：给它 255（照「WdColor 是 BGR」的说法算出来的红）,
-# Word 存进 w:color 的是 `0000FF` —— 蓝。也就是这一路上低字节是**蓝**、高字节是红，
-# 与 RRGGBB 同序。红蓝写反了看上去毫无破绽（每条结论都读成相反那一侧），
-# 所以这里按实测写 r*65536，并留下这行注释，免得下次照文档改回去。
+# Border.Color 的字节序**实测过两次，第二次把第一次推翻了**：写 `$b + $g*256 + $r*65536`
+# （即给红 0xFF0000）造 spike-table-04 的表丁，Word 存进 w:color 的是 `0000FF` —— 蓝。
+# 也就是 WdColor 的低字节是**红**（0xBBGGRR），与 RRGGBB **反序**，所以这里写 b*65536。
+# 第一次的结论反了而没被发现，是因为当时 API 这一路只用过黑与绿（#000000 / #008000）——
+# 两个都是字节回文，正反读都一样；spike-table-03 的红蓝是改 XML 写进去的，绕开了这段代码。
+# 红蓝写反了看上去毫无破绽（每条结论都读成相反那一侧），所以留下这行注释。
 function Set-BorderSide($borders, [int]$code, $spec, $lineStyleMap) {
   $bd = $borders.Item($code)
   $styleName = if ($spec.PSObject.Properties.Name -contains 'style') { [string]$spec.style } else { 'single' }
@@ -104,7 +106,7 @@ function Set-BorderSide($borders, [int]$code, $spec, $lineStyleMap) {
     $r = [Convert]::ToInt32($hex.Substring(0, 2), 16)
     $g = [Convert]::ToInt32($hex.Substring(2, 2), 16)
     $b = [Convert]::ToInt32($hex.Substring(4, 2), 16)
-    $bd.Color = $b + ($g * 256) + ($r * 65536)
+    $bd.Color = $r + ($g * 256) + ($b * 65536)
   }
 }
 

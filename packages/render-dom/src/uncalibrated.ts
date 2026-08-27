@@ -62,17 +62,3 @@ export const LEADER_DOT_PITCH_EM = 0.5;
 export const LEADER_THICKNESS_EM = 0.055;
 /** 前导符没有自己的字号，退到这个字号（12pt）—— 行内一个字都没有时才会走到 */
 export const LEADER_FALLBACK_SIZE = 240;
-
-/**
- * 表格**拆行**的接缝上画不画横线。
- *
- * 一行被拆到两页时（`@uw/layout` 的 `table-split.ts`），本页那一片的**底**与下一页
- * 那一片的**顶**都是切口，不是行的真边界 —— `PlacedRow` 上的 `splitAfter` / `continued`
- * 标着它们。取 `false`（不画）：Word 里表格续页看起来是「接着往下长」，
- * 接缝上凭空多一条线会让读者以为那儿真有一行结束了。但这只是观察，没有真值。
- *
- * 钉死办法：一张两行三列、四周与内部都带线的表，第二行里塞十几段文字逼它跨页，
- * 导出 PDF 看接缝上有没有横线；同一份样本顺手能看出「表级的 `w:tblBorders bottom`
- * 在续页顶上重不重复画」。
- */
-export const SPLIT_ROW_SEAM_BORDER: boolean = false;

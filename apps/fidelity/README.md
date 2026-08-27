@@ -31,6 +31,7 @@ pnpm spike:header          # 页眉页脚穿刺：框摆在哪、怎么反过来
 pnpm spike:image           # 图片穿刺：内嵌图在行盒里怎么摆、浮动图的参照框是哪个、含图的行怎么吸网格
 pnpm spike:table           # 表格穿刺：格线占不占高 / 吃不吃宽、条件格式命中谁、层序谁盖谁
 pnpm spike:table-border    # 格线冲突穿刺：相邻两格各写一条边，Word 画的是哪一条
+pnpm spike:table-split     # 拆行穿刺：切在哪一页 / 边距怎么分 / trHeight 归谁 / 头片 vAlign
 
 pnpm preview                     # 全部 fixture → out/*.html，用眼睛看引擎画成什么样
 pnpm preview gongwen-01 -- --truth --debug   # 叠真值基线（红虚线）+ 画版心与行盒
@@ -53,6 +54,7 @@ pnpm preview gongwen-01 -- --truth --debug   # 叠真值基线（红虚线）+ �
 | `spike:header` | `spike-header-01/02/03` | 页眉框顶 = `w:header`；页脚量的是框**底**；页边距是最小值（页眉页脚长过它就把版心顶开） |
 | `spike:table` | `spike-table-01/02` | **水平格线占纵向的高、竖格线不吃横向的宽**（宽度是 `w:tblGrid` 给定的，边框没地方可占；高度是算出来的，边框就加得进去）；`w:trHeight` 与 `w:vAlign` 量的是**格线以内**那一段；默认单元格边距真的是 108 twips；条件格式的层序里**列带盖行带**、**首末行盖首末列**、角格最后；隔行带的归属与实现一致 |
 | `spike:table-border` | `spike-table-03` | 相邻竞争**先分类**（点线 < 虚线 < 实线类），跨类时线宽完全不算数（3pt 的点线输给 0.75pt 的单线）；**同一种破折线之间连宽度都不比**（0.5pt 的点线赢过 2.25pt 的）；实线类内部比**画出来的厚度**（双线 = 3 × `w:sz`）；厚度打平才比样式权重；全平局取**左上** |
+| `spike:table-split` | `spike-table-04` | 一行放不下时**就地切**（本页剩下多少用多少，不是挪到下一页再切）；单元格上下边距**两片各补一整份**；`w:trHeight` **每一片各要一份**（一片都满足不了就整行挪走，大过整页版心时续页顶上还不重复表头）；头片**照样认** `w:vAlign`；接缝上那两条线**画**，取的是**表级** `w:tblBorders` 的上下边 |
 | `spike:image` | `spike-image-01/02/03` | 内嵌图占的高度 = 图高四舍五入到 1.5pt（坐在基线上的是这个**盒**，图在盒里靠上放）；文字的下伸留着；`w:position` 对图片起作用；浮动图八种参照框各是哪个（纵向的 inside/outside 镜像的是**上下页边距**、`character` 参照的是锚点**前一个**字）；**含图的行照样吸行网格**，但**倍数行距不乘在图撑起来的那一截上**（03，两侧分算再取大） |
 
 `spike:baseline` 现在跑**四份** fixture：04 补的是前三份漏掉的那一格 —— **固定值行距**
