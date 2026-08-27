@@ -17,8 +17,9 @@ Phase 5 的**列表编号**已经从 `numbering.xml` 一路通到首行几何，
 SECTIONPAGES 迭代到自洽）都做完了，TOC / SEQ 的求值还没写。
 **图片**也通了（解析 → 收字节 → 占位 → 画，四层各一段，见下），**几何也用真值标定完了**。Phase 4 的**表格**：属性 + 级联（含 `w:tblStylePr` 条件格式）在 model 层，
 列宽 + 每格的 x 与可用宽 + 格内段落 + **边框冲突解析**在 layout 层，跨页按**行**拆，
-一行放不下时还会从**行间**切开（**拆行**，见下）。**表格的几何与条件格式也用真值标定完了** ——
-造样本的工具从此会造表（`make-fixture.ps1` 的 `kind: "table"`），见下。
+一行放不下时还会从**行间**切开（**拆行**，见下）。**表格的几何、条件格式与格线冲突都用真值
+标定完了** —— 造样本的工具从此会造表（`make-fixture.ps1` 的 `kind: "table"`），
+真值也从此读得到**画出来的线**（`truth.json` 的 `pages[].rules[]`），见下。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、
 `@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 制表位 + **编号（解析 + 计数器 + 编号文字 + 接进级联）** + **表格（属性 + 级联 + 条件格式）** + **域（界桩配对 + 指令解析 + HYPERLINK）** + **页眉页脚部件** + **图片（外框 + blip 引用 + 裁剪 / 旋转 + 浮动锚点 + 字节表）**）、
 `@uw/fonts`（行高规则 + 脚本分桶 + 度量包 + 注册表 + `TextMeasurer`）、
@@ -339,7 +340,13 @@ L2 剩下那 2 行（真值第 10 / 11 行）是**唯一一个解释不了的反
 `nil` 在 ① 里是强的（Word 里「擦掉某格的格线」就靠它），在 ② 里是弱的（一格 nil、
 邻格 single 就画 single）；**合成一步会让整表的内部格线被一格的 nil 抹掉**。
 另外水平边要**按列分段**（表头一格跨 3 列、下面 3 格，那条线分 3 段各比各的），
-`vMerge=continue` 与上格之间不画线。竞争规则本身照 CSS collapsing borders 类比，**没有 Word 真值**。
+`vMerge=continue` 与上格之间不画线。**竞争规则已经实测**（`spike-table-03`，21 组 × 横竖两遍
+42 条边全对，证据表在 `table-borders.ts` 的 `BORDER_CONFLICT_RULES`）：顺序是可见性 →
+**线型分类**（点线 < 虚线 < 实线类，跨类时线宽一点都不算数：3pt 的点线输给 0.75pt 的单线）→
+同为破折类就直接看位置（**同一种破折线之间连宽度都不比**）→ 实线类内部比**画出来的厚度**
+（双线 = 3 × `w:sz`）→ 厚度打平比样式权重 → 仍平局取**左上**。原来照 CSS collapsing borders
+类比写的「先比线宽、再比样式权重」前两条都是错的，后两条对。实测没覆盖的线型归哪一类、
+算多厚仍在 `uncalibrated.ts`。
 
 字体名有个坑：中文版 Word 写的是「黑体」「等线」这种本地化名，磁盘上的字体叫 `SimHei` / `DengXian`。
 桥在 `fontTable.xml` 的 `w:altName`，查找顺序用 `fontNameCandidates()`，别只按一个名字查。
@@ -390,6 +397,7 @@ pnpm --filter @uw/fidelity spike:page      # 分页穿刺（孤行寡行 / keepN
 pnpm --filter @uw/fidelity spike:header    # 页眉页脚穿刺（框摆在哪 / 怎么挤版心，**不需要 Word**）
 pnpm --filter @uw/fidelity spike:image     # 图片穿刺（内嵌图的行盒 / 浮动图的参照框 / 行网格与倍数行距，**不需要 Word**）
 pnpm --filter @uw/fidelity spike:table     # 表格穿刺（格线占不占高 / 吃不吃宽 + 条件格式的命中与层序，**不需要 Word**）
+pnpm --filter @uw/fidelity spike:table-border  # 格线冲突穿刺（相邻两格各写一条边，Word 画哪一条，**不需要 Word**）
 pnpm --filter @uw/fidelity preview -- --truth  # fixture 画成 out/*.html 并叠真值基线（不需要 Word）
 pnpm --filter @uw/fidelity corpus          # 语料体检：整份文档与 truth.json 比页数 / 每页行数 / 每行文字 + 汇总诊断
 pnpm --filter @uw/fidelity corpus 名字 -- --diff   # 逐行看差异
@@ -424,7 +432,8 @@ pnpm --filter @uw/fonts run packs:check    # 只校验入库的包与本机字�
 
 ## 真值驱动
 
-`apps/fidelity` 用 Word COM 导出 PDF、pdf.js 抽每个文本片段的 transform，产出**坐标级**真值
+`apps/fidelity` 用 Word COM 导出 PDF、pdf.js 抽每个文本片段的 transform（外加算子表里的
+**图片落点** `pages[].images[]` 与**画出来的线** `pages[].rules[]`），产出**坐标级**真值
 `fixtures/*.truth.json`（单位 pt，原点页面左上角、y 向下、`y` 是基线）。这不是测试工具，是架构的一部分：
 它直接约束 `LayoutResult` 的数据形状 —— 必须能逐行、逐片段与真值 diff。
 
@@ -490,6 +499,15 @@ Times 的 winAscent 更大，若参与就该赢，实测却仍是等线单独的
 **水平格线占整条线的宽（纵向）、竖格线不吃可用宽**、条件格式里**列带盖行带**而**首末行盖首末列**。
 排组合（3 × 2）逐段比，唯一满分；差的那一段是 `w:tcMar left="0"` 那一格的 0.59pt，没有模型（见上）。
 
+**已定死（格线冲突穿刺，一份样本 21 组 × 横竖两遍 42 条边全对）** —— 实现在
+[`packages/layout/src/table-borders.ts`](packages/layout/src/table-borders.ts) 的
+`BORDER_CONFLICT_RULES`：**先按线型分类**（点线 < 虚线 < 实线类，跨类时线宽完全不算数）、
+**同一种破折线之间不比宽度**（直接看位置）、实线类内部比**画出来的厚度**（双线 = 3 × `w:sz`）、
+厚度打平比样式权重、仍平局取**左上**。判据同样是排组合（32 种）逐边比，唯一满分。
+读数靠**颜色**：竞争两侧各给一个独一无二的颜色，画出来的线是什么颜色就是谁赢 ——
+与条件格式那份拿字号认层序同一招。**Word 自己造不出这个局面**（对象模型里一条共享边
+只有一个 Border 对象），所以冲突是改 XML 写进去的，见 `apps/fidelity/src/patch-docx.ts`。
+
 **未决**：混排行的合成规则只有单字体样本 ——
 `composeBaseline()` 的「逐个居中再取 max」是判断，要一份「同一行两款东亚字体、字号不同」的样本才能钉死，
 而 fixture spec 目前一段只有一个字号。
@@ -508,10 +526,13 @@ Times 的 winAscent 更大，若参与就该赢，实测却仍是等线单独的
 「**用的字体**是不是东亚字体」而不是「字符是不是东亚的」，但一个数据点分不开
 「看字体 / 看 `w:hint` / 看 ascii 槽里装的是谁」三种说法，没有硬改。钉死办法写在
 `packages/fonts/src/metrics.ts` 的文件头，正好与第一条那份样本合并造。
-四是表格边框冲突：一张 2×2 的表、四条内部边分别让相邻两格写不同的 `w:val` / `w:sz` / `nil`，
-一份就能钉死「比宽度还是比样式」「平局取左上还是右下」「nil 在竞争里强不强」三问。
-它只改画法不改坐标，所以优先级低于上面几条。造样本的工具现在会造表了（`kind: "table"`），
-写一份 spec 就行。
+四原先是**表格边框冲突**，2026-08-27 用 `spike-table-03` 做完了（见上）。当时估的
+「一张 2×2 的表就够」偏小 —— 光是「宽度与样式谁先比」就要五组互为镜像的配对才排除得掉
+别的解释，最后用了 21 组；更没料到的是**样本造不出来**：Word 的对象模型里一条共享边
+只有一个 Border 对象，设一侧等于两侧都设，冲突只能改 XML 写进去
+（`apps/fidelity/src/patch-docx.ts`）。它留下的新问题是**实测没覆盖的那些线型**：
+`triple` 算几倍厚、`dashSmallGap` / `dotDash` / `wave` 各归哪一类（现在照样子归的，
+在 `uncalibrated.ts`）—— 照着已有的组再加几对配对就能钉死。
 五是域的 `\* CHINESENUM1|2|3` 各对应哪套中文数字（`FIELD_CHINESE_NUM_FORMATS`）：
 一份三节的 docx，页码跑到 11 与 105，看 Word 显示「十一 / 拾壹 / 一〇五」里的哪一种。
 中文数字比阿拉伯数字宽，猜错了页码那一行的断行点也会跟着错。

@@ -3,9 +3,9 @@
  *
  * 这里的期望值有两个来源，读的时候要分清：
  * - **层级覆盖**（单元格盖表级）有 ECMA-376 §17.4.39 撑着，是规范
- * - **相邻竞争**（谁赢）照 CSS collapsing borders 类比，**没有 Word 真值** ——
- *   见 table-borders.ts 文件头列的三条。等 Windows 上补了 2×2 那份样本，
- *   要是 Word 的结论不一样，改的是实现，这些期望值跟着改
+ * - **相邻竞争**（谁赢）已经用 `spike-table-03` 实测（21 组 × 横竖两遍全对），
+ *   规则与证据表见 table-borders.ts 的 `BORDER_CONFLICT_RULES`；
+ *   逐条边的回归在 table-border-fixture.test.ts。这里只挑规则的几个拐点做单测
  */
 import type { Border, CellBorders, TableBorders } from '@uw/model';
 import { describe, expect, it } from 'vitest';
@@ -101,8 +101,8 @@ describe('nil 的两副面孔', () => {
   });
 });
 
-describe('竞争规则（照 CSS 类比，无 Word 真值）', () => {
-  it('先比线宽 —— 粗的赢', () => {
+describe('竞争规则（spike-table-03 实测）', () => {
+  it('同类先比线宽 —— 粗的赢', () => {
     const rows = [r([c({ right: b('single', 40) }), c({ left: b('single', 10) })])];
     const out = resolveTableBorders(rows, FRAMED, 2);
     expect(out[0]?.[0]?.right?.size).toBe(40);
@@ -110,16 +110,45 @@ describe('竞争规则（照 CSS 类比，无 Word 真值）', () => {
     expect(out[0]?.[1]?.left?.size).toBe(40);
   });
 
-  it('线宽一样时比样式权重 —— double 赢 single', () => {
+  it('同宽时 double 赢 single —— 它画出来是 sz 的三倍厚', () => {
     const rows = [r([c({ right: b('single', 20) }), c({ left: b('double', 20) })])];
     expect(resolveTableBorders(rows, FRAMED, 2)[0]?.[0]?.right?.style).toBe('double');
   });
 
-  it('single 赢 dashed，dashed 赢 dotted', () => {
-    const a = [r([c({ right: b('dashed', 20) }), c({ left: b('single', 20) })])];
-    expect(resolveTableBorders(a, FRAMED, 2)[0]?.[0]?.right?.style).toBe('single');
+  it('双线按画出来的厚度比：0.75pt 的双线（2.25pt 厚）输给 3pt 的单线', () => {
+    // 实测的第「九」组。按 w:sz 直接比的话 15 < 120 也是单线赢，分不开两种算法；
+    // 分得开的是第「丁」组：1.5pt 双线（4.5pt 厚）赢过 3pt 单线
+    const nine = [r([c({ right: b('double', 15) }), c({ left: b('single', 60) })])];
+    expect(resolveTableBorders(nine, FRAMED, 2)[0]?.[0]?.right?.style).toBe('single');
+    const ding = [r([c({ right: b('single', 60) }), c({ left: b('double', 30) })])];
+    expect(resolveTableBorders(ding, FRAMED, 2)[0]?.[0]?.right?.style).toBe('double');
+  });
+
+  it('厚度一样时样式再比一次 —— 0.5pt 的双线赢过 1.5pt 的单线', () => {
+    // 实测的第「癸」组：两条都画出来 1.5pt 厚，位置规则（左上）本该让 single 赢
+    const rows = [r([c({ right: b('single', 30) }), c({ left: b('double', 10) })])];
+    expect(resolveTableBorders(rows, FRAMED, 2)[0]?.[0]?.right?.style).toBe('double');
+  });
+
+  it('破折类再宽也输给实线 —— 3pt 的点线输给 0.75pt 的单线', () => {
+    // 实测的第「八」/「丙」组。原来照 CSS 写的「先比线宽」在这里给的是相反的答案
+    const dot = [r([c({ right: b('dotted', 60) }), c({ left: b('single', 15) })])];
+    expect(resolveTableBorders(dot, FRAMED, 2)[0]?.[0]?.right?.style).toBe('single');
+    const dash = [r([c({ right: b('dashed', 60) }), c({ left: b('single', 10) })])];
+    expect(resolveTableBorders(dash, FRAMED, 2)[0]?.[0]?.right?.style).toBe('single');
+  });
+
+  it('dashed 赢 dotted', () => {
     const d = [r([c({ right: b('dotted', 20) }), c({ left: b('dashed', 20) })])];
     expect(resolveTableBorders(d, FRAMED, 2)[0]?.[0]?.right?.style).toBe('dashed');
+  });
+
+  it('同一种破折线之间不比宽度 —— 细的那条在左上就归它', () => {
+    // 实测的第「戊」/「壬」/「辛」组：dotted 0.5 与 dotted 2.25 互换位置，两次都是左上赢
+    const thin = [r([c({ right: b('dotted', 10, 'FF0000') }), c({ left: b('dotted', 45, '0000FF') })])];
+    expect(resolveTableBorders(thin, FRAMED, 2)[0]?.[0]?.right?.color).toBe('FF0000');
+    const thick = [r([c({ right: b('dotted', 45, 'FF0000') }), c({ left: b('dotted', 10, '0000FF') })])];
+    expect(resolveTableBorders(thick, FRAMED, 2)[0]?.[0]?.right?.color).toBe('FF0000');
   });
 
   it('认不出的线型落到 single 那一档，不会输给 dashed', () => {

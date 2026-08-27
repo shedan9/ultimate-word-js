@@ -18,6 +18,7 @@ import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractTruth } from './extract-truth.ts';
+import { patchCellBorders, type RawCellBorders } from './patch-docx.ts';
 import { assertWindows } from './platform.ts';
 import { runScript } from './run-powershell.ts';
 import type { WordMeta } from './truth-types.ts';
@@ -87,7 +88,34 @@ async function build(fx: Fixture): Promise<boolean> {
   const [tSpec, tDocx] = [await mtime(fx.spec), await mtime(fx.docx)];
   if (!force && !Number.isNaN(tDocx) && tDocx >= tSpec) return false;
   await runScript(path.join(SCRIPTS, 'make-fixture.ps1'), ['-Spec', fx.spec, '-Output', fx.docx]);
+  const patches = rawBorderPatches(JSON.parse(await readFile(fx.spec, 'utf8')));
+  const n = await patchCellBorders(fx.docx, patches);
+  if (n > 0) console.log(`  ${fx.name}: ${n} 格的边框由 XML 补丁写入（Word 的 API 造不出冲突边）`);
   return true;
+}
+
+/**
+ * 从 spec 里收出 `bordersRaw` 补丁：格子文字 → 那一格的 `w:tcBorders`。
+ *
+ * 这条路只为**相邻边框冲突**存在：Word 的对象模型里一条共享边只有一个 Border 对象，
+ * 给两侧设不同的值，后设的会把先设的整个盖掉（见 `patch-docx.ts` 的文件头）。
+ */
+function rawBorderPatches(spec: unknown): Map<string, RawCellBorders> {
+  const out = new Map<string, RawCellBorders>();
+  const blocks = (spec as { paragraphs?: unknown[] }).paragraphs ?? [];
+  for (const block of blocks) {
+    const b = block as { kind?: string; rows?: { cells?: unknown[] }[] };
+    if (b.kind !== 'table') continue;
+    for (const row of b.rows ?? []) {
+      for (const cell of row.cells ?? []) {
+        const c = cell as { text?: string; bordersRaw?: RawCellBorders };
+        if (c.bordersRaw === undefined || c.text === undefined) continue;
+        if (out.has(c.text)) throw new Error(`spec 里有两格文字都是「${c.text}」，补丁定位不了`);
+        out.set(c.text, c.bordersRaw);
+      }
+    }
+  }
+  return out;
 }
 
 async function truth(fx: Fixture, rebuilt: boolean): Promise<'skipped' | 'ok'> {

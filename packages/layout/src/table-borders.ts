@@ -16,16 +16,11 @@
  * `nil` 是弱的：一格说 nil、邻格说 single，Word 画那条 single。把两步合成一步
  * （比如「nil 一律赢」）会让整张表的内部格线全被一格的 nil 抹掉。
  *
- * ## 未经真值验证的三处（原则 1.5：写明白，别装作测过）
+ * ## 竞争规则已经实测（`spike-table-03`，21 组 × 横竖两遍全对）
  *
- * 1. **竞争规则本身**照 CSS 2.1 §17.6.2 的 collapsing borders 类比：先比线宽，
- *    再比样式权重（见 `uncalibrated.ts` 的 `BORDER_STYLE_RANK`），仍平局取**左上者**。
- *    ECMA-376 只规定了 `w:tcBorders` 覆盖 `w:tblBorders`，相邻两格的事一个字没提
- * 2. **`nil` / `none` 在竞争里输给一切**（= CSS 的 `none` 而非 `hidden`）
- * 3. **平局取左上**：水平边取上面那格的 `bottom`，垂直边取左边那格的 `right`
- *
- * 三条用同一份样本就能钉死：一张 2×2 的表，四条内部边分别让相邻两格写不同的
- * `w:val` / `w:sz` / `nil`，导出 PDF 看画出来的是哪一条。
+ * 规则与证据表见下面的 `BORDER_CONFLICT_RULES`。原来照 CSS 2.1 §17.6.2 类比写的
+ * 「先比线宽、再比样式权重」**错了一半**：Word 是**先分类**（点线 < 虚线 < 实线类），
+ * 类不同的时候线宽一点都不管用，而且**同一种破折线之间根本不比宽度**。
  *
  * ## 已知的洞
  *
@@ -37,7 +32,7 @@
  * - 边框宽度不吃可用宽（Word 把线画在格线上，不缩文字区），所以这一层完全不改坐标
  */
 import type { Border, CellBorders, ResolvedTableRow, TableBorders } from '@uw/model';
-import { borderStyleRank } from './uncalibrated.ts';
+import { borderSolidRank, borderStyleClass, borderThicknessFactor } from './uncalibrated.ts';
 
 /**
  * 一条水平边在某段列上的解析结果。
@@ -122,6 +117,7 @@ export function resolveTableBorders(
   rows: readonly BorderRow[],
   tableBorders: TableBorders,
   colCount: number,
+  rules: BorderConflictRules = BORDER_CONFLICT_RULES,
 ): CellBorderLayout[][] {
   const grid = buildGrid(rows, colCount);
   const cols = columnsOf(rows, colCount);
@@ -131,10 +127,10 @@ export function resolveTableBorders(
       const col = cols[r]?.[i] ?? 0;
       const span = cell.gridSpan;
       return {
-        top: horizontalEdge(rows, grid, tableBorders, r, cell, col, span, 'top'),
-        bottom: horizontalEdge(rows, grid, tableBorders, r, cell, col, span, 'bottom'),
-        left: verticalEdge(rows, grid, tableBorders, r, cell, col, span, 'left'),
-        right: verticalEdge(rows, grid, tableBorders, r, cell, col, span, 'right'),
+        top: horizontalEdge(rows, grid, tableBorders, r, cell, col, span, 'top', rules),
+        bottom: horizontalEdge(rows, grid, tableBorders, r, cell, col, span, 'bottom', rules),
+        left: verticalEdge(rows, grid, tableBorders, r, cell, col, span, 'left', rules),
+        right: verticalEdge(rows, grid, tableBorders, r, cell, col, span, 'right', rules),
         tl2br: visible(cell.borders.tl2br) ? cell.borders.tl2br : undefined,
         tr2bl: visible(cell.borders.tr2bl) ? cell.borders.tr2bl : undefined,
       };
@@ -213,6 +209,7 @@ function horizontalEdge(
   col: number,
   span: number,
   side: 'top' | 'bottom',
+  rules: BorderConflictRules,
 ): BorderSegment[] {
   const otherRow = side === 'top' ? r - 1 : r + 1;
   const outer = side === 'top' ? r === 0 : r === rows.length - 1;
@@ -225,7 +222,7 @@ function horizontalEdge(
     const border = mergedAt(rows, cell, neighbor, side)
       ? undefined
       : // 上面那格是左上者：解析本格 `top` 时邻格就在上面，平局让它赢
-        winner(mine, neighborCandidate(rows, table, neighbor, opposite), side === 'top');
+        winner(mine, neighborCandidate(rows, table, neighbor, opposite), side === 'top', rules);
     push(out, c, border);
   }
   return out;
@@ -261,6 +258,7 @@ function verticalEdge(
   col: number,
   span: number,
   side: 'left' | 'right',
+  rules: BorderConflictRules,
 ): Border | undefined {
   const colCount = grid[r]?.length ?? 0;
   const outer = side === 'left' ? col === 0 : col + span >= colCount;
@@ -268,7 +266,7 @@ function verticalEdge(
   const neighbor = grid[r]?.[side === 'left' ? col - 1 : col + span];
   const opposite = side === 'left' ? 'right' : 'left';
   // 左边那格是左上者：解析本格 `left` 时邻格就在左边，平局让它赢
-  return winner(mine, neighborCandidate(rows, table, neighbor, opposite), side === 'left');
+  return winner(mine, neighborCandidate(rows, table, neighbor, opposite), side === 'left', rules);
 }
 
 function neighborCandidate(
@@ -300,26 +298,114 @@ function visible(b: Border | undefined): b is Border {
 }
 
 /**
- * 两个候选谁画。`preferOther` 为真时平局让 `other` 赢（左上者优先，见文件头第 3 条）。
+ * ## 相邻竞争的规则（`spike-table-03` 实测，21 组 × 横竖两遍，两个方向结论一致）
  *
- * 顺序：可见性 → 线宽 → 样式权重 → 位置。前三条都比不出来的时候两条线长得一模一样，
- * 取谁都画出同一条 —— 位置那一条只是为了让结果**确定**，方便测试比对。
+ * 样本做法：给竞争的两侧各一个独一无二的颜色（左 / 上 = 红，右 / 下 = 蓝），
+ * PDF 里画出来的线是什么颜色就直接说出赢家是谁 —— 不必从线宽反推（好几组同宽不同样式，
+ * 线宽在那几组分不开）。冲突的 `w:tcBorders` 是**改 XML** 造出来的：Word 的对象模型里
+ * 一条共享边只有一个 Border 对象，设一侧等于两侧都设，它自己造不出这个局面。
+ *
+ * | 组 | 左 / 上 | 右 / 下 | 画出来的 | 说明 |
+ * |---|---|---|---|---|
+ * | 〇 | —（不写） | —（不写） | 表级绿线 | 层级覆盖那一级，也是读数方法的对照 |
+ * | 一 | single 0.5 | single 2.25 | 蓝 2.16 | 同类比厚度 |
+ * | 二 | single 2.25 | single 0.5 | 红 2.16 | 一的镜像，排除「总是某一侧赢」 |
+ * | 三 | single 1.5 | double 1.5 | 蓝双线 | double 画出来 4.32 = 3 × sz |
+ * | 四 | double 1.5 | single 1.5 | 红双线 | 三的镜像 |
+ * | 五 | single 1.5 红 | single 1.5 蓝 | **红** | 全平局取**左上** |
+ * | 六 | nil | single 1.5 | 蓝 | `nil` 在竞争里是弱的 |
+ * | 七 | single 1.5 | nil | 红 | 六的镜像 |
+ * | 八 | dotted 3.0 | single 0.75 | 蓝 0.72 | **破折类再宽也输给实线** |
+ * | 九 | double 0.75 | single 3.0 | 蓝 3.0 | 双线 2.16 厚 < 单线 3.0 厚 |
+ * | 十 | dashed 1.5 | dotted 1.5 | 红虚线 | dashed > dotted |
+ * | 甲 | nil | nil | **无线** | `nil` 赢过表级的绿线（层级覆盖那一级） |
+ * | 乙 | dotted 1.5 | dashed 1.5 | 蓝虚线 | 十的镜像，dashed > dotted 是真的排序 |
+ * | 丙 | dashed 3.0 | single 0.5 | 蓝 0.48 | 八换成 dashed，同样输 |
+ * | 丁 | single 3.0 | double 1.5 | 蓝双线 | 4.32 > 3.0，钉死双线算 **3 倍**不是 2 倍 |
+ * | 戊 | dotted 0.5 | dotted 2.25 | **红 0.48** | 同一种破折线之间**不比宽度** |
+ * | 己 | double 1.5 | double 0.75 | 红双线 | 实线类内部照样比厚度 |
+ * | 庚 | dotted 2.25 | nil | 红 2.16 虚 | 戊 / 壬 的对照：宽点线本身画得出来 |
+ * | 辛 | dashed 0.5 | dashed 3.0 | 红 0.48 | 虚线之间也不比宽度 |
+ * | 壬 | dotted 2.25 | dotted 0.5 | 红 2.16 | 戊的镜像，两边都是左上赢 |
+ * | 癸 | single 1.5 | double 0.5 | **蓝双线** | 厚度都是 1.44 → 样式权重再比一次 |
+ *
+ * 被推翻的旧写法（照 CSS 2.1 §17.6.2 类比来的）是「先比线宽、再比样式权重」：
+ * 八 / 丙 说它错 —— 3pt 的点线 / 虚线输给 0.5pt 的单线，跨类时线宽完全不算数；
+ * 戊 / 辛 / 壬 说它还错了一处 —— 同一种破折线之间连宽度都不比，直接看位置。
+ */
+export interface BorderConflictRules {
+  /**
+   * 先按线型分类（点线 < 虚线 < 实线类）再比，还是不分类只比厚度。
+   * **实测 `class`**：八 / 丙 里 3pt 的破折线输给 0.5pt 的实线。
+   */
+  order: 'class' | 'thickness';
+  /** 同一档破折线之间比不比厚度。**实测 `false`**（戊 / 辛 / 壬） */
+  brokenByThickness: boolean;
+  /**
+   * 厚度按什么算：`rendered` = `w:sz` × 线型倍数（双线 3 倍），`size` = 直接用 `w:sz`。
+   * **实测 `rendered`**：丁组里 1.5pt 的双线（画出来 4.32pt）赢过 3pt 的单线。
+   */
+  thickness: 'rendered' | 'size';
+  /** 厚度打平时再比一次样式权重（多线型 > 单线型）。**实测 `true`**（癸） */
+  styleBreaksTie: boolean;
+  /** 全平局取哪一侧。**实测 `leftTop`**（五，横竖两个方向一致） */
+  position: 'leftTop' | 'rightBottom';
+}
+
+export const BORDER_CONFLICT_RULES: BorderConflictRules = {
+  order: 'class',
+  brokenByThickness: false,
+  thickness: 'rendered',
+  styleBreaksTie: true,
+  position: 'leftTop',
+};
+
+/** 一条边按规则折算出来的厚度 */
+function thicknessOf(b: Border, rules: BorderConflictRules): number {
+  return rules.thickness === 'size' ? b.size : b.size * borderThicknessFactor(b.style);
+}
+
+/** `a` 比 `b` 强返回正数，弱返回负数，分不出高下返回 0 */
+function compare(a: Border, b: Border, rules: BorderConflictRules): number {
+  if (rules.order === 'class') {
+    const ka = borderStyleClass(a.style);
+    const kb = borderStyleClass(b.style);
+    if (ka !== kb) return ka - kb;
+    // 同一档破折线：Word 连宽度都不比（戊 / 辛 / 壬），直接交给位置
+    if (ka < 2 && !rules.brokenByThickness) return 0;
+  }
+  const ta = thicknessOf(a, rules);
+  const tb = thicknessOf(b, rules);
+  if (ta !== tb) return ta > tb ? 1 : -1;
+  if (rules.styleBreaksTie) {
+    const ra = borderSolidRank(a.style);
+    const rb = borderSolidRank(b.style);
+    if (ra !== rb) return ra > rb ? 1 : -1;
+  }
+  return 0;
+}
+
+/**
+ * 两个候选谁画。`neighborIsLeftTop` 为真时 `other` 是左上那一侧。
+ *
+ * 顺序：可见性 → `compare()` → 位置。前两条分不出高下时两条线也不一定长得一样
+ * （颜色可以不同），位置那一条既是实测结论（第五组）也让结果**确定**，方便逐条比对。
  */
 function winner(
   mine: Border | undefined,
   other: Border | undefined,
-  preferOther: boolean,
+  neighborIsLeftTop: boolean,
+  rules: BorderConflictRules,
 ): Border | undefined {
   const a = visible(mine) ? mine : undefined;
   const b = visible(other) ? other : undefined;
   if (a === undefined) return b;
   if (b === undefined) return a;
 
-  if (a.size !== b.size) return a.size > b.size ? a : b;
-  const ra = borderStyleRank(a.style);
-  const rb = borderStyleRank(b.style);
-  if (ra !== rb) return ra > rb ? a : b;
-  return preferOther ? b : a;
+  const cmp = compare(a, b, rules);
+  if (cmp !== 0) return cmp > 0 ? a : b;
+  const otherWins = rules.position === 'leftTop' ? neighborIsLeftTop : !neighborIsLeftTop;
+  return otherWins ? b : a;
 }
 
 // ── 分段合并 ──────────────────────────────────────────────────────────────────

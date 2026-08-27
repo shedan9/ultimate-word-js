@@ -30,6 +30,7 @@ pnpm spike:page            # 分页穿刺：孤行寡行 / keepNext / 页首段�
 pnpm spike:header          # 页眉页脚穿刺：框摆在哪、怎么反过来挤版心
 pnpm spike:image           # 图片穿刺：内嵌图在行盒里怎么摆、浮动图的参照框是哪个、含图的行怎么吸网格
 pnpm spike:table           # 表格穿刺：格线占不占高 / 吃不吃宽、条件格式命中谁、层序谁盖谁
+pnpm spike:table-border    # 格线冲突穿刺：相邻两格各写一条边，Word 画的是哪一条
 
 pnpm preview                     # 全部 fixture → out/*.html，用眼睛看引擎画成什么样
 pnpm preview gongwen-01 -- --truth --debug   # 叠真值基线（红虚线）+ 画版心与行盒
@@ -51,6 +52,7 @@ pnpm preview gongwen-01 -- --truth --debug   # 叠真值基线（红虚线）+ �
 | `spike:page` | `spike-page-01/02` | 孤行寡行保底 2 行；段前间距落在页首不算；keepNext 的接缝要留出下一块「最少能放多少」 |
 | `spike:header` | `spike-header-01/02/03` | 页眉框顶 = `w:header`；页脚量的是框**底**；页边距是最小值（页眉页脚长过它就把版心顶开） |
 | `spike:table` | `spike-table-01/02` | **水平格线占纵向的高、竖格线不吃横向的宽**（宽度是 `w:tblGrid` 给定的，边框没地方可占；高度是算出来的，边框就加得进去）；`w:trHeight` 与 `w:vAlign` 量的是**格线以内**那一段；默认单元格边距真的是 108 twips；条件格式的层序里**列带盖行带**、**首末行盖首末列**、角格最后；隔行带的归属与实现一致 |
+| `spike:table-border` | `spike-table-03` | 相邻竞争**先分类**（点线 < 虚线 < 实线类），跨类时线宽完全不算数（3pt 的点线输给 0.75pt 的单线）；**同一种破折线之间连宽度都不比**（0.5pt 的点线赢过 2.25pt 的）；实线类内部比**画出来的厚度**（双线 = 3 × `w:sz`）；厚度打平才比样式权重；全平局取**左上** |
 | `spike:image` | `spike-image-01/02/03` | 内嵌图占的高度 = 图高四舍五入到 1.5pt（坐在基线上的是这个**盒**，图在盒里靠上放）；文字的下伸留着；`w:position` 对图片起作用；浮动图八种参照框各是哪个（纵向的 inside/outside 镜像的是**上下页边距**、`character` 参照的是锚点**前一个**字）；**含图的行照样吸行网格**，但**倍数行距不乘在图撑起来的那一截上**（03，两侧分算再取大） |
 
 `spike:baseline` 现在跑**四份** fixture：04 补的是前三份漏掉的那一格 —— **固定值行距**
@@ -158,6 +160,18 @@ pnpm preview gongwen-01 -- --truth --debug   # 叠真值基线（红虚线）+ �
 一段只有**一个字号**：`w:rPr` 是挂在整段 range 上的。要造「一行里两个字号」的样本
 得先给 `make-fixture.ps1` 加 run 级支持，`@uw/fonts` 的 `composeBaseline()` 正等着这个。
 
+## 冲突的边框只能改 XML 造（`bordersRaw`）
+
+Word 的对象模型里，一条**共享边**只有一个 `Border` 对象：给左格设 `right`、再给右格设
+`left`，第二次设的把第一次的整个盖掉，存出来的 `w:tcBorders` 两边一模一样。也就是说
+**Word 自己造不出「相邻两格各写一条不同的边框」这个局面** —— 它只出现在别的生成器写的、
+从别处粘进来的、或经 `w:tblPrEx` 改过的文件里，而那正是 `table-borders.ts` 要处理的。
+
+所以 spec 里的格子多了一条 `bordersRaw`：Word 排完版之后，`src/patch-docx.ts` 直接改
+`word/document.xml` 把冲突写进去，再交给 Word 导 PDF。补丁按**格子里的文字**定位而不是
+下标（下标跟着 spec 增删动，文字就摆在 spec 里），打不中就报错 —— 静默漏掉一条，
+量出来的结论会指向别的规则。
+
 ## truth.json 读法
 
 - 单位 **pt**，原点**页面左上角、y 向下**（PDF 原生是左下原点，抽取时已翻转）
@@ -168,6 +182,12 @@ pnpm preview gongwen-01 -- --truth --debug   # 叠真值基线（红虚线）+ �
   `getTextContent()`（那一路只吐 show-text 的产物），而是照着算子表把 `q` / `Q` / `cm`
   演一遍 CTM 读出来的 —— PDF 里图片没有自己的坐标，位置与大小全在矩阵里。
   **没有图片的页整个字段不出现**，所以十几份纯文字真值重抽一遍仍逐字节相同
+- `pages[].rules[]`：**画出来的线**（表格格线、段落边框）与底纹色块，同样来自算子表。
+  `h` 极小的是横线、`w` 极小的是竖线，两个都小的是 Word 在格线交点上补的小方块
+  （相邻两格各画一遍，完全重合的已经去重）。收两种来源：实线是**填充矩形**，
+  虚线 / 点线是**带 dash 的描边**（`dash` 字段就是那串模式，也是「这条是什么线型」的读数）。
+  只收填充那一路的后果实测过：一条 dashed 边框整条消失，看上去像是 Word 判它输了竞争。
+  名字不叫 `lines` 是因为那个已经被文字行占了。**没有线的页整个字段不出现**
 - `fonts`：pdf.js 从字体表读出的归一化 `ascent` / `descent`（已除以 unitsPerEm）。
   这正是 Word 算行高的输入，Phase 0 的行高验证拿它对
 - `sections` / `wordPageCount`：来自 Word COM 自述，不是从 PDF 反推的，用于交叉校验

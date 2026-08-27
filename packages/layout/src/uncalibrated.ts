@@ -13,8 +13,9 @@
  * 图片的两条（内嵌图坐在哪、浮动图的六种参照物）也一样，`spike-image-01/02` 一跑就搬去了
  * `line-height.ts` 的 `OBJECT_RULES` 与 `page.ts` 的 `FLOAT_ORIGIN_RULES`。`layout/src/fixture.test.ts` 现在 18 行对上 16 行，
  * 剩下 2 行是一个至今解释不了的反例，写在 `PUNCT_COMPRESS_STRETCH_K` 的注释里。
- * 末尾的 `BORDER_STYLE_RANK` 是个例外：它影响的是**画哪条线**，不改坐标，
- * 但同样是拍脑袋来的，所以一并关在这里。
+ * 末尾那三张**边框线型**的表是个例外：它们影响的是**画哪条线**，不改坐标。
+ * 冲突规则本身已经用 `spike-table-03` 实测完了（见 `table-borders.ts`），
+ * 留在这里的只剩「实测没覆盖到的那些线型归哪一类、算多厚」。
  */
 import type { Twips } from '@uw/core';
 
@@ -92,49 +93,89 @@ export function em(fontSize: Twips, ratio: number): Twips {
 }
 
 /**
- * 边框冲突里「线宽一样时谁赢」的样式权重（大的赢）。
+ * 边框冲突里每种线型算**哪一类**（大的赢）。
  *
- * 依据是 CSS 2.1 §17.6.2 的 collapsing borders：`double > solid > dashed > dotted`。
- * 拿它当 Word 的规则用是**类比**，不是实测 —— ECMA-376 只说 `w:tcBorders` 覆盖
- * `w:tblBorders`（§17.4.39），相邻两格谁赢一个字没提，而 Word 的表格边框行为
- * 整体上就是 collapsing 模型的变体。
+ * 三档由 `spike-table-03` 实测（证据表在 `table-borders.ts` 的 `BORDER_CONFLICT_RULES`）：
+ * 点线 0 < 虚线 1 < 实线类 2，而且**跨档时线宽一点都不管用** —— 3pt 的点线输给 0.75pt 的
+ * 单实线、3pt 的虚线输给 0.5pt 的单实线。实测覆盖的只有 `single` / `double` / `dashed` /
+ * `dotted` 四种，其余线型是**照样子归类的**，所以这张表关在这里。
  *
- * 认不出的 `w:val` 落到 `single` 那一档：实文件里的生僻线型（`dashDotStroked`
+ * 认不出的 `w:val` 落到实线那一档：实文件里的生僻线型（`dashDotStroked`
  * `thickThinMediumGap` …）都是实线的花样，退成点线会让它凭空输掉。
  *
- * 钉死办法：一张 2×2 的表，四条内部边分别让上下两格写不同的 `w:val`（宽度写成一样），
- * 导出 PDF 看画出来的是哪一种。一份样本能同时钉死这张表和下面的平局方向。
+ * 钉死办法：`spike-table-03` 的 spec 里照着 dashed / dotted 那两组再加几组，
+ * 把 `dashSmallGap` / `dotDash` / `wave` / `triple` 各与 single 配一次即可。
  */
-const BORDER_STYLE_RANK: Record<string, number> = {
-  // 多线型：视觉最重
+const BORDER_STYLE_CLASS: Record<string, number> = {
+  // 点线（实测）
+  dotted: 0,
+  // 虚线族（`dashed` 实测，其余照样子归类）
+  dashed: 1,
+  dashSmallGap: 1,
+  dotDash: 1,
+  dotDotDash: 1,
+  // 实线类（`single` / `double` 实测，其余照样子归类）
+  single: 2,
+  thick: 2,
+  wave: 2,
+  double: 2,
+  triple: 2,
+  doubleWave: 2,
+  dashDotStroked: 2,
+  thickThinSmallGap: 2,
+  thinThickSmallGap: 2,
+  thickThinMediumGap: 2,
+  thinThickMediumGap: 2,
+  thickThinLargeGap: 2,
+  thinThickLargeGap: 2,
+  thinThickThinSmallGap: 2,
+  thinThickThinMediumGap: 2,
+  thinThickThinLargeGap: 2,
+};
+
+/** 0 点线 / 1 虚线 / 2 实线类。认不出的算实线类 */
+export function borderStyleClass(style: string): number {
+  return BORDER_STYLE_CLASS[style] ?? 2;
+}
+
+/**
+ * 实线类内部比的是**画出来有多厚**，这张表是「`w:sz` 的几倍」。
+ *
+ * `double` 的 3 倍是实测的（`spike-table-03`：sz=12 的双线画出来 4.32pt = 3 × 1.44pt，
+ * 于是它赢过 3pt 的单线、输给…… 见 `BORDER_CONFLICT_RULES` 的证据表）。
+ * 多线型的其余几种按「几条线加几个缝」推：triple 5 倍，thick 与 single 同宽。
+ * 破折类不走这条路（它们之间根本不比宽度），填 1 只是为了这张表是全的。
+ *
+ * 钉死办法：与上面那张表同一份样本 —— 让 triple 与 single 配一次，
+ * 挑一对「按 5 倍算谁赢、按 3 倍算换一个人赢」的宽度就分得开。
+ */
+const BORDER_THICKNESS_FACTOR: Record<string, number> = {
   double: 3,
-  triple: 3,
   doubleWave: 3,
+  triple: 5,
   thickThinSmallGap: 3,
   thinThickSmallGap: 3,
   thickThinMediumGap: 3,
   thinThickMediumGap: 3,
   thickThinLargeGap: 3,
   thinThickLargeGap: 3,
-  thinThickThinSmallGap: 3,
-  thinThickThinMediumGap: 3,
-  thinThickThinLargeGap: 3,
-  // 实线
-  single: 2,
-  thick: 2,
-  wave: 2,
-  // 虚线族
-  dashed: 1,
-  dashSmallGap: 1,
-  dotDash: 1,
-  dotDotDash: 1,
-  dashDotStroked: 1,
-  // 点线最轻
-  dotted: 0,
+  thinThickThinSmallGap: 5,
+  thinThickThinMediumGap: 5,
+  thinThickThinLargeGap: 5,
 };
 
-export function borderStyleRank(style: string): number {
-  return BORDER_STYLE_RANK[style] ?? BORDER_STYLE_RANK.single ?? 2;
+/** 一条边画出来的厚度 = `w:sz` × 这个系数。认不出的按 1 倍算 */
+export function borderThicknessFactor(style: string): number {
+  return BORDER_THICKNESS_FACTOR[style] ?? 1;
+}
+
+/**
+ * 厚度打平之后的样式权重（大的赢）。实测只钉死了一处：**同样画出来 1.44pt 厚**时，
+ * 0.5pt 的双线赢过 1.5pt 的单线（`spike-table-03` 的第「癸」组）。
+ * 于是这里只分两档「多线型 > 单线型」，多线型之间谁赢没有样本。
+ */
+export function borderSolidRank(style: string): number {
+  return borderThicknessFactor(style) > 1 ? 1 : 0;
 }
 
 /**

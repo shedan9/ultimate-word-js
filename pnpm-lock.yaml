@@ -44,6 +44,9 @@ importers:
       '@uw/render-dom':
         specifier: workspace:*
         version: link:../../packages/render-dom
+      fflate:
+        specifier: ^0.8.3
+        version: 0.8.3
       pdfjs-dist:
         specifier: ^6.2.108
         version: 6.2.108

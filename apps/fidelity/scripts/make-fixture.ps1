@@ -45,6 +45,19 @@ $wdRowHeightAtLeast     = 1
 $wdRowHeightExactly     = 2
 $wdLineStyleNone        = 0
 $wdLineStyleSingle      = 1
+# WdLineStyle 的常用几种。名字与 OOXML 的 w:val 对齐（single / dashed / dotted / double…），
+# 于是 spec 里写的就是最后落到 w:tcBorders 上的那个词，不必在脑子里翻一次表。
+$lineStyleMap = @{
+  none = 0; nil = 0; single = 1; dotted = 2; dashSmallGap = 3; dashed = 4
+  dashDot = 5; dashDotDot = 6; double = 7; triple = 8; thick = 1
+}
+# WdBorderType 的码：**全是负数**，顺序是 -1 上 / -2 左 / -3 下 / -4 右（顺时针），
+# 之后才是 -5 内横 / -6 内竖。四条边设成同一个值时这张表错没错**看不出来** ——
+# 这份文件里原来就写着「-1 左 / -2 右」的注释，直到 spike-table-03 逐边设不同的边框
+# 才露馅：要「左格的右边红」，Word 收到的是「左格的**左**边红」，
+# 导出的 PDF 里那条线安安静静画在了表格外沿上，看上去像是 Word 不认这条边框。
+$cellBorderMap  = @{ top = -1; left = -2; bottom = -3; right = -4 }
+$tableBorderMap = @{ top = -1; left = -2; bottom = -3; right = -4; insideH = -5; insideV = -6 }
 $wdStyleTypeTable       = 3
 $vAlignMap = @{ top = 0; center = 1; bottom = 3 }
 # WdConditionCode -> 它落到的 OOXML w:tblStylePr/@w:type。
@@ -65,6 +78,44 @@ $condMap = @{
 # omitting knobs, so "was it written?" has to be asked explicitly.
 function Test-Prop($obj, [string]$name) {
   return ($null -ne $obj) -and ($obj.PSObject.Properties.Name -contains $name)
+}
+
+# 一条边：样式 + 线宽 + 颜色。
+#
+# 颜色是这份样本的**读数**：边框冲突的两侧各给一个独一无二的颜色，PDF 里画出来的那条线
+# 是什么颜色，就直接说出「赢的是哪一侧」—— 与 spike-table-02 拿字号认条件格式同一招，
+# 不必从线宽反推（相邻两格可以配成同宽不同样式，线宽根本分不开）。
+#
+# Border.Color 的字节序**实测过**：给它 255（照「WdColor 是 BGR」的说法算出来的红）,
+# Word 存进 w:color 的是 `0000FF` —— 蓝。也就是这一路上低字节是**蓝**、高字节是红，
+# 与 RRGGBB 同序。红蓝写反了看上去毫无破绽（每条结论都读成相反那一侧），
+# 所以这里按实测写 r*65536，并留下这行注释，免得下次照文档改回去。
+function Set-BorderSide($borders, [int]$code, $spec, $lineStyleMap) {
+  $bd = $borders.Item($code)
+  $styleName = if ($spec.PSObject.Properties.Name -contains 'style') { [string]$spec.style } else { 'single' }
+  if (-not $lineStyleMap.ContainsKey($styleName)) { throw "unknown border style: $styleName" }
+  $bd.LineStyle = $lineStyleMap[$styleName]
+  if ($bd.LineStyle -eq 0) { return }   # 无边框时线宽与颜色都会被拒
+  if ($spec.PSObject.Properties.Name -contains 'widthPt') {
+    $bd.LineWidth = [int]([double]$spec.widthPt * 8)
+  }
+  if ($spec.PSObject.Properties.Name -contains 'color') {
+    $hex = [string]$spec.color -replace '^#', ''
+    $r = [Convert]::ToInt32($hex.Substring(0, 2), 16)
+    $g = [Convert]::ToInt32($hex.Substring(2, 2), 16)
+    $b = [Convert]::ToInt32($hex.Substring(4, 2), 16)
+    $bd.Color = $b + ($g * 256) + ($r * 65536)
+  }
+}
+
+# 一组边（单元格的四条 / 表格的六条），按 spec 里出现的那几条设，没写的**不碰** ——
+# 「没写」与「写了 none」在 OOXML 里是两件事（前者退到表级，后者是明确的 w:val="nil"），
+# 而这份样本要量的正是这两者的区别。
+function Set-Borders($borders, $spec, $map, $lineStyleMap) {
+  foreach ($side in $spec.PSObject.Properties.Name) {
+    if (-not $map.ContainsKey($side)) { throw "unknown border side: $side" }
+    Set-BorderSide $borders $map[$side] $spec.$side $lineStyleMap
+  }
 }
 
 # Paragraph-level formatting, shared by the body loop and the header/footer filler.
@@ -216,12 +267,14 @@ function Set-CellContent($word, $cell, $c) {
   # Word 把线画在格线上，所以答案应当是「不吃」—— @uw/layout 一直照这条写，
   # 但 table.ts 的文件头明说它「没有真值」。一格 6pt 的边就能钉死。
   if (Test-Prop $c 'borderWidthPt') {
-    foreach ($b in @(-1, -2, -3, -4)) {   # wdBorderLeft / Right / Top / Bottom
+    foreach ($b in @(-1, -2, -3, -4)) {   # wdBorderTop / Left / Bottom / Right
       $bd = $cell.Borders.Item($b)
       $bd.LineStyle = $wdLineStyleSingle
       $bd.LineWidth = [int]([double]$c.borderWidthPt * 8)
     }
   }
+  # 逐边的样式 / 线宽 / 颜色：格线冲突的样本靠它给相邻两格配不同的边
+  if (Test-Prop $c 'borders') { Set-Borders $cell.Borders $c.borders $cellBorderMap $lineStyleMap }
 }
 
 # 按 spec 造一份自定义表格样式，每个具名条件写成一条 w:tblStylePr。
@@ -297,6 +350,8 @@ function Add-Table($word, $doc, $t, $at) {
     $tbl.Borders.InsideLineWidth  = $w
     $tbl.Borders.OutsideLineWidth = $w
   }
+  # 表级逐边（含 insideH / insideV）。放在 borderWidthPt 之后：两者同时写时以细的这份为准
+  if (Test-Prop $t 'borders') { Set-Borders $tbl.Borders $t.borders $tableBorderMap $lineStyleMap }
 
   for ($ri = 0; $ri -lt $rows.Count; $ri++) {
     $r = $rows[$ri]

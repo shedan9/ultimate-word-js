@@ -1,0 +1,3083 @@
+{
+  "name": "spike-table-03",
+  "note": "表格格线**冲突**的真值样本 —— 在它之前 `layout/src/table-borders.ts` 的「相邻竞争」那一级\n（共享一条线的两个格子各出一条候选，谁画得算）一行都没跟 Word 比过，整条规则是照\nCSS 2.1 §17.6.2 的 collapsing borders 类比出来的。\n\n**冲突边是改 XML 造出来的**（spec 里的 `bordersRaw`，见 `src/patch-docx.ts`）：Word 的对象模型里\n一条共享边只有**一个** Border 对象，给左格设 right、再给右格设 left，后设的把先设的整个盖掉，\n存出来两边一模一样 —— 第一版样本就是这么塌掉的，12 组配对全成了同一条线。\n也就是说 Word 自己造不出这个局面，冲突只来自别的生成器 / 从别处粘进来的表 / `w:tblPrEx`。\n我们要标定的正是 Word **渲染**这类文件的规则，所以流程是：Word 排版 → 手工写冲突 → Word 导 PDF。\n\n读法是**颜色**：竞争的两侧各给一个独一无二的颜色（左 / 上 = 红 FF0000，右 / 下 = 蓝 0000FF，\n退到表级的 insideH / insideV = 绿 008000），PDF 里画出来的线是什么颜色，就直接说出赢的是哪条候选\n—— 与 spike-table-02 拿字号认条件格式同一招。不靠线宽反推：好几组有意配成「同宽不同样式」，\n线宽在那几组根本分不开。\n\n二十一组，每组做**两遍**（竖边一行两格 / 横边两行一格）：竖边只答得了「左右谁赢」，\n平局取「左上」还是「右下」要横竖各一份才分得开。\n\n  〇 两侧都不写 —— 该退到表级，画绿线。它同时是**读数方法本身**的对照；\n  一 / 二 同样式不同宽（0.5 vs 2.25），互为镜像 —— 分开「宽的赢」与「总是某一侧赢」；\n  三 / 四 同宽不同样式（single vs double），互为镜像；\n  五 全同只差颜色 —— 平局取哪一侧；\n  六 / 七 一侧 nil 一侧实线 —— nil 在竞争里强不强；\n  八 宽点线 vs 窄实线、丙 宽虚线 vs 窄实线 —— 破折类再宽也赢不赢得了实线；\n  九 窄双线 vs 宽单线、丁 宽单线 vs 窄双线 —— 双线算多厚（sz 的几倍）；\n  十 / 乙 dashed vs dotted 同宽，互为镜像 —— 破折类之间分不分高下；\n  甲 两侧都 nil 而表级说绿 —— 层级覆盖那一级：nil 必须赢过表级，什么都不画；\n  戊 / 壬 dotted 之间比宽（互为镜像）、辛 dashed 之间比宽、己 double 之间比宽 ——\n    同类里宽度还管不管用；\n  庚 宽点线 vs nil —— 单独摆着时 2.25pt 的点线画不画得出来。它是戊 / 壬 的对照：\n    「宽的那条输了」与「Word 根本画不出这么宽的点线」两种解释只有它分得开；\n  癸 single 1.5 vs double 0.5 —— 两者**画出来一样厚**（1.44pt），只差样式：\n    厚度打平之后是样式说了算还是位置说了算。\n\n虚线 / 点线的边框 Word 画成**描边**（带 dash 模式）而不是填充矩形，真值那边为此补了一路\n（`extract-truth.ts` 的 `strokeRects`）—— 第一版只收填充，第十组的 dashed 整条消失，\n差点被读成「它输了竞争」。\n\n页面不开行网格、字全是汉字：这份样本只量线，但断行一乱表格位置就跟着乱，\n没必要把已经标定完的那几套规则再牵进来。",
+  "page": {
+    "widthMm": 160,
+    "heightMm": 250,
+    "marginMm": {
+      "top": 20,
+      "bottom": 20,
+      "left": 20,
+      "right": 20
+    }
+  },
+  "paragraphs": [
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "格线冲突"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [60, 60],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideV": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "〇左"
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "〇右"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [60, 60],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideV": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "一左",
+              "bordersRaw": {
+                "right": {
+                  "val": "single",
+                  "sz": 4,
+                  "color": "FF0000"
+                }
+              }
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "一右",
+              "bordersRaw": {
+                "left": {
+                  "val": "single",
+                  "sz": 18,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [60, 60],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideV": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "二左",
+              "bordersRaw": {
+                "right": {
+                  "val": "single",
+                  "sz": 18,
+                  "color": "FF0000"
+                }
+              }
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "二右",
+              "bordersRaw": {
+                "left": {
+                  "val": "single",
+                  "sz": 4,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [60, 60],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideV": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "三左",
+              "bordersRaw": {
+                "right": {
+                  "val": "single",
+                  "sz": 12,
+                  "color": "FF0000"
+                }
+              }
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "三右",
+              "bordersRaw": {
+                "left": {
+                  "val": "double",
+                  "sz": 12,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [60, 60],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideV": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "四左",
+              "bordersRaw": {
+                "right": {
+                  "val": "double",
+                  "sz": 12,
+                  "color": "FF0000"
+                }
+              }
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "四右",
+              "bordersRaw": {
+                "left": {
+                  "val": "single",
+                  "sz": 12,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [60, 60],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideV": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "五左",
+              "bordersRaw": {
+                "right": {
+                  "val": "single",
+                  "sz": 12,
+                  "color": "FF0000"
+                }
+              }
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "五右",
+              "bordersRaw": {
+                "left": {
+                  "val": "single",
+                  "sz": 12,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [60, 60],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideV": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "六左",
+              "bordersRaw": {
+                "right": {
+                  "val": "nil"
+                }
+              }
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "六右",
+              "bordersRaw": {
+                "left": {
+                  "val": "single",
+                  "sz": 12,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [60, 60],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideV": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "七左",
+              "bordersRaw": {
+                "right": {
+                  "val": "single",
+                  "sz": 12,
+                  "color": "FF0000"
+                }
+              }
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "七右",
+              "bordersRaw": {
+                "left": {
+                  "val": "nil"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [60, 60],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideV": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "八左",
+              "bordersRaw": {
+                "right": {
+                  "val": "dotted",
+                  "sz": 24,
+                  "color": "FF0000"
+                }
+              }
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "八右",
+              "bordersRaw": {
+                "left": {
+                  "val": "single",
+                  "sz": 6,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [60, 60],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideV": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "九左",
+              "bordersRaw": {
+                "right": {
+                  "val": "double",
+                  "sz": 6,
+                  "color": "FF0000"
+                }
+              }
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "九右",
+              "bordersRaw": {
+                "left": {
+                  "val": "single",
+                  "sz": 24,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [60, 60],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideV": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "十左",
+              "bordersRaw": {
+                "right": {
+                  "val": "dashed",
+                  "sz": 12,
+                  "color": "FF0000"
+                }
+              }
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "十右",
+              "bordersRaw": {
+                "left": {
+                  "val": "dotted",
+                  "sz": 12,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [60, 60],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideV": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "甲左",
+              "bordersRaw": {
+                "right": {
+                  "val": "nil"
+                }
+              }
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "甲右",
+              "bordersRaw": {
+                "left": {
+                  "val": "nil"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [60, 60],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideV": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "乙左",
+              "bordersRaw": {
+                "right": {
+                  "val": "dotted",
+                  "sz": 12,
+                  "color": "FF0000"
+                }
+              }
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "乙右",
+              "bordersRaw": {
+                "left": {
+                  "val": "dashed",
+                  "sz": 12,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [60, 60],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideV": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "丙左",
+              "bordersRaw": {
+                "right": {
+                  "val": "dashed",
+                  "sz": 24,
+                  "color": "FF0000"
+                }
+              }
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "丙右",
+              "bordersRaw": {
+                "left": {
+                  "val": "single",
+                  "sz": 4,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [60, 60],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideV": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "丁左",
+              "bordersRaw": {
+                "right": {
+                  "val": "single",
+                  "sz": 24,
+                  "color": "FF0000"
+                }
+              }
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "丁右",
+              "bordersRaw": {
+                "left": {
+                  "val": "double",
+                  "sz": 12,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [60, 60],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideV": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "戊左",
+              "bordersRaw": {
+                "right": {
+                  "val": "dotted",
+                  "sz": 4,
+                  "color": "FF0000"
+                }
+              }
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "戊右",
+              "bordersRaw": {
+                "left": {
+                  "val": "dotted",
+                  "sz": 18,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [60, 60],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideV": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "己左",
+              "bordersRaw": {
+                "right": {
+                  "val": "double",
+                  "sz": 12,
+                  "color": "FF0000"
+                }
+              }
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "己右",
+              "bordersRaw": {
+                "left": {
+                  "val": "double",
+                  "sz": 6,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [60, 60],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideV": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "庚左",
+              "bordersRaw": {
+                "right": {
+                  "val": "dotted",
+                  "sz": 18,
+                  "color": "FF0000"
+                }
+              }
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "庚右",
+              "bordersRaw": {
+                "left": {
+                  "val": "nil"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [60, 60],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideV": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "辛左",
+              "bordersRaw": {
+                "right": {
+                  "val": "dashed",
+                  "sz": 4,
+                  "color": "FF0000"
+                }
+              }
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "辛右",
+              "bordersRaw": {
+                "left": {
+                  "val": "dashed",
+                  "sz": 24,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [60, 60],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideV": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "壬左",
+              "bordersRaw": {
+                "right": {
+                  "val": "dotted",
+                  "sz": 18,
+                  "color": "FF0000"
+                }
+              }
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "壬右",
+              "bordersRaw": {
+                "left": {
+                  "val": "dotted",
+                  "sz": 4,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [60, 60],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideV": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "癸左",
+              "bordersRaw": {
+                "right": {
+                  "val": "single",
+                  "sz": 12,
+                  "color": "FF0000"
+                }
+              }
+            },
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "癸右",
+              "bordersRaw": {
+                "left": {
+                  "val": "double",
+                  "sz": 4,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [120],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideH": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "〇上"
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "〇下"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [120],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideH": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "一上",
+              "bordersRaw": {
+                "bottom": {
+                  "val": "single",
+                  "sz": 4,
+                  "color": "FF0000"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "一下",
+              "bordersRaw": {
+                "top": {
+                  "val": "single",
+                  "sz": 18,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [120],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideH": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "二上",
+              "bordersRaw": {
+                "bottom": {
+                  "val": "single",
+                  "sz": 18,
+                  "color": "FF0000"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "二下",
+              "bordersRaw": {
+                "top": {
+                  "val": "single",
+                  "sz": 4,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [120],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideH": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "三上",
+              "bordersRaw": {
+                "bottom": {
+                  "val": "single",
+                  "sz": 12,
+                  "color": "FF0000"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "三下",
+              "bordersRaw": {
+                "top": {
+                  "val": "double",
+                  "sz": 12,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [120],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideH": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "四上",
+              "bordersRaw": {
+                "bottom": {
+                  "val": "double",
+                  "sz": 12,
+                  "color": "FF0000"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "四下",
+              "bordersRaw": {
+                "top": {
+                  "val": "single",
+                  "sz": 12,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [120],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideH": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "五上",
+              "bordersRaw": {
+                "bottom": {
+                  "val": "single",
+                  "sz": 12,
+                  "color": "FF0000"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "五下",
+              "bordersRaw": {
+                "top": {
+                  "val": "single",
+                  "sz": 12,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [120],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideH": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "六上",
+              "bordersRaw": {
+                "bottom": {
+                  "val": "nil"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "六下",
+              "bordersRaw": {
+                "top": {
+                  "val": "single",
+                  "sz": 12,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [120],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideH": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "七上",
+              "bordersRaw": {
+                "bottom": {
+                  "val": "single",
+                  "sz": 12,
+                  "color": "FF0000"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "七下",
+              "bordersRaw": {
+                "top": {
+                  "val": "nil"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [120],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideH": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "八上",
+              "bordersRaw": {
+                "bottom": {
+                  "val": "dotted",
+                  "sz": 24,
+                  "color": "FF0000"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "八下",
+              "bordersRaw": {
+                "top": {
+                  "val": "single",
+                  "sz": 6,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [120],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideH": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "九上",
+              "bordersRaw": {
+                "bottom": {
+                  "val": "double",
+                  "sz": 6,
+                  "color": "FF0000"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "九下",
+              "bordersRaw": {
+                "top": {
+                  "val": "single",
+                  "sz": 24,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [120],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideH": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "十上",
+              "bordersRaw": {
+                "bottom": {
+                  "val": "dashed",
+                  "sz": 12,
+                  "color": "FF0000"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "十下",
+              "bordersRaw": {
+                "top": {
+                  "val": "dotted",
+                  "sz": 12,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [120],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideH": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "甲上",
+              "bordersRaw": {
+                "bottom": {
+                  "val": "nil"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "甲下",
+              "bordersRaw": {
+                "top": {
+                  "val": "nil"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [120],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideH": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "乙上",
+              "bordersRaw": {
+                "bottom": {
+                  "val": "dotted",
+                  "sz": 12,
+                  "color": "FF0000"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "乙下",
+              "bordersRaw": {
+                "top": {
+                  "val": "dashed",
+                  "sz": 12,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [120],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideH": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "丙上",
+              "bordersRaw": {
+                "bottom": {
+                  "val": "dashed",
+                  "sz": 24,
+                  "color": "FF0000"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "丙下",
+              "bordersRaw": {
+                "top": {
+                  "val": "single",
+                  "sz": 4,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [120],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideH": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "丁上",
+              "bordersRaw": {
+                "bottom": {
+                  "val": "single",
+                  "sz": 24,
+                  "color": "FF0000"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "丁下",
+              "bordersRaw": {
+                "top": {
+                  "val": "double",
+                  "sz": 12,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [120],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideH": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "戊上",
+              "bordersRaw": {
+                "bottom": {
+                  "val": "dotted",
+                  "sz": 4,
+                  "color": "FF0000"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "戊下",
+              "bordersRaw": {
+                "top": {
+                  "val": "dotted",
+                  "sz": 18,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [120],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideH": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "己上",
+              "bordersRaw": {
+                "bottom": {
+                  "val": "double",
+                  "sz": 12,
+                  "color": "FF0000"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "己下",
+              "bordersRaw": {
+                "top": {
+                  "val": "double",
+                  "sz": 6,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [120],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideH": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "庚上",
+              "bordersRaw": {
+                "bottom": {
+                  "val": "dotted",
+                  "sz": 18,
+                  "color": "FF0000"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "庚下",
+              "bordersRaw": {
+                "top": {
+                  "val": "nil"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [120],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideH": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "辛上",
+              "bordersRaw": {
+                "bottom": {
+                  "val": "dashed",
+                  "sz": 4,
+                  "color": "FF0000"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "辛下",
+              "bordersRaw": {
+                "top": {
+                  "val": "dashed",
+                  "sz": 24,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [120],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideH": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "壬上",
+              "bordersRaw": {
+                "bottom": {
+                  "val": "dotted",
+                  "sz": 18,
+                  "color": "FF0000"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "壬下",
+              "bordersRaw": {
+                "top": {
+                  "val": "dotted",
+                  "sz": 4,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    },
+    {
+      "kind": "table",
+      "widthsPt": [120],
+      "borders": {
+        "top": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "left": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "bottom": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "right": {
+          "style": "single",
+          "widthPt": 0.5,
+          "color": "#000000"
+        },
+        "insideH": {
+          "style": "single",
+          "widthPt": 1.5,
+          "color": "#008000"
+        }
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "癸上",
+              "bordersRaw": {
+                "bottom": {
+                  "val": "single",
+                  "sz": 12,
+                  "color": "FF0000"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "fontEA": "仿宋",
+              "fontLatin": "Times New Roman",
+              "sizePt": 12,
+              "align": "left",
+              "text": "癸下",
+              "bordersRaw": {
+                "top": {
+                  "val": "double",
+                  "sz": 4,
+                  "color": "0000FF"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "fontEA": "仿宋",
+      "fontLatin": "Times New Roman",
+      "sizePt": 12,
+      "align": "left",
+      "text": "间"
+    }
+  ]
+}

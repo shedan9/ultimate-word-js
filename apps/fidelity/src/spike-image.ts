@@ -4,7 +4,7 @@
  *
  * 与 `spike:page` / `spike:header` 同一个路子 —— **不反推系数**，把整台引擎跑一遍再与真值
  * 逐行、逐图对。这里比别的穿刺多一样东西：真值里的 `images[]`（PDF 算子表里的图片落点，
- * 见 `extract-truth.ts` 的 `collectImages`）。没有它就只能靠「图把行撑高多少」间接推，
+ * 见 `extract-truth.ts` 的 `collectPaint`）。没有它就只能靠「图把行撑高多少」间接推，
  * 而那条路把「图摆在哪」与「行盒怎么算」两件事搅在一起。
  *
  * 三份样本：
