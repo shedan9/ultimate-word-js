@@ -41,6 +41,8 @@ const GEOMETRY = {
 function frag(over: Partial<LineFragment> = {}): LineFragment {
   return {
     runId: 'r1',
+    contentIndex: 0,
+    offset: 0,
     font: '仿宋',
     fontSize: 320,
     script: 'eastAsia',

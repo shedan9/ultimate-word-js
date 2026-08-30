@@ -21,6 +21,7 @@ export * from './parse-body.ts';
 export * from './parse-drawing.ts';
 export * from './parse-props.ts';
 export * from './parse-table-props.ts';
+export * from './position.ts';
 export * from './props.ts';
 export * from './resolve-body.ts';
 export * from './section.ts';
