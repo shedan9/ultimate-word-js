@@ -326,7 +326,14 @@ export function isEastAsianCodePoint(cp: number): boolean {
   return inRanges(EAST_ASIA_FLAT, cp);
 }
 
-/** 这段文字里有没有东亚文字。整行只要有一个字就按东亚行算行高 */
+/**
+ * 这段文字里有没有东亚文字。
+ *
+ * ⚠️ **不要拿它判行高走哪一套规则** —— 那一问的答案是「实际画字的那款字体是不是东亚字体」，
+ * 与字符无关（实测，见 `@uw/layout` 的 `SCRIPT_RULES`）。`@uw/layout` 只在**字体缺失**、
+ * 问不出字体是什么的时候才退回这条路。留着它是因为兜底度量（`fallbackAdvance`）
+ * 与保真度脚本还要按字符分全角半角。
+ */
 export function hasEastAsianText(text: string): boolean {
   for (const ch of text) {
     if (isEastAsianCodePoint(ch.codePointAt(0) as number)) return true;

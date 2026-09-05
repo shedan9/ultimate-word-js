@@ -78,7 +78,7 @@ describe('码点 → 桶', () => {
     expect(bucketOf(0x20000, 'default')).toBe('eastAsia');
   });
 
-  it('hasEastAsianText 决定整行走不走 1.3 行高系数', () => {
+  it('hasEastAsianText 认得出一段文字里有没有东亚字（行高规则改看字体之后只剩兜底用）', () => {
     expect(hasEastAsianText('Report 2024')).toBe(false);
     expect(hasEastAsianText('Report 2024 年')).toBe(true);
     expect(hasEastAsianText('')).toBe(false);

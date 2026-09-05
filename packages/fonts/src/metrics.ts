@@ -9,23 +9,17 @@
  * （基线穿刺，26 个样本）。第二问的答案在 `baselineOffset()`，它比第一问更容易搞反 ——
  * 行高对了但基线偏了，整页文字会整体上移或下移，而每行的间距看起来完全正常。
  *
- * ## 已知没做对的一处：**东亚字体里的纯 ASCII 行**
+ * ## 走哪一套，看的是**字体**不是字符（2026-09-05 实测）
  *
- * 「东亚规则（×1.3）还是拉丁规则（GDI 外部行距）」现在是按**这一行有没有东亚字符**判的
- * （`line-height.ts` 的 `hasEastAsia`）。`spike-table-02` 造样本时撞见反例：一行只有
- * 「A2C6」四个半角字符、字体是文档默认的**等线**（`w:hint="default"`，ascii 槽里也是等线），
- * Word 给的行高是 **20.32pt / 15pt 字**，正是等线走**东亚**规则的值；按拉丁规则只有 15.63pt。
- * 差 30%，而且是**每一行**都差。
+ * `eastAsian` 这个参数由调用方给，判据**不是**「这一行有没有东亚字符」而是
+ * 「这一段文字实际用的那款字体是不是东亚字体」—— 一行只有「A2C6」四个半角字符、
+ * 用等线画的，Word 照样按东亚规则算（20.32pt / 15pt 字，按拉丁规则只有 15.63pt，差 30%）。
+ * 样本 `spike-script-01`（11 页 × 每页四段，`pnpm --filter @uw/fidelity spike:script`），
+ * 规则表与证据在 `@uw/layout` 的 `SCRIPT_RULES`。`@uw/fonts` 这一侧的入口是
+ * `TextMeasurer.eastAsianFont()`：查这款字体有没有 U+4E00 的字形。
  *
- * 也就是说判据多半不是「字符是不是东亚的」而是「**用的字体是不是东亚字体**」。
- * 它与已定死的三条并不矛盾：Phase 0 那 13 个样本里的纯拉丁行用的是 Times New Roman
- * （西文字体 → 拉丁规则），基线穿刺第 ③ 条那个空段落走的也是 Times。
- *
- * **没有改**：一个数据点分不开「看字体」「看 `w:hint`」「看 ascii 槽里装的是谁」三种说法，
- * 照一个反例改规则正是这个项目不允许的硬凑。钉死办法：一份样本，同一句
- * 「ABC123」重复六段，`w:rFonts` 的 ascii 槽依次取 Times New Roman / 等线 / 宋体，
- * 每种再配 `w:hint="default"` 与 `w:hint="eastAsia"` 各一段 —— 六段的行高一比就知道谁说了算。
- * 它同时能顺手回答第 13 步 ① 那个歧义字符集的边界问题（两者问的都是「这一段算不算东亚」）。
+ * 原来按字符判是从 Phase 0 那 13 个样本推出去的 —— 那批样本里纯拉丁的行用的是
+ * Times New Roman，「字符是拉丁的」与「字体是拉丁字体」在它们身上完全重合，分不开。
  */
 import type { Twips } from '@uw/core';
 import { fontUnitsToTwips } from '@uw/core';
@@ -107,7 +101,10 @@ export function gdiExternalLeading(m: RawFontMetrics): number {
 
 export interface LineMetricsOptions {
   source?: MetricSource;
-  /** 该行是否含东亚文字 —— 决定用 1.3 系数还是 GDI 外部行距 */
+  /**
+   * 这段文字用的那款字体**是不是东亚字体** —— 决定用 1.3 系数还是 GDI 外部行距。
+   * 名字里没有「line」是有意的：判据是字体不是字符，见文件头。
+   */
   eastAsian?: boolean;
 }
 
@@ -147,9 +144,10 @@ export function readRawMetrics(font: FontkitFont): RawFontMetrics {
  *
  * typo / hhea 两个来源留着做对照实验与兜底 —— 有些字体 win 度量异常大。
  *
- * `eastAsian` 是**整行**的属性而不是这一段文字的：混排行里连拉丁字体也不加外部行距
- * （实测，见 `baselineOffset()` 的表）。所以这个参数由调用方按行判定后传进来，
- * 这里不看 family 自己猜。
+ * `eastAsian` 由调用方按**这段文字用的那款字体**判定后传进来（见文件头），这里不自己猜 ——
+ * 度量层拿到的只有一份 `RawFontMetrics`，它认不出「仿宋」和「Times」的区别，
+ * 而覆盖率要问 `FontSource`。原来这里写的是「`eastAsian` 是**整行**的属性」，被
+ * `spike-script-01` 推翻了：同一行里的两段文字完全可以一段走东亚规则、一段走拉丁规则。
  */
 export function lineMetrics(m: RawFontMetrics, fontSize: Twips, opts: LineMetricsOptions = {}): LineMetrics {
   const source = opts.source ?? 'win';
@@ -248,7 +246,12 @@ export function baselineOffsetExact(lineHeight: Twips): Twips {
   return lineHeight * EXACT_LINE_BASELINE_RATIO;
 }
 
-/** 混排行的自然行高：取各字体单倍行距行高的最大值（Phase 0 已验证） */
+/**
+ * 混排行的自然行高：取各字体单倍行距行高的最大值。
+ *
+ * ⚠️ 单字体的行**恒等于**它自己的行高，Phase 0 验的是这一格；混排行上它**是错的**
+ * —— 见 `composeLineBox()` 的证据表。只剩 `maxHeight` 那条落选分支还在用它。
+ */
 export function naturalLineHeight(parts: readonly LineMetrics[]): Twips {
   let h = 0;
   for (const p of parts) {
@@ -260,18 +263,9 @@ export function naturalLineHeight(parts: readonly LineMetrics[]): Twips {
 /**
  * 多款字体合成一个基线：**每款各自在最终行高里居中，再取最大值**。
  *
- * ⚠️ 这条合成规则**没有真值**，是个判断。基线穿刺的 26 个样本里，每一行的行盒都由
- * **单独一款**字体定死（中西混排行的行盒由东亚字体单独决定，见 `@uw/layout` 的
- * `line-height.ts`），所以样本分不开这里的两种写法：
- *
- * - 逐个居中再取 max（本实现）：各字体的核心盒各自完整，谁伸得最高谁定基线；
- * - 先把各核心盒逐项取 max 合成一个盒子、再让它居中：会把 A 字体的下沿与 B 字体的
- *   上沿凑成一个不存在的盒子，把基线整体顶高。宋体 72pt + Arial 72pt 若按这条算是 72.94pt，
- *   按本实现是 72.68pt —— 而 Word 给的是 72.57pt，即**两条都不对**，因为拉丁一侧压根没参与。
- *
- * 选前者的理由是它不凭空造盒子，不是因为它被测过。真要钉死，需要一份
- * 「同一行里两款**东亚**字体、字号不同」的样本（比如 24pt 宋体里嵌 48pt 黑体），
- * 而 fixture spec 目前一段只有一个字号 —— 补样本前要先给 spec 加 run 级字号。
+ * ⚠️ 这是**输给了实测的那一条**，留着只为 `spike:script` 还能把落选的组合再跑一遍
+ * （与 `HEADER_RULES` 里落选的 `footerAnchor: 'top'` 同理）。真正在用的是
+ * `composeLineBox()` 的 `maxSides`，见那里的证据表。
  */
 export function composeBaseline(parts: readonly LineMetrics[], lineHeight: Twips): Twips {
   let baseline = 0;
@@ -280,6 +274,55 @@ export function composeBaseline(parts: readonly LineMetrics[], lineHeight: Twips
     if (b > baseline) baseline = b;
   }
   return baseline;
+}
+
+/** 多款字体合成一行行盒的两种写法。实测的是 `maxSides`，见 `composeLineBox()` */
+export type ComposeRule = 'maxHeight' | 'maxSides';
+
+/** 一行的行盒：自然行高 + 行顶到基线。行距规则与网格吸附在这之后才动它 */
+export interface LineBox {
+  natural: Twips;
+  above: Twips;
+}
+
+/**
+ * 同一行里几款字体怎么合成一个行盒 —— **各自的行盒逐项取 max**（`maxSides`）。
+ *
+ * 实测（`spike-script-01` 的 P9/P10/P11，三页 9 个基线差，误差 0.04pt）。这一格
+ * 在此之前是**判断**而不是结论，因为基线穿刺那 26 个样本里每一行的行盒都由**单独一款**
+ * 字体定死（拉丁 run 的核心盒总是矮于同字号东亚 run 的，怎么合成都看不出来）。
+ * 要照出它，需要两款**上下互不相让**的字体在同一行里：
+ *
+ * | 36pt | 基线以上 | 基线以下 | 单倍行高 |
+ * |---|---|---|---|
+ * | 等线（东亚规则） | 34.79 | 13.98 | 48.77 |
+ * | 宋体（东亚规则） | **36.34** | 10.46 | 46.80 |
+ * | 两者同行，Word 实测 | **36.31** | 13.97 | **50.28** |
+ *
+ * 也就是说 Word 给的行高比**两款字体各自的行高都大**（50.28 > 48.77 > 46.80）——
+ * 原来的 `naturalLineHeight`「取各自行高的最大值」按定义就说不出这个数，差 1.51pt。
+ * 上取宋体、下取等线，得 36.34 + 13.98 = 50.32（twips 取整后 50.31），对上了。
+ *
+ * 注意每款字体是在**自己的**自然行高里居中的（不是在合成之后的行高里）——
+ * 后者会让矮的那一款把基线往下拽，P9 会算成 36.94（差 0.63pt）。
+ * 合成之后多出来的空间（行距倍数、网格吸附）仍旧上下均分，那条规则不受影响。
+ *
+ * `maxHeight` 是落选的那一条，留着给 `spike:script` 重跑组合用。
+ */
+export function composeLineBox(parts: readonly LineMetrics[], rule: ComposeRule = 'maxSides'): LineBox {
+  if (rule === 'maxHeight') {
+    const natural = naturalLineHeight(parts);
+    return { natural, above: composeBaseline(parts, natural) };
+  }
+  let above = 0;
+  let below = 0;
+  for (const p of parts) {
+    const a = baselineOffset(p, p.lineHeight);
+    if (a > above) above = a;
+    const b = p.lineHeight - a;
+    if (b > below) below = b;
+  }
+  return { natural: above + below, above };
 }
 
 // ── fontkit 的类型补丁 ────────────────────────────────────────────────────────

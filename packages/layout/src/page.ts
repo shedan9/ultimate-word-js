@@ -57,8 +57,8 @@ import {
   pickHeaderFooter,
   stackBlocks,
 } from './header-footer.ts';
-import type { ObjectRules } from './line-height.ts';
-import { OBJECT_RULES } from './line-height.ts';
+import type { ObjectRules, ScriptRules } from './line-height.ts';
+import { OBJECT_RULES, SCRIPT_RULES } from './line-height.ts';
 import { layoutParagraph } from './paragraph.ts';
 import type { RowLayout, TableLayout, TableRules } from './table.ts';
 import { layoutTable, TABLE_RULES } from './table.ts';
@@ -253,6 +253,11 @@ export interface LayoutDocumentOptions {
    * `apps/fidelity` 的 `spike:image` 靠它把 4 组假设各跑一遍，见 `OBJECT_RULES`
    */
   objectRules?: Partial<ObjectRules>;
+  /**
+   * 脚本与合成规则。同样是**标定用的接缝**，正常调用不要传 ——
+   * `apps/fidelity` 的 `spike:script` 靠它把 8 组假设各跑一遍，见 `SCRIPT_RULES`
+   */
+  scriptRules?: Partial<ScriptRules>;
   /** 表格格线的几何规则。同上，标定用的接缝，见 `TABLE_RULES` */
   tableRules?: Partial<TableRules>;
   /** 表格**拆行**的规则。同上，标定用的接缝，见 `TABLE_SPLIT_RULES` */
@@ -669,6 +674,7 @@ function prepare(b: ResolvedBlock, section: SectionProps, opts: LayoutDocumentOp
     ...(opts.defaultFont === undefined ? {} : { defaultFont: opts.defaultFont }),
     ...(opts.fieldValues === undefined ? {} : { fieldValues: opts.fieldValues }),
     ...(opts.objectRules === undefined ? {} : { objectRules: { ...OBJECT_RULES, ...opts.objectRules } }),
+    ...(opts.scriptRules === undefined ? {} : { scriptRules: { ...SCRIPT_RULES, ...opts.scriptRules } }),
     ...(opts.tableRules === undefined ? {} : { tableRules: { ...TABLE_RULES, ...opts.tableRules } }),
   };
   const width = pageGeometry(section, opts).content.width;

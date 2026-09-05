@@ -11,7 +11,7 @@ import type { DocGrid, DocumentSettings, NodeId, ResolvedParagraph, ResolvedPara
 import type { KinsokuSets } from './break-class.ts';
 import { isNumberingItem, kinsokuFrom } from './break-class.ts';
 import { buildItems } from './items.ts';
-import type { ObjectRules } from './line-height.ts';
+import type { ObjectRules, ScriptRules } from './line-height.ts';
 import { lineHeight, OBJECT_RULES, objectBoxHeight } from './line-height.ts';
 import type { BrokenLine, LineBreakContext } from './linebreak.ts';
 import { breakLines } from './linebreak.ts';
@@ -38,6 +38,8 @@ export interface LayoutParagraphOptions {
   fieldValues?: ReadonlyMap<NodeId, string>;
   /** 内嵌对象的行盒规则。**标定用的接缝**，正常调用不要传，见 `OBJECT_RULES` */
   objectRules?: ObjectRules;
+  /** 脚本与合成规则。同上，标定用的接缝，见 `SCRIPT_RULES` */
+  scriptRules?: ScriptRules;
 }
 
 export function layoutParagraph(p: ResolvedParagraph, opts: LayoutParagraphOptions): ParagraphLayout {
@@ -76,6 +78,7 @@ export function layoutParagraph(p: ResolvedParagraph, opts: LayoutParagraphOptio
       docGrid: opts.docGrid,
       ...(opts.defaultFont === undefined ? {} : { defaultFont: opts.defaultFont }),
       ...(opts.objectRules === undefined ? {} : { objectRules: opts.objectRules }),
+      ...(opts.scriptRules === undefined ? {} : { scriptRules: opts.scriptRules }),
     }),
   );
 
@@ -161,6 +164,7 @@ interface AssembleContext {
   docGrid: DocGrid;
   defaultFont?: string;
   objectRules?: ObjectRules;
+  scriptRules?: ScriptRules;
 }
 
 function assemble(
@@ -174,6 +178,7 @@ function assemble(
     docGrid: ctx.docGrid,
     ...(ctx.defaultFont === undefined ? {} : { defaultFont: ctx.defaultFont }),
     ...(ctx.objectRules === undefined ? {} : { objectRules: ctx.objectRules }),
+    ...(ctx.scriptRules === undefined ? {} : { scriptRules: ctx.scriptRules }),
   });
 
   const xs = line.xs.slice();
