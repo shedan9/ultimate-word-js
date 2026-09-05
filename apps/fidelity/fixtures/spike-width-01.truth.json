@@ -1,0 +1,1735 @@
+{
+  "source": "spike-width-01.docx",
+  "generator": {
+    "tool": "@uw/fidelity",
+    "formatVersion": 1,
+    "pdfjs": "6.2.108",
+    "word": "16.0",
+    "wordBuild": "16.0.20326"
+  },
+  "unit": "pt",
+  "origin": "top-left",
+  "pageCount": 3,
+  "fonts": {
+    "SimSun": {
+      "name": "SimSun",
+      "ascent": 0.859,
+      "descent": -0.141,
+      "vertical": false
+    },
+    "TimesNewRomanPSMT": {
+      "name": "TimesNewRomanPSMT",
+      "ascent": 0.891,
+      "descent": -0.216,
+      "vertical": false
+    }
+  },
+  "wordPageCount": 3,
+  "sections": [
+    {
+      "pageWidth": 595.3,
+      "pageHeight": 841.9,
+      "topMargin": 70.85,
+      "bottomMargin": 70.85,
+      "leftMargin": 70.85,
+      "rightMargin": 70.85,
+      "headerDist": 42.55,
+      "footerDist": 49.6,
+      "gutter": 0,
+      "orientation": 0,
+      "lineNumbers": false
+    }
+  ],
+  "pages": [
+    {
+      "index": 0,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 107.06,
+          "w": 55.98,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "Ea1"
+        },
+        {
+          "x": 126.74,
+          "y": 107.06,
+          "w": 288,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、中§中°中±中"
+        },
+        {
+          "x": 70.824,
+          "y": 153.74,
+          "w": 55.98,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "Ea2"
+        },
+        {
+          "x": 126.74,
+          "y": 153.74,
+          "w": 288,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、中×中÷中·中"
+        },
+        {
+          "x": 70.824,
+          "y": 200.54,
+          "w": 55.98,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "Ea3"
+        },
+        {
+          "x": 126.74,
+          "y": 200.54,
+          "w": 270,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、中¨中¤中´中"
+        },
+        {
+          "x": 70.824,
+          "y": 247.22,
+          "w": 55.98,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "Ea4"
+        },
+        {
+          "x": 126.74,
+          "y": 247.22,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、"
+        },
+        {
+          "x": 162.74,
+          "y": 247.22,
+          "w": 24.012,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "B"
+        },
+        {
+          "x": 186.89,
+          "y": 247.22,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "§"
+        },
+        {
+          "x": 222.89,
+          "y": 247.22,
+          "w": 24.012,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "B"
+        },
+        {
+          "x": 246.89,
+          "y": 247.22,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "°"
+        },
+        {
+          "x": 282.89,
+          "y": 247.22,
+          "w": 24.012,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "B"
+        },
+        {
+          "x": 306.89,
+          "y": 247.22,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "±"
+        },
+        {
+          "x": 342.91,
+          "y": 247.22,
+          "w": 24.012,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "B"
+        },
+        {
+          "x": 70.824,
+          "y": 293.93,
+          "w": 55.98,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "Ea5"
+        },
+        {
+          "x": 126.74,
+          "y": 293.93,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、"
+        },
+        {
+          "x": 162.74,
+          "y": 293.93,
+          "w": 24.012,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "B"
+        },
+        {
+          "x": 186.89,
+          "y": 293.93,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "×"
+        },
+        {
+          "x": 222.89,
+          "y": 293.93,
+          "w": 24.012,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "B"
+        },
+        {
+          "x": 246.89,
+          "y": 293.93,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "÷"
+        },
+        {
+          "x": 282.89,
+          "y": 293.93,
+          "w": 24.012,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "B"
+        },
+        {
+          "x": 306.89,
+          "y": 293.93,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "·"
+        },
+        {
+          "x": 342.91,
+          "y": 293.93,
+          "w": 24.012,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "B"
+        },
+        {
+          "x": 70.824,
+          "y": 340.61,
+          "w": 59.976,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "De1"
+        },
+        {
+          "x": 130.82,
+          "y": 340.61,
+          "w": 72,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、中"
+        },
+        {
+          "x": 202.85,
+          "y": 340.61,
+          "w": 18,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "§"
+        },
+        {
+          "x": 220.85,
+          "y": 340.61,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "中"
+        },
+        {
+          "x": 256.85,
+          "y": 340.61,
+          "w": 14.4,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "°"
+        },
+        {
+          "x": 271.25,
+          "y": 340.61,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "中"
+        },
+        {
+          "x": 307.25,
+          "y": 340.61,
+          "w": 19.764,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "±"
+        },
+        {
+          "x": 327.07,
+          "y": 340.61,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "中"
+        },
+        {
+          "x": 70.824,
+          "y": 387.29,
+          "w": 59.976,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "De2"
+        },
+        {
+          "x": 130.82,
+          "y": 387.29,
+          "w": 72,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、中"
+        },
+        {
+          "x": 202.85,
+          "y": 387.29,
+          "w": 20.304,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "×"
+        },
+        {
+          "x": 223.13,
+          "y": 387.29,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "中"
+        },
+        {
+          "x": 259.13,
+          "y": 387.29,
+          "w": 19.764,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "÷"
+        },
+        {
+          "x": 278.93,
+          "y": 387.29,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "中"
+        },
+        {
+          "x": 314.95,
+          "y": 387.29,
+          "w": 11.988,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "·"
+        },
+        {
+          "x": 326.95,
+          "y": 387.29,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "中"
+        },
+        {
+          "x": 70.824,
+          "y": 433.97,
+          "w": 59.976,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "De3"
+        },
+        {
+          "x": 130.82,
+          "y": 433.97,
+          "w": 72,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、中"
+        },
+        {
+          "x": 202.85,
+          "y": 433.97,
+          "w": 11.988,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "¨"
+        },
+        {
+          "x": 214.85,
+          "y": 433.97,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "中"
+        },
+        {
+          "x": 250.85,
+          "y": 433.97,
+          "w": 18,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "¤"
+        },
+        {
+          "x": 268.85,
+          "y": 433.97,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "中"
+        },
+        {
+          "x": 304.85,
+          "y": 433.97,
+          "w": 11.988,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "´"
+        },
+        {
+          "x": 316.87,
+          "y": 433.97,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "中"
+        },
+        {
+          "x": 70.824,
+          "y": 480.67,
+          "w": 59.976,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "De4"
+        },
+        {
+          "x": 130.82,
+          "y": 480.67,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、"
+        },
+        {
+          "x": 166.82,
+          "y": 480.67,
+          "w": 148.212,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "B§B°B±B"
+        },
+        {
+          "x": 70.824,
+          "y": 527.35,
+          "w": 59.976,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "De5"
+        },
+        {
+          "x": 130.82,
+          "y": 527.35,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、"
+        },
+        {
+          "x": 166.82,
+          "y": 527.35,
+          "w": 148.104,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "B×B÷B·B"
+        },
+        {
+          "x": 70.824,
+          "y": 574.03,
+          "w": 55.98,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "Ea6"
+        },
+        {
+          "x": 126.74,
+          "y": 574.03,
+          "w": 72,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、中"
+        },
+        {
+          "x": 198.74,
+          "y": 574.03,
+          "w": 18.03,
+          "size": 36,
+          "font": "SimSun",
+          "text": " "
+        },
+        {
+          "x": 216.77,
+          "y": 574.03,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "中"
+        },
+        {
+          "x": 70.824,
+          "y": 620.74,
+          "w": 55.98,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "Ea7"
+        },
+        {
+          "x": 126.74,
+          "y": 620.74,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、"
+        },
+        {
+          "x": 162.74,
+          "y": 620.74,
+          "w": 57.096,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "B B"
+        },
+        {
+          "x": 70.824,
+          "y": 667.42,
+          "w": 55.98,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "Ea8"
+        },
+        {
+          "x": 126.74,
+          "y": 667.42,
+          "w": 72,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、中"
+        },
+        {
+          "x": 198.74,
+          "y": 667.42,
+          "w": 18.03,
+          "size": 36,
+          "font": "SimSun",
+          "text": " "
+        },
+        {
+          "x": 216.77,
+          "y": 667.42,
+          "w": 24.012,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "B"
+        },
+        {
+          "x": 70.824,
+          "y": 714.1,
+          "w": 55.98,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "Ea9"
+        },
+        {
+          "x": 126.74,
+          "y": 714.1,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、"
+        },
+        {
+          "x": 162.74,
+          "y": 714.1,
+          "w": 24.012,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "B"
+        },
+        {
+          "x": 186.752,
+          "y": 714.1,
+          "w": 18.138,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": " "
+        },
+        {
+          "x": 204.89,
+          "y": 714.1,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "中"
+        }
+      ],
+      "lines": [
+        {
+          "y": 107.06,
+          "x": 70.824,
+          "xEnd": 414.74,
+          "text": "Ea1、中§中°中±中",
+          "first": "E",
+          "last": "中",
+          "items": [
+            0,
+            1
+          ]
+        },
+        {
+          "y": 153.74,
+          "x": 70.824,
+          "xEnd": 414.74,
+          "text": "Ea2、中×中÷中·中",
+          "first": "E",
+          "last": "中",
+          "items": [
+            2,
+            3
+          ]
+        },
+        {
+          "y": 200.54,
+          "x": 70.824,
+          "xEnd": 396.74,
+          "text": "Ea3、中¨中¤中´中",
+          "first": "E",
+          "last": "中",
+          "items": [
+            4,
+            5
+          ]
+        },
+        {
+          "y": 247.22,
+          "x": 70.824,
+          "xEnd": 366.922,
+          "text": "Ea4、B§B°B±B",
+          "first": "E",
+          "last": "B",
+          "items": [
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14
+          ]
+        },
+        {
+          "y": 293.93,
+          "x": 70.824,
+          "xEnd": 366.922,
+          "text": "Ea5、B×B÷B·B",
+          "first": "E",
+          "last": "B",
+          "items": [
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ]
+        },
+        {
+          "y": 340.61,
+          "x": 70.824,
+          "xEnd": 363.07,
+          "text": "De1、中§中°中±中",
+          "first": "D",
+          "last": "中",
+          "items": [
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ]
+        },
+        {
+          "y": 387.29,
+          "x": 70.824,
+          "xEnd": 362.95,
+          "text": "De2、中×中÷中·中",
+          "first": "D",
+          "last": "中",
+          "items": [
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39
+          ]
+        },
+        {
+          "y": 433.97,
+          "x": 70.824,
+          "xEnd": 352.87,
+          "text": "De3、中¨中¤中´中",
+          "first": "D",
+          "last": "中",
+          "items": [
+            40,
+            41,
+            42,
+            43,
+            44,
+            45,
+            46,
+            47
+          ]
+        },
+        {
+          "y": 480.67,
+          "x": 70.824,
+          "xEnd": 315.032,
+          "text": "De4、B§B°B±B",
+          "first": "D",
+          "last": "B",
+          "items": [
+            48,
+            49,
+            50
+          ]
+        },
+        {
+          "y": 527.35,
+          "x": 70.824,
+          "xEnd": 314.924,
+          "text": "De5、B×B÷B·B",
+          "first": "D",
+          "last": "B",
+          "items": [
+            51,
+            52,
+            53
+          ]
+        },
+        {
+          "y": 574.03,
+          "x": 70.824,
+          "xEnd": 252.77,
+          "text": "Ea6、中 中",
+          "first": "E",
+          "last": "中",
+          "items": [
+            54,
+            55,
+            56,
+            57
+          ]
+        },
+        {
+          "y": 620.74,
+          "x": 70.824,
+          "xEnd": 219.836,
+          "text": "Ea7、B B",
+          "first": "E",
+          "last": "B",
+          "items": [
+            58,
+            59,
+            60
+          ]
+        },
+        {
+          "y": 667.42,
+          "x": 70.824,
+          "xEnd": 240.782,
+          "text": "Ea8、中 B",
+          "first": "E",
+          "last": "B",
+          "items": [
+            61,
+            62,
+            63,
+            64
+          ]
+        },
+        {
+          "y": 714.1,
+          "x": 70.824,
+          "xEnd": 240.89,
+          "text": "Ea9、B 中",
+          "first": "E",
+          "last": "中",
+          "items": [
+            65,
+            66,
+            67,
+            68,
+            69
+          ]
+        }
+      ]
+    },
+    {
+      "index": 1,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 107.06,
+          "w": 63.972,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "EaA"
+        },
+        {
+          "x": 134.78,
+          "y": 107.06,
+          "w": 72,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、中"
+        },
+        {
+          "x": 206.81,
+          "y": 107.06,
+          "w": 10.008,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "/"
+        },
+        {
+          "x": 216.77,
+          "y": 107.06,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "中"
+        },
+        {
+          "x": 70.824,
+          "y": 153.74,
+          "w": 61.992,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "EaB"
+        },
+        {
+          "x": 132.74,
+          "y": 153.74,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、"
+        },
+        {
+          "x": 168.74,
+          "y": 153.74,
+          "w": 58.104,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "B/B"
+        },
+        {
+          "x": 70.824,
+          "y": 200.54,
+          "w": 61.992,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "EaC"
+        },
+        {
+          "x": 132.74,
+          "y": 200.54,
+          "w": 72.12,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、中"
+        },
+        {
+          "x": 204.89,
+          "y": 200.54,
+          "w": 11.988,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "-"
+        },
+        {
+          "x": 216.89,
+          "y": 200.54,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "中"
+        },
+        {
+          "x": 70.824,
+          "y": 247.22,
+          "w": 63.972,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "EaD"
+        },
+        {
+          "x": 134.78,
+          "y": 247.22,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、"
+        },
+        {
+          "x": 170.78,
+          "y": 247.22,
+          "w": 60.042,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "B-B"
+        },
+        {
+          "x": 70.824,
+          "y": 293.93,
+          "w": 59.976,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "De6"
+        },
+        {
+          "x": 130.82,
+          "y": 293.93,
+          "w": 72,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、中"
+        },
+        {
+          "x": 202.82,
+          "y": 293.93,
+          "w": 18.03,
+          "size": 36,
+          "font": "SimSun",
+          "text": " "
+        },
+        {
+          "x": 220.85,
+          "y": 293.93,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "中"
+        },
+        {
+          "x": 70.824,
+          "y": 340.61,
+          "w": 59.976,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "De7"
+        },
+        {
+          "x": 130.82,
+          "y": 340.61,
+          "w": 72,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、中"
+        },
+        {
+          "x": 202.82,
+          "y": 340.61,
+          "w": 18.03,
+          "size": 36,
+          "font": "SimSun",
+          "text": " "
+        },
+        {
+          "x": 220.85,
+          "y": 340.61,
+          "w": 24.012,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "B"
+        },
+        {
+          "x": 70.824,
+          "y": 387.29,
+          "w": 67.968,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "DeA"
+        },
+        {
+          "x": 138.86,
+          "y": 387.29,
+          "w": 72,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、中"
+        },
+        {
+          "x": 210.89,
+          "y": 387.29,
+          "w": 10.008,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "/"
+        },
+        {
+          "x": 220.85,
+          "y": 387.29,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "中"
+        },
+        {
+          "x": 70.824,
+          "y": 433.97,
+          "w": 65.988,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "DeC"
+        },
+        {
+          "x": 136.82,
+          "y": 433.97,
+          "w": 72,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、中"
+        },
+        {
+          "x": 208.85,
+          "y": 433.97,
+          "w": 11.988,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "-"
+        },
+        {
+          "x": 220.85,
+          "y": 433.97,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "中"
+        },
+        {
+          "x": 70.824,
+          "y": 480.67,
+          "w": 57.996,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "As1"
+        },
+        {
+          "x": 128.9,
+          "y": 480.67,
+          "w": 71.88,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、中"
+        },
+        {
+          "x": 200.78,
+          "y": 480.67,
+          "w": 9.03,
+          "size": 36,
+          "font": "SimSun",
+          "text": " "
+        },
+        {
+          "x": 209.81,
+          "y": 480.67,
+          "w": 24.012,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "B"
+        },
+        {
+          "x": 233.822,
+          "y": 480.67,
+          "w": 8.988,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": " "
+        },
+        {
+          "x": 242.81,
+          "y": 480.67,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "中"
+        },
+        {
+          "x": 70.824,
+          "y": 527.35,
+          "w": 57.996,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "As2"
+        },
+        {
+          "x": 128.9,
+          "y": 527.35,
+          "w": 71.88,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、中"
+        },
+        {
+          "x": 200.78,
+          "y": 527.35,
+          "w": 9.03,
+          "size": 36,
+          "font": "SimSun",
+          "text": " "
+        },
+        {
+          "x": 209.81,
+          "y": 527.35,
+          "w": 18,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "8"
+        },
+        {
+          "x": 227.81,
+          "y": 527.35,
+          "w": 9,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": " "
+        },
+        {
+          "x": 236.81,
+          "y": 527.35,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "中"
+        },
+        {
+          "x": 70.824,
+          "y": 574.03,
+          "w": 57.996,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "As3"
+        },
+        {
+          "x": 128.9,
+          "y": 574.03,
+          "w": 71.88,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、中"
+        },
+        {
+          "x": 200.81,
+          "y": 574.03,
+          "w": 24.012,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "C"
+        },
+        {
+          "x": 224.81,
+          "y": 574.03,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "中"
+        },
+        {
+          "x": 70.824,
+          "y": 620.74,
+          "w": 57.996,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "As4"
+        },
+        {
+          "x": 128.9,
+          "y": 620.74,
+          "w": 71.88,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、中"
+        },
+        {
+          "x": 200.81,
+          "y": 620.74,
+          "w": 18,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "9"
+        },
+        {
+          "x": 218.81,
+          "y": 620.74,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "中"
+        },
+        {
+          "x": 70.824,
+          "y": 667.42,
+          "w": 57.996,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "As5"
+        },
+        {
+          "x": 128.9,
+          "y": 667.42,
+          "w": 71.88,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、中"
+        },
+        {
+          "x": 200.78,
+          "y": 667.42,
+          "w": 9.03,
+          "size": 36,
+          "font": "SimSun",
+          "text": " "
+        },
+        {
+          "x": 209.81,
+          "y": 667.42,
+          "w": 25.992,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "D"
+        },
+        {
+          "x": 235.802,
+          "y": 667.42,
+          "w": 9.048,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": " "
+        },
+        {
+          "x": 244.85,
+          "y": 667.42,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "中"
+        },
+        {
+          "x": 70.824,
+          "y": 714.1,
+          "w": 57.996,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "As6"
+        },
+        {
+          "x": 128.9,
+          "y": 714.1,
+          "w": 71.88,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、中"
+        },
+        {
+          "x": 200.78,
+          "y": 714.1,
+          "w": 9.03,
+          "size": 36,
+          "font": "SimSun",
+          "text": " "
+        },
+        {
+          "x": 209.81,
+          "y": 714.1,
+          "w": 18,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "7"
+        },
+        {
+          "x": 227.81,
+          "y": 714.1,
+          "w": 9,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": " "
+        },
+        {
+          "x": 236.81,
+          "y": 714.1,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "中"
+        }
+      ],
+      "lines": [
+        {
+          "y": 107.06,
+          "x": 70.824,
+          "xEnd": 252.77,
+          "text": "EaA、中/中",
+          "first": "E",
+          "last": "中",
+          "items": [
+            0,
+            1,
+            2,
+            3
+          ]
+        },
+        {
+          "y": 153.74,
+          "x": 70.824,
+          "xEnd": 226.844,
+          "text": "EaB、B/B",
+          "first": "E",
+          "last": "B",
+          "items": [
+            4,
+            5,
+            6
+          ]
+        },
+        {
+          "y": 200.54,
+          "x": 70.824,
+          "xEnd": 252.89,
+          "text": "EaC、中-中",
+          "first": "E",
+          "last": "中",
+          "items": [
+            7,
+            8,
+            9,
+            10
+          ]
+        },
+        {
+          "y": 247.22,
+          "x": 70.824,
+          "xEnd": 230.822,
+          "text": "EaD、B-B",
+          "first": "E",
+          "last": "B",
+          "items": [
+            11,
+            12,
+            13
+          ]
+        },
+        {
+          "y": 293.93,
+          "x": 70.824,
+          "xEnd": 256.85,
+          "text": "De6、中 中",
+          "first": "D",
+          "last": "中",
+          "items": [
+            14,
+            15,
+            16,
+            17
+          ]
+        },
+        {
+          "y": 340.61,
+          "x": 70.824,
+          "xEnd": 244.862,
+          "text": "De7、中 B",
+          "first": "D",
+          "last": "B",
+          "items": [
+            18,
+            19,
+            20,
+            21
+          ]
+        },
+        {
+          "y": 387.29,
+          "x": 70.824,
+          "xEnd": 256.85,
+          "text": "DeA、中/中",
+          "first": "D",
+          "last": "中",
+          "items": [
+            22,
+            23,
+            24,
+            25
+          ]
+        },
+        {
+          "y": 433.97,
+          "x": 70.824,
+          "xEnd": 256.85,
+          "text": "DeC、中-中",
+          "first": "D",
+          "last": "中",
+          "items": [
+            26,
+            27,
+            28,
+            29
+          ]
+        },
+        {
+          "y": 480.67,
+          "x": 70.824,
+          "xEnd": 278.81,
+          "text": "As1、中 B 中",
+          "first": "A",
+          "last": "中",
+          "items": [
+            30,
+            31,
+            32,
+            33,
+            34,
+            35
+          ]
+        },
+        {
+          "y": 527.35,
+          "x": 70.824,
+          "xEnd": 272.81,
+          "text": "As2、中 8 中",
+          "first": "A",
+          "last": "中",
+          "items": [
+            36,
+            37,
+            38,
+            39,
+            40,
+            41
+          ]
+        },
+        {
+          "y": 574.03,
+          "x": 70.824,
+          "xEnd": 260.81,
+          "text": "As3、中C中",
+          "first": "A",
+          "last": "中",
+          "items": [
+            42,
+            43,
+            44,
+            45
+          ]
+        },
+        {
+          "y": 620.74,
+          "x": 70.824,
+          "xEnd": 254.81,
+          "text": "As4、中9中",
+          "first": "A",
+          "last": "中",
+          "items": [
+            46,
+            47,
+            48,
+            49
+          ]
+        },
+        {
+          "y": 667.42,
+          "x": 70.824,
+          "xEnd": 280.85,
+          "text": "As5、中 D 中",
+          "first": "A",
+          "last": "中",
+          "items": [
+            50,
+            51,
+            52,
+            53,
+            54,
+            55
+          ]
+        },
+        {
+          "y": 714.1,
+          "x": 70.824,
+          "xEnd": 272.81,
+          "text": "As6、中 7 中",
+          "first": "A",
+          "last": "中",
+          "items": [
+            56,
+            57,
+            58,
+            59,
+            60,
+            61
+          ]
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "width": 595.32,
+      "height": 841.92,
+      "rotate": 0,
+      "items": [
+        {
+          "x": 70.824,
+          "y": 107.06,
+          "w": 56.016,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "Pn1"
+        },
+        {
+          "x": 126.86,
+          "y": 107.06,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、"
+        },
+        {
+          "x": 162.86,
+          "y": 107.06,
+          "w": 24.012,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "B"
+        },
+        {
+          "x": 186.89,
+          "y": 107.06,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "，"
+        },
+        {
+          "x": 222.89,
+          "y": 107.06,
+          "w": 24.012,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "B"
+        },
+        {
+          "x": 70.824,
+          "y": 153.74,
+          "w": 54,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "Sz1"
+        },
+        {
+          "x": 124.82,
+          "y": 153.74,
+          "w": 72,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、中"
+        },
+        {
+          "x": 196.82,
+          "y": 153.74,
+          "w": 9.03,
+          "size": 36,
+          "font": "SimSun",
+          "text": " "
+        },
+        {
+          "x": 205.85,
+          "y": 153.74,
+          "w": 7.332,
+          "size": 12,
+          "font": "TimesNewRomanPSMT",
+          "text": "E"
+        },
+        {
+          "x": 213.182,
+          "y": 153.74,
+          "w": 2.988,
+          "size": 12,
+          "font": "TimesNewRomanPSMT",
+          "text": " "
+        },
+        {
+          "x": 216.17,
+          "y": 153.74,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "中"
+        },
+        {
+          "x": 70.824,
+          "y": 200.54,
+          "w": 54,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "Sz2"
+        },
+        {
+          "x": 124.82,
+          "y": 200.54,
+          "w": 36,
+          "size": 36,
+          "font": "SimSun",
+          "text": "、"
+        },
+        {
+          "x": 160.82,
+          "y": 200.54,
+          "w": 12,
+          "size": 12,
+          "font": "SimSun",
+          "text": "中"
+        },
+        {
+          "x": 172.82,
+          "y": 200.54,
+          "w": 3,
+          "size": 12,
+          "font": "SimSun",
+          "text": " "
+        },
+        {
+          "x": 175.82,
+          "y": 200.54,
+          "w": 20.016,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": "F"
+        },
+        {
+          "x": 195.836,
+          "y": 200.54,
+          "w": 9.054,
+          "size": 36,
+          "font": "TimesNewRomanPSMT",
+          "text": " "
+        },
+        {
+          "x": 204.89,
+          "y": 200.54,
+          "w": 12,
+          "size": 12,
+          "font": "SimSun",
+          "text": "中"
+        }
+      ],
+      "lines": [
+        {
+          "y": 107.06,
+          "x": 70.824,
+          "xEnd": 246.902,
+          "text": "Pn1、B，B",
+          "first": "P",
+          "last": "B",
+          "items": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        {
+          "y": 153.74,
+          "x": 70.824,
+          "xEnd": 252.17,
+          "text": "Sz1、中 E 中",
+          "first": "S",
+          "last": "中",
+          "items": [
+            5,
+            6,
+            7,
+            8,
+            9,
+            10
+          ]
+        },
+        {
+          "y": 200.54,
+          "x": 70.824,
+          "xEnd": 216.89,
+          "text": "Sz2、中 F 中",
+          "first": "S",
+          "last": "中",
+          "items": [
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17
+          ]
+        }
+      ]
+    }
+  ]
+}

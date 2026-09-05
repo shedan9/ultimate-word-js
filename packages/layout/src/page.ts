@@ -57,6 +57,7 @@ import {
   pickHeaderFooter,
   stackBlocks,
 } from './header-footer.ts';
+import { WIDTH_RULES, type WidthRules } from './items.ts';
 import type { ObjectRules, ScriptRules } from './line-height.ts';
 import { OBJECT_RULES, SCRIPT_RULES } from './line-height.ts';
 import { layoutParagraph } from './paragraph.ts';
@@ -258,6 +259,11 @@ export interface LayoutDocumentOptions {
    * `apps/fidelity` 的 `spike:script` 靠它把 8 组假设各跑一遍，见 `SCRIPT_RULES`
    */
   scriptRules?: Partial<ScriptRules>;
+  /**
+   * 宽度规则（歧义字符与中性字符的分桶、中西文自动间距）。同样是**标定用的接缝**，
+   * `apps/fidelity` 的 `spike:width` 靠它把 144 组假设各跑一遍，见 `WIDTH_RULES`
+   */
+  widthRules?: Partial<WidthRules>;
   /** 表格格线的几何规则。同上，标定用的接缝，见 `TABLE_RULES` */
   tableRules?: Partial<TableRules>;
   /** 表格**拆行**的规则。同上，标定用的接缝，见 `TABLE_SPLIT_RULES` */
@@ -675,6 +681,7 @@ function prepare(b: ResolvedBlock, section: SectionProps, opts: LayoutDocumentOp
     ...(opts.fieldValues === undefined ? {} : { fieldValues: opts.fieldValues }),
     ...(opts.objectRules === undefined ? {} : { objectRules: { ...OBJECT_RULES, ...opts.objectRules } }),
     ...(opts.scriptRules === undefined ? {} : { scriptRules: { ...SCRIPT_RULES, ...opts.scriptRules } }),
+    ...(opts.widthRules === undefined ? {} : { widthRules: { ...WIDTH_RULES, ...opts.widthRules } }),
     ...(opts.tableRules === undefined ? {} : { tableRules: { ...TABLE_RULES, ...opts.tableRules } }),
   };
   const width = pageGeometry(section, opts).content.width;

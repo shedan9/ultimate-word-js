@@ -11,7 +11,10 @@
  * **这个文件只留还没有真值的那些** —— 分页那三条（孤行寡行下限、页首段前间距、keepNext 的接缝）
  * 曾经在这里待过一天，`spike-page-01/02` 一跑就搬去了 `page.ts` 的 `PAGINATION_RULES`；
  * 图片的两条（内嵌图坐在哪、浮动图的六种参照物）也一样，`spike-image-01/02` 一跑就搬去了
- * `line-height.ts` 的 `OBJECT_RULES` 与 `page.ts` 的 `FLOAT_ORIGIN_RULES`。`layout/src/fixture.test.ts` 现在 18 行对上 16 行，
+ * `line-height.ts` 的 `OBJECT_RULES` 与 `page.ts` 的 `FLOAT_ORIGIN_RULES`；
+ * 中西文自动间距（`AUTO_SPACE_EM`）与歧义字符 / 中性字符的分桶是 `spike-width-01`，
+ * 搬去了 `items.ts` 的 `WIDTH_RULES` —— 那一条留在这里的两年里一直写着 1/8 em，
+ * **实测是 1/4**，也就是每一个中西文边界都少算一半。`layout/src/fixture.test.ts` 现在 18 行对上 16 行，
  * 剩下 2 行是一个至今解释不了的反例，写在 `PUNCT_COMPRESS_STRETCH_K` 的注释里。
  * 末尾那三张**边框线型**的表是个例外：它们影响的是**画哪条线**，不改坐标。
  * 冲突规则本身已经用 `spike-table-03` 实测完了（见 `table-borders.ts`），
@@ -34,27 +37,6 @@ export const SMALL_CAPS_SCALE = 0.8;
  * 钉死办法：`x²` 这样的样本，量上标字符的推进宽度 ÷ 正文同字符的推进宽度。
  */
 export const VERT_ALIGN_SCALE = 2 / 3;
-
-/**
- * 中西文自动间距的宽度（`w:autoSpaceDE` / `w:autoSpaceDN`），单位是**东亚一侧字号的 em**。
- *
- * 1/8 em 是开发计划 §2.2 记下的值，但没有自己的真值样本 —— 它与行长直接相关，
- * 中英混排一行差几个百分点就会换断行点。
- *
- * gongwen-01 的真值**测不了这个数**：那份文档的汉字与西文之间本来就打了空格，
- * 真值里相邻中西片段的间隙精确为 0.000pt，也就是 Word 一点自动间距都没加。
- * （那个空格本身量到 7.95–8.04pt = 仿宋的 0.5 em，不是 Times 的 0.25 em ——
- * 见 `items.ts` 的 `applySpaceFont`。间隙为 0 这条结论正是拿它对出来的。）
- *
- * 它**回答了另一个问题**：`（ascii`、`cs）`、`（autoSpaceDE` 三处是全角标点直接挨着西文、
- * 中间没有空格，实测间隙都在 0.05pt 以内 —— **全角标点旁边一点都不加**。
- * 这一条已经落到 `applyAutoSpace` 里了，也是真值第 13 行能对上的原因之一。
- * 剩下没标定的就是「**汉字**直接挨着西文、中间没空格」时加多少。
- *
- * 钉死办法：一行「中文English中文」，**中间不打空格**，量拉丁段的起始 x
- * 减去前一个汉字的右边缘。顺手把「打了空格时加不加」也写进同一份样本作对照。
- */
-export const AUTO_SPACE_EM = 1 / 8;
 
 /**
  * `w:*Chars`（1/100 字符）里「一个字符」的宽度 = 字号 × 这个系数。

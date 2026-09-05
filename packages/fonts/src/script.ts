@@ -27,9 +27,28 @@ export type FontBucket = 'ascii' | 'hAnsi' | 'eastAsia' | 'cs';
 export type FontHint = 'default' | 'eastAsia' | 'cs';
 
 /**
+ * 歧义字符（Unicode EastAsianWidth = **A**）归哪个桶，按什么判 —— **标定用的接缝**，
+ * 正常调用不要传，实测结论与证据表在 `@uw/layout` 的 `WIDTH_RULES`：
+ *
+ * - `hint`：`w:hint="eastAsia"` 时进 eastAsia 桶，否则进 hAnsi 桶（**实测**）
+ * - `eastAsia` / `latin`：不看 hint，一律进那一个桶
+ */
+export type AmbiguousRule = 'hint' | 'eastAsia' | 'latin';
+
+/**
+ * 空格这类**中性字符**跟不跟东亚邻居走 —— 同样是标定用的接缝，见 `neutralTakesEastAsia`：
+ *
+ * - `either`：任一侧邻居是东亚字就跟（**实测**）
+ * - `eitherHinted`：同上，但还要 `w:hint="eastAsia"`（**旧实现**）
+ * - `prev`：只看前一个字
+ * - `none`：一律按 `bucketOf` 走
+ */
+export type NeutralRule = 'either' | 'eitherHinted' | 'prev' | 'none';
+
+/**
  * 粗分类，给**排版**用（与 `FontBucket` 的用途不同）：
  * - 行高要不要走东亚的 1.3 系数，看 `eastAsia`
- * - 中西文之间自动加 1/8 em，靠的是 `latin` ↔ `eastAsia` 的边界
+ * - 中西文之间自动加 1/4 em（实测），靠的是 `latin` ↔ `eastAsia` 的边界
  *
  * ascii 与 hAnsi 都是拉丁，排版规则相同，所以合并成 `latin`。
  */
@@ -347,12 +366,21 @@ export function hasEastAsianText(text: string): boolean {
  * ASCII（< 0x80）**永远**走 ascii 桶，即使 hint="eastAsia" —— 中文文档里
  * `w:hint="eastAsia"` 是常态，若让它把数字和英文也拽进中文字体，「2024年」的
  * 「2024」就会变成全角宽。全角形式是**另外的码点**（U+FF10+），不需要靠 hint 分。
+ *
+ * 这一条 `spike-width-01` 顺手验过：Ea4 / Ea5 两段是 `hint="eastAsia"` 下的
+ * `B§B°B±B`，四个 `B` 在真值里全是 TimesNewRomanPSMT 画的（`§` 才是宋体）。
  */
-export function bucketOf(cp: number, hint: FontHint = 'default'): FontBucket {
+export function bucketOf(
+  cp: number,
+  hint: FontHint = 'default',
+  ambiguous: AmbiguousRule = 'hint',
+): FontBucket {
   if (cp < 0x80) return 'ascii';
   if (inRanges(EAST_ASIA_FLAT, cp)) return 'eastAsia';
   if (inRanges(COMPLEX_FLAT, cp)) return 'cs';
   if (inRanges(AMBIGUOUS_FLAT, cp)) {
+    if (ambiguous === 'eastAsia') return 'eastAsia';
+    if (ambiguous === 'latin') return 'hAnsi';
     if (hint === 'eastAsia') return 'eastAsia';
     if (hint === 'cs') return 'cs';
     return 'hAnsi';
@@ -376,17 +404,36 @@ export function bucketOf(cp: number, hint: FontHint = 'default'): FontBucket {
  * 判成 Times，实测却是 0.5 em。所以规则是「邻居里有一个东亚字就算东亚」，
  * 与 Unicode bidi 里中性字符随强方向的做法同构。
  *
- * ⚠️ 两处未标定：① 这里要求 `hint="eastAsia"`（公文的常态），hint=default 时会不会翻过来
- * 没有样本；② 只处理空格，其他中性字符（`/` `-` 之类）没有样本，一律照 `bucketOf` 走。
- * 要钉死：一份「中文 + 各种中性字符 + 拉丁」的样本，逐个量宽。
+ * ⚠️ **空格是唯一不能按真值里的字体名读的字符**：Word 画它时**不换 Tf**，
+ * PDF 里它跟着前一个字的字体走，而**推进宽度**才是另一款字体的。
+ * `spike-width-01` 的 Ea9（`B 中`）就是这样 —— 片段字体报的是 TimesNewRomanPSMT，
+ * 宽度却是 18.14pt = 36pt 的 0.5 em（Times 自己的空格只有 0.25 em）。
+ * 按字体名读会得出「空格只跟前一个字」这个相反的结论。
+ *
+ * `spike-width-01` 钉死的是**另外一半**：这条规则**与 `w:hint` 无关**。
+ * 原来这里要求 `hint="eastAsia"`（公文的常态，猜的），实测 hint=default 的
+ * De6（`中 中`）与 De7（`中 B`）里空格照样是 18.03pt = 0.5 em。
+ *
+ * 同一份样本还钉死了**只有空格**是这样：`/`（EaA / DeA）与 `-`（EaC / DeC）夹在两个
+ * 汉字中间，两种 hint 下都是 Times 画的、宽 10.01 / 11.99pt（0.278 / 0.333 em），
+ * 也就是老老实实待在 ascii 桶里。所以这个函数只该被空格调用。
  */
 export function neutralTakesEastAsia(
   hint: FontHint,
   prev: ScriptKind | undefined,
   next: ScriptKind | undefined,
+  rule: NeutralRule = 'either',
 ): boolean {
-  if (hint !== 'eastAsia') return false;
-  return prev === 'eastAsia' || next === 'eastAsia';
+  switch (rule) {
+    case 'none':
+      return false;
+    case 'prev':
+      return prev === 'eastAsia';
+    case 'eitherHinted':
+      return hint === 'eastAsia' && (prev === 'eastAsia' || next === 'eastAsia');
+    case 'either':
+      return prev === 'eastAsia' || next === 'eastAsia';
+  }
 }
 
 /** 桶 → 排版脚本类型。ascii / hAnsi 排版规则相同，合并成 latin */
@@ -432,19 +479,23 @@ function first(...names: readonly string[]): string {
 /**
  * 把一段文字切成「同字体 + 同脚本」的连续段。
  *
- * 为什么不只按字体名合并：中西文之间要自动加 1/8 em 间距，靠的就是 latin ↔ eastAsia
+ * 为什么不只按字体名合并：中西文之间要自动加 1/4 em 间距（实测，见 @uw/layout 的 WIDTH_RULES），靠的就是 latin ↔ eastAsia
  * 的边界。若「宋体」同时被两个桶引用而合并成一段，这个边界就没了，间距加不上去
  * —— 那是中文排版里肉眼可见的差异。
  *
  * 代理对按整个码点处理，不会在 U+20000 以上的汉字中间切开。
  */
-export function splitFontRuns(text: string, fonts: ScriptFonts): FontRun[] {
+export function splitFontRuns(
+  text: string,
+  fonts: ScriptFonts,
+  ambiguous: AmbiguousRule = 'hint',
+): FontRun[] {
   const out: FontRun[] = [];
   let i = 0;
   while (i < text.length) {
     const cp = text.codePointAt(i) as number;
     const width = cp > 0xffff ? 2 : 1;
-    const bucket = bucketOf(cp, fonts.hint);
+    const bucket = bucketOf(cp, fonts.hint, ambiguous);
     const font = bucketFont(fonts, bucket);
     const script = scriptOfBucket(bucket);
     const last = out[out.length - 1];

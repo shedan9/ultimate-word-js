@@ -153,6 +153,11 @@ function Set-ParaFormat($word, $para, $p) {
   $fmt.WidowControl = -not ((Test-Prop $p 'widowControl') -and (-not [bool]$p.widowControl))
   $fmt.KeepWithNext = [bool]$p.keepWithNext
   $fmt.KeepTogether = [bool]$p.keepTogether
+  # 中西文自动间距的两个开关（Word 界面上「中文版式」里的两项，OOXML 里是 w:autoSpaceDE /
+  # w:autoSpaceDN）。**两者默认开**，所以这里写的是「spec 明确说了 false 才关」——
+  # 与别的开关一样无条件赋值，条件赋值会让上一段的设置漏给下一段。
+  $fmt.AddSpaceBetweenFarEastAndAlpha = -not ((Test-Prop $p 'autoSpaceDE') -and (-not [bool]$p.autoSpaceDE))
+  $fmt.AddSpaceBetweenFarEastAndDigit = -not ((Test-Prop $p 'autoSpaceDN') -and (-not [bool]$p.autoSpaceDN))
   if ((Test-Prop $p 'lineSpacingMultiple') -and [double]$p.lineSpacingMultiple -gt 0) {
     $fmt.LineSpacingRule = $wdLineSpaceMultiple
     $fmt.LineSpacing     = $word.LinesToPoints([double]$p.lineSpacingMultiple)
@@ -161,6 +166,33 @@ function Set-ParaFormat($word, $para, $p) {
     $fmt.LineSpacing     = [double]$p.lineSpacingPt
   } else {
     $fmt.LineSpacingRule = $wdLineSpaceSingle
+  }
+}
+
+# 段落里**逐段**改字体 / 字号。spec 的 `runs` 是**盖在 text 上的一层**，不另给文字：
+# 每条只说「往后几个字符」和要覆盖的属性，段落文字仍然只有 `text` 一处真相 ——
+# 两处文字对不上是最难查的那种错（改了 text 忘了改 runs，量出来的是另一段字）。
+#
+# 为什么要它：一段只有一个字号的话，「中西文自动间距按**谁的 em** 算」这一问在样本里
+# 根本摆不出来 —— 两侧字号相同，「东亚侧的 em」与「拉丁侧的 em」两种说法同解。
+# 字符数对不上就抛：少算一个字会让后面每一条都盖到错的位置上，而排出来的版看着毫无破绽。
+function Set-ParaRuns($doc, $para, $p) {
+  if (-not (Test-Prop $p 'runs')) { return }
+  $start = $para.Range.Start
+  $at = $start
+  foreach ($r in $p.runs) {
+    $len = [int]$r.chars
+    $f = $doc.Range($at, $at + $len).Font
+    if (Test-Prop $r 'fontEA')    { $f.NameFarEast = [string]$r.fontEA }
+    if (Test-Prop $r 'fontLatin') { $f.NameAscii = [string]$r.fontLatin; $f.NameOther = [string]$r.fontLatin }
+    if (Test-Prop $r 'sizePt')    { $f.Size = [double]$r.sizePt }
+    if (Test-Prop $r 'bold')      { $f.Bold = [bool]$r.bold }
+    $at += $len
+  }
+  # Range.End 把段落标记也算进去，所以正文长度是 End - Start - 1
+  $textLen = $para.Range.End - $start - 1
+  if (($at - $start) -ne $textLen) {
+    throw "runs 的字符数合计 $($at - $start)，段落文字有 $textLen 个字符：$($p.text)"
   }
 }
 
@@ -491,6 +523,8 @@ try {
     # filler must not drift apart, or a fixture's header would silently get a different
     # line spacing rule from its body and the geometry it measures would mean nothing.
     Set-ParaFormat $word $para $p
+    # 段级格式写完**之后**再盖 runs：Set-ParaFormat 是整段一把刷，反过来会把 runs 抹掉
+    Set-ParaRuns $doc $para $p
 
     # Pictures go in after the formatting: the paragraph's font size defines the line box and
     # a picture merely drops a taller box into it. The other order would let Set-ParaFormat

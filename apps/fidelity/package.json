@@ -20,7 +20,8 @@
     "spike:table": "node src/spike-table.ts",
     "spike:table-border": "node src/spike-table-border.ts",
     "spike:table-split": "node src/spike-table-split.ts",
-    "spike:script": "node src/spike-script.ts"
+    "spike:script": "node src/spike-script.ts",
+    "spike:width": "node src/spike-width.ts"
   },
   "dependencies": {
     "@uw/core": "workspace:*",

@@ -251,8 +251,8 @@ describe('渲染片段', () => {
     const [cn, en] = out.lines[0]?.fragments ?? [];
     expect(cn?.text).toBe('中');
     expect(en?.text).toBe('a');
-    // 中西文自动间距体现在拉丁段的起点上
-    expect(en?.x).toBe(SIZE_5 + SIZE_5 / 8);
+    // 中西文自动间距（1/4 em，实测，见 WIDTH_RULES）体现在拉丁段的起点上
+    expect(en?.x).toBe(SIZE_5 + SIZE_5 / 4);
   });
 
   it('glyphX 与 text 的码点一一对应，供 SVG text 的 x 数组直接使用', () => {

@@ -1,0 +1,275 @@
+{
+  "name": "spike-width-01",
+  "note": "分桶穿刺的**宽度那一半**（行高那一半是 spike-script-01）。三问，每一问都直接改行宽、也就是直接改断行点。\n\n读数不靠反推：真值的 `TruthItem.font` **直接说出 Word 用哪款字体画了这个字** —— 一段文字里字体一换，PDF 里就换一次 `Tf`、起一个新的片段。所以每一行的「片段字体序列」就是分桶结果本身，不必从宽度倒推（那是拿一个未知量去解另一个未知量）。为此全篇只用两款字体：`w:ascii` 槽 Times New Roman、`w:eastAsia` 槽宋体，两者在真值里的名字分别是 TimesNewRomanPSMT 与 SimSun。\n\n**歧义字符只挑 Latin-1 段的**（`§ ¨ ° ± ´ · ¤ × ÷`）。理由有两条，缺一不可：① 这一段的字符**两款字体都有**，于是「分到哪个桶」与「这款字体没这个字形所以回退」两件事分得开 —— `※ ℃ ① Ⅰ` 这些看着更典型的公文符号 Times New Roman 里有的没有（实测 U+2460 就没有），量出来的字体名会变成回退的结果而不是分桶的结果；② 度量包只采样 0x20–0x7E 与 0xA0–0xFF（见 `metrics-pack.ts` 的 `defaultSampleCodePoints`），Latin-1 之外的码点在我们这边一律退到 `defaultAdvance`，样本能读出 Word 的答案、我们却算不准，比不了。两款字体在这几个字上的推进宽度差得很开（宋体一律 1.0 em，Times 是 0.33–0.56 em），所以第二路读数「行末 x」也是灵敏的。\n\n三问与它们对应的段：\n\n① **歧义字符归哪个桶，`w:hint` 说了算吗**（Ea1–Ea5 对 De1–De5，两组内容逐段相同、只有 hint 不同）。现实现是「hint=eastAsia 进 eastAsia 桶，否则进 hAnsi 桶」。每问都造了两种邻居：`中§中` 的两侧是东亚字、`B§B` 的两侧是拉丁字 —— 若答案其实是「跟着邻居走」而不是「跟着 hint 走」，这两种邻居会给出相反的字体序列，而只有一种邻居的话两种说法同解。**hint 只能改 XML 写进去**：Word 的对象模型里没有这个属性（见 `patch-docx.ts` 的 `patchRunHints`），而它的两个取值在真实语料里都是常态。\n\n② **中性字符跟不跟东亚邻居走**（Ea6–EaD 对 De6–DeC）。已知的一条是空格：`gongwen-01` 里只要任一侧邻居是东亚字，Word 就按东亚字体量它（0.5 em 而不是 0.25 em），现实现照这条做，但**要求 hint=eastAsia**（没样本，猜的）、且**只处理空格**（`/` `-` 这类没样本）。所以这里把「空格 / `/` / `-`」×「两侧东亚 / 两侧拉丁 / 一侧一个」×「两种 hint」摆开。空格那几段在 PDF 里是一个独立片段，字体名照样直接读得出来。\n\n③ **中西文自动间距**（As1–As6、Pn1、Sz1–Sz2）。`AUTO_SPACE_EM` 至今写着 1/8 em，来源是开发计划 §2.2 的记载而**不是真值**（`uncalibrated.ts` 说得很清楚：gongwen-01 的中西文之间本来就打了空格，量不到这个数）。As1/As2 是「汉字直接挨着西文、中间不打空格」的字母与数字两种情形；As3/As4 各关掉一个开关（`w:autoSpaceDE` / `w:autoSpaceDN`）验证两者确实分家，As5/As6 是它们的交叉对照（关掉 DN 不该影响字母，关掉 DE 不该影响数字）；Pn1 是已经实测过的那条「全角标点旁边一点都不加」的对照组，它对不上说明是样本造错了而不是规则错了。Sz1/Sz2 回答「按**谁的** em 算」：两段各把一侧的字号降到 12pt，于是「东亚侧的 em」（9 / 3 pt）与「拉丁侧的 em」（3 / 9 pt）给出的是**互相交换**的两个数，一段分不开、两段就分得开。段内换字号靠 spec 的 `runs`（盖在 `text` 上的一层，见 `make-fixture.ps1` 的 `Set-ParaRuns`）—— 在此之前一段只能有一个字号，这一问根本摆不出来。\n\n**不开行网格**：字符网格会把每个字吸到列上，把要量的宽度差整个盖掉（与 spike-script-01 关网格同一个理由，只是那边盖的是行高）。字号取 36pt 是为分辨力：1/4 em 与 1/8 em 差 4.5pt，宋体与 Times 画同一个 `§` 差 18pt，都远大于 PDF 的 0.13pt 坐标噪声。段首那个 `Ea1、` 式的标记有两个作用：让每一段的文字**唯一**（hint 补丁按段落文字定位），以及在西文与正文之间垫一个全角标点 —— 全角标点两侧不加自动间距（已实测），于是标记本身不会把第 ③ 问的读数搅进第 ①② 问的段落里。",
+  "page": {
+    "widthMm": 210,
+    "heightMm": 297,
+    "marginMm": {
+      "top": 25,
+      "bottom": 25,
+      "left": 25,
+      "right": 25
+    }
+  },
+  "paragraphs": [
+    {
+      "text": "Ea1、中§中°中±中",
+      "hint": "eastAsia",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "Ea2、中×中÷中·中",
+      "hint": "eastAsia",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "Ea3、中¨中¤中´中",
+      "hint": "eastAsia",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "Ea4、B§B°B±B",
+      "hint": "eastAsia",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "Ea5、B×B÷B·B",
+      "hint": "eastAsia",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "De1、中§中°中±中",
+      "hint": "default",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "De2、中×中÷中·中",
+      "hint": "default",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "De3、中¨中¤中´中",
+      "hint": "default",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "De4、B§B°B±B",
+      "hint": "default",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "De5、B×B÷B·B",
+      "hint": "default",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "Ea6、中 中",
+      "hint": "eastAsia",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "Ea7、B B",
+      "hint": "eastAsia",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "Ea8、中 B",
+      "hint": "eastAsia",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "Ea9、B 中",
+      "hint": "eastAsia",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "EaA、中/中",
+      "hint": "eastAsia",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "EaB、B/B",
+      "hint": "eastAsia",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "EaC、中-中",
+      "hint": "eastAsia",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "EaD、B-B",
+      "hint": "eastAsia",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "De6、中 中",
+      "hint": "default",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "De7、中 B",
+      "hint": "default",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "DeA、中/中",
+      "hint": "default",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "DeC、中-中",
+      "hint": "default",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "As1、中B中",
+      "hint": "eastAsia",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "As2、中8中",
+      "hint": "eastAsia",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "As3、中C中",
+      "hint": "eastAsia",
+      "autoSpaceDE": false,
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "As4、中9中",
+      "hint": "eastAsia",
+      "autoSpaceDN": false,
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "As5、中D中",
+      "hint": "eastAsia",
+      "autoSpaceDN": false,
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "As6、中7中",
+      "hint": "eastAsia",
+      "autoSpaceDE": false,
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "Pn1、B，B",
+      "hint": "eastAsia",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "Sz1、中E中",
+      "hint": "eastAsia",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left",
+      "runs": [{ "chars": 5, "sizePt": 36 }, { "chars": 1, "sizePt": 12 }, { "chars": 1, "sizePt": 36 }]
+    },
+    {
+      "text": "Sz2、中F中",
+      "hint": "eastAsia",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left",
+      "runs": [
+        { "chars": 4, "sizePt": 36 },
+        { "chars": 1, "sizePt": 12 },
+        { "chars": 1, "sizePt": 36 },
+        { "chars": 1, "sizePt": 12 }
+      ]
+    }
+  ]
+}

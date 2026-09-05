@@ -10,6 +10,7 @@ import type { TextMeasurer } from '@uw/fonts';
 import type { DocGrid, DocumentSettings, NodeId, ResolvedParagraph, ResolvedParaProps } from '@uw/model';
 import type { KinsokuSets } from './break-class.ts';
 import { isNumberingItem, kinsokuFrom } from './break-class.ts';
+import type { WidthRules } from './items.ts';
 import { buildItems } from './items.ts';
 import type { ObjectRules, ScriptRules } from './line-height.ts';
 import { lineHeight, OBJECT_RULES, objectBoxHeight } from './line-height.ts';
@@ -40,6 +41,8 @@ export interface LayoutParagraphOptions {
   objectRules?: ObjectRules;
   /** 脚本与合成规则。同上，标定用的接缝，见 `SCRIPT_RULES` */
   scriptRules?: ScriptRules;
+  /** 宽度规则（分桶与中西文间距）。同上，标定用的接缝，见 `WIDTH_RULES` */
+  widthRules?: WidthRules;
 }
 
 export function layoutParagraph(p: ResolvedParagraph, opts: LayoutParagraphOptions): ParagraphLayout {
@@ -51,6 +54,7 @@ export function layoutParagraph(p: ResolvedParagraph, opts: LayoutParagraphOptio
     compressPunctuation: opts.settings.characterSpacingControl !== 'doNotCompress',
     ...(opts.defaultFont === undefined ? {} : { defaultFont: opts.defaultFont }),
     ...(opts.fieldValues === undefined ? {} : { fieldValues: opts.fieldValues }),
+    ...(opts.widthRules === undefined ? {} : { widthRules: opts.widthRules }),
   };
   const items = buildItems(p, itemOpts);
 

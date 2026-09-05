@@ -6,10 +6,10 @@
  */
 import { describe, expect, it } from 'vitest';
 import { PUNCT_PAIR_COMPRESS_EM } from './break-class.ts';
-import { buildItems } from './items.ts';
+import { buildItems, WIDTH_RULES } from './items.ts';
 import { fakeMeasurer, para, run, runOf, SIZE_5 } from './test-fixtures.ts';
 import type { CharItem, LayoutItem } from './types.ts';
-import { AUTO_SPACE_EM, SMALL_CAPS_SCALE } from './uncalibrated.ts';
+import { SMALL_CAPS_SCALE } from './uncalibrated.ts';
 
 const M = { measurer: fakeMeasurer() };
 const chars = (items: LayoutItem[]): CharItem[] => items.filter((i): i is CharItem => i.kind === 'char');
@@ -100,7 +100,7 @@ describe('分桶与度量', () => {
     expect(items.map((i) => i.script)).toEqual(['latin', 'eastAsia', 'eastAsia', 'eastAsia']);
   });
 
-  it('hint 不是 eastAsia 时空格不改桶 —— 那时没有真值，保持规范默认', () => {
+  it('空格改桶与 hint 无关 —— hint=default 也照样跟着东亚邻居走（spike-width-01 的 De6）', () => {
     const fonts = {
       ascii: 'Times New Roman',
       hAnsi: 'Times New Roman',
@@ -109,7 +109,7 @@ describe('分桶与度量', () => {
       hint: 'default' as const,
     };
     const items = chars(buildItems(para([run('中 a', { fonts })]), M));
-    expect(items.map((i) => i.script)).toEqual(['eastAsia', 'latin', 'latin']);
+    expect(items.map((i) => i.script)).toEqual(['eastAsia', 'eastAsia', 'latin']);
   });
 
   it('offset 指回源文本的 UTF-16 下标，代理对不会被切开', () => {
@@ -120,9 +120,9 @@ describe('分桶与度量', () => {
 });
 
 describe('中西文自动间距', () => {
-  const gap = SIZE_5 * AUTO_SPACE_EM;
+  const gap = SIZE_5 * WIDTH_RULES.autoSpaceEm;
 
-  it('汉字与拉丁字母之间加 1/8 em，记在后一个字符上', () => {
+  it('汉字与拉丁字母之间加 1/4 em，记在后一个字符上', () => {
     const items = chars(buildItems(para([run('中a中')]), M));
     expect(items.map((i) => i.gapBefore)).toEqual([0, gap, gap]);
   });
