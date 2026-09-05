@@ -299,10 +299,18 @@ function fragmentsOf(
       current.runId !== item.runId ||
       current.font !== item.font ||
       current.fontSize !== item.fontSize ||
-      current.script !== item.script
+      current.script !== item.script ||
+      // 源位置断开就切开：片段内「第 k 个码点在文件里的哪一位」全靠首字的位置加长度推
+      // （见 `LineFragment.contentIndex`）。同一个 run 里挨着的两个 `w:t`、
+      // 或者 `w:sym` 后面接一段文字，下标一换就不能再往下加了。
+      // 编号与域结果的位置是 -1（在文件里根本没有位置），那条路不参与这个判断
+      (item.offset >= 0 &&
+        (current.contentIndex !== item.contentIndex || current.offset + current.text.length !== item.offset))
     ) {
       current = {
         runId: item.runId,
+        contentIndex: item.contentIndex,
+        offset: item.offset,
         font: item.font,
         fontSize: item.fontSize,
         script: item.script,

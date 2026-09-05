@@ -233,6 +233,17 @@ export interface TabLeader {
  */
 export interface LineFragment {
   runId: NodeId;
+  /**
+   * 片段第一个字在 run 里的位置：`RunNode.content` 的下标 + 该片段内的 UTF-16 偏移。
+   * 编号与域结果没有源位置，两项都是 -1（与 `CharItem` 同一套约定）。
+   *
+   * **片段因此不跨内容片，也不跨断开的偏移**（`fragmentsOf` 会在那里切开）：
+   * 有了这条保证，「片段里第 k 个码点」的位置就是 `offset + 前 k 个码点的 UTF-16 长度`，
+   * 一个数就够，不必给每个字形再存一份位置。命中测试与 `DocPosition` 反查靠的正是它 ——
+   * 没有它，`LineFragment` 只说得出「这几个字属于哪个 run」，说不出是**哪几个**字。
+   */
+  contentIndex: number;
+  offset: number;
   font: string;
   fontSize: Twips;
   script: ScriptKind;

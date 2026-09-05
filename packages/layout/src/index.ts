@@ -20,6 +20,10 @@
  * （`w:cantSplit` 与表头行除外）。切出来的是两份各自自洽的 `RowLayout`，
  * 渲染层不需要裁剪窗口。
  *
+ * **布局索引**（`layout-index.ts`）是 Phase 6 的地基：`buildLayoutIndex()` 把整份布局摊平成
+ * 一张行表，答「点了哪个字」「这个 range 该画在哪几个矩形上」「光标在哪」「谁先谁后」。
+ * 它**在消费侧现建**（带方法的对象过不了结构化克隆），屏幕坐标那一跳不在这里。
+ *
  * **还没有的**：TOC / SEQ 的求值、脚注尾注。
  *
  * 约束（从第一天就守住，否则后面搬不动）：
@@ -34,6 +38,7 @@ export * from './break-class.ts';
 export * from './fields.ts';
 export * from './header-footer.ts';
 export * from './items.ts';
+export * from './layout-index.ts';
 export * from './line-height.ts';
 export * from './linebreak.ts';
 export * from './page.ts';

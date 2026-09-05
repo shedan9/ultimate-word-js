@@ -172,8 +172,9 @@ view.dispose();                       // 摘掉所有 DOM、解绑所有事件
 
 ```ts
 interface DocPosition {
-  readonly nodeId: NodeId;   // 稳定标识，不是数组下标
-  readonly offset: number;   // 节点内的字符偏移
+  readonly nodeId: NodeId;       // run 的稳定标识，不是数组下标
+  readonly contentIndex: number; // run 里第几个内容片段（w:t / w:tab / w:drawing…）
+  readonly offset: number;       // 该片段内的 UTF-16 偏移
 }
 
 interface DocRange {
@@ -187,6 +188,12 @@ interface DocRange {
 doc.compare(a: DocPosition, b: DocPosition): -1 | 0 | 1;
 doc.rangeOf(node: NodeId): DocRange;
 ```
+
+> ⚠️ **`contentIndex` 是 2026-08-30 补上的第三个字段**（实现 `LayoutIndex` 时才看清）：
+> 一个 run 的内容是一列片段，片段**没有自己的 id**，而「run 内的全局字符偏移」要把前面
+> 每个片段的长度加起来才算得出 —— 那是模型才有的数据。命中测试却在**布局**那一侧，
+> Worker 化之后它手上只有 `DocumentLayout`，所以位置必须自带片段下标。
+> 类型定义在 `@uw/model` 的 `position.ts`，两个方向的转换在 `@uw/layout` 的 `LayoutIndex`。
 
 > **为什么不用「全局字符偏移」这种更省事的表示**：
 > 全局偏移在任何编辑之后都会整体平移，你存下来的每个批注位置都会错位。
@@ -215,6 +222,11 @@ view.locate({ clientX: 320, clientY: 540 }): DocPosition | null;
 // ④ 内容位置 → 屏幕矩形（一个 range 跨行会有多个矩形）
 view.rectsOf(range): DOMRect[];
 ```
+
+> ③ 与 ④ 的**布局空间那一半已经做完**（`@uw/layout` 的 `buildLayoutIndex(doc)`：
+> `positionAt(point)` / `rectsOf(range)` / `caretRect(pos)` / `compare(a, b)`，单位 twips、
+> 坐标相对纸左上角）。`view` 这一层要补的只是「屏幕 px ↔ 布局 twips」那一跳。
+> 两处照着实现改过的说法见 [architecture.md §4](./architecture.md#4-三个坐标空间)。
 
 支持的选择器（够用即止，不做完整 CSS）：
 
