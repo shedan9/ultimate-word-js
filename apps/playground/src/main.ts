@@ -2,7 +2,7 @@
  * 调试台：把一份 docx 拖进来，看引擎把它画成什么样。
  *
  * 整条链全在浏览器里跑，一个后端调用都没有：
- * `OpcPackage.open` → `loadDocument` → `layoutDocumentWithFields` → `mount`。
+ * `OpcPackage.open` → `loadDocument` → `layoutDocumentWithFields` → `mountView`。
  *
  * 字体度量走随库分发的**度量包**（`packages/fonts/packs/*.json`），不是浏览器的
  * `measureText` —— 所以本机装没装仿宋、黑体**不影响排版**，只影响字形好不好看。
@@ -20,7 +20,8 @@ import { layoutDocumentWithFields } from '@uw/layout';
 import { fontNameCandidates, loadDocument } from '@uw/model';
 import { OpcPackage } from '@uw/ooxml';
 import { imageHrefResolver } from '@uw/render-dom';
-import { mount } from '@uw/render-dom/dom';
+import type { DomView } from '@uw/view/dom';
+import { mountView } from '@uw/view/dom';
 
 const packs = import.meta.glob<MetricsPack>('../../../packages/fonts/packs/*.json', {
   eager: true,
@@ -43,6 +44,8 @@ app.innerHTML = `
     <label class="file">选择 docx<input type="file" accept=".docx" hidden></label>
     <label>缩放 <input type="range" min="50" max="200" step="10" value="100"></label>
     <label><input type="checkbox" class="debug"> 画版心与行盒</label>
+    <label><input type="checkbox" class="text-layer" checked> 原生选区</label>
+    <label><input type="checkbox" class="virtualize" checked> 按需绘制</label>
     <span class="status">把一份 .docx 拖进来</span>
   </header>
   <div class="stage"></div>
@@ -52,20 +55,27 @@ const stage = app.querySelector<HTMLElement>('.stage') as HTMLElement;
 const status = app.querySelector<HTMLElement>('.status') as HTMLElement;
 const zoomInput = app.querySelector<HTMLInputElement>('input[type=range]') as HTMLInputElement;
 const debugInput = app.querySelector<HTMLInputElement>('.debug') as HTMLInputElement;
+const textLayerInput = app.querySelector<HTMLInputElement>('.text-layer') as HTMLInputElement;
+const virtualizeInput = app.querySelector<HTMLInputElement>('.virtualize') as HTMLInputElement;
 const fileInput = app.querySelector<HTMLInputElement>('input[type=file]') as HTMLInputElement;
 
-/** 当前文档的布局结果。缩放与调试开关只重画，**不重排** —— 架构 §4.1 */
+/** 当前文档的布局结果。缩放只改尺寸，调试开关重画；两者都不重排 —— 架构 §4.1 */
 let current: ReturnType<typeof layoutDocumentWithFields>['layout'] | undefined;
 /** 当前文档的图片解析器（id → data URI）。与布局分开存：换缩放不该重新编码一遍 base64 */
 let images: ((id: string) => string | undefined) | undefined;
+let view: DomView | undefined;
 
 function draw(): void {
   if (current === undefined) return;
-  mount(stage, current, {
+  const options = {
     zoom: Number(zoomInput.value) / 100,
     debug: debugInput.checked,
+    textLayer: textLayerInput.checked,
+    virtualize: virtualizeInput.checked,
     ...(images === undefined ? {} : { imageHref: images }),
-  });
+  };
+  if (view === undefined) view = mountView(stage, current, options);
+  else view.update(current, options);
 }
 
 function open(bytes: Uint8Array, name: string): void {
@@ -111,8 +121,10 @@ fileInput.addEventListener('change', () => {
   const file = fileInput.files?.[0];
   if (file !== undefined) void openFile(file);
 });
-zoomInput.addEventListener('input', draw);
+zoomInput.addEventListener('input', () => view?.setZoom(Number(zoomInput.value) / 100));
 debugInput.addEventListener('change', draw);
+textLayerInput.addEventListener('change', draw);
+virtualizeInput.addEventListener('change', draw);
 
 document.addEventListener('dragover', (e) => e.preventDefault());
 document.addEventListener('drop', (e) => {

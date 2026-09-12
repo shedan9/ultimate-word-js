@@ -1,0 +1,25 @@
+{
+  "name": "@uw/view",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "视口坐标转换与只读交互",
+  "exports": {
+    ".": "./src/index.ts",
+    "./dom": "./src/dom.ts"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@uw/core": "workspace:*",
+    "@uw/layout": "workspace:*",
+    "@uw/model": "workspace:*",
+    "@uw/render-dom": "workspace:*"
+  },
+  "devDependencies": {
+    "tsdown": "^0.22.14"
+  }
+}

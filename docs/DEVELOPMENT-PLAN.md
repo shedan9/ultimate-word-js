@@ -34,7 +34,7 @@ DOM 渲染的关键取舍：
 
 - **不要一字一 span**（DOM 爆炸）。粒度 = "一行内的一个 run 片段" → 一个绝对定位元素
 - 需要逐字微调 x（两端对齐、标点挤压、中西文间距）时，用 **SVG `<text x="x1 x2 x3 ...">`** —— SVG text 原生支持逐字形 x 数组，一个元素搞定精确定位，这是 HTML 做不到的
-- 页面虚拟化：视口 ±2 页实际渲染，其余用占位盒 + `content-visibility: auto`
+- 页面虚拟化：视口 ±2 页实际绘制，其余保留占位壳；原生文字层全文常驻，保证离屏查找与跨页选区
 
 ---
 
@@ -551,7 +551,7 @@ await view.toPNG(3);     // 第 3 页
   - 端到端断言在 `packages/render-dom/src/fixture.test.ts`：拿画出来的 `<text>`
     **属性**跟真值比，L3 / L4 都在 0.5pt 内。与布局侧的 fixture.test.ts 不重复 ——
     中间隔着三步翻译（twips → pt、版心原点搬进 `<g transform>`、逐字 x 拼成 x 列表）
-  - 未画：run 级高亮（model 没解析）、可选文本层、增量更新
+  - 未画：run 级高亮（model 没解析）、增量更新；可选文本层已由 Phase 6 的 `@uw/view` 实现
     （页眉页脚原本也在这一行，Phase 3 做完后已经画上了 —— 与版心 `<g>` 平级的两个框；
     **图片**也在这一行，Phase 5 做完了，见下）
   - 未标定的画法常数关在 `packages/render-dom/src/uncalibrated.ts`：下划线 / 删除线的
@@ -613,7 +613,7 @@ await view.toPNG(3);     // 第 3 页
 - ~~PAGE / NUMPAGES 域 + 收敛循环（§2.4）~~ ✅（2026-08-22）`@uw/layout` 的 `fields.ts`：
   `layoutDocumentWithFields()` 把「排版 → 算页码 → 再排版」迭代到自洽，认
   PAGE / NUMPAGES / SECTIONPAGES。详见 Phase 5 的对应条目
-- ⏸ 页面虚拟化
+- ✅ 页面虚拟化（2026-09-12，`@uw/view` 实现，见 Phase 6）
 - **DoD**：20 页真实公文，总页数与 Word 一致，每页首末字一致（**语料库里还没有多页真实公文**，
   见第 9 步；合成的多页样本已经有五份：`spike-page-01/02` 与 `spike-header-01/02/03`，
   共 62 页逐行全对）
@@ -810,7 +810,7 @@ await view.toPNG(3);     // 第 3 页
 ### Phase 6 — 交互 API（只读态）
 - ~~命中测试、坐标 ↔ 模型位置双向映射~~ ✅（2026-08-30）**布局空间那一半**做完了：
   `@uw/layout` 的 `layout-index.ts`，`buildLayoutIndex(doc)` → `positionAt` / `rectsOf` /
-  `caretRect` / `compare`。剩下的是 `ViewTransform`（px ↔ twips），要连着视口一起做
+  `caretRect` / `compare`。`ViewTransform`（px ↔ twips）已在 2026-09-12 接通，见下
   - **索引是消费侧现建的**，不是流水线的产物：带方法的对象过不了结构化克隆（原则 1.1），
     与 model 的 `StyleSheet` 同理。它只吃 `DocumentLayout` 这一份纯数据
   - 为它给 `LineFragment` 补了 `contentIndex` / `offset`（片段首字在文件里的位置），
@@ -824,8 +824,27 @@ await view.toPNG(3);     // 第 3 页
     `DocPosition` **是三个字段**不是两个（run 的内容是一列没有 id 的片段）
   - **没有新的标定**：字摆在哪由已经标定完的那几层决定，索引只保证「画在那儿的字点得中」，
     所以它的判据是单测（`layout-index.test.ts` 19 个）而不是真值残差
-- `find` / `query` / `decorate` / `overlay` / `scrollTo`
-- 原生可选文本层模式（Ctrl+F、复制、无障碍）
+- ~~屏幕坐标与只读视图~~ ✅（2026-09-12）新增 `@uw/view`：
+  - `createViewTransform()` 接收页面仿射矩阵，`createReadonlyView()` 接上 `LayoutIndex`，
+    提供 `locate` / `rectsOf` / `caretRect`；同一份布局可供多个视图使用
+  - `@uw/view/dom` 的 `mountView()` 每次查询读取页面屏幕矩阵，包含滚动、缩放、页间距、
+    CSS 旋转和 SVG 留白。点击纸外或被遮挡的位置不命中；矩形返回 CSS px 的纯数据
+  - 调试台已接入，`setZoom()` 只更新页面尺寸、不重排、不重建 SVG 内容与布局索引；
+    `update()` 处理重排，`destroy()` 清理挂载内容
+  - 26 项 Vitest 测试覆盖双向转换、跨页、重排与装饰锚点；`apps/playground/tests/view.html`
+    提供 22 项真实浏览器坐标回归断言
+- `find` / `query` / `scrollTo`
+- `decorate` / `overlay` 已在 `@uw/view/dom` 接通：高亮按 range 生成页面壳内矩形，批注保留 DOM、
+  随缩放与重排重新定位；完整浏览器回归仍需在下一轮补跑
+- ~~视口虚拟化与原生可选文本层~~ ✅（2026-09-12）
+  - 页面壳与透明文字 SVG 常驻，`IntersectionObserver` 仅挂载可见页前后各两页的绘制层；
+    无观察器时全量绘制，打印前补画所有页，打印后恢复窗口
+  - 绘制层 `inert` 消除重复查找；一行一个 `<text>`，样式片段用 `<tspan>`，
+    支持离屏查找与同一行跨样式查找；横向压缩字形坐标已在浏览器对照验证
+  - 原生跨页选区在滚动与缩放后保留；复制跳过编号和重复表头、保留计算域，
+    视觉行之间输出换行。图片替代说明留在辅助功能树，不混入复制文本
+  - 调试台增加原生选区 / 按需绘制开关；`@uw/view` 共 22 项单测，
+    `/tests/virtual-text.html` 提供 29 项浏览器断言。**Phase 6 DoD 仍未完成**
 - 打印（`@media print` + 分页 CSS，或直接走 canvas → PDF）
 - **DoD**：能在文档任意段落右侧挂一个 React 批注气泡，滚动 / 缩放 / 重排后位置不飘
 
@@ -1174,6 +1193,13 @@ CI 上无 Word，所以真值 PDF 与抽取结果**提交进仓库**（`fixtures
     架构 §4 的「二分查找」与 api.md 的两字段 `DocPosition` 都是写在实现之前、被实现推翻的。
     它同时是 Phase 5 剩下的 TOC 求值的地基（目录要跳转、要知道标题落在第几页）
 
+15. ~~**Phase 6 的屏幕坐标映射**~~ ✅（2026-09-12）`@uw/view` 接上布局索引，
+    DOM 入口支持挂载、定位、模型范围到屏幕矩形、缩放、更新与销毁。
+
+16. ~~**视口虚拟化与原生可选文本层**~~ ✅（2026-09-12）绘制页按需挂载、文字层常驻，
+    离屏查找、跨样式查找、跨页复制、缩放保留选区已验证。下一步接装饰与 overlay 生命周期；
+    当前仍不是完整的交互 API。
+
 第 6 步曾经优先于任何**布局**代码 —— 与第 4 步同理，没测准的东西不要拿来当地基。
 它做完之后的卡口是分页，分页现在也做完了（第 12f 步），于是**没有卡口了**：
 每一行都有页号与 y，横向与纵向都能与真值逐行比。
@@ -1189,10 +1215,8 @@ CI 上无 Word，所以真值 PDF 与抽取结果**提交进仓库**（`fixtures
 2. ~~**图片**（`w:drawing`）~~ ✅ 四层都通了，几何也标定完了（第 12l / 12o 步），
    开着网格的那一半也补完了 —— 现在这一格空着
 3. 第 13 步 ③–⑥ 的宽度类标定，影响的是 L2/L4 的精度
-4. **可选文本层**（Ctrl+F / 划词复制 / 屏幕阅读器）：数据早就齐了 —— 每个片段都带
-   `runId` 与逐字 x，编号片段还带着 `data-numbering` 让复制跳过它；**位置映射也齐了**
-   （第 14 步的 `LayoutIndex`：`lines` 是文档序，重复表头带着 `repeated` 标记等着被跳过）。
-   但它属于 `@uw/view`（架构 §3.1：view 是渲染器的调度者），要连着视口虚拟化一起做
+4. **装饰与 overlay 生命周期**：第 16 步已完成可选文本层与虚拟化。接下来让模型范围对应的
+   高亮、批注随滚动 / 缩放 / 重排更新位置，满足 Phase 6 的 DoD；程序化查找与滚动接口仍待实现
 5. ~~**表格剩下的一组样本**~~ ✅ 拆行的四问 2026-08-27 做完了（第 12r 步），
    表格这一层（几何 / 隔行带 / 格线冲突 / 拆行）全部有真值了 —— 现在这一格空着。
    估过头的地方记一笔：一张表根本不够，最后用了七张（`spike-table-04`），

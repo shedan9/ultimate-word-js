@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>视图浏览器回归验证</title>
+<style>
+body { margin: 0; min-height: 2000px; }
+#result { position: fixed; top: 0; left: 0; background: white; z-index: 20; }
+#host { margin: 150px 40px; width: 850px; height: 450px; overflow: auto; }
+.uw-doc { display: flex; flex-direction: column; align-items: center; gap: 24px; }
+.uw-page { flex-shrink: 0; background: white; }
+</style>
+<pre id="result">Running browser checks…</pre><div id="host"></div>
+<script type="module">
+import { mountView } from '@uw/view/dom';
+
+const host = document.querySelector('#host');
+const result = document.querySelector('#result');
+const style = { bold:false, italic:false, color:'auto', underline:'none', strike:false,
+  doubleStrike:false, vertAlign:'baseline', position:0, scale:100 };
+const layout = (offset = 0) => ({ pages: [0,1].map(index => ({
+  index, number:1, sectionIndex:index,
+  geometry:{ width:6000, height:9000, content:{x:600,y:900,width:4800,height:7200} },
+  blocks:[{kind:'paragraph',id:`p${index}`,y:offset,first:true,last:true,
+    lines:[{index:0,y:offset,line:{start:0,end:2,x:0,width:600,height:450,baseline:350,
+      natural:450,leaders:[],isLast:true,fragments:[{runId:`r${index}`,contentIndex:0,
+        offset:0,font:'serif',fontSize:300,script:'eastAsia',style,text:'AB',
+        x:0,width:600,glyphX:[0,300]}]}}]}],
+})) });
+const start = {nodeId:'r0',contentIndex:0,offset:0};
+const end = {nodeId:'r1',contentIndex:0,offset:2};
+let passed = 0;
+const assert = (condition, label) => { if (!condition) throw new Error(label); passed++; };
+const near = (a,b) => Math.abs(a-b) < 0.02;
+const frame = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+function textPoint(root, page = 0) {
+  const text = root.querySelector(`svg[data-page="${page}"] text`);
+  const pos = text.getStartPositionOfChar(0);
+  const p = new DOMPoint(pos.x+1, pos.y-5).matrixTransform(text.getScreenCTM());
+  return {clientX:p.x,clientY:p.y};
+}
+try {
+  const initial = layout();
+  const original = JSON.stringify(initial);
+  const view = mountView(host, initial, { virtualize: false });
+  await frame();
+  const root = view.root;
+  const svg = root.querySelector('svg');
+  const text = svg.querySelector('text');
+  const box = svg.getBoundingClientRect();
+  let caret = view.caretRect(start);
+  assert(near(caret.x, box.x+40) && near(caret.y,box.y+60), 'initial absolute coordinates');
+  assert(view.locate(textPoint(root))?.nodeId === 'r0', 'actual SVG glyph hit');
+  assert(view.rectsOf({start,end}).length === 2, 'cross-page range');
+  assert(view.locate({clientX:box.left-10,clientY:box.top+100}) === null, 'paper exterior');
+  view.setZoom(1.5);
+  await frame();
+  caret = view.caretRect(start);
+  const zoomBox = svg.getBoundingClientRect();
+  assert(near(caret.x, zoomBox.x+60) && near(caret.height,45), 'zoom coordinates');
+  assert(view.root === root && root.querySelector('text') === text, 'zoom keeps SVG subtree');
+  assert(view.locate(textPoint(root))?.offset === 0, 'zoom glyph hit');
+  let rejected = false;
+  try { view.setZoom(0); } catch { rejected = true; }
+  assert(rejected && svg.getBoundingClientRect().width === zoomBox.width, 'invalid zoom is atomic');
+  view.setZoom(1);
+  host.scrollTop = 40;
+  host.scrollLeft = 10;
+  await frame();
+  caret = view.caretRect(start);
+  assert(near(caret.y, box.y+20), 'nested scroll updates coordinates');
+  assert(view.locate(textPoint(root))?.nodeId === 'r0', 'nested scroll glyph hit');
+  host.scrollTop = 150;
+  await frame();
+  assert(view.locate(textPoint(root)) === null, 'clipped glyph is not hit');
+  host.scrollTop = 650;
+  await frame();
+  assert(view.locate(textPoint(root,1))?.nodeId === 'r1', 'second physical page with restarted number');
+  host.scrollTop = 0;
+  window.scrollTo(0, 70);
+  await frame();
+  assert(view.locate(textPoint(root))?.nodeId === 'r0', 'window scroll glyph hit');
+  const cover = document.createElement('div');
+  cover.style.cssText = 'position:fixed;inset:0;background:white;z-index:10';
+  document.body.append(cover);
+  assert(view.locate(textPoint(root)) === null, 'overlay obscures page');
+  cover.remove();
+  const shell = svg.closest('[data-page]')?.parentElement?.parentElement;
+  shell.style.transformOrigin = 'center center';
+  shell.style.transform = 'rotate(5deg)';
+  await frame();
+  assert(view.locate(textPoint(root))?.nodeId === 'r0', 'CSS rotation glyph hit');
+  shell.style.transform = '';
+  shell.style.width = '500px';
+  shell.style.height = '600px';
+  await frame();
+  assert(view.locate(textPoint(root))?.nodeId === 'r0', 'viewBox letterboxing glyph hit');
+  view.update(layout(450));
+  await frame();
+  assert(!root.isConnected && view.root !== root, 'relayout replaces owned tree');
+  assert(view.locate(textPoint(view.root))?.nodeId === 'r0', 'relayout rebuilds index');
+  assert(original === JSON.stringify(initial), 'layout remains immutable');
+  view.root.style.display = 'none';
+  assert(view.caretRect(start) === null, 'hidden pages have no client rectangle');
+  view.destroy();
+  view.destroy();
+  assert(host.children.length === 0 && view.rectsOf({start,end}).length === 0, 'destroy cleanup');
+  assert(view.locate({clientX:0,clientY:0}) === null, 'destroyed view cannot hit');
+  result.textContent = `PASS: ${passed} browser assertions`;
+} catch (error) {
+  result.textContent = `FAIL after ${passed} assertions: ${error.stack}`;
+}
+</script>
+</html>

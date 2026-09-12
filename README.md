@@ -38,6 +38,7 @@ packages/
   fonts/         @uw/fonts       字体表解析、度量、替换表、缓存         ← 行高规则已可用
   layout/        @uw/layout      布局引擎                               ← Phase 2
   render-dom/    @uw/render-dom  绝对定位 DOM 渲染器                    ← Phase 2
+  view/          @uw/view        屏幕坐标、虚拟化、原生选区与缩放     ← Phase 6
 apps/
   playground/    调试台（Vite 8）
   fidelity/      保真度真值流水线 + Phase 0 穿刺（见 apps/fidelity/README.md）

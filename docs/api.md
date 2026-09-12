@@ -220,13 +220,50 @@ doc.find(/第\s*\d+\s*条/g, { limit: 50 }): DocRange[];
 view.locate({ clientX: 320, clientY: 540 }): DocPosition | null;
 
 // ④ 内容位置 → 屏幕矩形（一个 range 跨行会有多个矩形）
-view.rectsOf(range): DOMRect[];
+view.rectsOf(range): ClientRect[]; // { x, y, width, height }，CSS px
 ```
 
-> ③ 与 ④ 的**布局空间那一半已经做完**（`@uw/layout` 的 `buildLayoutIndex(doc)`：
-> `positionAt(point)` / `rectsOf(range)` / `caretRect(pos)` / `compare(a, b)`，单位 twips、
-> 坐标相对纸左上角）。`view` 这一层要补的只是「屏幕 px ↔ 布局 twips」那一跳。
-> 两处照着实现改过的说法见 [architecture.md §4](./architecture.md#4-三个坐标空间)。
+> ③ 与 ④ 已由 `@uw/view` 接通（2026-09-12）：布局空间的 `LayoutIndex` 负责模型位置
+> ↔ twips，`ViewTransform` 负责 twips ↔ CSS px。返回值采用纯数据 `ClientRect`，
+> 替代原方案的 `DOMRect`，让不依赖 DOM 的主入口也能提供相同接口。
+> `query` / `find` 仍为规划中的接口；以下是已实现的低层只读入口：
+
+```ts
+import { mountView } from '@uw/view/dom';
+
+const view = mountView(container, documentLayout, {
+  zoom: 1,
+  textLayer: true, // 默认：全文原生查找与选区
+  virtualize: true, // 默认：仅绘制可见页与相邻页
+  overscan: 2, // 可见页前后各预绘制两页
+  pageGap: 24, // CSS px
+});
+const position = view.locate({ clientX: 320, clientY: 540 }); // DocPosition | null
+const rectangles = view.rectsOf(range); // ClientRect[]，跨行 / 跨页分别返回
+const caret = view.caretRect(range.start); // ClientRect | null
+view.setZoom(1.5); // 保留 SVG 内容节点与布局索引，不重新排版
+view.update(nextLayout); // 重建索引与文字层，清除原生选区；沿用未被覆盖的选项
+view.destroy(); // 可重复调用；销毁后查询返回空结果，更新操作抛错
+```
+
+页面矩阵按查询实时读取，涵盖滚动、缩放和 CSS 二维变换；不支持透视变换。
+`locate` 在纸外、页间空隙、视口外或遮挡处返回 `null`。每页保留占位壳与坐标 SVG，
+因此 `rectsOf` / `caretRect` 可返回尚未绘制页面的位置；矩形**不裁剪到当前视口**，
+旋转时返回轴对齐包围盒。矩形是瞬时结果，宿主应在滚动、缩放或重排后重新查询；
+自动跟随的 overlay 尚未实现。页面默认纵向居中排列，间距由 `pageGap` 设置，
+滚动容器与页面壳的外观由宿主控制，`apps/playground` 提供接入示例。
+
+`textLayer` 默认开启。透明文字层全文常驻，支持浏览器查找（包括离屏与同一行跨样式文字）、
+原生选区和辅助技术读取。绘制层设为 `inert` 以免重复匹配；编号与重复表头跳过，
+计算域保留，图片保留辅助说明。纯文本复制在视觉行 / 单元格 / 页之间插入换行，
+不还原语义段落、表格制表符或富文本；选区跨出本视图时不接管复制。
+关闭 `textLayer` 会同时关闭这些原生文字能力，坐标查询仍可用。
+
+`virtualize` 使用 `IntersectionObserver`，同时遵守窗口和祖先滚动容器的裁剪；
+无此 API 时全量绘制。滚动与缩放保留文字节点和原生选区，`update()` 会重建它们。
+打印前临时补画所有页面，打印后恢复窗口，但完整打印分页仍待实现。
+`zoom` 必须为正有限数，`overscan` 为非负整数，`pageGap` 为非负有限数；
+`destroy()` 清理观察器、事件监听与 DOM。
 
 支持的选择器（够用即止，不做完整 CSS）：
 

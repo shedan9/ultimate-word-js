@@ -326,6 +326,19 @@ function paintFragment(frag: LineFragment, x0: Twips, baseline: Twips, ctx: Ctx)
   return textEl('text', attrs, frag.text);
 }
 
+/**
+ * 只构造文字片段，供 view 的原生选区层复用同一套逐字 x、上下标和横向缩放。
+ * 输入仍是布局数据；编号与重复表头是否参与复制由消费方决定。
+ */
+export function buildTextFragment(
+  fragment: LineFragment,
+  originX: Twips,
+  baseline: Twips,
+  options: RenderOptions = {},
+): RElement {
+  return paintFragment(fragment, originX, baseline, context(options));
+}
+
 /** 基线的最终 y：`w:position` 的升降 + 上下标的升降都落在这里，两者可叠加 */
 function baselineOf(frag: LineFragment, baseline: Twips): number {
   const style = frag.style;

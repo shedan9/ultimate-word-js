@@ -71,6 +71,9 @@ importers:
       '@uw/render-dom':
         specifier: workspace:*
         version: link:../../packages/render-dom
+      '@uw/view':
+        specifier: workspace:*
+        version: link:../../packages/view
     devDependencies:
       vite:
         specifier: ^8.2.1
@@ -167,6 +170,25 @@ importers:
       fflate:
         specifier: ^0.8.3
         version: 0.8.3
+      tsdown:
+        specifier: ^0.22.14
+        version: 0.22.14(typescript@7.0.2)
+
+  packages/view:
+    dependencies:
+      '@uw/core':
+        specifier: workspace:*
+        version: link:../core
+      '@uw/layout':
+        specifier: workspace:*
+        version: link:../layout
+      '@uw/model':
+        specifier: workspace:*
+        version: link:../model
+      '@uw/render-dom':
+        specifier: workspace:*
+        version: link:../render-dom
+    devDependencies:
       tsdown:
         specifier: ^0.22.14
         version: 0.22.14(typescript@7.0.2)

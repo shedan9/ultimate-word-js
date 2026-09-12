@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>装饰与批注浏览器回归</title>
+<style>
+body { margin: 0; min-height: 2000px; font: 14px/1.5 system-ui; }
+#result { position:fixed;top:0;left:0;z-index:20;background:white; }
+#host { margin:100px 40px;width:850px;height:450px;overflow:auto; }
+.bubble { width:160px;padding:8px;border:1px solid blue;background:white; }
+.bubble textarea { width:140px;height:40px; }
+</style>
+<pre id="result">正在验证…</pre><div id="host"></div>
+<script type="module">
+import { mountView } from '@uw/view/dom';
+import { annotationLayout, annotationEnd as end, annotationStart as start } from './annotation-fixture.ts';
+
+const host = document.querySelector('#host');
+const result = document.querySelector('#result');
+let passed = 0;
+const assert = (condition, label) => { if (!condition) throw new Error(label); passed++; };
+const near = (a, b) => Math.abs(a-b) < 0.08;
+const frame = async () => { for (let i=0;i<5;i++) await new Promise(requestAnimationFrame); };
+const bounds = (node) => node.getBoundingClientRect();
+try {
+  const original = annotationLayout();
+  const before = JSON.stringify(original);
+  const view = mountView(host, original, { overscan: 0 });
+  const decoration = view.decorate({start,end}, {style:{background:'#ffd33d66'}});
+  const bubble = document.createElement('aside');
+  bubble.className = 'bubble';
+  bubble.innerHTML = '<label>批注<textarea></textarea></label><button>关闭</button>';
+  const input = bubble.querySelector('textarea');
+  const overlay = view.overlay(start, bubble);
+  await frame();
+  const wrapper = bubble.parentElement;
+  const marks = [...view.root.querySelectorAll('[data-decoration]')];
+  const rects = view.rectsOf({start,end});
+  assert(marks.length === 3, '跨页高亮覆盖三个页面');
+  assert(marks.every((node,i) => near(bounds(node).x,rects[i].x) && near(bounds(node).width,rects[i].width)), '装饰矩形匹配模型范围');
+  assert(near(bounds(wrapper).x,rects[0].x+rects[0].width+8) && near(bounds(wrapper).y,rects[0].y), '批注在行末');
+  assert(getComputedStyle(marks[0]).pointerEvents === 'none' && marks[0].getAttribute('aria-hidden') === 'true', '高亮不拦选区且不重复朗读');
+  const oldWrapper = wrapper;
+  const oldMark = marks[0];
+  view.setZoom(1.233);
+  await frame();
+  const zoomRects = view.rectsOf({start,end});
+  assert(near(bounds(wrapper).x,zoomRects[0].x+zoomRects[0].width+8), '非整数缩放保持行末与八像素间距');
+  assert(near(bounds(oldMark).width,zoomRects[0].width), '非整数缩放高亮宽度准确');
+  assert(bubble.parentElement === oldWrapper && view.root.querySelector('[data-decoration]') === oldMark, '缩放保留批注与装饰节点');
+  const y = bounds(wrapper).y;
+  host.scrollTop = 30;
+  await frame();
+  assert(near(bounds(wrapper).y,y-30), '祖先滚动自然跟随');
+  view.setZoom(1);
+  host.scrollTop = 0;
+  await frame();
+  const shell = wrapper.parentElement;
+  shell.style.width = '700px';
+  shell.style.height = '600px';
+  await frame();
+  assert(near(bounds(oldMark).x,view.rectsOf({start,end})[0].x), 'ResizeObserver 跟随页面留白');
+  shell.style.transform = 'rotate(5deg)';
+  await frame();
+  assert(near(bounds(oldMark).x,view.rectsOf({start,end})[0].x) && near(bounds(oldMark).width,view.rectsOf({start,end})[0].width), 'CSS 旋转保持高亮四角');
+  shell.style.transform = '';
+  input.value = '保留我的批注';
+  input.focus({preventScroll:true});
+  view.update(annotationLayout(300,true));
+  await frame();
+  assert(bubble.parentElement === oldWrapper && wrapper.closest('[data-page]').dataset.page === '1', '重排跨页移动同一个批注 DOM');
+  assert(input.value === '保留我的批注' && document.activeElement === input, '跨页重排保留输入与焦点');
+  assert(near(bounds(wrapper).y,view.caretRect(start).y), '跨页重排锚点跟随新行');
+  const textNode = view.root.querySelector('[data-text-layer=true] tspan').firstChild;
+  const selection = document.getSelection();
+  const range = document.createRange();
+  range.selectNodeContents(textNode);selection.removeAllRanges();selection.addRange(range);
+  input.focus({preventScroll:true});input.select();
+  const copy = new ClipboardEvent('copy', {bubbles:true,cancelable:true,clipboardData:new DataTransfer()});
+  input.dispatchEvent(copy);
+  assert(!copy.defaultPrevented, '批注输入框复制不被文档残留选区劫持');
+  input.blur();selection.removeAllRanges();
+  host.scrollTop = 1300;
+  await frame();
+  assert(!view.root.querySelector('[data-page="0"] .uw-painting svg') && view.root.querySelectorAll('[data-decoration]').length === 2, '虚拟化卸载绘制层后装饰仍在');
+  view.update({pages:[]});
+  await frame();
+  assert(wrapper.inert && wrapper.style.visibility === 'hidden', '锚点缺失时隐藏且不可聚焦');
+  view.update(annotationLayout());
+  await frame();
+  assert(wrapper.isConnected && !wrapper.inert && input.value === '保留我的批注', '锚点恢复后复用原批注');
+  host.scrollTop = 0;
+  const aboveElement = document.createElement('div');
+  aboveElement.style.cssText = 'width:60px;height:20px';
+  const above = view.overlay(start, aboveElement, {placement:'above',offset:{x:0,y:0}});
+  await frame();
+  assert(near(bounds(aboveElement.parentElement).bottom,view.caretRect(start).y), 'above 按内容高度定位');
+  aboveElement.style.height = '65px';
+  await frame();
+  assert(near(bounds(aboveElement.parentElement).bottom,view.caretRect(start).y), '批注尺寸变化自动重定位');
+  overlay.update({nodeId:'r2',contentIndex:0,offset:1});
+  await frame();
+  assert(wrapper.closest('[data-page]').dataset.page === '2', '句柄可更新锚点');
+  decoration.update({start,end:{...start,offset:2}});
+  assert(view.root.querySelectorAll('[data-decoration]').length === 1, '更新高亮范围清理旧矩形');
+  let rejected = false;
+  try {view.decorate({start,end}, {layer:'below-text'});} catch {rejected = true;}
+  assert(rejected && view.root.querySelectorAll('[data-decoration]').length === 1, '未支持层级明确拒绝且无残留');
+  const otherHost = document.createElement('div');document.body.append(otherHost);
+  const other = mountView(otherHost, annotationLayout());
+  const otherMark = other.decorate({start,end});
+  decoration.dispose();decoration.dispose();above.dispose();above.dispose();
+  assert(view.root.querySelectorAll('[data-decoration]').length === 0 && other.root.querySelectorAll('[data-decoration]').length === 3, '释放幂等且多个视图隔离');
+  view.destroy();overlay.dispose();overlay.update();decoration.update();
+  await frame();
+  assert(host.children.length === 0 && !bubble.isConnected && bubble.parentElement === null, '销毁清理批注及延后回调');
+  rejected = false;try {view.overlay(start,bubble);} catch {rejected = true;}
+  assert(rejected, '已销毁视图不能新建批注');
+  assert(before === JSON.stringify(original), '装饰不修改文档布局');
+  otherMark.dispose();other.destroy();otherHost.remove();
+  result.textContent = `PASS: ${passed} browser assertions`;
+} catch (error) { result.textContent = `FAIL after ${passed} assertions: ${error.stack}`; }
+</script>
+</html>

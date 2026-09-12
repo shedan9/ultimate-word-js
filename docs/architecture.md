@@ -208,8 +208,9 @@ flowchart BT
 | `@uw/ooxml` | 🟢 OPC 解包 · 内容类型 · 关系 · 保序 XML 纯数据树 + 反向序列化 |
 | `@uw/model` | 🟢 样式级联（含编号层与表格样式层）· 主题字体 · 正文节点树 · 分节 · 设置 · 字体表 · 编号（解析 + 计数器 + 编号文字）· 表格（属性 + 级联 + `w:tblStylePr` 条件格式**（层序实测标定）** + `w:tblPrEx` 行级例外）· 域的结构还原（界桩配对 + 指令解析 + HYPERLINK；**求值在 layout 那一侧**，见 §6）· **页眉页脚部件**（按引用解析 + 各带 id 前缀 + 单独级联）· **图片**（`w:drawing` / VML `w:pict` 的外框 + blip 引用 + 裁剪 / 旋转 + 浮动锚点；字节按引用收进 `LoadedDocument.images`） |
 | `@uw/layout` | 🟢 断行（禁则 / 挤压 / 悬挂，四条补救顺序与三个常数全部实测标定）· 缩进（含字符单位）· 对齐 · 制表位 · 列表编号 · 行高 + 网格吸附 + **行内基线** · 表格列宽与格内几何 + 边框冲突解析（**格线几何与相邻竞争都已实测标定**：横向不吃宽、纵向吃高；竞争先分类再比厚度，见 §5.6）· **分页**（`layoutDocument()`：页面几何 · 分节 · 孤行寡行 · keepNext / keepLines · 硬分页符 · 表格按行拆页 · 页码，见 §5.4）· **域求值**（`layoutDocumentWithFields()`：PAGE / NUMPAGES / SECTIONPAGES 迭代到自洽，见 §6）· **页眉页脚**（选哪一份 · 框的定位 · 反过来挤版心，三条几何规则实测标定，见 §5.4）· **对象**（内嵌图占宽占高，行盒四条规则与浮动图的参照框全部实测标定，见 §5.5；**带 `wp:anchor` 的图**一律不占文字流、按锚点算成纸坐标）· **表格拆行**（`table-split.ts`：一行放不下时从行间切开，`w:cantSplit` 与表头行除外；**四条规则全部实测标定**，见 §5.4）· **布局索引**（`layout-index.ts`：命中测试 · range → 矩形 · 光标 · 文档序比较，架构 §4 的 ①↔②）· ⏸ 方形 / 上下型环绕的**文字让开**未做（位置与大小是对的，文字不绕着它走）|
-| `@uw/render-dom` | 🟢 v1：一页一个 `<svg>`（viewBox 单位 **pt**）· 逐字 x 走 `<text x="…">` · 下划线 / 删除线 / 上下标 / 横向缩放 · 制表位前导符 · 表格底纹 + 格线（共享的线只画一次）· 页眉页脚（与版心平级的两个框）· 缩放只改 `<svg>` 尺寸不重排 · **图片**（`<image>` + 裁剪 `clipPath` + 旋转翻转；画不出来的画尺寸正确的占位框）· ⏸ 可选文本层 / 增量更新 |
-| `@uw/render-canvas` `@uw/view` `@uw/editor` `@uw/serialize` `ultimate-word` `@uw/react` | ⚪ 未创建（Phase 6 的地基 **`LayoutIndex` 已经在 `@uw/layout` 里**：命中测试 · 位置 → 矩形 · 光标 · 文档序比较，见 §4）|
+| `@uw/render-dom` | 🟢 v1：一页一个 `<svg>`（viewBox 单位 **pt**）· 逐字 x 走 `<text x="…">` · 下划线 / 删除线 / 上下标 / 横向缩放 · 制表位前导符 · 表格底纹 + 格线（共享的线只画一次）· 页眉页脚（与版心平级的两个框）· 缩放只改 `<svg>` 尺寸不重排 · **图片**（`<image>` + 裁剪 `clipPath` + 旋转翻转；画不出来的画尺寸正确的占位框）· ⏸ 增量更新（可选文本层归 view） |
+| `@uw/view` | 🟢 屏幕坐标转换（页面仿射矩阵）· `locate` / `rectsOf` / `caretRect` · DOM 挂载 / 更新 / 销毁 · 缩放保留选区与布局索引 · 视口 ±2 页绘制 · 全文原生文字层 / 查找 / 纯文本复制；⏸ 装饰与 overlay 生命周期 |
+| `@uw/render-canvas` `@uw/editor` `@uw/serialize` `ultimate-word` `@uw/react` | ⚪ 未创建 |
 
 ---
 
@@ -220,7 +221,7 @@ flowchart BT
 ```mermaid
 flowchart LR
   subgraph m ["① 模型空间 · 与排版无关"]
-    P["DocPosition<br/>{ nodeId, offset }<br/>重排后依然有效"]
+    P["DocPosition<br/>{ nodeId, contentIndex, offset }<br/>重排后依然有效"]
   end
   subgraph l ["② 布局空间 · twips"]
     L["LayoutPoint<br/>{ page, x, y }<br/>页面左上角原点"]
@@ -242,6 +243,12 @@ flowchart LR
 - **谁拥有哪个转换**：`LayoutIndex`（`@uw/layout` 的 `layout-index.ts`，2026-08-30 做完）
   拥有 ①↔②；`ViewTransform`（view 拥有）负责 ②↔③。
   模型层**永远不知道像素**，渲染层**永远不知道 DocPosition**。
+- **②↔③ 已实现**（2026-09-12）：`@uw/view` 的 `createViewTransform()` 消费一次测量的
+  页面矩阵快照，`createReadonlyView()` 组合两次转换。DOM 适配器使用 `getScreenCTM()`，
+  将 SVG 的 pt 输入换成 twips 输入，平移保留 CSS px。矩阵已包含滚动，不能再加滚动偏移；
+  只拿页面包围盒推比例也不够，因为 CSS 旋转和 SVG 留白会让包围盒与纸面不同。
+  每次查询统一读取常驻文字 SVG 的页面矩阵；绘制页卸载后仍可查询几何。
+  缩放只写页面壳尺寸，重排才重建索引与文字层。当前不做透视变换。
 - **命中测试**是 ③→②→① 的两跳，不依赖 `caretPositionFromPoint` 那种浏览器 API。
 - ⚠️ 原来这里写着「②→① 只是一次二分查找」，**做出来才看清是错的**：表格让同一个 y 上
   并排坐着好几行（一行几格），行序与 y 序不再一致，二分的前提就不成立。
@@ -600,8 +607,14 @@ CSS 2.1 §17.6.2 的 collapsing borders 类比写成「线宽 → 样式权重 �
 **衬于文字下方的画在正文之前、浮于上方的画在最后** —— SVG 里的「层」就是画的先后。
 
 没画的：图表 / SmartArt / 形状与 EMF / WMF（画尺寸正确的虚线占位框，`alt` 进 `<title>`）、
-run 级高亮（model 里没解析）、
-可选文本层（Ctrl+F / 复制，属于 `@uw/view`）、增量更新（等增量排版，见 §7）。
+run 级高亮（model 里没解析）、增量更新（等增量排版，见 §7）。
+
+`@uw/view` 已实现原生文字层与虚拟化：所有页面保留壳与透明 SVG，复杂绘制 SVG 仅在
+视口前后各两页挂载。文字层复用绘制片段的字体与坐标，每行一个 `<text>`、片段用 `<tspan>`，
+横向压缩用 `textLength` 与逐字 x。绘制层设为 `inert`，浏览器查找只命中文字层；
+编号与重复表头不进入文字层，计算域保留，图片另留辅助说明。复制按视觉行换行。
+滚动 / 缩放不重建文字节点，因此跨页选区保留；重排重建文字层。打印事件临时补画全部页，
+尚未提供完整的打印分页样式。
 
 ---
 

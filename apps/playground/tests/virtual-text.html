@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>虚拟页面与原生文字回归</title>
+<style>
+body { margin: 0; }
+#result { white-space: pre-wrap; margin: 16px; }
+#host { margin: 20px; width: 700px; height: 450px; overflow: auto; border: 1px solid #666; }
+.uw-page-shell { box-shadow: 0 1px 5px #777; }
+</style>
+<pre id="result">正在验证…</pre><div id="host"></div>
+<script type="module">
+import { mountView } from '@uw/view/dom';
+
+const host = document.querySelector('#host');
+const output = document.querySelector('#result');
+const style = { bold:false, italic:false, color:'auto', underline:'none', strike:false,
+  doubleStrike:false, vertAlign:'baseline', position:0, scale:100 };
+const fragment = (text, runId, x = 0, extra = {}) => ({ runId,contentIndex:0,offset:0,
+  font:'serif',fontSize:300,script:'eastAsia',style,text,x,width:[...text].length*300,
+  glyphX:[...text].map((_,i)=>x+i*300),...extra });
+const layout = {pages:Array.from({length:12},(_,index)=>({
+  index,number:index===11?1:index+1,sectionIndex:0,
+  geometry:{width:6000,height:9000,content:{x:600,y:900,width:4800,height:7200}},
+  blocks:[{kind:'paragraph',id:`p${index}`,y:0,first:true,last:true,lines:[{index:0,y:0,
+    line:{start:0,end:12,x:0,width:4000,height:450,baseline:350,natural:450,leaders:[],isLast:true,
+      fragments:index===0 ? [fragment('编号排除','n',0,{numbering:true,contentIndex:-1,offset:-1}),
+        fragment('首行正文','r0',1200),fragment('2026','field',2400,{field:true,contentIndex:-1,offset:-1})]
+        : [fragment(index===11?'唯一目标终页':`中间第${index}页` ,`r${index}`)]}}]}],
+}))};
+let passed=0;
+const assert=(ok,label)=>{if(!ok)throw new Error(label);passed++;};
+const frame=()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+const scaled=layout.pages[1].blocks[0].lines[0].line.fragments[0];
+scaled.style={...style,scale:50};
+scaled.glyphX=scaled.glyphX.map(x=>x/2);scaled.width/=2;
+async function until(predicate,label){
+  const end=performance.now()+4000;
+  while(!predicate()){if(performance.now()>end)throw new Error(label);await frame();}
+}
+const view=mountView(host,layout,{overscan:0});
+const rendered=()=>[...view.root.querySelectorAll('[data-rendered="true"]')].map(n=>Number(n.dataset.page));
+const layerTexts=()=>[...view.root.querySelectorAll('[data-text-layer="true"] tspan')];
+function select(first,last){
+  const range=document.createRange();range.setStart(first,0);range.setEnd(last,last.textContent.length);
+  const selection=document.getSelection();selection.removeAllRanges();selection.addRange(range);return selection;
+}
+function copy(){
+  const clipboardData=new DataTransfer();
+  const event=new ClipboardEvent('copy',{bubbles:true,cancelable:true,clipboardData});
+  view.root.dispatchEvent(event);return {text:clipboardData.getData('text/plain'),handled:event.defaultPrevented};
+}
+try{
+  await until(()=>rendered().includes(0),'初始页面未绘制');
+  assert(rendered().length===1,'只绘制可见页');
+  assert(view.root.querySelectorAll('[data-viewport-page]').length===12,'所有页面坐标与文字仍在 DOM');
+  const fullHeight=host.scrollHeight;
+  const first=layerTexts()[0].firstChild;
+  const last=layerTexts().at(-1).firstChild;
+  const selection=select(first,last);
+  const before=copy();
+  assert(before.handled&&before.text.startsWith('首行正文2026\n'),'复制正文与域结果，保留行分隔');
+  assert(!before.text.includes('编号排除')&&before.text.endsWith('唯一目标终页'),'编号排除且离屏文字未丢失');
+  const partial=document.createRange();partial.setStart(first,2);partial.setEnd(layerTexts()[1].firstChild,2);
+  selection.removeAllRanges();selection.addRange(partial);
+  assert(copy().text==='正文20','部分片段与域结果的复制边界错误');
+  select(first,last);
+  host.scrollTop=624;
+  await until(()=>rendered().includes(1),'压缩文字页未绘制');
+  const ink=view.root.querySelector('[data-page="1"] .uw-painting text');
+  const native=view.root.querySelector('[data-viewport-page="1"] tspan');
+  for(let i=0;i<[...scaled.text].length;i++){
+    const a=ink.getStartPositionOfChar(i).matrixTransform(ink.getScreenCTM());
+    const b=native.getStartPositionOfChar(i).matrixTransform(native.getScreenCTM());
+    assert(Math.abs(a.x-b.x)<0.02&&Math.abs(a.y-b.y)<0.02,'压缩文字的原生选区坐标与画面不一致');
+  }
+  host.scrollTop=11*624;
+  await until(()=>rendered().includes(11)&&!rendered().includes(0),'滚动后绘制集合未更新');
+  assert(host.scrollHeight===fullHeight,'卸载内容不改变滚动高度');
+  assert(selection.anchorNode===first&&selection.focusNode===last,'跨页选区节点未替换');
+  assert(copy().text===before.text,'滚动卸载后复制结果相同');
+  view.setZoom(1.25);await frame();
+  assert(selection.anchorNode===first&&selection.focusNode===last,'缩放保留原生选区');
+  assert(copy().text===before.text,'缩放后复制结果相同');
+  selection.removeAllRanges();
+  view.setZoom(1);host.scrollTop=0;
+  await until(()=>rendered().includes(0)&&!rendered().includes(11),'恢复第一页失败');
+  assert(typeof window.find==='function','浏览器不支持测试所需的原生查找入口');
+  window.getSelection().collapse(view.root,0);
+  assert(window.find('唯一目标终页',false,false,false),'原生查找找不到离屏文字');
+  assert(window.getSelection().toString()==='唯一目标终页','原生查找选中的内容错误');
+  await until(()=>rendered().includes(11),'查找跳转后目标页未补绘');
+  assert(!window.find('唯一目标终页',false,false,false),'绘制层产生了重复的查找结果');
+  window.getSelection().collapse(view.root,0);
+  assert(window.find('首行正文2026',false,false,false),'查找不能跨同一行的样式片段');
+  await until(()=>rendered().includes(0),'跨片段查找未滚回第一页');
+  window.getSelection().collapse(view.root,0);
+  assert(!window.find('编号排除',false,false,false),'编号进入原生查找');
+  window.dispatchEvent(new Event('beforeprint'));
+  assert(rendered().length===12,'打印前没有补齐所有页面');
+  window.dispatchEvent(new Event('afterprint'));
+  assert(rendered().length<12,'打印后没有恢复按需绘制');
+  const oldRoot=view.root;
+  view.update(layout,{virtualize:false});
+  assert(rendered().length===12&&!oldRoot.isConnected,'切换全量绘制或更新失效');
+  view.update(layout,{textLayer:false,virtualize:true,overscan:1});
+  await frame();
+  assert(layerTexts().length===0,'关闭文字层仍留下文字副本');
+  assert(view.root.querySelectorAll('[data-viewport-page]').length===12,'关闭文字层影响坐标占位');
+  view.update(layout,{textLayer:true,virtualize:false});
+  const texts=layerTexts();select(texts[0].firstChild,texts.at(-1).firstChild);
+  const outsider=document.createElement('span');outsider.textContent='视图外';document.body.append(outsider);
+  select(texts[0].firstChild,outsider.firstChild);
+  assert(!copy().handled,'错误接管视图外选区');
+  outsider.remove();
+  view.destroy();view.destroy();
+  assert(host.children.length===0,'销毁残留页面');
+  window.dispatchEvent(new Event('beforeprint'));
+  assert(host.children.length===0,'销毁后打印监听仍在重建页面');
+  output.textContent=`PASS: ${passed} virtual/text browser assertions`;
+}catch(error){output.textContent=`FAIL after ${passed}: ${error.stack}`;}
+</script>
+</html>

@@ -16,7 +16,8 @@
     "@uw/layout": "workspace:*",
     "@uw/render-dom": "workspace:*",
     "@uw/model": "workspace:*",
-    "@uw/ooxml": "workspace:*"
+    "@uw/ooxml": "workspace:*",
+    "@uw/view": "workspace:*"
   },
   "devDependencies": {
     "vite": "^8.2.1"

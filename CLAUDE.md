@@ -22,13 +22,32 @@ SECTIONPAGES 迭代到自洽）都做完了，TOC / SEQ 的求值还没写。
 （`make-fixture.ps1` 的 `kind: "table"`），真值也从此读得到**画出来的线**
 （`truth.json` 的 `pages[].rules[]`），见下。
 **Phase 6 的地基也起了**：`buildLayoutIndex()` 把「点 ↔ 模型位置」的两个方向做完了（见下），
-剩下的是屏幕坐标那一跳（`@uw/view` 还没建）。
+**屏幕坐标那一跳也已接通**（2026-09-12）：`@uw/view` 的 `createViewTransform()` /
+`createReadonlyView()` + `@uw/view/dom` 的 `mountView()`，支持 `locate` / `rectsOf` /
+`caretRect`；调试台缩放只改页面尺寸，保留文字节点、选区和索引。视口虚拟化与原生
+可选文本层也已完成：默认绘制可见页前后各两页，全文文字层常驻。装饰与 overlay 生命周期仍待实现。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、
 `@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 制表位 + **模型位置（`DocPosition`）** + **编号（解析 + 计数器 + 编号文字 + 接进级联）** + **表格（属性 + 级联 + 条件格式）** + **域（界桩配对 + 指令解析 + HYPERLINK）** + **页眉页脚部件** + **图片（外框 + blip 引用 + 裁剪 / 旋转 + 浮动锚点 + 字节表）**）、
 `@uw/fonts`（行高规则 + 脚本分桶 + 度量包 + 注册表 + `TextMeasurer`）、
 `@uw/layout`（item 流 + 断行 + 缩进 / 对齐 / 制表位 / 列表编号 + 行高与网格吸附 + **行内基线** +
 **表格列宽与格内几何 + 边框冲突解析** + **分页（含表格拆行）** + **域求值** + **页眉页脚** + **对象占位与浮动定位** + **布局索引（命中测试 / range → 矩形 / 光标）**）、
-`@uw/render-dom`（**元素树 → SVG / DOM**，见下）。
+`@uw/render-dom`（**元素树 → SVG / DOM**，见下）、`@uw/view`（屏幕坐标转换与只读视图）。
+
+**只读视图**（`packages/view`）：主入口只处理纯数据，DOM 挂载从 `@uw/view/dom` 导入。
+每次查询重新读取页面的 `getScreenCTM()`，不能缓存跨滚动的矩阵，也不能重复加 `scrollTop`。
+矩阵从 SVG 的 pt 输入换成布局的 twips 输入，保留 CSS 旋转与 viewBox 留白。
+纸外、页间空隙、被工具栏遮挡的点返回 `null`；`rectsOf` / `caretRect` 返回 CSS px 的
+纯数据 `{ x, y, width, height }`，不依赖全局 `DOMRect`。重排走 `update()` 重建索引，
+缩放走 `setZoom()` 保留文字层与已绘制子树。22 项单测覆盖坐标、文本层与页面窗口；
+启动 playground 后访问 `/tests/view.html`（22 项）和 `/tests/virtual-text.html`（29 项）
+运行真实浏览器回归。
+
+**虚拟化与原生选区**：每页常驻占位壳与透明文字 SVG，`IntersectionObserver` 只卸载复杂绘制层。
+几何查询取常驻 SVG 的矩阵，离屏页面仍有位置。绘制层设 `inert`，避免查找重复命中。
+一行一个 `<text>`、样式片段用 `<tspan>`，支持同一行跨样式查找；横向压缩用逐字 x 与
+`textLength` 保持坐标。文字层跳过编号、重复表头，保留计算域与图片替代说明。
+复制输出纯文本，视觉行 / 单元格 / 页之间换行，不还原语义段落或富文本。打印前补画全部页，
+打印后恢复窗口；完整打印分页仍待实现。`destroy()` 断开观察器、事件与 DOM。
 
 **渲染器**（`packages/render-dom`）是流水线的出口，**px 只在这一步出现**。
 一页一个 `<svg>`，**viewBox 的单位是 pt** —— 与 `fixtures/*.truth.json` 同一套坐标
@@ -46,7 +65,7 @@ SECTIONPAGES 迭代到自洽）都做完了，TOC / SEQ 的求值还没写。
 页眉页脚是与版心 `<g>` **平级**的另外两个 `<g>`（坐标相对纸左上角）—— 它们不在版心里，
 版心正是被它们挤出来的。浮动对象（印章 / 水印）同样与版心平级，**衬于文字下方的画在正文之前、
 浮于上方的画在最后** —— SVG 里的「层」就是画的先后。
-未画：run 级高亮（model 没解析）、可选文本层、增量更新。
+未画：run 级高亮（model 没解析）、增量更新。可选文本层已由 `@uw/view` 实现。
 画法里没有真值的常数（下划线 / 删除线的位置粗细、上下标升降量、前导符点距）
 关在 `packages/render-dom/src/uncalibrated.ts` ——
 **它们一个都不改坐标**，所以 L2/L3/L4 全绿也证明不了它们对。
@@ -54,7 +73,7 @@ SECTIONPAGES 迭代到自洽）都做完了，TOC / SEQ 的求值还没写。
 **布局索引**（`packages/layout/src/layout-index.ts`，Phase 6 的地基）：`buildLayoutIndex(doc)`
 把整份 `DocumentLayout` 摊平成一张「行表」，答四件事 —— `positionAt(点)` 命中测试、
 `rectsOf(range)` 装饰要画的矩形、`caretRect(位置)` 光标、`compare` 文档序。
-架构 §4 的 ①↔② 就是它；②↔③（px）归将来的 `@uw/view`，**它要知道缩放与滚动，那是每个视图各不相同的**。
+架构 §4 的 ①↔② 就是它；②↔③（px）归 `@uw/view`，**它要知道缩放与滚动，那是每个视图各不相同的**。
 它**在消费侧现建**（带方法的对象过不了结构化克隆），只吃 `DocumentLayout` 这一份纯数据。
 四处容易搞反：① **不是二分查找** —— 表格让同一个 y 上并排坐着好几行，行序与 y 序不一致，
 实现是「按页分桶线性扫，先比纵向距离再比横向」；② **`DocPosition` 是三个字段**
