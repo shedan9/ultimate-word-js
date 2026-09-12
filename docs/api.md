@@ -11,7 +11,7 @@
 
 ---
 
-## 1. 快速开始
+## 1. 快速开始 🟢
 
 ```ts
 import { UltimateWord } from 'ultimate-word';
@@ -21,6 +21,11 @@ const view = doc.mount('#container');
 ```
 
 两行。其余一切都是可选的。
+
+> 🟢 2026-09-13 起这两行是真的（`packages/ultimate-word`）。`apps/playground` 的调试台
+> 就只靠它们跑，`apps/playground/tests/facade.html` 是它的浏览器回归（15 项）。
+> 类型名带 `Uw` 前缀：`UwDocument` / `UwView` —— 裸的 `Document` / `View` 与 DOM 的
+> 全局类型撞名，在满是 `HTMLElement` 的调用方文件里十有八九会被当成 DOM 那个。
 
 ---
 
@@ -65,26 +70,26 @@ flowchart LR
 
 ---
 
-## 3. 加载 🟡
+## 3. 加载 🟢
 
 ```ts
-namespace UltimateWord {
-  function load(source: LoadSource, options?: LoadOptions): Promise<Document>;
-}
+UltimateWord.load(source: LoadSource, options?: LoadOptions): Promise<UwDocument>;
 
-type LoadSource = ArrayBuffer | Uint8Array | Blob | File | Response | string; // string = URL
+type LoadSource = ArrayBuffer | Uint8Array | Blob | Response | string; // string = URL；File 是 Blob 的子类
 
 interface LoadOptions {
-  fonts?: FontOptions;
-  /** 加载即排版（默认 true）。false 时首次 mount 或首次查询才排 */
-  layoutOnLoad?: boolean;
-  /** 布局跑在 Worker 里（默认 'auto'：文档 > 50 页时启用） */
-  worker?: boolean | 'auto';
-  /** 覆盖文档自带的页面设置，仅用于「按当前容器宽度重排」这类特殊场景 */
-  pageSetup?: Partial<PageSetup>;
+  /** 按文档覆盖字体注册表，默认用全局那份（`UltimateWord.fonts.registry`） */
+  fonts?: FontRegistry;
+  /** 只作用于取字节那一步（fetch / Blob 读取）；排版是同步的，中途停不下来 */
   signal?: AbortSignal;
 }
 ```
+
+> **已实现的与原方案的差别**（2026-09-13）：`layoutOnLoad` / `worker` / `pageSetup` 三个字段
+> **没有**。前两个是增量排版与 Worker 化（架构 §7 / §9）的开关，那两件事还没做，先摆一个
+> 不生效的选项等于骗人；`pageSetup` 要等「按容器宽度重排」有真实需求再定形状。
+> `fonts` 从形状待定的 `FontOptions` 收成了一个 `FontRegistry` —— 「按文档覆盖」就是换一份注册表，
+> 没有第二种含义。
 
 `load` 是唯一的异步入口（要解压、解析、可能要 fetch 字体）。
 **之后所有查询都是同步的**——布局结果已经在内存里，
@@ -92,16 +97,23 @@ interface LoadOptions {
 
 ---
 
-## 4. 字体 🟡
+## 4. 字体 🟢
 
 字体是这个库保真度的地基，所以它有一个独立的、全局的注册表。
 
 ```ts
-UltimateWord.fonts.register(family: string, data: ArrayBuffer): void;
+UltimateWord.fonts.register(family: string, data: ArrayBuffer | Uint8Array, postscriptName?: string): Promise<void>;
 UltimateWord.fonts.registerMetrics(pack: MetricsPack): void;
 UltimateWord.fonts.substitute(map: Record<string, string>): void;
-UltimateWord.fonts.status(family: string): 'file' | 'metrics' | 'fallback' | 'missing';
+UltimateWord.fonts.status(family: string | string[]): 'file' | 'metrics' | 'fallback' | 'missing';
+UltimateWord.fonts.registry: FontRegistry; // 底层注册表，按文档覆盖时拿它造一份新的
 ```
+
+> ⚠️ **`register()` 是异步的**（原来写的 `void`，2026-09-13 改）：解码字体要 fontkit，而门面的
+> 主 chunk 刻意不带它 —— `@uw/fonts` 把解码关在 `/decode` 子路径里正是为了让只带度量包的
+> 部署不必打包 fontkit，门面若静态 import 那条路就把这个好处整个吃掉了。动态 `import()`
+> 让打包器自然拆出一个 chunk，第一次调 `register` 才加载。`.ttc` 字体集要用
+> `postscriptName` 指定其中一款（simsun.ttc 里同时有 SimSun 与 NSimSun）。
 
 对应[三级降级策略](./architecture.md#53-度量的三级降级)：
 
@@ -122,9 +134,10 @@ UltimateWord.fonts.status('方正小标宋简体'); // → 'missing'
 但注册一份度量包就能修好）；**`missing` = 什么都没命中**，走等宽近似。
 
 > **随库那 17 款不需要调用方操心**：A/B/C/D 四类度量包已经入库
-> （`packages/fonts/packs`，88 KB），`@uw/fonts/node` 的 `loadBundledPacks()` 一行注册进
-> `FontRegistry`；门面包会在 `load()` 时替调用方做掉。上面的 `registerMetrics`
-> 是给**清单之外**的字体用的（比如 `仿宋_GB2312`）。
+> （`packages/fonts/packs`，88 KB），门面在**模块加载时**就注册进全局注册表
+> （走 `@uw/fonts/packs` 的 `bundledPacks()` —— JSON import，浏览器与 Node 同一条路；
+> `@uw/fonts/node` 的 `loadBundledPacks()` 靠 `readFileSync`，只剩离线工具在用）。
+> 上面的 `registerMetrics` 是给**清单之外**的字体用的（比如 `仿宋_GB2312`）。
 
 > **级别③ 现在是等宽近似，不是 `canvas.measureText`**：canvas 是 DOM API，
 > 而 `@uw/fonts` 在无 DOM 区（架构原则 1.2），调不到它。这个洞的三条出路见
@@ -140,35 +153,46 @@ UltimateWord.fonts.status('方正小标宋简体'); // → 'missing'
 
 ---
 
-## 5. 挂载与视图 🟡
+## 5. 挂载与视图 🟢
 
 ```ts
-doc.mount(target: string | HTMLElement, options?: ViewOptions): View;
+doc.mount(target: string | Element, options?: ViewOptions): UwView; // 先清空容器
 
 interface ViewOptions {
-  mode?: 'preview' | 'edit';           // 默认 'preview'
-  zoom?: number | 'fit-width' | 'fit-page';
-  pageGap?: number;                    // px
-  /** 额外渲染一层原生可选文本，让 Ctrl+F / 划词复制 / 屏幕阅读器可用 */
-  textLayer?: boolean;                 // preview 默认 true，edit 默认 false
-  renderer?: 'dom' | 'canvas';         // 默认 'dom'
-  /** 视口外多渲染几页（默认 2），调大更顺滑、更吃内存 */
+  zoom?: number | 'fit-width' | 'fit-page';   // 默认 1
+  pageGap?: number;                            // CSS px，默认 24
+  /** 额外渲染一层原生可选文本，让 Ctrl+F / 划词复制 / 屏幕阅读器可用（默认 true） */
+  textLayer?: boolean;
+  /** 只绘制可见页前后几页（默认 true）；视口外多绘制几页由 overscan 定（默认 2） */
+  virtualize?: boolean;
   overscan?: number;
+  classPrefix?: string;                        // 默认 'uw'
+  fontFamily?: (family: string) => string;     // Word 字体名 → CSS font-family
+  debug?: boolean;                             // 画版心框与行盒
 }
 ```
 
 ```ts
 view.setZoom(1.5);
-view.setZoom('fit-width');
-view.dispose();                       // 摘掉所有 DOM、解绑所有事件
+view.setZoom('fit-width');            // 按最宽的那一页算；容器变宽变窄时自动跟（ResizeObserver）
+view.zoom;                            // 当前生效的倍率，fit 模式下是算出来的那个数
+view.dispose();                       // 摘掉所有 DOM、解绑所有事件、停掉观察器
 ```
+
+> **已实现的与原方案的差别**（2026-09-13）：`mode` 与 `renderer` 两个字段**没有** ——
+> 现在只有预览态与 DOM 渲染器，摆一个只有一个取值的选项没有意义（Phase 7 / canvas 进来再加，
+> 加字段不破坏兼容）。多出来的 `virtualize` / `classPrefix` / `fontFamily` / `debug`
+> 是底层 `@uw/view/dom` 本来就认的，门面原样透出。
+> **fit 的分母是最宽 / 最高的那一页**（混合纸张的文档不会有哪一页出界），分子是容器的
+> **内容盒**（去掉 padding 与滚动条）再减一个页间距；容器还没排出尺寸时退回 1，等观察器补。
+> 视图**没有 `update()`**：重排是 Phase 7 的事，现在改构造选项就是 `dispose()` 再 `mount()`。
 
 > **为什么 `textLayer` 在预览态默认开、编辑态默认关**：预览态用户期待 Ctrl+F 能搜到字；
 > 编辑态有自己的选区系统，再叠一层原生可选文本会导致双重选区打架。
 
 ---
 
-## 6. 位置与范围 🟡
+## 6. 位置与范围 🟢
 
 ```ts
 interface DocPosition {
@@ -184,8 +208,8 @@ interface DocRange {
   /** 屏幕矩形要问 View 要，因为那是屏幕空间的事 */
 }
 
-doc.compare(a: DocPosition, b: DocPosition): -1 | 0 | 1;
-doc.rangeOf(node: NodeId): DocRange;
+doc.compare(a: DocPosition, b: DocPosition): -1 | 0 | 1;   // 🟢 不属于这份文档的位置抛错
+doc.rangeOf(node: NodeId | DocNode): DocRange | undefined; // 🟢 空段落 / 不存在的 id 答 undefined
 ```
 
 > ⚠️ **`DocRange` 是纯数据，原先写的 `text()` / `contains()` 两个方法没有了**（2026-09-12）：
@@ -213,7 +237,7 @@ doc.rangeOf(node: NodeId): DocRange;
 
 ---
 
-## 7. 查询与定位 🟡
+## 7. 查询与定位 🟢
 
 四个方法覆盖「我想找到文档里的某个东西」的全部场景：
 
@@ -239,7 +263,8 @@ view.rectsOf(range): ClientRect[]; // { x, y, width, height }，CSS px
 > 替代原方案的 `DOMRect`，让不依赖 DOM 的主入口也能提供相同接口。
 > `query` / `find` 已实现（2026-09-12），低层入口在 `@uw/model`：
 > `queryNodes(body, selector)` 与 `findText(resolvedBody, pattern, options)`；
-> `doc.xxx` 那层门面等 `ultimate-word` 包再包。四处要点：
+> `doc.find` / `doc.query` 的门面 2026-09-13 包上了 —— `doc.find` **自动带上**这份文档
+> 求值过的域（`fieldValues`），调用方不必知道有这回事。四处要点：
 > - **`findText` 吃级联完的树**（`LoadedDocument.resolved`），不是可编辑的那棵：
 >   「隐藏不隐藏」要级联完才知道（`w:vanish` 常写在字符样式里）。两棵树的节点 id 一样，
 >   结果照样指回可编辑的那棵
@@ -312,7 +337,7 @@ view.destroy(); // 可重复调用；销毁后查询返回空结果，更新操�
 
 ---
 
-## 8. 装饰与锚定 🟡
+## 8. 装饰与锚定 🟢（`UwView` 上原样透出）
 
 **这是本库相对 docx-preview 之类最主要的增量能力。**
 
@@ -433,7 +458,7 @@ view.on('viewport:change', ({ visiblePages, zoom }) => {});
 
 ---
 
-## 12. 诊断与错误 🟡
+## 12. 诊断与错误 🟢
 
 两类问题两种处理，[架构上就分开](./architecture.md#10-错误与诊断)：
 
@@ -592,8 +617,8 @@ main.on('viewport:change', ({ visiblePages }) => thumbs.scrollTo({ page: visible
 
 | API | 阶段 |
 |---|---|
-| `load` · `mount` · 只读渲染 | Phase 2–3 |
-| `query` · `find` · `locate` · `rectsOf` · `decorate` · `overlay` · `scrollTo` | Phase 6 |
+| `load` · `mount` · 只读渲染 | Phase 2–3 ✅（门面 2026-09-13） |
+| `query` · `find` · `locate` · `rectsOf` · `decorate` · `overlay` · `scrollTo` | Phase 6 ✅（门面 2026-09-13） |
 | `tx` · `undo` / `redo` · 选区 · IME | Phase 7 |
 | `toDocx` | Phase 8 |
 | `bindings` | Phase 5–6 |

@@ -289,7 +289,8 @@ A 类与 C 类字体在 Linux/Mac 上缺失。关键认识：**我们需要的�
 
 **已落地**（2026-08-17）：抽取工具 `packages/fonts/tools/build-packs.ts`
 （`pnpm --filter @uw/fonts run packs`，非 Windows 上以退出码 2 拒绝跑），
-产物 `packages/fonts/packs/*.json` **入库**，消费侧 `loadBundledPacks()` 完全跨平台。
+产物 `packages/fonts/packs/*.json` **入库**，消费侧 `loadBundledPacks()` 完全跨平台
+（浏览器侧 2026-09-13 起走 `@uw/fonts/packs` 的 `bundledPacks()`，JSON import，无 fs）。
 直接后果：`layout/src/fixture.test.ts` 从「只能测与度量无关的性质」升级成**逐行比真值**（L2）——
 真实公文 18 行里对上 8 行，剩下 10 行差的是同一件事（Word 常态压标点），见 `uncalibrated.ts`。
 
@@ -933,8 +934,22 @@ await view.toPNG(3);     // 第 3 页
     视觉行之间输出换行。图片替代说明留在辅助功能树，不混入复制文本
   - 调试台增加原生选区 / 按需绘制开关；`@uw/view` 共 22 项单测，
     `/tests/virtual-text.html` 提供 29 项浏览器断言。**Phase 6 DoD 仍未完成**
+- ~~`ultimate-word` 门面包~~ ✅（2026-09-13）`packages/ultimate-word`：api.md §1 那两行
+  （`UltimateWord.load()` → `doc.mount()`）从此是真的，调试台改成只走它。
+  **它不实现任何东西**，只把六个包接成 api.md 的形状 —— 所以判据是接线（Vitest 14 项 +
+  `/tests/facade.html` 15 项），不是真值。三处把文档写在实现之前的说法改对了（见 api.md）：
+  - `fonts.register()` 是**异步**的：解码要 fontkit，主 chunk 刻意不带它，走动态 `import()`
+  - `LoadOptions` 只有 `fonts` / `signal`，`ViewOptions` 没有 `mode` / `renderer` ——
+    对应的能力（增量排版 / Worker / 编辑态 / canvas）都还没有，摆一个不生效的选项等于骗人
+  - `rangeOf` 答 `DocRange | undefined`（空段落没有 range，这是 order.ts 早就定下的）
+  - 顺带补了 `@uw/fonts/packs`：随库 17 款度量包的**无 fs** 入口（JSON import attributes），
+    浏览器与 Node 同一条路；门面在模块加载时就把它们注册进全局注册表。列表是手写的，
+    `packs.test.ts` 对着 `packs/index.json` 校验
+  - `fit-width` / `fit-page` 按最宽 / 最高的那一页算、跟随容器（`ResizeObserver`）——
+    缩放永不重排，所以跟着容器走是 O(1) 的
 - 打印（`@media print` + 分页 CSS，或直接走 canvas → PDF）
 - **DoD**：能在文档任意段落右侧挂一个 React 批注气泡，滚动 / 缩放 / 重排后位置不飘
+  （overlay 已能做到，差 `@uw/react` 那层声明式包装）
 
 ### Phase 7 — 编辑态
 - 选区模型、光标渲染与闪烁、Shift/Ctrl 移动、双击选词（用 `Intl.Segmenter`）
@@ -1360,6 +1375,11 @@ CI 上无 Word，所以真值 PDF 与抽取结果**提交进仓库**（`fixtures
     一处估计落空：api.md 列的 `sdt[tag=…]` 选择器做不了 —— 内容控件在 parse-body 里
     是透明容器，`tag` / `alias` 根本没留下；要支持它得先改解析，那是数据绑定（§9）那一步的事
 
+18. ~~**`ultimate-word` 门面包**~~ ✅（2026-09-13）见 Phase 6 的条目。跨平台，不需要 Word。
+    做的过程中照出一件工具链上的事：随库度量包在浏览器里没有一条**库自己**的路可走
+    （`loadBundledPacks()` 靠 fs，playground 靠 Vite 专属的 `import.meta.glob`），
+    补了 `@uw/fonts/packs`。剩下的 Phase 6 是打印分页与 `@uw/react`
+
 第 6 步曾经优先于任何**布局**代码 —— 与第 4 步同理，没测准的东西不要拿来当地基。
 它做完之后的卡口是分页，分页现在也做完了（第 12f 步），于是**没有卡口了**：
 每一行都有页号与 y，横向与纵向都能与真值逐行比。
@@ -1382,7 +1402,8 @@ CI 上无 Word，所以真值 PDF 与抽取结果**提交进仓库**（`fixtures
    这一格现在空着；宽度这一维还没标定的只剩上下标字号与禁则集边界（第 13 步 ③）
 4. ~~**装饰与 overlay 生命周期** + **查找 / 查询 / 滚动**~~ ✅ 2026-09-12 做完了（第 17 步）——
    Phase 6 的交互 API 至此齐了（`decorate` / `overlay` / `find` / `query` / `scrollTo`），
-   剩下的是 `ultimate-word` 门面包把 `doc.xxx` 包起来，以及打印分页。这一格现在空着
+   ~~剩下的是 `ultimate-word` 门面包把 `doc.xxx` 包起来~~ ✅ 2026-09-13 做完了（第 18 步），
+   以及打印分页。这一格现在空着
 5. ~~**表格剩下的一组样本**~~ ✅ 拆行的四问 2026-08-27 做完了（第 12r 步），
    表格这一层（几何 / 隔行带 / 格线冲突 / 拆行）全部有真值了 —— 现在这一格空着。
    估过头的地方记一笔：一张表根本不够，最后用了七张（`spike-table-04`），

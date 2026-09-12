@@ -1,0 +1,7 @@
+{
+  "extends": "../../tsconfig.base.json",
+  // 门面是线外的最后一站：`mount()` 要 DOM 类型。`load` / `find` / `query` 本身不碰 DOM，
+  // 单测在纯 Node 里跑它们（node types 只为测试读 fixture）
+  "compilerOptions": { "types": ["node"], "lib": ["ES2023", "DOM"] },
+  "include": ["src/**/*.ts"]
+}

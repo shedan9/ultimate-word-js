@@ -210,7 +210,9 @@ flowchart BT
 | `@uw/layout` | 🟢 断行（禁则 / 挤压 / 悬挂，四条补救顺序与三个常数全部实测标定）· 缩进（含字符单位）· 对齐 · 制表位 · 列表编号 · 行高 + 网格吸附 + **行内基线** · 表格列宽与格内几何 + 边框冲突解析（**格线几何与相邻竞争都已实测标定**：横向不吃宽、纵向吃高；竞争先分类再比厚度，见 §5.6）· **分页**（`layoutDocument()`：页面几何 · 分节 · 孤行寡行 · keepNext / keepLines · 硬分页符 · 表格按行拆页 · 页码，见 §5.4）· **域求值**（`layoutDocumentWithFields()`：PAGE / NUMPAGES / SECTIONPAGES 迭代到自洽，见 §6）· **页眉页脚**（选哪一份 · 框的定位 · 反过来挤版心，三条几何规则实测标定，见 §5.4）· **对象**（内嵌图占宽占高，行盒四条规则与浮动图的参照框全部实测标定，见 §5.5；**带 `wp:anchor` 的图**一律不占文字流、按锚点算成纸坐标）· **表格拆行**（`table-split.ts`：一行放不下时从行间切开，`w:cantSplit` 与表头行除外；**四条规则全部实测标定**，见 §5.4）· **中西文自动间距**（**1/4 em，实测**，按接缝前面那个字符的字号算，见 §5.2）· **布局索引**（`layout-index.ts`：命中测试 · range → 矩形 · 光标 · 文档序比较，架构 §4 的 ①↔②）· ⏸ 方形 / 上下型环绕的**文字让开**未做（位置与大小是对的，文字不绕着它走）|
 | `@uw/render-dom` | 🟢 v1：一页一个 `<svg>`（viewBox 单位 **pt**）· 逐字 x 走 `<text x="…">` · 下划线 / 删除线 / 上下标 / 横向缩放 · 制表位前导符 · 表格底纹 + 格线（共享的线只画一次）· 页眉页脚（与版心平级的两个框）· 缩放只改 `<svg>` 尺寸不重排 · **图片**（`<image>` + 裁剪 `clipPath` + 旋转翻转；画不出来的画尺寸正确的占位框）· ⏸ 增量更新（可选文本层归 view） |
 | `@uw/view` | 🟢 屏幕坐标转换（页面仿射矩阵）· `locate` / `rectsOf` / `caretRect` · DOM 挂载 / 更新 / 销毁 · 缩放保留选区与布局索引 · 视口 ±2 页绘制 · 全文原生文字层 / 查找 / 纯文本复制 · **装饰与 overlay**（住在页壳上，滚动与 CSS 变换由浏览器继承，缩放 / 重排 / 壳尺寸变化才重算）· **`scrollTo`**（位置 / range 首行 / 页，走 `scrollIntoView`）；⏸ `below-text` 装饰、打印分页 |
-| `@uw/render-canvas` `@uw/editor` `@uw/serialize` `ultimate-word` `@uw/react` | ⚪ 未创建 |
+| `@uw/fonts/packs` | 🟢 随库 17 款度量包的**无 fs** 入口（JSON import attributes），浏览器与 Node 同一条路；`@uw/fonts/node` 的 `loadBundledPacks()` 只剩离线工具在用 |
+| `ultimate-word` | 🟢 门面（2026-09-13）：`UltimateWord.load()`（ArrayBuffer / Uint8Array / Blob / Response / URL）→ `UwDocument`（`pageCount` · `diagnostics` · `find` · `query` · `compare` · `rangeOf` · `mount`）→ `UwView`（`locate` / `rectsOf` / `caretRect` / `decorate` / `overlay` / `scrollTo` / `setZoom` 认 `fit-width` / `fit-page` 并跟随容器 / `dispose`）· `UltimateWord.fonts` 全局注册表（随库度量包模块加载时就注册；`register()` **异步**，fontkit 走动态 import 不进主 chunk）。**它不实现任何东西**，只把六个包接成 api.md 的形状；`layout` 暴露但不在稳定性承诺内 |
+| `@uw/render-canvas` `@uw/editor` `@uw/serialize` `@uw/react` | ⚪ 未创建 |
 
 ---
 

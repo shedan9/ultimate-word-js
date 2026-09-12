@@ -31,12 +31,17 @@ SECTIONPAGES 迭代到自洽）都做完了，TOC / SEQ 的求值还没写。
 可选文本层也已完成：默认绘制可见页前后各两页，全文文字层常驻。**Phase 6 的交互 API 至此齐了**
 （2026-09-12）：`decorate` / `overlay` 住在页壳上、`scrollTo` 走 `scrollIntoView`，
 `find` / `query` 在 `@uw/model`（`search.ts` / `query.ts`，模型侧的文档序在 `order.ts`），见下。
+**门面包 `ultimate-word` 也有了**（2026-09-13）：api.md §1 那两行（`UltimateWord.load()` →
+`doc.mount()`）从此是真的，调试台只走它；它**不实现任何东西**，只把六个包接成 api.md 的形状，
+判据是接线不是真值（Vitest 14 项 + `/tests/facade.html` 15 项）。随库度量包在浏览器里的路
+是 `@uw/fonts/packs`（JSON import，无 fs）。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、
 `@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 制表位 + **模型位置（`DocPosition`）** + **编号（解析 + 计数器 + 编号文字 + 接进级联）** + **表格（属性 + 级联 + 条件格式）** + **域（界桩配对 + 指令解析 + HYPERLINK）** + **页眉页脚部件** + **图片（外框 + blip 引用 + 裁剪 / 旋转 + 浮动锚点 + 字节表）** + **查找 / 选择器 / 模型侧文档序**）、
 `@uw/fonts`（行高规则 + 脚本分桶（**歧义字符 / 中性字符两条都实测**）+ 度量包 + 注册表 + `TextMeasurer`）、
 `@uw/layout`（item 流 + 断行 + 缩进 / 对齐 / 制表位 / 列表编号 + **中西文自动间距** + 行高与网格吸附 + **行内基线** +
 **表格列宽与格内几何 + 边框冲突解析** + **分页（含表格拆行）** + **域求值** + **页眉页脚** + **对象占位与浮动定位** + **布局索引（命中测试 / range → 矩形 / 光标）**）、
-`@uw/render-dom`（**元素树 → SVG / DOM**，见下）、`@uw/view`（屏幕坐标转换与只读视图 + 装饰 / overlay / `scrollTo`）。
+`@uw/render-dom`（**元素树 → SVG / DOM**，见下）、`@uw/view`（屏幕坐标转换与只读视图 + 装饰 / overlay / `scrollTo`）、
+`ultimate-word`（门面：`load` / `fonts` / `UwDocument` / `UwView`，见下）。
 
 **只读视图**（`packages/view`）：主入口只处理纯数据，DOM 挂载从 `@uw/view/dom` 导入。
 每次查询重新读取页面的 `getScreenCTM()`，不能缓存跨滚动的矩阵，也不能重复加 `scrollTop`。
@@ -46,6 +51,18 @@ SECTIONPAGES 迭代到自洽）都做完了，TOC / SEQ 的求值还没写。
 缩放走 `setZoom()` 保留文字层与已绘制子树。22 项单测覆盖坐标、文本层与页面窗口；
 启动 playground 后访问 `/tests/view.html`（22 项）和 `/tests/virtual-text.html`（29 项）
 运行真实浏览器回归。
+
+**门面**（`packages/ultimate-word`）四处容易搞反：① `fonts.register()` 是**异步**的 —— 解码要 fontkit，
+主 chunk 刻意不带它，走动态 `import('@uw/fonts/decode')`；② 随库度量包在**模块加载时**就注册进
+全局注册表，走 `@uw/fonts/packs`（JSON import attributes，列表手写、`packs.test.ts` 对着
+`index.json` 校验），不是 `@uw/fonts/node`（`readFileSync`，浏览器没有）；③ `doc.find` **自动带上**
+求值过的域（`fieldValues`），`doc.compare` 对不属于这份文档的位置**抛错**，`doc.rangeOf` 对空段落答
+undefined；④ `UwView` 没有 `update()`（重排是 Phase 7 的事），改构造选项就是 `dispose()` 再
+`mount()`；`fit-width` / `fit-page` 按**最宽 / 最高的那一页**与容器**内容盒**算、`ResizeObserver`
+跟随容器（观察的是容器不是 root —— root 的尺寸是页面撑出来的，观察它会自己触发自己）。
+`doc.layout` 暴露但**不在稳定性承诺内**（api.md §16），给调试台与保真度工具用。
+`ViewOptions` 没有 `mode` / `renderer`、`LoadOptions` 没有 `worker` / `layoutOnLoad` ——
+对应的能力还没有，不摆不生效的选项。
 
 **查找 / 查询 / 滚动**（`packages/model/src/search.ts` · `query.ts` · `order.ts`，`packages/view/src/scroll.ts`）
 四处容易搞反：① `findText` **吃级联完的树**（`LoadedDocument.resolved`）—— 「隐藏不隐藏」要级联完才知道，
@@ -391,7 +408,8 @@ L2 剩下那 2 行（真值第 10 / 11 行）是**唯一一个解释不了的反
 布局里出现别处的魔法数字视为 bug，散落的数字会被后人当成实测结论。
 
 `@uw/fonts` 的用法：`FontRegistry` 收字体（`fontkitSource` 一级 / `metricsPackSource` 二级，
-随库那 17 款走 `@uw/fonts/node` 的 `loadBundledPacks()`；
+随库那 17 款走 `@uw/fonts/packs` 的 `bundledPacks()`（无 fs，浏览器与 Node 同一条路）
+或 `@uw/fonts/node` 的 `loadBundledPacks()`（`readFileSync`，只给离线工具）；
 字节走 `@uw/fonts/decode` 的 `fontSourceFromBytes()`，文件走 `@uw/fonts/node` 的 `fileSource()`
 —— **主入口刻意不依赖 fontkit**，只带度量包的部署不该被迫打包它），
 `createTextMeasurer(registry, { candidates, diagnostics })` 产出给 layout 注入的 `TextMeasurer`。

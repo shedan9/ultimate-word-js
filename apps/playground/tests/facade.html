@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>ultimate-word 门面浏览器回归</title>
+<style>
+body { margin: 0; font: 14px/1.5 system-ui; }
+#result { position:fixed;top:0;left:0;z-index:20;background:white; }
+#host { margin:60px 40px;width:700px;height:500px;overflow:auto;padding:10px;box-sizing:border-box; }
+#second { margin:0 40px;width:300px;height:200px;overflow:auto; }
+</style>
+<pre id="result">正在验证…</pre><div id="host"></div><div id="second"></div>
+<script type="module">
+// 真实公文走完整条链：这里验的是门面的**接线**（fit 跟容器、dispose 摘干净、
+// find → decorate → rectsOf 通到屏幕），字摆在哪由 Vitest 里的真值断言负责
+import { UltimateWord } from 'ultimate-word';
+import fixtureUrl from '../../fidelity/fixtures/gongwen-01.docx?url';
+
+const host = document.querySelector('#host');
+const second = document.querySelector('#second');
+const result = document.querySelector('#result');
+let passed = 0;
+const assert = (condition, label) => { if (!condition) throw new Error(label); passed++; result.textContent = `进行中 ${passed}：${label}`; };
+const near = (a, b, tol = 1) => Math.abs(a - b) < tol;
+const frame = async () => { if (document.hidden) return; for (let i = 0; i < 5; i++) await new Promise(requestAnimationFrame); };
+// ResizeObserver 的回调是异步的，后台标签页里 rAF 不跑，只能轮询等条件
+const until = async (fn, ms = 3000) => { const t0 = performance.now(); while (!fn()) { if (performance.now() - t0 > ms) return false; await new Promise((r) => setTimeout(r, 50)); } return true; };
+try {
+  // ① 两行：URL 来源 + 选择器目标
+  const doc = await UltimateWord.load(fixtureUrl);
+  assert(doc.pageCount >= 1, `load(URL) 排出 ${doc.pageCount} 页`);
+  const view = doc.mount('#host');
+  await frame();
+  const shell = () => view.root.querySelector('[data-page="0"]');
+  assert(host.firstElementChild === view.root && shell() !== null, 'mount 把根元素挂进容器');
+  assert(view.zoom === 1, '默认 zoom = 1');
+  // ② fit-width：页壳宽 = 容器内容盒宽 − 页间距（padding 与滚动条都要去掉）
+  view.setZoom('fit-width');
+  await frame();
+  const inner = () => host.clientWidth - 20; // padding 10 × 2
+  assert(near(shell().getBoundingClientRect().width, inner() - 24, 1.5), 'fit-width 让页宽贴住容器内容盒');
+  // ③ 容器变宽，fit 跟着走（ResizeObserver）
+  host.style.width = '900px';
+  // ResizeObserver 只在渲染流水线里派发，后台标签页（document.hidden）永远等不到 —— 那种情况下跳过这一条
+  if (!document.hidden) assert(await until(() => near(shell().getBoundingClientRect().width, inner() - 24, 1.5)), '容器变宽后 fit-width 自动重算');
+  // ④ 切回数字倍率后容器再变不再跟
+  view.setZoom(1);
+  host.style.width = '700px';
+  await until(() => host.clientWidth < 750); await frame();
+  assert(view.zoom === 1 && near(shell().getBoundingClientRect().width, shell().offsetWidth, 0.5), '数字倍率不再跟随容器');
+  // ⑤ fit-page：整页装得下
+  view.setZoom('fit-page');
+  await frame();
+  const box = shell().getBoundingClientRect();
+  assert(box.width <= host.clientWidth && box.height <= host.clientHeight, 'fit-page 整页装进容器');
+  view.setZoom(1);
+  await frame();
+  // ⑥ find → decorate → rectsOf：矩形落在第一页壳里
+  const hits = doc.find('通知');
+  assert(hits.length > 0, `find 命中 ${hits.length} 处`);
+  const mark = view.decorate(hits[0], { className: 'hit' });
+  const rects = view.rectsOf(hits[0]);
+  const page = shell().getBoundingClientRect();
+  assert(rects.length > 0 && rects[0].x >= page.x && rects[0].x + rects[0].width <= page.right + 0.5, 'rectsOf 的矩形落在页壳里');
+  assert(view.scrollTo(hits[0], { align: 'center' }) === true, 'scrollTo 命中');
+  await frame();
+  const pos = view.locate({ clientX: rects[0].x + 2, clientY: rects[0].y + rects[0].height / 2 });
+  assert(pos !== null && doc.compare(hits[0].start, pos) <= 0 && doc.compare(pos, hits[0].end) <= 0, 'locate 反查回命中的 range 之内');
+  mark.dispose();
+  // ⑦ 同一份文档挂第二个视图，互不干扰
+  const thumbs = doc.mount(second, { zoom: 0.2, textLayer: false });
+  await frame();
+  assert(second.firstElementChild === thumbs.root && view.root.isConnected, '第二个视图不影响第一个');
+  thumbs.dispose();
+  assert(second.childElementCount === 0, 'dispose 把第二个视图摘干净');
+  // ⑧ dispose 后容器空、再 setZoom 抛
+  view.dispose();
+  assert(host.childElementCount === 0, 'dispose 后容器为空');
+  let rejected = false; try { view.setZoom(1); } catch { rejected = true; }
+  assert(rejected, '销毁后 setZoom 抛错');
+  view.dispose();
+  // ⑨ 结构性错误抛 UwError
+  let code = '';
+  try { await UltimateWord.load(new Uint8Array([1, 2, 3])); } catch (e) { code = e.code ?? ''; }
+  assert(code === 'NOT_A_ZIP', '不是 zip 抛 NOT_A_ZIP');
+  result.textContent = `PASS: ${passed} browser assertions`;
+} catch (error) {
+  result.textContent = `FAIL after ${passed}: ${error.message}`;
+  console.error(error);
+}
+</script>
+</html>

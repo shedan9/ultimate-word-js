@@ -74,6 +74,9 @@ importers:
       '@uw/view':
         specifier: workspace:*
         version: link:../../packages/view
+      ultimate-word:
+        specifier: workspace:*
+        version: link:../../packages/ultimate-word
     devDependencies:
       vite:
         specifier: ^8.2.1
@@ -170,6 +173,34 @@ importers:
       fflate:
         specifier: ^0.8.3
         version: 0.8.3
+      tsdown:
+        specifier: ^0.22.14
+        version: 0.22.14(typescript@7.0.2)
+
+  packages/ultimate-word:
+    dependencies:
+      '@uw/core':
+        specifier: workspace:*
+        version: link:../core
+      '@uw/fonts':
+        specifier: workspace:*
+        version: link:../fonts
+      '@uw/layout':
+        specifier: workspace:*
+        version: link:../layout
+      '@uw/model':
+        specifier: workspace:*
+        version: link:../model
+      '@uw/ooxml':
+        specifier: workspace:*
+        version: link:../ooxml
+      '@uw/render-dom':
+        specifier: workspace:*
+        version: link:../render-dom
+      '@uw/view':
+        specifier: workspace:*
+        version: link:../view
+    devDependencies:
       tsdown:
         specifier: ^0.22.14
         version: 0.22.14(typescript@7.0.2)

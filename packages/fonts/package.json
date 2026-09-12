@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./decode": "./src/decode.ts",
-    "./node": "./src/load-node.ts"
+    "./node": "./src/load-node.ts",
+    "./packs": "./src/packs.ts"
   },
   "scripts": {
     "build": "tsdown",

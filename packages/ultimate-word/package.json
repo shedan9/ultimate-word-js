@@ -1,0 +1,27 @@
+{
+  "name": "ultimate-word",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "门面包：load / mount / find / query / 字体注册表，把 @uw/* 收成 api.md 的形状",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@uw/core": "workspace:*",
+    "@uw/fonts": "workspace:*",
+    "@uw/layout": "workspace:*",
+    "@uw/model": "workspace:*",
+    "@uw/ooxml": "workspace:*",
+    "@uw/render-dom": "workspace:*",
+    "@uw/view": "workspace:*"
+  },
+  "devDependencies": {
+    "tsdown": "^0.22.14"
+  }
+}

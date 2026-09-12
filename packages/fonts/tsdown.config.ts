@@ -3,7 +3,7 @@ import { defineConfig } from 'tsdown';
 export default defineConfig({
   // decode 与 load-node 各自成入口：主入口不依赖 fontkit，
   // 只带度量包的部署不必把它打进包里
-  entry: ['src/index.ts', 'src/decode.ts', 'src/load-node.ts'],
+  entry: ['src/index.ts', 'src/decode.ts', 'src/load-node.ts', 'src/packs.ts'],
   format: ['esm'],
   dts: true,
   clean: true,

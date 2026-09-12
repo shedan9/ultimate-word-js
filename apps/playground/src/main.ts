@@ -1,40 +1,20 @@
 /**
  * 调试台：把一份 docx 拖进来，看引擎把它画成什么样。
  *
- * 整条链全在浏览器里跑，一个后端调用都没有：
- * `OpcPackage.open` → `loadDocument` → `layoutDocumentWithFields` → `mountView`。
+ * 整条链全在浏览器里跑，一个后端调用都没有 —— 而且从 2026-09-13 起它**只认门面**：
+ * `UltimateWord.load(bytes)` → `doc.mount(stage)`，与 api.md §1 那两行一字不差。
+ * 它原来是把 `OpcPackage.open` → `loadDocument` → `layoutDocumentWithFields` → `mountView`
+ * 手接起来的；那条链现在住在 `packages/ultimate-word/src/load.ts` 里，调试台再自己接一遍
+ * 只会让门面漏了什么都照不出来。
  *
- * 字体度量走随库分发的**度量包**（`packages/fonts/packs/*.json`），不是浏览器的
- * `measureText` —— 所以本机装没装仿宋、黑体**不影响排版**，只影响字形好不好看。
+ * 字体度量走随库分发的**度量包**（`@uw/fonts/packs`，门面在模块加载时就注册好了），
+ * 不是浏览器的 `measureText` —— 所以本机装没装仿宋、黑体**不影响排版**，只影响字形好不好看。
  * 这正是自研布局引擎买到的东西，也是这个调试台最值得盯着看的一点：
  * 换一台没有中文字体的机器打开，断行点与基线一个都不会动。
- *
- * `import.meta.glob` 是 Vite 专属语法，只出现在这个 app 里 —— `@uw/fonts` 的主入口
- * 刻意不依赖任何打包器（也不依赖 fontkit），度量包在浏览器侧怎么送进去是**调用方**
- * 的事。真产品里这一步多半是 `fetch` 一个合并后的包，不是 17 个 JSON。
  */
-import { createDiagnosticSink, twipsToPt } from '@uw/core';
-import type { MetricsPack } from '@uw/fonts';
-import { createTextMeasurer, FontRegistry } from '@uw/fonts';
-import { layoutDocumentWithFields } from '@uw/layout';
-import type { DocRange, LoadedDocument } from '@uw/model';
-import { findText, fontNameCandidates, loadDocument } from '@uw/model';
-import { OpcPackage } from '@uw/ooxml';
-import { imageHrefResolver } from '@uw/render-dom';
-import type { DecorationHandle, DomView } from '@uw/view/dom';
-import { mountView } from '@uw/view/dom';
-
-const packs = import.meta.glob<MetricsPack>('../../../packages/fonts/packs/*.json', {
-  eager: true,
-  import: 'default',
-});
-
-/** 注册表建一次就够，度量包与文档无关 */
-const registry = new FontRegistry();
-for (const [file, pack] of Object.entries(packs)) {
-  if (file.endsWith('index.json')) continue;
-  registry.registerMetrics(pack);
-}
+import { twipsToPt } from '@uw/core';
+import type { DecorationHandle, DocRange, UwDocument, UwView } from 'ultimate-word';
+import { UltimateWord } from 'ultimate-word';
 
 const app = document.querySelector<HTMLElement>('#app');
 if (app === null) throw new Error('#app 不在页面上');
@@ -43,7 +23,7 @@ app.innerHTML = `
   <header>
     <h1>ultimate-word 调试台</h1>
     <label class="file">选择 docx<input type="file" accept=".docx" hidden></label>
-    <label>缩放 <input type="range" min="50" max="200" step="10" value="100"></label>
+    <label>缩放 <input type="range" min="50" max="300" step="10" value="100"><button type="button" class="fit">适应宽度</button></label>
     <label><input type="checkbox" class="debug"> 画版心与行盒</label>
     <label><input type="checkbox" class="text-layer" checked> 原生选区</label>
     <label><input type="checkbox" class="virtualize" checked> 按需绘制</label>
@@ -56,6 +36,7 @@ app.innerHTML = `
 const stage = app.querySelector<HTMLElement>('.stage') as HTMLElement;
 const status = app.querySelector<HTMLElement>('.status') as HTMLElement;
 const zoomInput = app.querySelector<HTMLInputElement>('input[type=range]') as HTMLInputElement;
+const fitButton = app.querySelector<HTMLButtonElement>('.fit') as HTMLButtonElement;
 const debugInput = app.querySelector<HTMLInputElement>('.debug') as HTMLInputElement;
 const textLayerInput = app.querySelector<HTMLInputElement>('.text-layer') as HTMLInputElement;
 const virtualizeInput = app.querySelector<HTMLInputElement>('.virtualize') as HTMLInputElement;
@@ -63,33 +44,28 @@ const fileInput = app.querySelector<HTMLInputElement>('input[type=file]') as HTM
 const findInput = app.querySelector<HTMLInputElement>('input[type=search]') as HTMLInputElement;
 const hitsLabel = app.querySelector<HTMLElement>('.hits') as HTMLElement;
 
-/** 当前文档的布局结果。缩放只改尺寸，调试开关重画；两者都不重排 —— 架构 §4.1 */
-let current: ReturnType<typeof layoutDocumentWithFields>['layout'] | undefined;
-/** 当前文档的图片解析器（id → data URI）。与布局分开存：换缩放不该重新编码一遍 base64 */
-let images: ((id: string) => string | undefined) | undefined;
-let view: DomView | undefined;
-/** 查找要回模型（`findText` 吃级联完的树），布局只回答「画在哪」 */
-let loaded: LoadedDocument | undefined;
-let fieldValues: ReadonlyMap<string, string> | undefined;
+let doc: UwDocument | undefined;
+let view: UwView | undefined;
 
-function draw(): void {
-  if (current === undefined) return;
-  const options = {
+/**
+ * 三个开关（调试框 / 文字层 / 虚拟化）改的是视图的**构造**选项，门面没有 `update()`
+ * （重排是 Phase 7 的事），所以是摘掉再挂一个 —— 缩放不走这条，它只改尺寸（架构 §4.1）。
+ */
+function remount(): void {
+  if (doc === undefined) return;
+  view?.dispose();
+  view = doc.mount(stage, {
     zoom: Number(zoomInput.value) / 100,
     debug: debugInput.checked,
     textLayer: textLayerInput.checked,
     virtualize: virtualizeInput.checked,
-    ...(images === undefined ? {} : { imageHref: images }),
-  };
-  if (view === undefined) view = mountView(stage, current, options);
-  else view.update(current, options);
+  });
   search.rerun();
 }
 
 /**
- * 查找 = `findText`（模型）→ `decorate`（视图）→ `scrollTo`（视图）三步，api.md §7 / §8 的用法。
- * 装饰在重排后自己跟着走，所以 `update()` 之后只需按同一串字重搜一遍换掉过期的 range，
- * 不必重建 DOM。
+ * 查找 = `doc.find`（模型）→ `view.decorate`（视图）→ `view.scrollTo`（视图）三步，
+ * api.md §15 的第一条配方。装饰在缩放后自己跟着走，重挂视图后按同一串字重搜一遍。
  */
 const search = (() => {
   let ranges: DocRange[] = [];
@@ -104,11 +80,8 @@ const search = (() => {
   };
   const run = (query: string) => {
     clear();
-    if (loaded === undefined || view === undefined || query.length === 0) return;
-    ranges = findText(loaded.resolved, query, {
-      limit: 500,
-      ...(fieldValues === undefined ? {} : { fieldValues }),
-    });
+    if (doc === undefined || view === undefined || query.length === 0) return;
+    ranges = doc.find(query, { limit: 500 });
     marks = ranges.map((r) => view?.decorate(r, { className: 'hit' }) as DecorationHandle);
     hitsLabel.textContent = ranges.length === 0 ? '无' : `${ranges.length} 处`;
   };
@@ -129,43 +102,24 @@ const search = (() => {
   };
 })();
 
-function open(bytes: Uint8Array, name: string): void {
-  const t0 = performance.now();
-  const sink = createDiagnosticSink();
-  const doc = loadDocument(OpcPackage.open(bytes), sink);
-  loaded = doc;
-  images = imageHrefResolver(doc.images);
-  const measurer = createTextMeasurer(registry, {
-    candidates: (family) => fontNameCandidates(doc.fonts, family),
-    diagnostics: sink,
-  });
-  const result = layoutDocumentWithFields(doc.resolved, doc.fields, {
-    measurer,
-    settings: doc.cascade.settings,
-    headerFooters: doc.headerFooters,
-    diagnostics: sink,
-  });
-  current = result.layout;
-  fieldValues = result.values;
-  findInput.disabled = false;
-  const ms = performance.now() - t0;
-
-  const first = current.pages[0]?.geometry;
-  const size =
-    first === undefined
-      ? ''
-      : ` · ${twipsToPt(first.width).toFixed(0)}×${twipsToPt(first.height).toFixed(0)}pt`;
-  const diags = sink.list();
-  status.textContent =
-    `${name} · ${current.pages.length} 页${size} · 解析 + 排版 ${ms.toFixed(1)}ms` +
-    (diags.length === 0 ? ' · 无诊断' : ` · ${diags.length} 条诊断：${diags[0]?.message ?? ''}`);
-  draw();
-}
-
 async function openFile(file: File): Promise<void> {
   status.textContent = `正在读 ${file.name}…`;
   try {
-    open(new Uint8Array(await file.arrayBuffer()), file.name);
+    const t0 = performance.now();
+    doc = await UltimateWord.load(file);
+    const ms = performance.now() - t0;
+    findInput.disabled = false;
+
+    const first = doc.layout.pages[0]?.geometry;
+    const size =
+      first === undefined
+        ? ''
+        : ` · ${twipsToPt(first.width).toFixed(0)}×${twipsToPt(first.height).toFixed(0)}pt`;
+    const diags = doc.diagnostics;
+    status.textContent =
+      `${file.name} · ${doc.pageCount} 页${size} · 解析 + 排版 ${ms.toFixed(1)}ms` +
+      (diags.length === 0 ? ' · 无诊断' : ` · ${diags.length} 条诊断：${diags[0]?.message ?? ''}`);
+    remount();
   } catch (err) {
     // 结构性错误（不是 zip、缺 document.xml）会抛，内容问题只记诊断 —— 原则 1.5
     status.textContent = `打不开 ${file.name}：${err instanceof Error ? err.message : String(err)}`;
@@ -177,9 +131,14 @@ fileInput.addEventListener('change', () => {
   if (file !== undefined) void openFile(file);
 });
 zoomInput.addEventListener('input', () => view?.setZoom(Number(zoomInput.value) / 100));
-debugInput.addEventListener('change', draw);
-textLayerInput.addEventListener('change', draw);
-virtualizeInput.addEventListener('change', draw);
+fitButton.addEventListener('click', () => {
+  if (view === undefined) return;
+  view.setZoom('fit-width');
+  zoomInput.value = String(Math.round(view.zoom * 100));
+});
+debugInput.addEventListener('change', remount);
+textLayerInput.addEventListener('change', remount);
+virtualizeInput.addEventListener('change', remount);
 findInput.addEventListener('input', search.rerun);
 findInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
