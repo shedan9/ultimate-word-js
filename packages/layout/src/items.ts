@@ -9,8 +9,8 @@
  * `splitFontRuns` 来，宽度从注入的 `TextMeasurer` 来。
  */
 import type { Twips } from '@uw/core';
-import type { ScriptKind, TextMeasurer } from '@uw/fonts';
-import { bucketFont, neutralTakesEastAsia, splitFontRuns } from '@uw/fonts';
+import type { AmbiguousRule, NeutralRule, ScriptKind, TextMeasurer } from '@uw/fonts';
+import { bucketFont, isEastAsianCodePoint, neutralTakesEastAsia, splitFontRuns } from '@uw/fonts';
 import type { DrawingAnchor, NodeId, ResolvedParagraph, ResolvedRun, ResolvedRunProps } from '@uw/model';
 import type { KinsokuSets } from './break-class.ts';
 import {
@@ -21,7 +21,85 @@ import {
   punctPairCompressible,
 } from './break-class.ts';
 import type { CharItem, FragmentStyle, LayoutItem, ObjectItem } from './types.ts';
-import { AUTO_SPACE_EM, em, SMALL_CAPS_SCALE, VERT_ALIGN_SCALE } from './uncalibrated.ts';
+import { em, SMALL_CAPS_SCALE, VERT_ALIGN_SCALE } from './uncalibrated.ts';
+
+/**
+ * 宽度那一维的四条规则 —— 与 `ObjectRules` / `ScriptRules` 同理，留成接缝只为了让
+ * `apps/fidelity` 的 `spike:width` 把 144 种组合各跑一遍，证明实现的这一组是唯一能复现 Word 的。
+ */
+export interface WidthRules {
+  /** 歧义字符（EastAsianWidth = A）归哪个桶，见 `@uw/fonts` 的 `AmbiguousRule` */
+  ambiguous: AmbiguousRule;
+  /** 空格这类中性字符跟不跟东亚邻居走，见 `@uw/fonts` 的 `NeutralRule` */
+  neutral: NeutralRule;
+  /** 中西文自动间距的宽度，单位 em */
+  autoSpaceEm: number;
+  /**
+   * 那个 em 按**谁的字号**算：
+   * - `prev`：接缝**前面**那个字符的字号（实测）
+   * - `eastAsia`：东亚那一侧的字号（**旧实现**）
+   */
+  autoSpaceSize: 'prev' | 'eastAsia';
+  /**
+   * 「东亚那一侧」算到哪一步为止：
+   * - `eastAsianCp`：必须是**无条件东亚**的码点（EastAsianWidth = W/F，实测）
+   * - `bucket`：落进 eastAsia 桶就算（**旧实现**，于是靠 hint 进桶的 `§` 也会被加间距）
+   */
+  autoSpaceScope: 'eastAsianCp' | 'bucket';
+}
+
+/**
+ * 宽度规则的实测值。样本 `spike-width-01`（`pnpm --filter @uw/fidelity spike:width`）：
+ * 3 页 31 段，宋体 + Times New Roman 两款字体、36pt、不开网格，
+ * **144 种组合逐行跑，实现的这一组唯一满分**。
+ *
+ * 读数不靠反推：真值的 `TruthItem.font` 直接说出 Word 用哪款字体画了这个字
+ * （字体一换，PDF 里就换一次 `Tf`、起一个新片段）。唯一读不得的是**空格** ——
+ * Word 画它时不换 Tf，见 `@uw/fonts` 的 `neutralTakesEastAsia`。
+ *
+ * ① **`ambiguous: 'hint'`** —— 歧义字符跟着 `w:hint`，与邻居无关：
+ *
+ *    | 段 | 内容 | hint | Word 用谁画 `§ ° ± × ÷ ·` |
+ *    |---|---|---|---|
+ *    | Ea1 / Ea2 / Ea3 | `中§中°中±中` | eastAsia | 宋体（各 36.00pt = 1 em） |
+ *    | Ea4 / Ea5 | `B§B°B±B` | eastAsia | 宋体（邻居是拉丁字，照样宋体） |
+ *    | De1 / De2 / De3 | `中§中°中±中` | default | Times（18.00 / 14.40 / 19.76pt） |
+ *    | De4 / De5 | `B§B°B±B` | default | Times（整段一个片段） |
+ *
+ *    Ea4 与 De4 内容一模一样、只有 hint 不同，结果相反 —— 「跟邻居走」这条说法
+ *    在这两段上就被打掉了。**`w:hint` 只能改 XML 写进去**（Word 的对象模型里没有
+ *    这个属性），见 `apps/fidelity` 的 `patch-docx.ts`。
+ *
+ * ② **`neutral: 'either'`** —— 空格随邻居，**与 hint 无关**（旧实现要求 hint=eastAsia，
+ *    是猜的）：hint=default 的 De6（`中 中`）/ De7（`中 B`）里空格照样 18.03pt = 0.5 em。
+ *    `/` 与 `-`（EaA / EaC / DeA / DeC）两种 hint 下都是 Times 的 10.01 / 11.99pt，
+ *    也就是**只有空格**这么走。
+ *
+ * ③ **`autoSpaceEm: 0.25`** —— 中西文自动间距是 **1/4 em，不是 1/8**。
+ *    开发计划 §2.2 记的 1/8 从来没有过真值（`gongwen-01` 的中西文之间本来就打了空格，
+ *    量不到这个数）。As1（`中B中`）与 As2（`中8中`）36pt，两侧缝隙实测 9.03 / 8.99pt。
+ *    差的这 4.5pt 是**每一个中西文边界**都差，混排行的断行点一路错下去。
+ *    两个开关照旧分家：As3 关 `w:autoSpaceDE` → 字母那一侧缝隙归零（0.03pt），
+ *    As4 关 `w:autoSpaceDN` → 数字那一侧归零，交叉的 As5 / As6 则原样留着 9.03pt。
+ *
+ * ④ **`autoSpaceSize: 'prev'`** —— 那 1/4 em 按**接缝前面**那个字符的字号算，
+ *    不是东亚那一侧的。Sz1（`中` 36pt + `E` 12pt + `中` 36pt）实测左缝 9.03pt、
+ *    右缝 2.99pt；Sz2 把字号反过来，实测左缝 3.00pt、右缝 9.05pt ——
+ *    两段互为镜像，「按东亚侧算」「按较大者算」都给不出这对数。
+ *
+ * ⑤ **`autoSpaceScope: 'eastAsianCp'`** —— 靠 hint 才进东亚桶的歧义字符**不算东亚侧**：
+ *    Ea4 的 `B` 与宋体画的 `§` 之间实测只差 0.14pt，也就是一点没加。
+ *    按「落进 eastAsia 桶就算」写，这一段每个接缝会平白多出 9pt。
+ *    全角标点旁边不加那一条（Pn1 的 `B，B` 实测 0.02pt）是另一条早就实测过的规则，
+ *    由 `isCompressiblePunct` 拦着，两者叠在一起才是完整的例外表。
+ */
+export const WIDTH_RULES: WidthRules = {
+  ambiguous: 'hint',
+  neutral: 'either',
+  autoSpaceEm: 0.25,
+  autoSpaceSize: 'prev',
+  autoSpaceScope: 'eastAsianCp',
+};
 
 export interface BuildItemsOptions {
   measurer: TextMeasurer;
@@ -46,6 +124,8 @@ export interface BuildItemsOptions {
    * 同样可结构化克隆（原则 1.1），Worker 化时跟着一起过去就行。
    */
   fieldValues?: ReadonlyMap<NodeId, string>;
+  /** 宽度规则。**标定用的接缝**，正常调用不要传，见 `WIDTH_RULES` */
+  widthRules?: WidthRules;
 }
 
 /**
@@ -64,7 +144,7 @@ export function buildItems(p: ResolvedParagraph, opts: BuildItemsOptions): Layou
     appendRun(out, run, opts, spaces);
   }
   applySpaceFont(out, spaces, opts);
-  applyAutoSpace(out, p.props.autoSpaceDE, p.props.autoSpaceDN);
+  applyAutoSpace(out, p.props.autoSpaceDE, p.props.autoSpaceDN, opts.widthRules ?? WIDTH_RULES);
   applyPunctPairs(out, opts.compressPunctuation !== false);
   return out;
 }
@@ -257,7 +337,7 @@ function appendText(
   const smallCaps = props.smallCaps && !props.caps;
   // 先切成「同字体 + 同脚本」的段，再逐段批量量宽 —— 度量器的热路径是数组进数组出，
   // 逐字调用会把两级缓存的收益吃掉一大半
-  for (const fr of splitFontRuns(text, props.fonts)) {
+  for (const fr of splitFontRuns(text, props.fonts, (opts.widthRules ?? WIDTH_RULES).ambiguous)) {
     const slice = text.slice(fr.start, fr.end);
     const cps: number[] = [];
     const offsets: number[] = [];
@@ -421,7 +501,11 @@ function transformCase(text: string, props: ResolvedRunProps): string {
  * 「没有源文本却要占位」的片段需要单独问一次，正文走 `splitFontRuns` 批量分。
  */
 function fontFor(props: ResolvedRunProps, cp: number, opts: BuildItemsOptions): string {
-  const runs = splitFontRuns(String.fromCodePoint(cp), props.fonts);
+  const runs = splitFontRuns(
+    String.fromCodePoint(cp),
+    props.fonts,
+    (opts.widthRules ?? WIDTH_RULES).ambiguous,
+  );
   const font = runs[0]?.font ?? '';
   return font === '' ? (opts.defaultFont ?? '') : font;
 }
@@ -450,7 +534,8 @@ function applySpaceFont(out: LayoutItem[], spaces: readonly SpaceRef[], opts: Bu
     if (item === undefined || item.kind !== 'char') continue;
     const prev = neighborScript(out, ref.index, -1);
     const next = neighborScript(out, ref.index, 1);
-    if (!neutralTakesEastAsia(ref.props.fonts.hint, prev, next)) continue;
+    const rule = (opts.widthRules ?? WIDTH_RULES).neutral;
+    if (!neutralTakesEastAsia(ref.props.fonts.hint, prev, next, rule)) continue;
     const font = bucketFont(ref.props.fonts, 'eastAsia') || (opts.defaultFont ?? '');
     item.font = font;
     item.script = 'eastAsia';
@@ -472,24 +557,34 @@ function neighborScript(items: readonly LayoutItem[], index: number, step: 1 | -
 /**
  * 中西文自动间距（`w:autoSpaceDE` / `w:autoSpaceDN`，两者默认**开**）。
  *
- * 东亚字符与拉丁字母 / 数字相邻时插入 1/8 em。不做的话中英混排的行长永远对不上，
+ * 东亚字符与拉丁字母 / 数字相邻时插入 **1/4 em**（实测，见 `WIDTH_RULES` 第 ③ 条 ——
+ * 原来照开发计划写的 1/8 每个边界都少 4.5pt / 36pt 字）。不做的话中英混排的行长永远对不上，
  * 断行点会随着每行的中英切换次数越差越多。
  *
  * 四条边界：
  * - 空格两侧不加 —— 已经有空隙了，再加就成了双份
  * - **全角标点两侧也不加**（实测）：`gongwen-01` 里 `（ascii`、`cs）`、`（autoSpaceDE`
  *   三处的间隙都是 0.05pt 以内，也就是一点没加。道理与空格同理 ——
- *   标点自己就带着空半边，再加 1/8 em 就成了双份。漏了这一条，一行里每有一个
- *   「标点挨着西文」就多出 2pt（三号字），真值第 13 行正是被这 2pt 顶掉了一个「）」
- * - DE 管字母、DN 管数字，两个开关是分开的（Word 界面上也是两项）
+ *   标点自己就带着空半边，再加就成了双份。漏了这一条，一行里每有一个
+ *   「标点挨着西文」就多出 2pt（三号字），真值第 13 行正是被这 2pt 顶掉了一个「）」。
+ *   `spike-width-01` 的 Pn1（`B，B`）复核了一遍：两个接缝各差 0.02pt
+ * - **靠 `w:hint` 才进东亚桶的歧义字符也不加**（实测，`autoSpaceScope`）：
+ *   Ea4 的 `B§B` 里 `§` 是宋体画的全角符号，与 `B` 之间实测 0.14pt。
+ *   所以判据是**码点**（`isEastAsianCodePoint`）而不是分桶结果
+ * - DE 管字母、DN 管数字，两个开关是分开的（Word 界面上也是两项，
+ *   `spike-width-01` 的 As3–As6 四段交叉验过）
  * - 间距记在**后一个** item 上（`gapBefore`），行首那一个不生效 ——
  *   断行把它俩分到两行时，这个间距必须消失
  *
  * ⚠️ 「…」「—」这类**没有空半边**的全角标点旁边加不加，没有样本 ——
  * 现在按「有空半边的才不加」处理，也就是它们照常加。
  */
-function applyAutoSpace(items: LayoutItem[], de: boolean, dn: boolean): void {
+function applyAutoSpace(items: LayoutItem[], de: boolean, dn: boolean, rules: WidthRules): void {
   if (!de && !dn) return;
+  // 「这一侧算不算东亚」：实测判的是**码点**（无条件东亚的那一段），不是分桶结果 ——
+  // 靠 w:hint 才进 eastAsia 桶的歧义字符旁边一点都不加（WIDTH_RULES 第 ⑤ 条）
+  const isEa = (it: CharItem): boolean =>
+    rules.autoSpaceScope === 'bucket' ? it.script === 'eastAsia' : isEastAsianCodePoint(it.cp);
   for (let i = 1; i < items.length; i++) {
     const prev = items[i - 1] as LayoutItem;
     const cur = items[i] as LayoutItem;
@@ -497,15 +592,18 @@ function applyAutoSpace(items: LayoutItem[], de: boolean, dn: boolean): void {
     if (prev.space || cur.space) continue;
     if (isCompressiblePunct(prev.cp) || isCompressiblePunct(cur.cp)) continue;
 
-    const eastAsiaSide = prev.script === 'eastAsia' ? prev : cur.script === 'eastAsia' ? cur : undefined;
-    const latinSide = prev.script === 'eastAsia' ? cur : prev;
-    if (eastAsiaSide === undefined || latinSide.script !== 'latin') continue;
+    const eastAsiaSide = isEa(prev) ? prev : isEa(cur) ? cur : undefined;
+    const latinSide = isEa(prev) ? cur : prev;
+    if (eastAsiaSide === undefined || latinSide.script !== 'latin' || isEa(latinSide)) continue;
 
     const digit = latinSide.cp >= 0x30 && latinSide.cp <= 0x39;
     const letter = isLatinLetter(latinSide.cp);
     if (digit ? !dn : letter ? !de : true) continue;
 
-    cur.gapBefore = em(eastAsiaSide.fontSize, AUTO_SPACE_EM);
+    // 按**接缝前面**那个字符的字号算（实测，见 WIDTH_RULES 第 ④ 条）：
+    // Sz1 / Sz2 两段把两侧字号互换，缝隙跟着换，「按东亚侧算」给不出这对数
+    const ref = rules.autoSpaceSize === 'eastAsia' ? eastAsiaSide : prev;
+    cur.gapBefore = em(ref.fontSize, rules.autoSpaceEm);
   }
 }
 
@@ -537,6 +635,17 @@ function applyPunctPairs(items: LayoutItem[], enabled: boolean): void {
   }
 }
 
+/**
+ * 拉丁**字母** —— 只给 `applyAutoSpace` 用，判的是「DE 那一侧算不算字母」。
+ *
+ * Latin-1 补充那一段里 `×`(U+00D7) 与 `÷`(U+00F7) 夹在字母中间，但它们是**数学符号**。
+ * 漏掉这两个的后果实测过（`spike-width-01` 的 De2，`中×中÷中·中` 在 hint=default 下）：
+ * 四个接缝各平白多出 1/4 em，一行多 36pt / 36pt 字。同一段里的 `·`(U+00B7) 没露出来，
+ * 因为它落在 0xC0 以下 —— 一个字符的差别，只有把整段的行末 x 与真值对上才看得见。
+ */
 function isLatinLetter(cp: number): boolean {
-  return (cp >= 0x41 && cp <= 0x5a) || (cp >= 0x61 && cp <= 0x7a) || (cp >= 0xc0 && cp <= 0x24f);
+  if (cp >= 0x41 && cp <= 0x5a) return true;
+  if (cp >= 0x61 && cp <= 0x7a) return true;
+  if (cp === 0xd7 || cp === 0xf7) return false;
+  return cp >= 0xc0 && cp <= 0x24f;
 }

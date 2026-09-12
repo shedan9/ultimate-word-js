@@ -11,6 +11,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Phase 2 全部做完了**（DOM 渲染器 v1 已落地），**Phase 3 与 Phase 4 也全部做完了** —— `layoutDocument()`
 把段落与表格摞进一页页的版心，每一行都有了页号与 y，`LineLayout` 的 `baseline` 终于能拼成
 绝对坐标；**页眉页脚**（选份 + 定位 + 反过来挤版心）三条几何规则已用真值标定。
+**行高走东亚还是拉丁规则**也标定完了 —— 看的是**字体**不是字符（见下），
+这条修掉了一个「每一行都差 30%」的老错。**宽度那一维**（歧义字符与空格的分桶、
+中西文自动间距）也标定完了，同样修掉一条老错：自动间距是 **1/4 em 不是 1/8**（见下）。
 **卡口没有了**：横向（断行）与纵向（基线 y）现在都能与真值逐行比。
 Phase 5 的**列表编号**已经从 `numbering.xml` 一路通到首行几何，
 同阶段的**域**结构还原（界桩配对 + 指令解析 + HYPERLINK）与**求值**（PAGE / NUMPAGES /
@@ -28,8 +31,8 @@ SECTIONPAGES 迭代到自洽）都做完了，TOC / SEQ 的求值还没写。
 可选文本层也已完成：默认绘制可见页前后各两页，全文文字层常驻。装饰与 overlay 生命周期仍待实现。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、
 `@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 制表位 + **模型位置（`DocPosition`）** + **编号（解析 + 计数器 + 编号文字 + 接进级联）** + **表格（属性 + 级联 + 条件格式）** + **域（界桩配对 + 指令解析 + HYPERLINK）** + **页眉页脚部件** + **图片（外框 + blip 引用 + 裁剪 / 旋转 + 浮动锚点 + 字节表）**）、
-`@uw/fonts`（行高规则 + 脚本分桶 + 度量包 + 注册表 + `TextMeasurer`）、
-`@uw/layout`（item 流 + 断行 + 缩进 / 对齐 / 制表位 / 列表编号 + 行高与网格吸附 + **行内基线** +
+`@uw/fonts`（行高规则 + 脚本分桶（**歧义字符 / 中性字符两条都实测**）+ 度量包 + 注册表 + `TextMeasurer`）、
+`@uw/layout`（item 流 + 断行 + 缩进 / 对齐 / 制表位 / 列表编号 + **中西文自动间距** + 行高与网格吸附 + **行内基线** +
 **表格列宽与格内几何 + 边框冲突解析** + **分页（含表格拆行）** + **域求值** + **页眉页脚** + **对象占位与浮动定位** + **布局索引（命中测试 / range → 矩形 / 光标）**）、
 `@uw/render-dom`（**元素树 → SVG / DOM**，见下）、`@uw/view`（屏幕坐标转换与只读视图）。
 
@@ -187,6 +190,26 @@ gongwen-01 的 18 行与 Word 真值最大差 **0.06pt**（L3 判据 0.5pt），
 三份样本（含 `spike-header-03`：首页 / 奇偶各一份 + 页脚里真的 `{ PAGE }`）进了 CI
 （`header-fixture.test.ts`，跨平台，12 页逐行全对）。
 
+**行高走哪一套规则也标定完了**（样本 `spike-script-01`，跑 `pnpm --filter @uw/fidelity spike:script`，
+落在 `line-height.ts` 的 `SCRIPT_RULES` 与 `@uw/fonts` 的 `composeLineBox()`）。这一层原来有
+一条**已知没做对**的：东亚字体里的**纯 ASCII 行**。答案是**看实际画字的那款字体**、**逐段**判 ——
+不是「这一行有没有东亚字符」（旧实现），不是 `w:eastAsia` 槽，也不是 `w:hint`。
+一行只有「A2C6」、ascii 槽里是等线，Word 照样按东亚规则给行高（20.32pt / 15pt 字，
+拉丁规则只有 15.63pt）：**差 30%，而且每一行都差**。判据落在 `TextMeasurer.eastAsianFont()`
+（查这款字体有没有 U+4E00 的字形）；字体缺失时它答 `undefined`，退回按字符判那条旧路 ——
+谎报成拉丁字体会让一份缺字体的中文文档每行都矮 30%，比退回旧路错得远。
+同一份样本顺带钉死了**混排行的合成**（原来是判断不是实测）：几款字体**各自的行盒逐项取 max**
+（上取最高、下取最深），不是「取各自行高的最大值」—— 等线画 ASCII、宋体画汉字的那一行
+Word 给 50.28pt，**比两款字体各自的行高都大**（48.77 / 46.80），旧写法按定义说不出这个数。
+每款是在**自己的**自然行高里居中的，在合成后的行高里居中会把基线往下拽 0.63pt。
+这与基线穿刺那条「东亚行的行盒只由东亚字体决定、拉丁 run 完全不参与」**不矛盾，是把它讲对了**：
+等线 72pt + Times 72pt 那一页 Times 没赢，不是因为它没参与，而是因为它作为拉丁字体
+走拉丁规则、核心盒上沿只有 67.22pt，输给等线的 69.57pt。两种说法在那一页上同解，
+只有「两款东亚字体上下互不相让」的行分得开。排组合（8 种）逐页比，唯一满分 11/11（第二名 8/11），
+样本进了 CI（`script-fixture.test.ts`）。**造样本时撞见一格 Word 自己造不出来的**：
+`Font.NameFarEast = "Times New Roman"` 报 0x800A16D4，Word 界面里那个下拉框只列中日韩字体 ——
+但与 `spike-table-03` 的相邻边框冲突不同，那一格不是唯一能回答问题的局面，所以没为它改 XML。
+
 **分页的三条规则已经标定完**（样本 `spike-page-01/02`，跑 `pnpm --filter @uw/fidelity spike:page`，
 落在 `page.ts` 的 `PAGINATION_RULES`）：孤行寡行**保底 2 行**、段前间距落在页首**不算**、
 keepNext 的接缝要留出下一块**「最少能放多少」**（不是它的第一行，也不是整块）。
@@ -294,6 +317,31 @@ Word 自己的行位置带着 ±0.12pt 抖动，44 行图叠起来累到 1.5pt�
 三号字差 4pt）。判断在 fonts（`neutralTakesEastAsia`），应用在 layout
 （`items.ts` 的 `applySpaceFont`）—— 邻居**跨 run**，`splitFontRuns` 那一层看不见。
 
+**宽度那一维也标定完了**（样本 `spike-width-01`，跑 `pnpm --filter @uw/fidelity spike:width`，
+落在 `items.ts` 的 `WIDTH_RULES`）。144 种组合逐行跑，实现的这一组唯一满分 31/31（第二名 30/31）。
+读数不靠反推：真值的 `TruthItem.font` **直接说出** Word 用哪款字体画了这个字 ——
+字体一换，PDF 里就换一次 `Tf`、起一个新片段，所以「片段字体序列」就是分桶结果本身。
+四条结论，两条是**真错**：
+① **歧义字符**（EastAsianWidth = A：`§ ° ± × ÷ ·`…）**跟着 `w:hint` 走，与两侧邻居无关** ——
+同样一段 `B§B°B±B`，hint=eastAsia 时 `§` 是宋体的 1 em、hint=default 时是 Times 的 0.5 em；
+② 空格随邻居这条**与 `w:hint` 无关**（原来附带的「要 hint=eastAsia」是猜的），
+且中性字符里**只有空格**这么走 —— `/` `-` 两种 hint 下都待在 ascii 桶里；
+③ **中西文自动间距是 1/4 em 不是 1/8** —— 那个 1/8 是开发计划抄来的说法、从来没有过真值
+（gongwen-01 的中西文之间本来就打了空格，量不到这个数），每一个中西文边界都少 4.5pt / 36pt 字；
+④ 那 1/4 em 按**接缝前面那个字符**的字号算，不是东亚那一侧的（`中`36 + `E`12 + `中`36
+实测 9.03 / 2.99pt，把字号反过来就换成 3.00 / 9.05pt）。
+自动间距的例外表也补全了：**靠 hint 才进东亚桶的歧义字符旁边也不加**（与全角标点同理），
+所以判据是**码点**（`isEastAsianCodePoint`）而不是分桶结果。
+顺带照出一条**代码里的**错：`isLatinLetter` 把 Latin-1 的 `×`(U+00D7) 与 `÷`(U+00F7)
+当成了字母（它们夹在字母区间中间），`中×中` 每个接缝平白多出 1/4 em。
+两处方法论上的坑：**空格是唯一不能按字体名读的字符**（Word 画它时不换 `Tf`，
+字体名跟着前一个字走、宽度才是另一款字体的，按字体名读会得出相反结论），
+以及歧义字符**只能挑 Latin-1 段的** —— `※ ℃ ① Ⅰ` 这些 Times New Roman 有的没有，
+字体回退会盖住分桶；度量包也只采样到 0xFF，之外的码点我们自己算不准。
+`w:hint` 与 spike-table-03 的冲突边框一样**只能改 XML 写进去**，但拦路的东西不同：
+那边是 Word **表达不了**那个局面，这边是 Word **不让你选** —— 对象模型里根本没有这个属性
+（`patch-docx.ts` 的 `patchRunHints`）。
+
 **临时挤压**（塞不下时额外再挤一点把字留住）也标定完了，靠两份专门的样本
 （`spike-compress-01/02`，跑 `pnpm --filter @uw/fidelity spike:compress`）。做法是让每段
 「恰好一行放不下最后一个字」，用**点为单位的右缩进**把可用宽一格格调窄，于是「要挤多少」连续可控。
@@ -308,7 +356,7 @@ Word 自己的行位置带着 ±0.12pt 抖动，44 行图叠起来累到 1.5pt�
    七组阶梯（标点 1/2/3/4/6 × 行长 14/20/27 字）的翻转点全部落在预测的 ±0.1pt 内
 
 顺带钉死的两条：**全角标点旁边不加中西文自动间距**（`（ascii`、`cs）` 实测间隙 0.05pt 以内 ——
-标点自己带着空半边，再加 1/8 em 就成了双份），以及**后置标点先试着整个塞进版心，塞不下才谈悬挂**
+标点自己带着空半边，再加就成了双份），以及**后置标点先试着整个塞进版心，塞不下才谈悬挂**
 （真值第 13 行的「）」靠挤掉行内的「（」正好收进版心，然后换「，」挂出去）。
 
 L2 剩下那 2 行（真值第 10 / 11 行）是**唯一一个解释不了的反例**：第 10 行 Word 只差 4.6pt
@@ -452,6 +500,8 @@ pnpm --filter @uw/fidelity spike:image     # 图片穿刺（内嵌图的行盒 /
 pnpm --filter @uw/fidelity spike:table     # 表格穿刺（格线占不占高 / 吃不吃宽 + 条件格式的命中与层序，**不需要 Word**）
 pnpm --filter @uw/fidelity spike:table-border  # 格线冲突穿刺（相邻两格各写一条边，Word 画哪一条，**不需要 Word**）
 pnpm --filter @uw/fidelity spike:table-split   # 拆行穿刺（切在哪一页 / 边距怎么分 / trHeight 归谁 / 头片 vAlign，**不需要 Word**）
+pnpm --filter @uw/fidelity spike:script    # 脚本穿刺（纯 ASCII 的行走东亚还是拉丁规则 / 混排行怎么合成，**不需要 Word**）
+pnpm --filter @uw/fidelity spike:width     # 宽度穿刺（歧义字符与空格进哪个桶 / 中西文自动间距多宽，**不需要 Word**）
 pnpm --filter @uw/fidelity preview -- --truth  # fixture 画成 out/*.html 并叠真值基线（不需要 Word）
 pnpm --filter @uw/fidelity corpus          # 语料体检：整份文档与 truth.json 比页数 / 每页行数 / 每行文字 + 汇总诊断
 pnpm --filter @uw/fidelity corpus 名字 -- --diff   # 逐行看差异
@@ -500,12 +550,17 @@ pnpm --filter @uw/fonts run packs:check    # 只校验入库的包与本机字�
 
 **已定死（Phase 0，13 个样本最大误差 0.132pt）** —— 实现在 [`packages/fonts/src/metrics.ts`](packages/fonts/src/metrics.ts)：
 
-| 行的内容 | 单倍行距行高 |
+| 这段文字用的字体 | 单倍行距行高 |
 |---|---|
-| 含东亚文字 | `(usWinAscent + usWinDescent) × 1.3 × 字号 / unitsPerEm`，**不加**外部行距 |
-| 纯拉丁文字 | `(usWinAscent + usWinDescent + GDI 外部行距) × 字号 / unitsPerEm` |
+| **东亚字体** | `(usWinAscent + usWinDescent) × 1.3 × 字号 / unitsPerEm`，**不加**外部行距 |
+| **拉丁字体** | `(usWinAscent + usWinDescent + GDI 外部行距) × 字号 / unitsPerEm` |
 
 那个 1.3 是乘在**字体度量**上，不是「1.3 × 字号」；只测宋体家族（unitsPerEm=256、win 跨度恰好 1.0em）两种假设分不开。
+
+⚠️ 表头这一列原先写的是「**含东亚文字**的行 / **纯拉丁文字**的行」，
+**被 `spike-script-01` 推翻了**：判据是**字体**不是字符，而且**逐段**判（见下面的脚本穿刺）。
+Phase 0 这 13 个样本分不开两种说法 —— 纯拉丁的行用的是 Times New Roman，
+「字符是拉丁的」与「字体是拉丁字体」在它们身上完全重合。
 
 **已定死（基线穿刺，30 个样本最大误差 0.140pt）** —— 实现在同一个文件的 `baselineOffset()`：
 **「核心盒」在最终行高里居中**，核心盒 = win 跨度（拉丁的话再加上 GDI 外部行距）。
@@ -572,24 +627,43 @@ Times 的 winAscent 更大，若参与就该赢，实测却仍是等线单独的
 判页的方式与别处不同：Word 自己的行距带着 ±0.12pt 抖动、十八行能累到 0.58pt，
 所以比的是**首行绝对 y + 逐行增量**（与 `spike-image` 同一个理由）。
 
-**未决**：混排行的合成规则只有单字体样本 ——
-`composeBaseline()` 的「逐个居中再取 max」是判断，要一份「同一行两款东亚字体、字号不同」的样本才能钉死，
-而 fixture spec 目前一段只有一个字号。
+**已定死（脚本穿刺，一份样本 11 页逐行全对）** —— 实现在
+[`packages/layout/src/line-height.ts`](packages/layout/src/line-height.ts) 的 `SCRIPT_RULES` 与
+[`packages/fonts/src/metrics.ts`](packages/fonts/src/metrics.ts) 的 `composeLineBox()`：
+**行高走东亚规则还是拉丁规则，看的是「实际画字的那款字体是不是东亚字体」，逐段判** ——
+不是行里有没有东亚**字符**（旧实现）、不是 `w:eastAsia` 槽、也不是 `w:hint`；
+**同一行里几款字体，各自的行盒逐项取 max**（上取最高、下取最深），不是「取各自行高的最大值」。
+排组合（8 种）逐页比，唯一满分 11/11（第二名 8/11）。判据放在 `TextMeasurer.eastAsianFont()`
+（查这款字体有没有 U+4E00 的字形），字体缺失时答 undefined、退回按字符判那条旧路。
+
+**已定死（宽度穿刺，一份样本 31 行逐行全对，行末 x 最大偏差 0.089pt）** —— 实现在
+[`packages/layout/src/items.ts`](packages/layout/src/items.ts) 的 `WIDTH_RULES` 与
+[`packages/fonts/src/script.ts`](packages/fonts/src/script.ts) 的 `bucketOf` /
+`neutralTakesEastAsia`：**歧义字符跟着 `w:hint` 走、与邻居无关**；中性字符里
+**只有空格**随东亚邻居（任一侧就算）且**与 hint 无关**；**中西文自动间距 = 1/4 em**
+（不是一直写着的 1/8），按**接缝前面**那个字符的字号算；靠 hint 才进东亚桶的歧义字符
+旁边**不加**间距。144 种组合逐行比，唯一满分。读数是**字体名**不是宽度
+（`TruthItem.font` 直接说出 Word 用哪款字体画了这个字），
+唯一的例外是空格 —— Word 画它时不换 `Tf`。
+
+**未决**：同一行里两款东亚字体且**字号也不同**时怎么合成 —— `spike-script-01`
+只覆盖了同字号那一格。样本这一侧的限制 2026-09-05 解开了：`make-fixture.ps1`
+认 `runs`（盖在 `text` 上的一层，段内逐段改字体 / 字号），造这份样本不再需要改工具。
 
 行高与基线之外还有七处未标定（临时挤压那条原来排第一，已经用 `spike-compress-01/02` 做完，见上）。
-一是 `splitFontRuns()` 的歧义字符集取的是 Unicode **EastAsianWidth = Ambiguous**
-（`w:hint` 要回答的正是「这份文档算不算东亚环境」，两者同构），但 Word 的实际边界有没有偏差没有真值验证过 ——
-上 Windows 时顺手做一份「① ※ ℃ Ⅰ 在 hint=eastAsia / default 下各占多宽」的样本就能钉死；
-同一份样本顺手回答空格那条规则的两个边界：`hint="default"` 时空格算谁的、`/` `-` 这类中性字符跟不跟着走。
+一原先是 `splitFontRuns()` 的歧义字符集与空格分桶的两处边界，2026-09-05 用 `spike-width-01`
+做完了（**歧义字符跟 `w:hint`、空格与 hint 无关、`/` `-` 不随**，另外照出中西文间距
+是 1/4 em 不是 1/8，见上）。当时估的「拿 `TruthItem.font` 直接读」是对的，
+但那一句里列的候选字 `α β Б “ ”` **用不得**：度量包只采样 0x20–0x7E 与 0xA0–0xFF，
+之外的码点我们自己一律退到 `defaultAdvance`，Word 答得出、我们算不准 ——
+真正能用的只有 Latin-1 那一段。这一格现在空着。
 二是编号的三个样本：`w:lvlJc="right"` 的编号以哪条线对齐、编号宽过悬挂缩进时正文落在哪、
 `chineseCounting` 与 `chineseCountingThousand` 在 105 / 1005 上各显示什么。
 三原先是**表格隔行带的序号**，2026-08-26 用 `spike-table-02` 做完了（**归属与实现一致，
-层序错了一条**，见上）。它留下的新问题是**东亚字体里的纯 ASCII 行走哪套行高规则** ——
-造这份样本时格子里写 ASCII，Word 给 15pt 字 20.32pt 的行高（**东亚**规则），
-我们按「行里有没有东亚字」判、给的是 15.63pt，差 30% 且每行都差。判据多半是
-「**用的字体**是不是东亚字体」而不是「字符是不是东亚的」，但一个数据点分不开
-「看字体 / 看 `w:hint` / 看 ascii 槽里装的是谁」三种说法，没有硬改。钉死办法写在
-`packages/fonts/src/metrics.ts` 的文件头，正好与第一条那份样本合并造。
+层序错了一条**，见上）。它留下的「东亚字体里的纯 ASCII 行走哪套行高规则」2026-09-05
+也用 `spike-script-01` 做完了（**看字体**，见上），那份样本还顺带把「混排行怎么合成」
+一起钉死了 —— 它本来是第一条那份样本的一半，另一半（**宽度**：歧义字符与中性字符进哪个桶）
+2026-09-05 也用 `spike-width-01` 做完了（见上）。
 四原先是**表格边框冲突**，2026-08-27 用 `spike-table-03` 做完了（见上）。当时估的
 「一张 2×2 的表就够」偏小 —— 光是「宽度与样式谁先比」就要五组互为镜像的配对才排除得掉
 别的解释，最后用了 21 组；更没料到的是**样本造不出来**：Word 的对象模型里一条共享边

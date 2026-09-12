@@ -1,0 +1,334 @@
+{
+  "name": "spike-script-01",
+  "note": "脚本分桶穿刺第一组：**纯 ASCII 的一行走哪一套行高规则**。现在的实现按「这一行有没有东亚**字符**」判（`line-height.ts` 的 `hasEastAsia`），造 spike-table-02 时撞见反例 —— 一行只有「A2C6」四个半角字符、ascii 槽里是等线，Word 给 20.32pt / 15pt 字，正是等线走**东亚**规则的值（拉丁规则只有 15.63pt）：差 30%，而且每一行都差。一个数据点分不开四种说法，这一份把它们拆开：每页一种「ascii 槽 × eastAsia 槽」的配法，正文一律**纯 ASCII 且不含空格**（空格随邻居分桶是另一条已标定的规则，混进来就分不开了），四段同格式连排 → 三个相邻基线差就是行高。四种说法在这几页上的预测：① 看**字符**（现实现）→ 一律拉丁规则；② 看**实际画字的那款字体**是不是东亚字体 → P2–P5、P7 翻成东亚规则；③ 看 **eastAsia 槽**里装的是不是东亚字体 → 连 P1、P6 一起翻；④ 看 **w:hint** → 同一份文档里 hint 处处相同的话，它解释不了页与页之间的差。36pt 是为分辨力：等线两套规则差 11.25pt、微软雅黑差 14.25pt、宋体家族差 5.74pt，都远大于 PDF 的 0.13pt 坐标噪声。**不开行网格** —— 网格会把基线吸到整数倍上，把要量的差整个盖掉。\n\n造不出来的一格：**拉丁字体放进 eastAsia 槽**（`Font.NameFarEast = \"Times New Roman\"` 报 0x800A16D4，Word 界面里那个下拉框只列中日韩字体）。它只在别的生成器写出来的文件里出现，而四种说法用剩下的配法已经分得开（P1/P6 把说法 ③ 与 ①② 分开、P2–P5/P7 把 ② 与 ① 分开），所以没有为它改 XML —— 与 spike-table-03 的相邻边框冲突不同，那一格是**唯一**能回答问题的局面，这一格不是。\n\n末四页（P8–P11）带汉字，本来只是对照组，量出来却多回答了一问：**同一行里两款字体怎么合成一个行盒**。P9（等线画 ASCII、宋体画汉字）实测 50.28pt，而两款字体各自的单倍行高只有 48.77 与 46.80 —— 「取各自行高的最大值」（现实现的 `naturalLineHeight`）给不出这个数。给得出的是「**各自的行盒逐项取 max**」：等线的核心盒在基线上下是 34.79 / 13.98，宋体是 36.34 / 10.46，上取宋体、下取等线得 50.32。这一对是我们手上唯一**上下互不相让**的东亚字体组合（别的组合里总有一款两侧都大，合成规则被遮住），所以 P10 / P11 把它正反各造一遍：仿宋与宋体度量相同而字体不同，两页给出同一个数才说明这是规则而不是宋体的怪癖。P8 仍是纯粹的对照组，用来确认「有汉字时行盒只由 eastAsia 槽那款字体定、拉丁 run 不参与」这条已定死的规则在这份样本里照样成立 —— 对照组对不上说明是样本造错了，而不是规则错了。",
+  "page": {
+    "widthMm": 210,
+    "heightMm": 297,
+    "marginMm": {
+      "top": 25,
+      "bottom": 25,
+      "left": 25,
+      "right": 25
+    }
+  },
+  "paragraphs": [
+    {
+      "text": "P1TimesAsciiSongEa",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P1TimesAsciiSongEa",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P1TimesAsciiSongEa",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P1TimesAsciiSongEa",
+      "fontEA": "宋体",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P2SongAsciiSongEa",
+      "fontEA": "宋体",
+      "fontLatin": "宋体",
+      "sizePt": 36,
+      "align": "left",
+      "pageBreakBefore": true
+    },
+    {
+      "text": "P2SongAsciiSongEa",
+      "fontEA": "宋体",
+      "fontLatin": "宋体",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P2SongAsciiSongEa",
+      "fontEA": "宋体",
+      "fontLatin": "宋体",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P2SongAsciiSongEa",
+      "fontEA": "宋体",
+      "fontLatin": "宋体",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P3DengAsciiDengEa",
+      "fontEA": "等线",
+      "fontLatin": "等线",
+      "sizePt": 36,
+      "align": "left",
+      "pageBreakBefore": true
+    },
+    {
+      "text": "P3DengAsciiDengEa",
+      "fontEA": "等线",
+      "fontLatin": "等线",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P3DengAsciiDengEa",
+      "fontEA": "等线",
+      "fontLatin": "等线",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P3DengAsciiDengEa",
+      "fontEA": "等线",
+      "fontLatin": "等线",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P4YaheiAsciiYaheiEa",
+      "fontEA": "微软雅黑",
+      "fontLatin": "微软雅黑",
+      "sizePt": 36,
+      "align": "left",
+      "pageBreakBefore": true
+    },
+    {
+      "text": "P4YaheiAsciiYaheiEa",
+      "fontEA": "微软雅黑",
+      "fontLatin": "微软雅黑",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P4YaheiAsciiYaheiEa",
+      "fontEA": "微软雅黑",
+      "fontLatin": "微软雅黑",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P4YaheiAsciiYaheiEa",
+      "fontEA": "微软雅黑",
+      "fontLatin": "微软雅黑",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P5FangsongAsciiFangsongEa",
+      "fontEA": "仿宋",
+      "fontLatin": "仿宋",
+      "sizePt": 36,
+      "align": "left",
+      "pageBreakBefore": true
+    },
+    {
+      "text": "P5FangsongAsciiFangsongEa",
+      "fontEA": "仿宋",
+      "fontLatin": "仿宋",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P5FangsongAsciiFangsongEa",
+      "fontEA": "仿宋",
+      "fontLatin": "仿宋",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P5FangsongAsciiFangsongEa",
+      "fontEA": "仿宋",
+      "fontLatin": "仿宋",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P6TimesAsciiDengEa",
+      "fontEA": "等线",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left",
+      "pageBreakBefore": true
+    },
+    {
+      "text": "P6TimesAsciiDengEa",
+      "fontEA": "等线",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P6TimesAsciiDengEa",
+      "fontEA": "等线",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P6TimesAsciiDengEa",
+      "fontEA": "等线",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P7YaheiAsciiSongEa",
+      "fontEA": "宋体",
+      "fontLatin": "微软雅黑",
+      "sizePt": 36,
+      "align": "left",
+      "pageBreakBefore": true
+    },
+    {
+      "text": "P7YaheiAsciiSongEa",
+      "fontEA": "宋体",
+      "fontLatin": "微软雅黑",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P7YaheiAsciiSongEa",
+      "fontEA": "宋体",
+      "fontLatin": "微软雅黑",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P7YaheiAsciiSongEa",
+      "fontEA": "宋体",
+      "fontLatin": "微软雅黑",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P8汉TimesAsciiDengEa",
+      "fontEA": "等线",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left",
+      "pageBreakBefore": true
+    },
+    {
+      "text": "P8汉TimesAsciiDengEa",
+      "fontEA": "等线",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P8汉TimesAsciiDengEa",
+      "fontEA": "等线",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P8汉TimesAsciiDengEa",
+      "fontEA": "等线",
+      "fontLatin": "Times New Roman",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P9汉DengAsciiSongEa",
+      "fontEA": "宋体",
+      "fontLatin": "等线",
+      "sizePt": 36,
+      "align": "left",
+      "pageBreakBefore": true
+    },
+    {
+      "text": "P9汉DengAsciiSongEa",
+      "fontEA": "宋体",
+      "fontLatin": "等线",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P9汉DengAsciiSongEa",
+      "fontEA": "宋体",
+      "fontLatin": "等线",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P9汉DengAsciiSongEa",
+      "fontEA": "宋体",
+      "fontLatin": "等线",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P10汉FangsongAsciiDengEa",
+      "fontEA": "等线",
+      "fontLatin": "仿宋",
+      "sizePt": 36,
+      "align": "left",
+      "pageBreakBefore": true
+    },
+    {
+      "text": "P10汉FangsongAsciiDengEa",
+      "fontEA": "等线",
+      "fontLatin": "仿宋",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P10汉FangsongAsciiDengEa",
+      "fontEA": "等线",
+      "fontLatin": "仿宋",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P10汉FangsongAsciiDengEa",
+      "fontEA": "等线",
+      "fontLatin": "仿宋",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P11汉DengAsciiFangsongEa",
+      "fontEA": "仿宋",
+      "fontLatin": "等线",
+      "sizePt": 36,
+      "align": "left",
+      "pageBreakBefore": true
+    },
+    {
+      "text": "P11汉DengAsciiFangsongEa",
+      "fontEA": "仿宋",
+      "fontLatin": "等线",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P11汉DengAsciiFangsongEa",
+      "fontEA": "仿宋",
+      "fontLatin": "等线",
+      "sizePt": 36,
+      "align": "left"
+    },
+    {
+      "text": "P11汉DengAsciiFangsongEa",
+      "fontEA": "仿宋",
+      "fontLatin": "等线",
+      "sizePt": 36,
+      "align": "left"
+    }
+  ]
+}

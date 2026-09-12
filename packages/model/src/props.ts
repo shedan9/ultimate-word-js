@@ -219,7 +219,7 @@ export interface ParaProps {
   numbering?: NumberingRef;
   /** 段落是否吸附行网格。公文的「每页 22 行」靠它 */
   snapToGrid?: boolean;
-  /** 中西文之间自动加 1/8 em 间距，默认开。不做的话中英混排行长永远对不上 */
+  /** 中西文之间自动加 1/4 em 间距（实测，见 @uw/layout 的 WIDTH_RULES），默认开 */
   autoSpaceDE?: boolean;
   /** 中文与数字之间的自动间距，默认开 */
   autoSpaceDN?: boolean;

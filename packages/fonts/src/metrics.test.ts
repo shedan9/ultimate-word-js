@@ -10,7 +10,7 @@ import { ptToTwips, twipsToPt } from '@uw/core';
 import { describe, expect, it } from 'vitest';
 import {
   baselineOffset,
-  composeBaseline,
+  composeLineBox,
   gdiExternalLeading,
   lineMetrics,
   naturalLineHeight,
@@ -237,24 +237,45 @@ describe('基线位置：行高被拉大之后（对齐 Word 实测）', () => {
 });
 
 describe('混排行的合成', () => {
-  it('自然行高取各字体的最大值', () => {
+  it('单字体的行盒恒等于它自己的行高与基线 —— 两种合成写法在这一格上同解', () => {
     const ea = lineMetrics(fangSong, ptToTwips(12), { eastAsian: true });
-    const latin = lineMetrics(timesNewRoman, ptToTwips(12), { eastAsian: true });
-    expect(naturalLineHeight([ea, latin])).toBe(Math.max(ea.lineHeight, latin.lineHeight));
+    for (const rule of ['maxSides', 'maxHeight'] as const) {
+      const boxOf = composeLineBox([ea], rule);
+      expect(boxOf.natural).toBe(ea.lineHeight);
+      expect(boxOf.above).toBe(baselineOffset(ea, ea.lineHeight));
+    }
   });
 
-  it('东亚行的行盒只由东亚字体定 —— 把拉丁一侧也算进来会差 6.5pt', () => {
+  it('拉丁字体走拉丁规则，所以它参与合成也顶不高东亚一侧的基线', () => {
     // spike-baseline-02 的「等 Tj 等」那一页：等线 72pt 与 Times New Roman 72pt 同排一行，
     // 实测首行基线 69.570 —— 与同字号的**纯等线**那一页一模一样。
+    //
+    // 原来的解释是「拉丁 run 完全不参与行盒」，`spike-script-01` 把它讲对了：
+    // 它参与了，但它作为拉丁字体走**拉丁规则**（外部行距整块在基线以上、没有那 30%），
+    // 核心盒上沿只有 67.22pt，赢不过等线的 69.57pt。
     const ea = lineMetrics(dengXian, ptToTwips(72), { eastAsian: true });
-    const latin = lineMetrics(timesNewRoman, ptToTwips(72), { eastAsian: true });
+    const latin = lineMetrics(timesNewRoman, ptToTwips(72), { eastAsian: false });
+    expectPt(twipsToPt(composeLineBox([ea, latin], 'maxSides').above), 69.57);
+    expectPt(twipsToPt(composeLineBox([ea, latin], 'maxSides').natural), twipsToPt(ea.lineHeight));
 
-    // 只让东亚一侧定行盒：对得上
-    expectPt(twipsToPt(composeBaseline([ea], ea.lineHeight)), 69.57);
+    // 若照旧实现给拉丁一侧也套东亚规则（那 30% 让它的 win 跨度整整多出 6%），
+    // 基线被顶高 6pt 以上。这一页是全部混排样本里唯一能分开两种做法的。
+    const wrong = lineMetrics(timesNewRoman, ptToTwips(72), { eastAsian: true });
+    expect(Math.abs(twipsToPt(composeLineBox([ea, wrong], 'maxSides').above) - 69.57)).toBeGreaterThan(6);
+  });
 
-    // 让拉丁也参与：Times 的 win 跨度比等线大 6%，行高与基线一起被顶高，差出 6pt 以上。
-    // 这一页是全部混排样本里唯一能分开两种做法的 —— 别的页上拉丁一侧本来就赢不了。
-    const bothHeight = naturalLineHeight([ea, latin]);
-    expect(Math.abs(twipsToPt(composeBaseline([ea, latin], bothHeight)) - 69.57)).toBeGreaterThan(6);
+  it('两款东亚字体同行：上取最高、下取最深，行高比两款各自的都大', () => {
+    // spike-script-01 的 P9/P10/P11：等线画 ASCII、宋体画汉字，36pt。
+    // Word 实测行高 50.28pt、首行基线距版心顶 36.31pt。
+    const deng = lineMetrics(dengXian, ptToTwips(36), { eastAsian: true });
+    // 宋体与仿宋的 win 度量一模一样（都是 unitsPerEm=256 / 220 / 36），P10/P11 用的正是仿宋
+    const song = lineMetrics(fangSong, ptToTwips(36), { eastAsian: true });
+    const box = composeLineBox([deng, song], 'maxSides');
+    expectPt(twipsToPt(box.natural), 50.28);
+    expectPt(twipsToPt(box.above), 36.31);
+
+    // 「取各自行高的最大值」按定义给不出这个数：两款各自只有 48.77 与 46.80
+    expect(twipsToPt(box.natural)).toBeGreaterThan(twipsToPt(Math.max(deng.lineHeight, song.lineHeight)));
+    expect(twipsToPt(naturalLineHeight([deng, song]))).toBeCloseTo(48.77, 1);
   });
 });

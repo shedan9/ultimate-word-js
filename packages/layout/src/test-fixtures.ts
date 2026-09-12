@@ -31,12 +31,19 @@ import type {
 /** 五号字（10.5pt）= 210 twips，公文正文的默认字号 */
 export const SIZE_5 = 210;
 
+/**
+ * 合成度量器里算「东亚字体」的那几款。真度量器问的是字体里有没有 U+4E00，
+ * 合成的没有 cmap，只好按名字列 —— 单测里出现的就这几款。
+ */
+const FAKE_EAST_ASIAN_FAMILIES = new Set(['仿宋', '宋体', '黑体', '楷体', '等线', '微软雅黑']);
+
 /** 合成度量器：东亚全角、其余半角；行高按 `@uw/fonts` 的两条规则同构地造 */
 export function fakeMeasurer(): TextMeasurer {
   const advanceOf = (fontSize: Twips, cp: number): Twips =>
     isEastAsianCodePoint(cp) ? fontSize : fontSize / 2;
   return {
     status: () => 'metrics',
+    eastAsianFont: (family) => FAKE_EAST_ASIAN_FAMILIES.has(family),
     lineMetrics(_family, fontSize, o = {}): LineMetrics {
       const ascent = fontSize * 0.8;
       const descent = fontSize * 0.2;

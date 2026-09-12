@@ -18,7 +18,7 @@ import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractTruth } from './extract-truth.ts';
-import { patchCellBorders, type RawCellBorders } from './patch-docx.ts';
+import { patchCellBorders, patchRunHints, type RawCellBorders, type RunHint } from './patch-docx.ts';
 import { assertWindows } from './platform.ts';
 import { runScript } from './run-powershell.ts';
 import type { WordMeta } from './truth-types.ts';
@@ -88,9 +88,11 @@ async function build(fx: Fixture): Promise<boolean> {
   const [tSpec, tDocx] = [await mtime(fx.spec), await mtime(fx.docx)];
   if (!force && !Number.isNaN(tDocx) && tDocx >= tSpec) return false;
   await runScript(path.join(SCRIPTS, 'make-fixture.ps1'), ['-Spec', fx.spec, '-Output', fx.docx]);
-  const patches = rawBorderPatches(JSON.parse(await readFile(fx.spec, 'utf8')));
-  const n = await patchCellBorders(fx.docx, patches);
+  const spec: unknown = JSON.parse(await readFile(fx.spec, 'utf8'));
+  const n = await patchCellBorders(fx.docx, rawBorderPatches(spec));
   if (n > 0) console.log(`  ${fx.name}: ${n} 格的边框由 XML 补丁写入（Word 的 API 造不出冲突边）`);
+  const h = await patchRunHints(fx.docx, runHintPatches(spec));
+  if (h > 0) console.log(`  ${fx.name}: ${h} 段的 w:hint 由 XML 补丁写入（Word 的 API 里没有这个属性）`);
   return true;
 }
 
@@ -114,6 +116,24 @@ function rawBorderPatches(spec: unknown): Map<string, RawCellBorders> {
         out.set(c.text, c.bordersRaw);
       }
     }
+  }
+  return out;
+}
+
+/**
+ * 从 spec 里收出 `hint` 补丁：段落文字 → 那一段的 `w:rFonts/@w:hint`。
+ *
+ * 与边框那条同理，只为「Word 的对象模型里没有这个开关」而存在：`w:hint` 是 Word
+ * 按输入环境自己写的，spec 说不动它（见 `patch-docx.ts` 的 `patchRunHints`）。
+ */
+function runHintPatches(spec: unknown): Map<string, RunHint> {
+  const out = new Map<string, RunHint>();
+  const blocks = (spec as { paragraphs?: unknown[] }).paragraphs ?? [];
+  for (const block of blocks) {
+    const b = block as { kind?: string; text?: string; hint?: RunHint };
+    if (b.kind === 'table' || b.hint === undefined || b.text === undefined) continue;
+    if (out.has(b.text)) throw new Error(`spec 里有两段文字都是「${b.text}」，hint 补丁定位不了`);
+    out.set(b.text, b.hint);
   }
   return out;
 }

@@ -8,8 +8,8 @@
  * 顺序是这一层最容易搞反的地方，见 `applyLineRule` 的注释：网格吸附在**行距倍数之前**。
  */
 import type { Twips } from '@uw/core';
-import type { LineMetrics, TextMeasurer } from '@uw/fonts';
-import { baselineOffsetExact, bucketFont, composeBaseline, naturalLineHeight } from '@uw/fonts';
+import type { ComposeRule, LineMetrics, TextMeasurer } from '@uw/fonts';
+import { baselineOffsetExact, bucketFont, composeLineBox } from '@uw/fonts';
 import type { DocGrid, ResolvedParaProps } from '@uw/model';
 import type { LayoutItem } from './types.ts';
 
@@ -19,7 +19,70 @@ export interface LineHeightContext {
   defaultFont?: string;
   /** 内嵌对象的行盒规则。**标定用的接缝**，正常调用不要传，见 `OBJECT_RULES` */
   objectRules?: ObjectRules;
+  /** 脚本与合成规则。同样是**标定用的接缝**，见 `SCRIPT_RULES` */
+  scriptRules?: ScriptRules;
 }
+
+/**
+ * 「这一行算东亚行还是拉丁行」与「几款字体怎么合成一个行盒」——
+ * 与 `ObjectRules` 同理，留成接缝只为让 `spike:script` 把 12 种组合各跑一遍。
+ */
+export interface ScriptRules {
+  /**
+   * 行高走东亚规则（×1.3）还是拉丁规则（GDI 外部行距），按什么判：
+   * - `font`：按**这一段文字实际用的那款字体**是不是东亚字体，**逐段**判（实测）
+   * - `line`：按**这一行**有没有东亚字符，整行同一套（**旧实现**）
+   */
+  eastAsianBy: 'font' | 'line';
+  /** 几款字体怎么合成一个行盒，见 `@uw/fonts` 的 `composeLineBox()` */
+  compose: ComposeRule;
+  /**
+   * 哪些文字段参与行盒：
+   * - `all`：全部（实测）
+   * - `eastAsiaBucket`：这一行有东亚字符时，只有 **eastAsia 桶**的段参与，其余只当兜底下限（**旧实现**）
+   */
+  box: 'all' | 'eastAsiaBucket';
+}
+
+/**
+ * 脚本与合成规则的实测值。样本 `spike-script-01`
+ * （`pnpm --filter @uw/fidelity spike:script`）：11 页、每页四段同格式连排，
+ * 每页换一种「`w:ascii` 槽 × `w:eastAsia` 槽」的配法，正文一律 36pt。
+ * **8 种组合逐页跑，实现的这一组唯一满分 11/11**（第二名 8/11）。
+ *
+ * ① **`eastAsianBy: 'font'`** —— 走哪一套行高规则，看的是**实际画字的那款字体**，
+ *    不是这一行有没有东亚**字符**，也不是 `w:eastAsia` 槽里装的是谁：
+ *
+ *    | 36pt 一整行纯 ASCII | ascii 槽 | eastAsia 槽 | Word 实测行高 | 那款字体的东亚 / 拉丁规则 |
+ *    |---|---|---|---|---|
+ *    | P1 | Times New Roman | 宋体 | 41.40 | 51.83 / **41.40** |
+ *    | P2 | 宋体 | 宋体 | 46.72 | **46.80** / 41.06 |
+ *    | P3 | 等线 | 等线 | 48.76 | **48.77** / 37.51 |
+ *    | P4 | 微软雅黑 | 微软雅黑 | 61.77 | **61.77** / 47.51 |
+ *    | P6 | Times New Roman | 等线 | 41.40 | 51.83 / **41.40** |
+ *    | P7 | 微软雅黑 | 宋体 | 61.77 | **61.77** / 47.51 |
+ *
+ *    P2–P4、P7 把旧实现（按字符判 → 一律拉丁规则）打掉：一行里一个东亚字都没有，
+ *    Word 照样按东亚规则算，**差 13–30%，而且每一行都差**。P1 / P6 把「按 eastAsia 槽判」
+ *    打掉：那两页的 eastAsia 槽里是东亚字体，行高却是 Times 的拉丁值。
+ *    `w:hint` 也不是答案 —— 同一页四段里 Word 自己写的 hint 有的带 `eastAsia` 有的不带，
+ *    四段行高完全一样（差 0.12pt 以内，那是 PDF 的坐标噪声）。
+ *
+ * ② **`box: 'all'` + `compose: 'maxSides'`** —— 见 `composeLineBox()` 的证据表。
+ *    P9/P10/P11 三页（等线画 ASCII、宋体 / 仿宋画汉字）实测 50.28pt，
+ *    比**两款字体各自的行高都大**，旧实现的「只有东亚桶参与 + 取行高最大值」给 46.80，差 3.5pt。
+ *
+ * 这一条与基线穿刺的「东亚行的行盒只由东亚桶的字体决定」**不矛盾，是把它讲对了**：
+ * spike-baseline-02 那页等线 72pt + Times 72pt，Times 的 winAscent 更大却没赢 ——
+ * 原来解释成「拉丁 run 不参与」，实际是它参与了，但它作为**拉丁字体**走拉丁规则，
+ * 核心盒上沿只有 67.22pt，输给等线走东亚规则的 69.57pt。两种说法在那一页上同解，
+ * 而 P9 这种「两款东亚字体上下互不相让」的行只有新说法算得出来。
+ */
+export const SCRIPT_RULES: ScriptRules = {
+  eastAsianBy: 'font',
+  compose: 'maxSides',
+  box: 'all',
+};
 
 /**
  * 内嵌对象（图片）在行盒里怎么摆。三条都是实测的，留成接缝只为了让
@@ -124,17 +187,15 @@ export interface LineHeight {
 /**
  * 一行的行高与基线。
  *
- * 「这一行算不算东亚行」按**整行**判定（只要有一个东亚字就算），与 `@uw/fonts` 里
- * `hasEastAsianText` 的注释一致 —— Word 是按行选行距规则的，不是按 run。
+ * 「走东亚规则还是拉丁规则」按**这一段文字用的那款字体**判、**逐段**判，不是按行里有没有
+ * 东亚字符（实测，见 `SCRIPT_RULES` 第 ① 条）—— 一行「A2C6」若是用等线画的，
+ * Word 照样按东亚规则给行高，差 30%。**行里的每一段都参与行盒**，各自的行盒逐项取 max
+ * （第 ② 条）。
  *
- * 东亚行的行盒**只由东亚桶的字体决定**，拉丁 run 完全不参与 —— 这一条反直觉，是实测的
- * （spike-baseline-02 末四页，中西混排行的首行基线与「同字号纯东亚」那几页**一模一样**，
- * 小数点后三位都不差）。最能说明问题的是等线 72pt 配 Times New Roman 72pt 那一页：
- * Times 的 winAscent（64.16pt）比等线的（58.32pt）大，若它参与合成就该赢，
- * 实测基线仍落在等线单独算出来的 69.57pt 上。
- *
- * 这也解释了 Phase 0 的那条结论「含东亚文字的行不加外部行距」：不是「外部行距被扣掉」，
- * 而是拉丁字体压根没进这一行的行盒。
+ * 「东亚行的行盒只由东亚桶决定、拉丁 run 完全不参与」是这条规则的**旧说法**：
+ * spike-baseline-02 那页等线 72pt + Times 72pt，Times 的 winAscent 更大却没赢 ——
+ * 不是因为它没参与，而是因为它作为**拉丁字体**走拉丁规则、核心盒上沿只有 67.22pt，
+ * 输给了等线的 69.57pt。两种说法在那一页上同解，`spike-script-01` 的 P9 才把它们分开。
  */
 export function lineHeight(
   items: readonly LayoutItem[],
@@ -143,10 +204,11 @@ export function lineHeight(
   ctx: LineHeightContext,
 ): LineHeight {
   const rules = ctx.objectRules ?? OBJECT_RULES;
-  const eastAsian = hasEastAsia(items, range);
-  /** 定行盒的那些字体：东亚行里只有东亚桶，拉丁行里就是全部 */
+  const script = ctx.scriptRules ?? SCRIPT_RULES;
+  const eastAsianLine = hasEastAsia(items, range);
+  /** 定行盒的那些字体 */
   const box: LineMetrics[] = [];
-  /** 不定行盒但也不能被切掉的那些（东亚行里的拉丁 run），只用来兜底 */
+  /** 不定行盒但也不能被切掉的那些，只用来兜底。`box: 'all'` 下恒为空 */
   const passenger: LineMetrics[] = [];
   const seen = new Set<string>();
   /** 对象要占的基线**以上** / **以下**各多少（`w:position` 已经算进去了） */
@@ -171,14 +233,19 @@ export function lineHeight(
     const key = `${font}|${item.fontSize}`;
     if (seen.has(key)) continue;
     seen.add(key);
+    // 字体缺失时 `eastAsianFont` 答 undefined（「不知道」），退回按整行的字符判 ——
+    // 谎报成拉丁字体会让一份缺字体的中文文档每一行都矮 30%
+    const eastAsian =
+      script.eastAsianBy === 'line' ? eastAsianLine : (ctx.measurer.eastAsianFont(font) ?? eastAsianLine);
     const m = ctx.measurer.lineMetrics(font, item.fontSize, { eastAsian });
-    const decidesBox = !eastAsian || (item.kind === 'char' && item.script === 'eastAsia');
+    const decidesBox =
+      script.box === 'all' || !eastAsianLine || (item.kind === 'char' && item.script === 'eastAsia');
     (decidesBox ? box : passenger).push(m);
   }
 
   if (box.length === 0) {
     // 空段落的行高全靠段落标记（¶）自己的字符属性，它不是摆设。
-    // 「东亚行但一个东亚 item 都没有」不可能（eastAsian 就是这么判的），所以这里只会是空行。
+    // 「东亚行但一个东亚 item 都没有」不可能（eastAsianLine 就是这么判的），所以这里只会是空行。
     box.push(markMetrics(props, ctx));
   }
 
@@ -186,8 +253,7 @@ export function lineHeight(
   // 文字自己的下伸照旧留在基线以下 —— 行高 = 图高 + 文字下伸，不是图高。
   // 对象**不参与居中**：核心盒居中那条规则是给文字量的，把图片也居中会让它凭空浮起来。
   const floor = floorBox(passenger);
-  const textNatural = naturalLineHeight(box);
-  const textAbove = composeBaseline(box, textNatural);
+  const { natural: textNatural, above: textAbove } = composeLineBox(box, script.compose);
   const below = Math.max(rules.keepDescent ? textNatural - textAbove : 0, objectBelow);
   // 基线在**自然行高**下的位置：对象撑出来的高度是硬的，不许被「多出来的空间上下均分」摊掉，
   // 否则压低 6pt 的那一行会把基线又往下推半截（实测差 0.28pt）
@@ -345,8 +411,13 @@ function hasEastAsia(items: readonly LayoutItem[], range: { start: number; end: 
 function markMetrics(props: ResolvedParaProps, ctx: LineHeightContext): LineMetrics {
   const fonts = props.markRunProps.fonts;
   const ascii = bucketFont(fonts, 'ascii');
-  const font = ascii !== '' ? ascii : bucketFont(fonts, 'eastAsia');
-  return ctx.measurer.lineMetrics(font === '' ? (ctx.defaultFont ?? '') : font, props.markRunProps.size, {
-    eastAsian: false,
-  });
+  const picked = ascii !== '' ? ascii : bucketFont(fonts, 'eastAsia');
+  const font = picked === '' ? (ctx.defaultFont ?? '') : picked;
+  // 走哪一套规则**跟着这款字体**，与正文的每一段同一条（`SCRIPT_RULES` 第 ① 条）。
+  // 原来这里硬写 `eastAsian: false`，在 ascii 槽里装着 Times 的那两页上与新规则同解 ——
+  // 「ascii 槽里装着东亚字体的空段落」这一格没有样本，但为它留一个与正文相反的
+  // 特例，等于说「段落标记不算字」，那才是没有依据的一条。
+  const script = ctx.scriptRules ?? SCRIPT_RULES;
+  const eastAsian = script.eastAsianBy === 'line' ? false : (ctx.measurer.eastAsianFont(font) ?? false);
+  return ctx.measurer.lineMetrics(font, props.markRunProps.size, { eastAsian });
 }

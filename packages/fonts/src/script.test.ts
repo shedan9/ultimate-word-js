@@ -78,7 +78,7 @@ describe('码点 → 桶', () => {
     expect(bucketOf(0x20000, 'default')).toBe('eastAsia');
   });
 
-  it('hasEastAsianText 决定整行走不走 1.3 行高系数', () => {
+  it('hasEastAsianText 认得出一段文字里有没有东亚字（行高规则改看字体之后只剩兜底用）', () => {
     expect(hasEastAsianText('Report 2024')).toBe(false);
     expect(hasEastAsianText('Report 2024 年')).toBe(true);
     expect(hasEastAsianText('')).toBe(false);
@@ -117,7 +117,7 @@ describe('切段', () => {
     ]);
   });
 
-  it('字体名相同但脚本不同**不合并** —— 中西文 1/8 em 间距要靠这个边界', () => {
+  it('字体名相同但脚本不同**不合并** —— 中西文自动间距要靠这个边界', () => {
     const same: ScriptFonts = {
       ascii: '等线',
       hAnsi: '等线',
@@ -177,8 +177,14 @@ describe('中性字符随邻居', () => {
     expect(neutralTakesEastAsia('eastAsia', undefined, 'eastAsia')).toBe(true);
   });
 
-  it('hint 不是 eastAsia 时不改桶 —— 那时没有真值', () => {
-    expect(neutralTakesEastAsia('default', 'eastAsia', 'eastAsia')).toBe(false);
-    expect(neutralTakesEastAsia('cs', 'eastAsia', 'eastAsia')).toBe(false);
+  it('与 hint 无关 —— spike-width-01 的 De6 / De7 实测（原来这里要求 eastAsia，是猜的）', () => {
+    expect(neutralTakesEastAsia('default', 'eastAsia', 'eastAsia')).toBe(true);
+    expect(neutralTakesEastAsia('cs', 'eastAsia', 'eastAsia')).toBe(true);
+  });
+
+  it('三条落选的规则各自的行为（标定用的接缝，见 WIDTH_RULES）', () => {
+    expect(neutralTakesEastAsia('default', 'eastAsia', 'latin', 'eitherHinted')).toBe(false);
+    expect(neutralTakesEastAsia('default', 'latin', 'eastAsia', 'prev')).toBe(false);
+    expect(neutralTakesEastAsia('eastAsia', 'eastAsia', 'eastAsia', 'none')).toBe(false);
   });
 });

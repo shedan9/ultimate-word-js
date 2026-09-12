@@ -1,7 +1,10 @@
 /**
- * 造完 docx 之后**直接改 XML**：给相邻两格的共享边写上**互相冲突**的边框。
+ * 造完 docx 之后**直接改 XML**：两类补丁，共同点是 **Word 的对象模型里没有这个开关**。
  *
- * ## 为什么非改 XML 不可
+ * - `patchCellBorders`：给相邻两格的共享边写上**互相冲突**的边框（`spike-table-03`）
+ * - `patchRunHints`：改 `w:rFonts/@w:hint`，也就是歧义字符算东亚还是拉丁（`spike-width-01`）
+ *
+ * ## 边框：为什么非改 XML 不可
  *
  * Word 的对象模型里，一条共享边只有**一个** `Border` 对象：给左格设 `right`、
  * 再给右格设 `left`，第二次设的把第一次的整个盖掉，存出来的 `w:tcBorders` 两边
@@ -83,8 +86,8 @@ function cellRanges(xml: string): { start: number; end: number }[] {
   return out.sort((a, b) => a.start - b.start);
 }
 
-/** 格子里的文字：所有 `w:t` 拼起来，与 spec 里写的那串对得上 */
-function cellText(chunk: string): string {
+/** 一段 XML 里的文字：所有 `w:t` 拼起来，与 spec 里写的那串对得上（格子用，段落也用） */
+function innerText(chunk: string): string {
   let text = '';
   const re = /<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g;
   for (let m = re.exec(chunk); m !== null; m = re.exec(chunk)) text += m[1] ?? '';
@@ -98,7 +101,7 @@ function applyToCell(chunk: string, borders: RawCellBorders): string {
     return chunk.replace(/<w:tcBorders>[\s\S]*?<\/w:tcBorders>/, xml);
   }
   const pr = /<w:tcPr>([\s\S]*?)<\/w:tcPr>/.exec(chunk);
-  if (pr === null) throw new Error(`格子里没有 w:tcPr，插不进边框：${cellText(chunk)}`);
+  if (pr === null) throw new Error(`格子里没有 w:tcPr，插不进边框：${innerText(chunk)}`);
   const body = pr[1] ?? '';
   let at = body.length;
   for (const tag of AFTER_BORDERS) {
@@ -131,12 +134,12 @@ export async function patchCellBorders(
   for (const { start, end } of ranges) {
     if (start < at) continue; // 嵌套表格的外层格子已经整段抄过了
     const chunk = xml.slice(start, end);
-    const borders = patches.get(cellText(chunk));
+    const borders = patches.get(innerText(chunk));
     out += xml.slice(at, start);
     if (borders === undefined) {
       out += chunk;
     } else {
-      const key = cellText(chunk);
+      const key = innerText(chunk);
       hits.set(key, (hits.get(key) ?? 0) + 1);
       out += applyToCell(chunk, borders);
     }
@@ -152,6 +155,74 @@ export async function patchCellBorders(
   zip[partName] = new TextEncoder().encode(out);
   // 固定时间戳：docx 要入库，用「现在」会让每次重建的二进制都不同。
   // 不能填 0 —— zip 的时间字段只表示得了 1980–2099，fflate 直接抛
+  await writeFile(docxPath, zipSync(zip, { mtime: new Date('2020-01-01T00:00:00Z') }));
+  return hits.size;
+}
+
+// ── w:hint ──────────────────────────────────────────────────────────────────
+
+/** `w:rFonts/@w:hint` 的三个取值 */
+export type RunHint = 'default' | 'eastAsia' | 'cs';
+
+/**
+ * 造完 docx 之后把每一段的 `w:hint` 改成 spec 说的那个值。
+ *
+ * ## hint：为什么非改 XML 不可
+ *
+ * `w:hint` 回答的是「歧义字符（EastAsianWidth = A：`§ ° ± × ÷ ·`…）算东亚还是拉丁」，
+ * 而 **Word 的对象模型里根本没有这个属性** —— 它由编辑器按「这段文字是在什么输入环境下
+ * 进来的」自己写，spec 说不动它。实测的证据就在已入库的样本里：`spike-script-01`
+ * 同一页四段文字、同一套格式，Word 写出来的四个 `w:rFonts` 有的带 `w:hint="eastAsia"`
+ * 有的不带（见那份 docx 的前八个 run）—— 也就是说连「Word 会不会写」都不受控。
+ *
+ * 于是流程与 `spike-table-03` 的相邻边框冲突一样：Word 排版 → 改 XML 写进去 → Word 导 PDF。
+ * 不同的是这一次改的不是「Word 造不出的局面」而是「Word 不让你选的开关」：
+ * 两个 hint 值在真实语料里都是常态（中文版 Word 自己写 eastAsia，别的生成器多半不写）。
+ *
+ * ## 定位靠段落文字
+ *
+ * 与边框补丁同理，key 是**整段的文字**而不是第几段，且要求唯一 —— 悄悄打到第一个匹配上
+ * 是最难查的那种错。段落里的每一个 `w:rFonts` 都会被改，包括段落标记自己那一个
+ * （`w:pPr/w:rPr/w:rFonts`）：段落标记的 hint 只影响它自己的度量，留着不改反而会让
+ * 「同一段里两种 hint」这种样本里不存在的局面混进来。
+ */
+export async function patchRunHints(
+  docxPath: string,
+  patches: ReadonlyMap<string, RunHint>,
+): Promise<number> {
+  if (patches.size === 0) return 0;
+  const zip = unzipSync(new Uint8Array(await readFile(docxPath)));
+  const partName = 'word/document.xml';
+  const part = zip[partName];
+  if (part === undefined) throw new Error(`${docxPath} 里没有 ${partName}`);
+
+  const xml = new TextDecoder().decode(part);
+  const hits = new Map<string, number>();
+  // `<w:pPr>` 也以 `<w:p` 开头，所以 `w:p` 后面必须跟空白或 `>`；段落不嵌套，
+  // 非贪婪匹配到第一个 `</w:p>` 就是这一段
+  const out = xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, (chunk) => {
+    const hint = patches.get(innerText(chunk));
+    if (hint === undefined) return chunk;
+    const key = innerText(chunk);
+    hits.set(key, (hits.get(key) ?? 0) + 1);
+    let touched = 0;
+    const patched = chunk.replace(/<w:rFonts(\s[^>]*?)?\/>/g, (_all, attrs: string | undefined) => {
+      touched += 1;
+      const kept = (attrs ?? '').replace(/\s+w:hint="[^"]*"/g, '');
+      return `<w:rFonts${kept} w:hint="${hint}"/>`;
+    });
+    // 一个 w:rFonts 都没有 = 这一段的字体全来自样式链，hint 无处可写。
+    // 静默跳过的话样本量出来的是「另一个 hint 的行为」，而输出里没有任何线索指得出原因
+    if (touched === 0) throw new Error(`这一段里没有 w:rFonts，hint 写不进去：${key}`);
+    return patched;
+  });
+
+  const missed = [...patches.keys()].filter((k) => !hits.has(k));
+  if (missed.length > 0) throw new Error(`hint 补丁没打中这些段：${missed.join('、')}`);
+  const dup = [...hits].filter(([, n]) => n > 1).map(([k]) => k);
+  if (dup.length > 0) throw new Error(`这些文字在文档里不止一段，改哪个都不对：${dup.join('、')}`);
+
+  zip[partName] = new TextEncoder().encode(out);
   await writeFile(docxPath, zipSync(zip, { mtime: new Date('2020-01-01T00:00:00Z') }));
   return hits.size;
 }
