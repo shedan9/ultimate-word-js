@@ -3,6 +3,7 @@ import type { DocumentLayout, IndexedLine, PageLayout } from '@uw/layout';
 import type { DocPosition, DocRange } from '@uw/model';
 import type { MountOptions } from '@uw/render-dom/dom';
 import { renderPage, toDom } from '@uw/render-dom/dom';
+import { pageRect } from './annotations.ts';
 import type {
   DecorationHandle,
   DecorationOptions,
@@ -11,6 +12,8 @@ import type {
 } from './annotations-dom.ts';
 import { createAnnotations } from './annotations-dom.ts';
 import { selectedText } from './copy.ts';
+import type { ScrollOptions, ScrollTarget } from './scroll.ts';
+import { scrollTargetRect } from './scroll.ts';
 import { buildTextLayer } from './text-layer.ts';
 import type { ClientPoint, ClientRect, PageViewport } from './transform.ts';
 import { createReadonlyView } from './view.ts';
@@ -23,6 +26,7 @@ export type {
   OverlayHandle,
   OverlayOptions,
 } from './annotations-dom.ts';
+export type { ScrollOptions, ScrollTarget } from './scroll.ts';
 
 export interface ViewOptions extends MountOptions {
   /** 默认开启；常驻原生文字层，不因绘制页卸载而丢失选区 / 浏览器查找。 */
@@ -42,6 +46,11 @@ export interface DomView {
   caretRect(position: DocPosition): ClientRect | null;
   decorate(range: DocRange, options?: DecorationOptions): DecorationHandle;
   overlay(position: DocPosition, element: HTMLElement, options?: OverlayOptions): OverlayHandle;
+  /**
+   * 滚到一个模型位置 / range 的首行 / 某一页。目标排不出来（空 run、越界的页号）时不动并返回 false。
+   * 走的是 `scrollIntoView`，所以窗口与任意祖先滚动容器都照顾到，宿主不必告诉视图谁在滚。
+   */
+  scrollTo(target: ScrollTarget, options?: ScrollOptions): boolean;
   /** 只改页面占位尺寸，保留文字层、选区与已绘制的内容。 */
   setZoom(zoom: number): void;
   update(layout: DocumentLayout, options?: ViewOptions): void;
@@ -274,6 +283,37 @@ export function mountView(container: Element, layout: DocumentLayout, options: V
     caretRect: (position) => view.caretRect(position),
     decorate: annotations.decorate,
     overlay: annotations.overlay,
+    scrollTo(target, options = {}) {
+      assertLive();
+      const scroll: ScrollIntoViewOptions = {
+        block: options.align ?? 'start',
+        inline: 'nearest',
+        behavior: options.behavior ?? 'auto',
+      };
+      if ('page' in target) {
+        const slot = Number.isInteger(target.page) ? slots[target.page] : undefined;
+        if (slot === undefined) return false;
+        slot.shell.scrollIntoView(scroll);
+        return true;
+      }
+      const rect = scrollTargetRect(view.index, target);
+      const slot = rect === undefined ? undefined : slots[rect.page];
+      if (rect === undefined || slot === undefined) return false;
+      // 壳内坐标与装饰同一套换算（壳可能被宿主改过尺寸，不能按 zoom 反推）
+      const style = win?.getComputedStyle(slot.viewport);
+      const width = Number.parseFloat(style?.width ?? '') || slot.viewport.clientWidth;
+      const height = Number.parseFloat(style?.height ?? '') || slot.viewport.clientHeight;
+      if (width <= 0 || height <= 0) return false;
+      const local = pageRect(rect, slot.page.geometry.width, slot.page.geometry.height, width, height);
+      // 借一个临时元素让浏览器算滚动量：它认得所有祖先滚动容器，自己算只能认一个。
+      // smooth 滚动的终点在调用那一刻就定了，元素随后移除不影响它
+      const probe = doc.createElement('div');
+      probe.style.cssText = `position:absolute;left:${local.x}px;top:${local.y}px;width:${Math.max(local.width, 1)}px;height:${Math.max(local.height, 1)}px;pointer-events:none;visibility:hidden`;
+      slot.shell.append(probe);
+      probe.scrollIntoView(scroll);
+      probe.remove();
+      return true;
+    },
     setZoom(zoom) {
       assertLive();
       validate({ ...opts, zoom });

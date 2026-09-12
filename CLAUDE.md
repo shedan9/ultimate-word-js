@@ -28,13 +28,15 @@ SECTIONPAGES 迭代到自洽）都做完了，TOC / SEQ 的求值还没写。
 **屏幕坐标那一跳也已接通**（2026-09-12）：`@uw/view` 的 `createViewTransform()` /
 `createReadonlyView()` + `@uw/view/dom` 的 `mountView()`，支持 `locate` / `rectsOf` /
 `caretRect`；调试台缩放只改页面尺寸，保留文字节点、选区和索引。视口虚拟化与原生
-可选文本层也已完成：默认绘制可见页前后各两页，全文文字层常驻。装饰与 overlay 生命周期仍待实现。
+可选文本层也已完成：默认绘制可见页前后各两页，全文文字层常驻。**Phase 6 的交互 API 至此齐了**
+（2026-09-12）：`decorate` / `overlay` 住在页壳上、`scrollTo` 走 `scrollIntoView`，
+`find` / `query` 在 `@uw/model`（`search.ts` / `query.ts`，模型侧的文档序在 `order.ts`），见下。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、
-`@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 制表位 + **模型位置（`DocPosition`）** + **编号（解析 + 计数器 + 编号文字 + 接进级联）** + **表格（属性 + 级联 + 条件格式）** + **域（界桩配对 + 指令解析 + HYPERLINK）** + **页眉页脚部件** + **图片（外框 + blip 引用 + 裁剪 / 旋转 + 浮动锚点 + 字节表）**）、
+`@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 制表位 + **模型位置（`DocPosition`）** + **编号（解析 + 计数器 + 编号文字 + 接进级联）** + **表格（属性 + 级联 + 条件格式）** + **域（界桩配对 + 指令解析 + HYPERLINK）** + **页眉页脚部件** + **图片（外框 + blip 引用 + 裁剪 / 旋转 + 浮动锚点 + 字节表）** + **查找 / 选择器 / 模型侧文档序**）、
 `@uw/fonts`（行高规则 + 脚本分桶（**歧义字符 / 中性字符两条都实测**）+ 度量包 + 注册表 + `TextMeasurer`）、
 `@uw/layout`（item 流 + 断行 + 缩进 / 对齐 / 制表位 / 列表编号 + **中西文自动间距** + 行高与网格吸附 + **行内基线** +
 **表格列宽与格内几何 + 边框冲突解析** + **分页（含表格拆行）** + **域求值** + **页眉页脚** + **对象占位与浮动定位** + **布局索引（命中测试 / range → 矩形 / 光标）**）、
-`@uw/render-dom`（**元素树 → SVG / DOM**，见下）、`@uw/view`（屏幕坐标转换与只读视图）。
+`@uw/render-dom`（**元素树 → SVG / DOM**，见下）、`@uw/view`（屏幕坐标转换与只读视图 + 装饰 / overlay / `scrollTo`）。
 
 **只读视图**（`packages/view`）：主入口只处理纯数据，DOM 挂载从 `@uw/view/dom` 导入。
 每次查询重新读取页面的 `getScreenCTM()`，不能缓存跨滚动的矩阵，也不能重复加 `scrollTop`。
@@ -44,6 +46,17 @@ SECTIONPAGES 迭代到自洽）都做完了，TOC / SEQ 的求值还没写。
 缩放走 `setZoom()` 保留文字层与已绘制子树。22 项单测覆盖坐标、文本层与页面窗口；
 启动 playground 后访问 `/tests/view.html`（22 项）和 `/tests/virtual-text.html`（29 项）
 运行真实浏览器回归。
+
+**查找 / 查询 / 滚动**（`packages/model/src/search.ts` · `query.ts` · `order.ts`，`packages/view/src/scroll.ts`）
+四处容易搞反：① `findText` **吃级联完的树**（`LoadedDocument.resolved`）—— 「隐藏不隐藏」要级联完才知道，
+`w:vanish` 常写在字符样式里；② **匹配跨 run、不跨段落**，逐段拼串再搜，串与排版看见的一致
+（隐藏 run / 域界桩与指令 / 软连字符不进串，对象算一个 U+FFFC **阻断**匹配，`fieldValues` 里的 run 整个跳过）；
+字符串默认不分大小写且**一律转成正则**跑一条路 —— `toLowerCase()` 会改变 UTF-16 长度；
+③ 选择器只有 `paragraph` / `run` / `table` / `row` / `cell`，`image` / `field` / `sdt` **抛错**不答空
+（图片不是节点、域不在树上、内容控件解析时已剥掉）；④ `scrollTo` 的 range 滚到**首行**不是包围盒中心，
+目标排不出来时**不动**并返回 false。模型侧的文档序（`buildRunOrder` / `compareDocPositions` / `rangeOfNode`）
+与 `LayoutIndex.compare()` 的差别是**树里有的 run 都算**；`DocRange` 是纯数据，没有方法。
+浏览器回归 `/tests/annotations.html`（装饰 / overlay）与 `/tests/scroll.html`（17 项）。
 
 **虚拟化与原生选区**：每页常驻占位壳与透明文字 SVG，`IntersectionObserver` 只卸载复杂绘制层。
 几何查询取常驻 SVG 的矩阵，离屏页面仍有位置。绘制层设 `inert`，避免查找重复命中。

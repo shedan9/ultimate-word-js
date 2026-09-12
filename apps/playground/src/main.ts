@@ -17,10 +17,11 @@ import { createDiagnosticSink, twipsToPt } from '@uw/core';
 import type { MetricsPack } from '@uw/fonts';
 import { createTextMeasurer, FontRegistry } from '@uw/fonts';
 import { layoutDocumentWithFields } from '@uw/layout';
-import { fontNameCandidates, loadDocument } from '@uw/model';
+import type { DocRange, LoadedDocument } from '@uw/model';
+import { findText, fontNameCandidates, loadDocument } from '@uw/model';
 import { OpcPackage } from '@uw/ooxml';
 import { imageHrefResolver } from '@uw/render-dom';
-import type { DomView } from '@uw/view/dom';
+import type { DecorationHandle, DomView } from '@uw/view/dom';
 import { mountView } from '@uw/view/dom';
 
 const packs = import.meta.glob<MetricsPack>('../../../packages/fonts/packs/*.json', {
@@ -46,6 +47,7 @@ app.innerHTML = `
     <label><input type="checkbox" class="debug"> 画版心与行盒</label>
     <label><input type="checkbox" class="text-layer" checked> 原生选区</label>
     <label><input type="checkbox" class="virtualize" checked> 按需绘制</label>
+    <label class="find">查找 <input type="search" placeholder="回车到下一处" disabled><span class="hits"></span></label>
     <span class="status">把一份 .docx 拖进来</span>
   </header>
   <div class="stage"></div>
@@ -58,12 +60,17 @@ const debugInput = app.querySelector<HTMLInputElement>('.debug') as HTMLInputEle
 const textLayerInput = app.querySelector<HTMLInputElement>('.text-layer') as HTMLInputElement;
 const virtualizeInput = app.querySelector<HTMLInputElement>('.virtualize') as HTMLInputElement;
 const fileInput = app.querySelector<HTMLInputElement>('input[type=file]') as HTMLInputElement;
+const findInput = app.querySelector<HTMLInputElement>('input[type=search]') as HTMLInputElement;
+const hitsLabel = app.querySelector<HTMLElement>('.hits') as HTMLElement;
 
 /** 当前文档的布局结果。缩放只改尺寸，调试开关重画；两者都不重排 —— 架构 §4.1 */
 let current: ReturnType<typeof layoutDocumentWithFields>['layout'] | undefined;
 /** 当前文档的图片解析器（id → data URI）。与布局分开存：换缩放不该重新编码一遍 base64 */
 let images: ((id: string) => string | undefined) | undefined;
 let view: DomView | undefined;
+/** 查找要回模型（`findText` 吃级联完的树），布局只回答「画在哪」 */
+let loaded: LoadedDocument | undefined;
+let fieldValues: ReadonlyMap<string, string> | undefined;
 
 function draw(): void {
   if (current === undefined) return;
@@ -76,23 +83,71 @@ function draw(): void {
   };
   if (view === undefined) view = mountView(stage, current, options);
   else view.update(current, options);
+  search.rerun();
 }
+
+/**
+ * 查找 = `findText`（模型）→ `decorate`（视图）→ `scrollTo`（视图）三步，api.md §7 / §8 的用法。
+ * 装饰在重排后自己跟着走，所以 `update()` 之后只需按同一串字重搜一遍换掉过期的 range，
+ * 不必重建 DOM。
+ */
+const search = (() => {
+  let ranges: DocRange[] = [];
+  let marks: DecorationHandle[] = [];
+  let cursor = -1;
+  const clear = () => {
+    for (const m of marks) m.dispose();
+    marks = [];
+    ranges = [];
+    cursor = -1;
+    hitsLabel.textContent = '';
+  };
+  const run = (query: string) => {
+    clear();
+    if (loaded === undefined || view === undefined || query.length === 0) return;
+    ranges = findText(loaded.resolved, query, {
+      limit: 500,
+      ...(fieldValues === undefined ? {} : { fieldValues }),
+    });
+    marks = ranges.map((r) => view?.decorate(r, { className: 'hit' }) as DecorationHandle);
+    hitsLabel.textContent = ranges.length === 0 ? '无' : `${ranges.length} 处`;
+  };
+  const go = (step: number) => {
+    if (ranges.length === 0 || view === undefined) return;
+    marks[cursor]?.dispose();
+    if (cursor >= 0) marks[cursor] = view.decorate(ranges[cursor] as DocRange, { className: 'hit' });
+    cursor = (cursor + step + ranges.length) % ranges.length;
+    marks[cursor]?.dispose();
+    marks[cursor] = view.decorate(ranges[cursor] as DocRange, { className: 'hit hit-current' });
+    view.scrollTo(ranges[cursor] as DocRange, { align: 'center', behavior: 'smooth' });
+    hitsLabel.textContent = `${cursor + 1} / ${ranges.length}`;
+  };
+  return {
+    rerun: () => run(findInput.value),
+    clear,
+    go,
+  };
+})();
 
 function open(bytes: Uint8Array, name: string): void {
   const t0 = performance.now();
   const sink = createDiagnosticSink();
   const doc = loadDocument(OpcPackage.open(bytes), sink);
+  loaded = doc;
   images = imageHrefResolver(doc.images);
   const measurer = createTextMeasurer(registry, {
     candidates: (family) => fontNameCandidates(doc.fonts, family),
     diagnostics: sink,
   });
-  current = layoutDocumentWithFields(doc.resolved, doc.fields, {
+  const result = layoutDocumentWithFields(doc.resolved, doc.fields, {
     measurer,
     settings: doc.cascade.settings,
     headerFooters: doc.headerFooters,
     diagnostics: sink,
-  }).layout;
+  });
+  current = result.layout;
+  fieldValues = result.values;
+  findInput.disabled = false;
   const ms = performance.now() - t0;
 
   const first = current.pages[0]?.geometry;
@@ -125,6 +180,13 @@ zoomInput.addEventListener('input', () => view?.setZoom(Number(zoomInput.value) 
 debugInput.addEventListener('change', draw);
 textLayerInput.addEventListener('change', draw);
 virtualizeInput.addEventListener('change', draw);
+findInput.addEventListener('input', search.rerun);
+findInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    search.go(e.shiftKey ? -1 : 1);
+  }
+});
 
 document.addEventListener('dragover', (e) => e.preventDefault());
 document.addEventListener('drop', (e) => {

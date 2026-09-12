@@ -905,9 +905,25 @@ await view.toPNG(3);     // 第 3 页
     `update()` 处理重排，`destroy()` 清理挂载内容
   - 26 项 Vitest 测试覆盖双向转换、跨页、重排与装饰锚点；`apps/playground/tests/view.html`
     提供 22 项真实浏览器坐标回归断言
-- `find` / `query` / `scrollTo`
-- `decorate` / `overlay` 已在 `@uw/view/dom` 接通：高亮按 range 生成页面壳内矩形，批注保留 DOM、
-  随缩放与重排重新定位；完整浏览器回归仍需在下一轮补跑
+- ~~`find` / `query` / `scrollTo`~~ ✅（2026-09-12）三个都在低层入口上做完了，`doc.xxx` 门面等 `ultimate-word` 包：
+  - `@uw/model` 的 `findText(resolved, pattern, opts)` —— **逐段拼串再搜**（跨 run、不跨段落），
+    串与排版看见的一致：隐藏 run / 域界桩与指令 / 软连字符不进串，对象算一个 U+FFFC 阻断匹配；
+    `fieldValues` 里的 run 整个跳过（它们的旧值指不到屏幕上）。字符串默认不分大小写（Word 的默认），
+    全部转成正则跑一条路 —— 用 `toLowerCase()` 比会改变 UTF-16 长度，位置就对不上了。
+    **吃级联完的树**：`w:vanish` 常写在字符样式里，直接格式树上看不见
+  - `@uw/model` 的 `queryNodes(body, selector)` —— 类型 / 属性 / 后代 / 直接子 / 三个位置伪类，
+    只有 `paragraph` / `run` / `table` / `row` / `cell` 五种；api.md 原来列的 `image` / `field` / `sdt`
+    **抛错**而不是答空（图片不是节点、域不在树上、内容控件解析时已剥掉）
+  - `@uw/model` 的 `order.ts` —— 模型侧的文档序（`buildRunOrder` / `compareDocPositions` /
+    `rangeContains` / `rangeOfNode`）。`LayoutIndex.compare()` 只认排出来的 run，
+    查找与批注却常指着空 run / 隐藏 run。顺带把 api.md 里 `DocRange` 的两个方法改成了纯数据
+    （原则 1.1：range 要能存、要能过 Worker 边界）
+  - `@uw/view/dom` 的 `scrollTo(target, { align, behavior })` —— 位置取光标矩形、range 取**首行**、
+    页按物理页序；走 `scrollIntoView`（借一个临时探针元素），窗口与任意祖先滚动容器都照顾到。
+    目标排不出来时**不动**并返回 false，不退到页首。`/tests/scroll.html` 17 项浏览器断言
+  - 调试台加了查找框（`findText` → `decorate` → `scrollTo`，回车循环命中），就是 api.md §15 的第一条配方
+- ~~`decorate` / `overlay`~~ ✅ 已在 `@uw/view/dom` 接通：高亮按 range 生成页面壳内矩形，批注保留 DOM、
+  随缩放与重排重新定位；`/tests/annotations.html` 是它的浏览器回归
 - ~~视口虚拟化与原生可选文本层~~ ✅（2026-09-12）
   - 页面壳与透明文字 SVG 常驻，`IntersectionObserver` 仅挂载可见页前后各两页的绘制层；
     无观察器时全量绘制，打印前补画所有页，打印后恢复窗口
@@ -1335,8 +1351,14 @@ CI 上无 Word，所以真值 PDF 与抽取结果**提交进仓库**（`fixtures
     DOM 入口支持挂载、定位、模型范围到屏幕矩形、缩放、更新与销毁。
 
 16. ~~**视口虚拟化与原生可选文本层**~~ ✅（2026-09-12）绘制页按需挂载、文字层常驻，
-    离屏查找、跨样式查找、跨页复制、缩放保留选区已验证。下一步接装饰与 overlay 生命周期；
-    当前仍不是完整的交互 API。
+    离屏查找、跨样式查找、跨页复制、缩放保留选区已验证。
+
+17. ~~**Phase 6 收尾：`find` / `query` / `scrollTo`**~~ ✅（2026-09-12）三个接口都在低层入口上做完，
+    见 Phase 6 的条目。**没有新的标定**，判据是单测（model 18 个 + view 2 个）与浏览器回归
+    （`/tests/scroll.html` 17 项）。两处把文档写在实现之前的说法改对了：`DocRange` 是纯数据
+    （原先带 `text()` / `contains()`）、overlay 没有 `follow` 开关（一律跟随，关不掉也没必要关）。
+    一处估计落空：api.md 列的 `sdt[tag=…]` 选择器做不了 —— 内容控件在 parse-body 里
+    是透明容器，`tag` / `alias` 根本没留下；要支持它得先改解析，那是数据绑定（§9）那一步的事
 
 第 6 步曾经优先于任何**布局**代码 —— 与第 4 步同理，没测准的东西不要拿来当地基。
 它做完之后的卡口是分页，分页现在也做完了（第 12f 步），于是**没有卡口了**：
@@ -1358,8 +1380,9 @@ CI 上无 Word，所以真值 PDF 与抽取结果**提交进仓库**（`fixtures
    只是**空格是唯一的例外**：Word 画空格时不换 `Tf`，字体名跟着前一个字走、
    宽度却是另一款字体的 —— 按字体名读会得出相反的结论。
    这一格现在空着；宽度这一维还没标定的只剩上下标字号与禁则集边界（第 13 步 ③）
-4. **装饰与 overlay 生命周期**：第 16 步已完成可选文本层与虚拟化。接下来让模型范围对应的
-   高亮、批注随滚动 / 缩放 / 重排更新位置，满足 Phase 6 的 DoD；程序化查找与滚动接口仍待实现
+4. ~~**装饰与 overlay 生命周期** + **查找 / 查询 / 滚动**~~ ✅ 2026-09-12 做完了（第 17 步）——
+   Phase 6 的交互 API 至此齐了（`decorate` / `overlay` / `find` / `query` / `scrollTo`），
+   剩下的是 `ultimate-word` 门面包把 `doc.xxx` 包起来，以及打印分页。这一格现在空着
 5. ~~**表格剩下的一组样本**~~ ✅ 拆行的四问 2026-08-27 做完了（第 12r 步），
    表格这一层（几何 / 隔行带 / 格线冲突 / 拆行）全部有真值了 —— 现在这一格空着。
    估过头的地方记一笔：一张表根本不够，最后用了七张（`spike-table-04`），

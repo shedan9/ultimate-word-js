@@ -177,17 +177,28 @@ interface DocPosition {
   readonly offset: number;       // 该片段内的 UTF-16 偏移
 }
 
+/** 半开区间 [start, end)。纯数据，没有方法 —— 见下面的说明 */
 interface DocRange {
   readonly start: DocPosition;
   readonly end: DocPosition;
-  text(): string;
-  contains(other: DocPosition | DocRange): boolean;
   /** 屏幕矩形要问 View 要，因为那是屏幕空间的事 */
 }
 
 doc.compare(a: DocPosition, b: DocPosition): -1 | 0 | 1;
 doc.rangeOf(node: NodeId): DocRange;
 ```
+
+> ⚠️ **`DocRange` 是纯数据，原先写的 `text()` / `contains()` 两个方法没有了**（2026-09-12）：
+> range 是批注、书签、查找结果的存储形态，要能 `JSON.stringify`、要能过 Worker 边界
+> （架构原则 1.1），带方法就都不行了。`contains` 变成了函数
+> `rangeContains(order, range, other)`，`text()` 等 Phase 7 的选区模型一起做。
+>
+> `compare` / `rangeOf` 现在的低层入口在 `@uw/model` 的 `order.ts`：
+> `buildRunOrder(body)` 一次建好 run 的文档序（消费侧现建，与 `LayoutIndex` 同理），
+> 再用 `compareDocPositions(order, a, b)` / `rangeContains(order, range, x)` / `rangeOfNode(node)`。
+> 它与 `LayoutIndex.compare()` 的差别：**树里有的 run 都算**，空 run、隐藏 run 也能比 ——
+> 布局那一份只认排出来的。`rangeOfNode` 对一个 run 都没有的节点（空段落）答 `undefined`：
+> `DocPosition` 只能指 run，段落标记还不是 run（Phase 7 的光标模型再补）。
 
 > ⚠️ **`contentIndex` 是 2026-08-30 补上的第三个字段**（实现 `LayoutIndex` 时才看清）：
 > 一个 run 的内容是一列片段，片段**没有自己的 id**，而「run 内的全局字符偏移」要把前面
@@ -226,7 +237,25 @@ view.rectsOf(range): ClientRect[]; // { x, y, width, height }，CSS px
 > ③ 与 ④ 已由 `@uw/view` 接通（2026-09-12）：布局空间的 `LayoutIndex` 负责模型位置
 > ↔ twips，`ViewTransform` 负责 twips ↔ CSS px。返回值采用纯数据 `ClientRect`，
 > 替代原方案的 `DOMRect`，让不依赖 DOM 的主入口也能提供相同接口。
-> `query` / `find` 仍为规划中的接口；以下是已实现的低层只读入口：
+> `query` / `find` 已实现（2026-09-12），低层入口在 `@uw/model`：
+> `queryNodes(body, selector)` 与 `findText(resolvedBody, pattern, options)`；
+> `doc.xxx` 那层门面等 `ultimate-word` 包再包。四处要点：
+> - **`findText` 吃级联完的树**（`LoadedDocument.resolved`），不是可编辑的那棵：
+>   「隐藏不隐藏」要级联完才知道（`w:vanish` 常写在字符样式里）。两棵树的节点 id 一样，
+>   结果照样指回可编辑的那棵
+> - **匹配跨 run、不跨段落**：Word 会把一个词切成好几个 run，「签发人」分在三个 run 里是常态；
+>   段落是 Word 查找的天然边界。隐藏 run、域的界桩与指令、软连字符不进匹配串；
+>   制表位 / 换行各算一个字符（`\t` / `\n`）；对象算一个 U+FFFC，**阻断**匹配。
+>   传 `fieldValues`（`layoutDocumentWithFields()` 的 `values`）可以把求值过的域整个跳过 ——
+>   它们显示的是算出来的页码，文件里存的旧值搜到了也画不到屏幕上
+> - 字符串默认**不分大小写**（Word 的默认），`matchCase: true` 才分；正则跟自己的 flags 走，
+>   `g` / `y` 由实现接管（调用方正则的 `lastIndex` 不会被动）。零长匹配跳过
+> - 选择器**只有** `paragraph` / `run` / `table` / `row` / `cell` 五种类型；下表列的
+>   `image` / `field` / `sdt` 会抛错而不是答空 —— 图片是 run 内容的片段不是节点，域不在树上，
+>   内容控件解析时已剥成透明容器（`tag` / `alias` 根本没留下）。
+>   `:nth-child` 数的是父列表里的位置、**不分类型**（与 CSS 一致）
+>
+> 以下是已实现的低层只读入口：
 
 ```ts
 import { mountView } from '@uw/view/dom';
@@ -241,6 +270,8 @@ const view = mountView(container, documentLayout, {
 const position = view.locate({ clientX: 320, clientY: 540 }); // DocPosition | null
 const rectangles = view.rectsOf(range); // ClientRect[]，跨行 / 跨页分别返回
 const caret = view.caretRect(range.start); // ClientRect | null
+view.scrollTo(range, { align: 'center' }); // 滚到 range 的首行；目标排不出来时返回 false
+view.scrollTo({ page: 2 }); // 物理页序（0 起），不是显示页码
 view.setZoom(1.5); // 保留 SVG 内容节点与布局索引，不重新排版
 view.update(nextLayout); // 重建索引与文字层，清除原生选区；沿用未被覆盖的选项
 view.destroy(); // 可重复调用；销毁后查询返回空结果，更新操作抛错
@@ -290,17 +321,16 @@ view.destroy(); // 可重复调用；销毁后查询返回空结果，更新操�
 const d = view.decorate(range, {
   className: 'search-hit',
   style: { background: '#ffd33d55' },
-  layer: 'below-text',                 // 'below-text' | 'above-text'
+  layer: 'above-text',                 // 现只支持 'above-text'，见下
 });
 d.dispose();
 
 // 把任意 DOM / React 组件锚到文档位置上，重排后自动跟随
 const o = view.overlay(range.start, bubbleElement, {
   placement: 'right-of-line',          // 'right-of-line' | 'above' | 'below' | 'inline'
-  offset: { x: 8, y: 0 },
-  follow: true,                        // 重排 / 滚动 / 缩放后自动更新位置
+  offset: { x: 8, y: 0 },              // 页面壳内 CSS px，不随文档 zoom 放大
 });
-o.update();                            // 手动重算（内容尺寸自己变了时）
+o.update(newPosition?);                // 换锚点；尺寸自己变了不用调（ResizeObserver 接住）
 o.dispose();
 ```
 
@@ -308,8 +338,19 @@ o.dispose();
 view.scrollTo(target: DocPosition | DocRange | { page: number }, options?: {
   align?: 'start' | 'center' | 'end';
   behavior?: 'auto' | 'smooth';
-});
+}): boolean;
 ```
+
+> **已实现的与原方案的差别**（2026-09-12，`@uw/view/dom`）：
+> - `decorate` 只支持 `layer: 'above-text'`（透明背景盖在文字上）；`below-text` 要把装饰
+>   插进页面 SVG 的绘制层，而绘制层会被虚拟化卸载 —— 装饰住在页壳上正是为了不跟着卸载
+> - `overlay` 没有 `follow` 开关：**一律跟随**。滚动与 CSS 变换由浏览器继承（装饰与批注是
+>   页壳的子元素），只有缩放 / 重排 / 壳尺寸变化才重算壳内坐标；批注自身尺寸变了由
+>   `ResizeObserver` 接住，`update()` 留给「锚点换了」这一种情况
+> - `scrollTo` 返回 `boolean`：目标排不出来（空 run、隐藏 run、越界页号）时**不动**并答 false，
+>   而不是退到页首 —— 滚到了别处比没滚更难察觉。range 滚到的是**首行**，不是包围盒中心
+>   （跨三页的选区滚到中心会落在空白页上）。实现走 `scrollIntoView`，窗口与任意祖先滚动容器
+>   都照顾到，宿主不必告诉视图谁在滚
 
 > **为什么装饰不是「往模型里插标签」**：装饰是**视图层**的东西。
 > 插进模型会污染文档内容、进 undo 栈、被导出到 docx 里去。
@@ -496,17 +537,21 @@ function Viewer({ url }: { url: string }) {
 let hits: Disposable[] = [];
 function search(keyword: string) {
   hits.forEach(d => d.dispose());
-  hits = doc.find(keyword).map(r => view.decorate(r, { className: 'hit' }));
-  if (hits.length) view.scrollTo(doc.find(keyword)[0], { align: 'center' });
+  const ranges = doc.find(keyword);
+  hits = ranges.map(r => view.decorate(r, { className: 'hit' }));
+  if (ranges.length) view.scrollTo(ranges[0], { align: 'center' });
 }
 ```
+
+`apps/playground` 的查找框就是这一段（低层入口版：`findText` + `decorate` + `scrollTo`），
+回车 / Shift+回车在命中之间循环。
 
 ### 给每个一级标题右侧挂一个批注气泡
 
 ```ts
 for (const h of doc.query('paragraph[styleId=Heading1]')) {
   const el = renderBubble(h);
-  view.overlay(doc.rangeOf(h.id).start, el, { placement: 'right-of-line', follow: true });
+  view.overlay(doc.rangeOf(h.id).start, el, { placement: 'right-of-line' });
 }
 ```
 

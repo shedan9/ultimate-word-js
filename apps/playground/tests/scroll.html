@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>scrollTo 浏览器回归</title>
+<style>
+body { margin: 0; min-height: 3000px; font: 14px/1.5 system-ui; }
+#result { position:fixed;top:0;left:0;z-index:20;background:white; }
+#host { margin:100px 40px;width:850px;height:450px;overflow:auto; }
+</style>
+<pre id="result">正在验证…</pre><div id="host"></div>
+<script type="module">
+import { mountView } from '@uw/view/dom';
+import { annotationLayout, annotationEnd as end } from './annotation-fixture.ts';
+
+const host = document.querySelector('#host');
+const result = document.querySelector('#result');
+let passed = 0;
+const assert = (condition, label) => { if (!condition) throw new Error(label); passed++; result.textContent = `进行中 ${passed}：${label}`; };
+const near = (a, b, tol = 1) => Math.abs(a-b) < tol;
+// 标签页在后台时 rAF 不跑、定时器被节流到秒级；scrollTo 与装饰的换算都是同步的，后台直接不等
+const frame = async () => { if (document.hidden) return; for (let i=0;i<5;i++) await new Promise(requestAnimationFrame); };
+const bounds = (node) => node.getBoundingClientRect();
+const at = (run, offset) => ({ nodeId: `r${run}`, contentIndex: 0, offset });
+try {
+  const view = mountView(host, annotationLayout(), { overscan: 0 });
+  await frame();
+  const hostBox = () => bounds(host);
+  // ① 按页：壳顶贴视口顶（窗口与 host 两层滚动容器都要动）
+  assert(view.scrollTo({ page: 2 }) === true, '按页滚动返回 true');
+  await frame();
+  const page2 = view.root.querySelector('[data-page="2"]');
+  assert(near(bounds(page2).y, hostBox().y), '第 3 页壳顶贴住 host 顶');
+  assert(hostBox().y >= 0 && hostBox().y < window.innerHeight, '外层窗口也滚到 host 可见');
+  // ② 越界 / 排不出来的目标：不动、返回 false
+  const before = host.scrollTop;
+  assert(view.scrollTo({ page: 5 }) === false && view.scrollTo({ page: -1 }) === false && view.scrollTo({ page: 1.5 }) === false, '越界页号返回 false');
+  assert(view.scrollTo(at(9, 0)) === false && view.scrollTo({ start: at(9, 0), end: at(9, 1) }) === false, '排不出来的位置返回 false');
+  assert(host.scrollTop === before, '失败的滚动不动');
+  // ③ 位置 + center：光标矩形的中心落在 host 中心
+  assert(view.scrollTo(at(1, 2), { align: 'center' }) === true, '按位置滚动');
+  await frame();
+  const caret = view.caretRect(at(1, 2));
+  assert(near(caret.y + caret.height / 2, hostBox().y + hostBox().height / 2, 1.5), 'align=center 把行居中');
+  // ④ range + end：首行（不是包围盒）的底贴 host 底
+  // 首页顶上那一行没法再往下推（scrollTop 到 0 就到头了），拿第 2 页起的 range 测
+  const tail = { start: at(1, 0), end };
+  assert(view.scrollTo(tail, { align: 'end' }) === true, '按 range 滚动');
+  await frame();
+  const first = view.rectsOf(tail)[0];
+  assert(near(first.y + first.height, hostBox().y + hostBox().height, 1.5), 'align=end 以 range 首行的底对齐');
+  assert(first.y < view.rectsOf(tail)[1].y - 100, 'range 跨页时滚到的是首行那一页');
+  // ⑤ start（默认）+ 缩放后照样准
+  view.setZoom(1.4);
+  await frame();
+  assert(view.scrollTo(at(2, 0)) === true, '缩放后滚动');
+  await frame();
+  assert(near(view.caretRect(at(2, 0)).y, hostBox().y, 1.5), '缩放后 align=start 行顶贴 host 顶');
+  view.setZoom(1);
+  // ⑥ 宿主改过壳尺寸也走同一套换算
+  const shell1 = view.root.querySelector('[data-page="1"]');
+  shell1.style.width = '700px'; shell1.style.height = '700px';
+  await frame();
+  view.scrollTo(at(1, 0), { align: 'center' });
+  await frame();
+  const c1 = view.caretRect(at(1, 0));
+  assert(near(c1.y + c1.height / 2, hostBox().y + hostBox().height / 2, 1.5), '壳尺寸被改后仍按实际留白换算');
+  shell1.style.width = ''; shell1.style.height = '';
+  // ⑦ 临时探针不残留；smooth 不抛
+  assert(view.root.querySelectorAll('.uw-page-shell > div:not(.uw-painting)').length === 0, '探针元素已移除');
+  view.scrollTo(at(0, 0), { behavior: 'smooth' });
+  // ⑧ 重排后按新位置滚
+  view.update(annotationLayout(300, true));
+  await frame();
+  view.scrollTo(at(0, 0));
+  await frame();
+  assert(view.root.querySelector('[data-page="1"]').contains(document.elementFromPoint(hostBox().x + 100, hostBox().y + 10)) || near(view.caretRect(at(0, 0)).y, hostBox().y, 1.5), '重排后 r0 跟到第 2 页并滚过去');
+  view.destroy();
+  let rejected = false; try { view.scrollTo({ page: 0 }); } catch { rejected = true; }
+  assert(rejected, '销毁后 scrollTo 抛错');
+  result.textContent = `PASS: ${passed} browser assertions`;
+} catch (error) {
+  result.textContent = `FAIL: ${error.message}`;
+  console.error(error);
+}
+</script>
+</html>
