@@ -34,14 +34,16 @@ SECTIONPAGES 迭代到自洽）都做完了，TOC / SEQ 的求值还没写。
 **门面包 `ultimate-word` 也有了**（2026-09-13）：api.md §1 那两行（`UltimateWord.load()` →
 `doc.mount()`）从此是真的，调试台只走它；它**不实现任何东西**，只把六个包接成 api.md 的形状，
 判据是接线不是真值（Vitest 14 项 + `/tests/facade.html` 15 项）。随库度量包在浏览器里的路
-是 `@uw/fonts/packs`（JSON import，无 fs）。
+是 `@uw/fonts/packs`（JSON import，无 fs）。**Phase 6 至此全部做完**（2026-09-13）：
+**打印**（`@uw/view` 的 `print.ts`）与 **`@uw/react`**（`packages/react`），见下。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、
 `@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 制表位 + **模型位置（`DocPosition`）** + **编号（解析 + 计数器 + 编号文字 + 接进级联）** + **表格（属性 + 级联 + 条件格式）** + **域（界桩配对 + 指令解析 + HYPERLINK）** + **页眉页脚部件** + **图片（外框 + blip 引用 + 裁剪 / 旋转 + 浮动锚点 + 字节表）** + **查找 / 选择器 / 模型侧文档序**）、
 `@uw/fonts`（行高规则 + 脚本分桶（**歧义字符 / 中性字符两条都实测**）+ 度量包 + 注册表 + `TextMeasurer`）、
 `@uw/layout`（item 流 + 断行 + 缩进 / 对齐 / 制表位 / 列表编号 + **中西文自动间距** + 行高与网格吸附 + **行内基线** +
 **表格列宽与格内几何 + 边框冲突解析** + **分页（含表格拆行）** + **域求值** + **页眉页脚** + **对象占位与浮动定位** + **布局索引（命中测试 / range → 矩形 / 光标）**）、
-`@uw/render-dom`（**元素树 → SVG / DOM**，见下）、`@uw/view`（屏幕坐标转换与只读视图 + 装饰 / overlay / `scrollTo`）、
-`ultimate-word`（门面：`load` / `fonts` / `UwDocument` / `UwView`，见下）。
+`@uw/render-dom`（**元素树 → SVG / DOM**，见下）、`@uw/view`（屏幕坐标转换与只读视图 + 装饰 / overlay / `scrollTo` + **打印**）、
+`ultimate-word`（门面：`load` / `fonts` / `UwDocument` / `UwView`，见下）、
+`@uw/react`（`<UltimateWordView>` + `useDocument` + `useDecoration`，见下）。
 
 **只读视图**（`packages/view`）：主入口只处理纯数据，DOM 挂载从 `@uw/view/dom` 导入。
 每次查询重新读取页面的 `getScreenCTM()`，不能缓存跨滚动的矩阵，也不能重复加 `scrollTop`。
@@ -63,6 +65,27 @@ undefined；④ `UwView` 没有 `update()`（重排是 Phase 7 的事），改�
 `doc.layout` 暴露但**不在稳定性承诺内**（api.md §16），给调试台与保真度工具用。
 `ViewOptions` 没有 `mode` / `renderer`、`LoadOptions` 没有 `worker` / `layoutOnLoad` ——
 对应的能力还没有，不摆不生效的选项。
+
+**打印**（`packages/view/src/print.ts`）三处容易搞反：① **不印屏幕上那一份** —— 它住在宿主的
+滚动容器里（`overflow:auto` 打印时只印第一屏）、带着缩放与页间距；`beforeprint` 那一刻往 `<body>`
+直下另造一张「打印页」（每页一个 pt 尺寸的盒子 + 同一份布局在 zoom = 1 下的重画，`@page { size }`
+取纸张、边距 0），`afterprint` 拆掉。不走 `<iframe>`：拿不到宿主的 `@font-face`；
+② **Ctrl+P 默认也走它**（`printMode: 'document'`），`'inline'` 才是原来的「原地补画」；
+同一页面几个视图只造一张（`data-uw-print` 标记，与 classPrefix 无关），`print()` 显式叫的那个优先
+（`printClaims`）；③ 分页用 `break-before` 不用 `break-after`（最后一页后面多印一张白纸）。
+装饰与 overlay 不进打印页。判据：headless Chrome `printToPDF` 出来的 PDF 页数 / 纸张 / 每页首字
+与布局一致，gongwen-01 的基线与真值差 0.06pt；浏览器回归 `/tests/print.html`（12 项）。
+
+**`@uw/react`**（`packages/react`）四处容易搞反：① **构造选项变了就重挂**（`UwView` 没有 `update()`），
+`zoom` 单独走 `setZoom()`，所以 `fontFamily` 要给稳定引用；② `overlays` 按 key 调和
+（`overlays.ts` 的 `reconcileOverlays`，纯函数）：锚点变了 `update()`，placement / offset 变了
+摘了重挂；③ 气泡的宿主 `<div>` 在**渲染期**按 key 造（portal 要在同一趟渲染里拿到目标节点），
+视图重挂后宿主元素与其中的 React 子树不动 —— 输入到一半的字还在；④ `useDocument` 的 `source`
+按引用比（`ArrayBuffer` 要调用方 memo），`useDecoration` 的 range / options 按值比。
+判据是接线：Vitest 14 项（jsdom + 假视图）+ `/tests/react.html` 24 项。**浏览器回归页在被遮住的
+标签页里会永远停在「正在验证…」**（`document.hidden` 下 rAF 不跑）—— 用 headless Chrome + CDP
+轮询 `#result` 跑最稳：`node apps/playground/tests/run.mjs`（七个页面 view / virtual-text / annotations /
+scroll / facade / print / react 一口气跑完，要先起调试台）。
 
 **查找 / 查询 / 滚动**（`packages/model/src/search.ts` · `query.ts` · `order.ts`，`packages/view/src/scroll.ts`）
 四处容易搞反：① `findText` **吃级联完的树**（`LoadedDocument.resolved`）—— 「隐藏不隐藏」要级联完才知道，
@@ -511,6 +534,7 @@ pnpm turbo run typecheck test        # 全量检查（跨平台，应当全绿�
 pnpm lint                            # biome check .
 pnpm lint:fix
 pnpm --filter @uw/playground dev     # 调试台，:5273（拖一份 docx 进去就画）
+node apps/playground/tests/run.mjs [print react …]   # 浏览器回归（七个页面，headless Chrome + CDP，要先起调试台）
 
 # 单个包 / 单个测试文件 / 单个用例
 pnpm --filter @uw/fonts run test
@@ -559,7 +583,7 @@ pnpm --filter @uw/fonts run packs:check    # 只校验入库的包与本机字�
    用户要的是看到文档，不是看到白屏。
 
 包依赖方向严格单向：`core ← ooxml ← model ← layout ← render-* ← view ← editor`，
-`serialize ← model`。虚线以内（core / ooxml / model / fonts / layout / serialize）无 DOM 依赖，
+`serialize ← model`；`ultimate-word` 在最外面收拢，`@uw/react` 只依赖 `ultimate-word`。虚线以内（core / ooxml / model / fonts / layout / serialize）无 DOM 依赖，
 这条线就是未来的 Worker 边界。
 
 三个坐标空间、两个转换：`DocPosition{nodeId,offset}` ↔（`LayoutIndex`）↔ `LayoutPoint{page,x,y}`（twips）

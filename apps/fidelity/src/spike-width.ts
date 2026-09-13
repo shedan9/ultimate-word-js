@@ -231,7 +231,7 @@ for (const s of ranked.slice(0, 10)) {
 const currentRank = ranked.findIndex((s) => isDefault(s.rules));
 if (currentRank >= 10) {
   const s = ranked[currentRank] as (typeof ranked)[number];
-  console.log(`  …\n→ ` + label(s.rules).padEnd(LABEL_W - 2) + `${s.ok}/${s.total}`.padStart(12));
+  console.log(`  …\n→ ${label(s.rules).padEnd(LABEL_W - 2)}${`${s.ok}/${s.total}`.padStart(12)}`);
 }
 console.log('-'.repeat(LABEL_W + 12));
 

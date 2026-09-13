@@ -880,7 +880,7 @@ await view.toPNG(3);     // 第 3 页
     按「对象要的高是硬下限」处理，没有样本）
 - **DoD**：带自动目录的报告，目录页码正确且跳转可用
 
-### Phase 6 — 交互 API（只读态）
+### Phase 6 — 交互 API（只读态）✅（2026-09-13 收尾：打印 + `@uw/react`）
 - ~~命中测试、坐标 ↔ 模型位置双向映射~~ ✅（2026-08-30）**布局空间那一半**做完了：
   `@uw/layout` 的 `layout-index.ts`，`buildLayoutIndex(doc)` → `positionAt` / `rectsOf` /
   `caretRect` / `compare`。`ViewTransform`（px ↔ twips）已在 2026-09-12 接通，见下
@@ -933,7 +933,7 @@ await view.toPNG(3);     // 第 3 页
   - 原生跨页选区在滚动与缩放后保留；复制跳过编号和重复表头、保留计算域，
     视觉行之间输出换行。图片替代说明留在辅助功能树，不混入复制文本
   - 调试台增加原生选区 / 按需绘制开关；`@uw/view` 共 22 项单测，
-    `/tests/virtual-text.html` 提供 29 项浏览器断言。**Phase 6 DoD 仍未完成**
+    `/tests/virtual-text.html` 提供 36 项浏览器断言（含打印的 7 项）
 - ~~`ultimate-word` 门面包~~ ✅（2026-09-13）`packages/ultimate-word`：api.md §1 那两行
   （`UltimateWord.load()` → `doc.mount()`）从此是真的，调试台改成只走它。
   **它不实现任何东西**，只把六个包接成 api.md 的形状 —— 所以判据是接线（Vitest 14 项 +
@@ -947,9 +947,31 @@ await view.toPNG(3);     // 第 3 页
     `packs.test.ts` 对着 `packs/index.json` 校验
   - `fit-width` / `fit-page` 按最宽 / 最高的那一页算、跟随容器（`ResizeObserver`）——
     缩放永不重排，所以跟着容器走是 O(1) 的
-- 打印（`@media print` + 分页 CSS，或直接走 canvas → PDF）
-- **DoD**：能在文档任意段落右侧挂一个 React 批注气泡，滚动 / 缩放 / 重排后位置不飘
-  （overlay 已能做到，差 `@uw/react` 那层声明式包装）
+- ~~打印（`@media print` + 分页 CSS，或直接走 canvas → PDF）~~ ✅（2026-09-13）`@uw/view` 的 `print.ts`，
+  走的是「`@media print` + 分页 CSS」那条路，但**不印屏幕上那一份**：它住在宿主的滚动容器里
+  （`overflow:auto` 打印时只印第一屏）、带着缩放与页间距。`beforeprint` 那一刻往 `<body>` 直下造一张
+  「打印页」——每页一个 pt 尺寸的盒子、同一份 `PageLayout` 在 zoom = 1 下的重画，`@page { size }`
+  取纸张、边距 0（页边距早已算进版心，打印机再加一遍就是双份）；`afterprint` 拆掉
+  - 不走 `<iframe>`：拿不到宿主的 `@font-face` / `document.fonts`，与屏幕上用的就不是同一批字体
+  - Ctrl+P 默认也走它（`printMode: 'document'`）；`'inline'` 保留原来的「原地补画」，给文档只是页面一角的宿主。
+    同一页面几个视图只造一张（后挂的看见已有就让开），`print()` 显式叫的那个优先
+  - 分页用 `break-before` 不用 `break-after`（最后一页后面的强制分页会多印一张白纸）；
+    混合纸张按每页各自尺寸出（CSS 命名页）；装饰与 overlay 不进打印页
+  - 判据：headless Chrome `printToPDF(preferCSSPageSize)` → pdf.js：`spike-page-01` 22 页印出 22 页、
+    每页正好 340.15 × 340.15pt、每页首字与布局一致；gongwen-01 印出来的基线 y 与 Word 真值差 **0.06pt**
+    ——与屏幕上同一个数，这正是「打印不需要重排」的实证。浏览器回归 `/tests/print.html`（12 项，
+    body 故意钉成一屏高 + overflow:hidden 的应用壳布局）
+- ~~`@uw/react`~~ ✅（2026-09-13）`packages/react`：`<UltimateWordView>` + `useDocument` + `useDecoration`。
+  **不另起 API**，`ref` 拿到的就是 `UwView`
+  - 构造选项变了就 dispose 再 mount（`UwView` 没有 `update()`），`zoom` 单独走 `setZoom()`
+  - `overlays` 按 key 调和（`overlays.ts` 的 `reconcileOverlays`，纯函数）：新 key 挂、消失的摘、
+    锚点变了 `update()`、placement / offset 变了摘了重挂；气泡是 portal 进宿主元素的正常 React 子树，
+    **视图重挂后宿主元素与子树不动**（气泡里打了一半的字还在）
+  - 宿主元素在渲染期按 key 造，不在 effect 里：portal 要在同一趟渲染里拿到目标节点
+  - 判据是接线：Vitest 14 项（jsdom + 假视图记录每次调用）+ `/tests/react.html` 24 项
+    （真文档真视图：气泡在锚点行右侧，滚动 / 缩放 / 换锚点 / 重挂后位置不飘、输入不丢）
+- **DoD** ✅：能在文档任意段落右侧挂一个 React 批注气泡，滚动 / 缩放 / 重排后位置不飘
+  （`/tests/react.html` 就是这一条）
 
 ### Phase 7 — 编辑态
 - 选区模型、光标渲染与闪烁、Shift/Ctrl 移动、双击选词（用 `Intl.Segmenter`）
@@ -1378,7 +1400,16 @@ CI 上无 Word，所以真值 PDF 与抽取结果**提交进仓库**（`fixtures
 18. ~~**`ultimate-word` 门面包**~~ ✅（2026-09-13）见 Phase 6 的条目。跨平台，不需要 Word。
     做的过程中照出一件工具链上的事：随库度量包在浏览器里没有一条**库自己**的路可走
     （`loadBundledPacks()` 靠 fs，playground 靠 Vite 专属的 `import.meta.glob`），
-    补了 `@uw/fonts/packs`。剩下的 Phase 6 是打印分页与 `@uw/react`
+    补了 `@uw/fonts/packs`。剩下的 Phase 6 是打印分页与 `@uw/react`（第 19 步）
+
+19. ~~**Phase 6 收尾：打印 + `@uw/react`**~~ ✅（2026-09-13）见 Phase 6 的条目。跨平台，不需要 Word。
+    打印的判据不是「看起来能印」而是 headless Chrome `printToPDF` 再过 pdf.js：页数、纸张、
+    每页首字都与布局一致，gongwen-01 印出来的基线与真值差 0.06pt（与屏幕同一个数）。
+    照出两件事：① `document.hidden` 的标签页里 rAF 不跑，浏览器回归页在被遮住的窗口里会
+    永远停在「正在验证…」—— 用 CDP 驱动 headless Chrome 轮询 `#result` 才稳；
+    ② Vite 里源码直读的 `@uw/react` 与页面各自 import `react-dom`，两份 CJS interop 产物对不上，
+    要把 `react` / `react-dom` / `react-dom/client` 一起放进 `optimizeDeps.include`。
+    **Phase 6 至此全部做完**，DoD（段落右侧的 React 批注气泡，滚动 / 缩放 / 重排后不飘）有浏览器断言
 
 第 6 步曾经优先于任何**布局**代码 —— 与第 4 步同理，没测准的东西不要拿来当地基。
 它做完之后的卡口是分页，分页现在也做完了（第 12f 步），于是**没有卡口了**：

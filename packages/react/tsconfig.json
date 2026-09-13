@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  // React 包装整个住在线外：组件要 DOM 类型；jsx 走自动运行时，不必每个文件 import React
+  "compilerOptions": {
+    "types": ["node", "react", "react-dom"],
+    "lib": ["ES2023", "DOM"],
+    "jsx": "react-jsx"
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
+}

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>打印回归</title>
+<style>
+/* 故意摆成应用壳的惯用布局：body 钉成一屏高 + overflow:hidden，文档住在一个小滚动容器里 ——
+   原地打印在这种布局下只印得出第一屏，按文档印必须不受它影响 */
+html, body { margin: 0; height: 100%; overflow: hidden; }
+#app { display: flex; height: 100%; }
+#side { width: 200px; background: #eee; }
+#result { position: fixed; top: 0; left: 0; z-index: 20; background: white; margin: 0; }
+#host { flex: 1; overflow: auto; padding: 16px; }
+</style>
+<div id="app"><div id="side"><pre id="result">正在验证…</pre></div><div id="host"></div></div>
+<script type="module">
+import { UltimateWord } from 'ultimate-word';
+
+// `?fixture=名字` 换样本（默认 spike-page-01，22 页）；外部的 printToPDF 检查拿 gongwen-01 与真值比坐标
+const fixtures = import.meta.glob('../../fidelity/fixtures/*.docx', { query: '?url', import: 'default' });
+const name = new URLSearchParams(location.search).get('fixture') ?? 'spike-page-01';
+const fixtureUrl = await fixtures[`../../fidelity/fixtures/${name}.docx`]();
+
+const host = document.querySelector('#host');
+const result = document.querySelector('#result');
+let passed = 0;
+const assert = (condition, label) => { if (!condition) throw new Error(label); passed++; };
+const sheet = () => document.body.querySelector(':scope > [data-uw-print]');
+try {
+  const doc = await UltimateWord.load(fixtureUrl);
+  assert(doc.pageCount >= 1, `${name}：${doc.pageCount} 页`);
+  const view = doc.mount(host, { zoom: 0.5 });
+  window.__doc = doc; window.__view = view;
+  const paper = doc.layout.pages[0].geometry;
+  // ① Ctrl+P（beforeprint）：body 直下多出一张打印页，页数 = 文档页数，尺寸 = 纸张 pt
+  window.dispatchEvent(new Event('beforeprint'));
+  const pages = sheet()?.querySelectorAll('.uw-print-page') ?? [];
+  assert(pages.length === doc.pageCount, `打印页有 ${pages.length} 页`);
+  assert(pages[0].style.width === `${Math.round(paper.width / 20 * 100) / 100}pt`, '页盒宽 = 纸宽（pt）');
+  assert(pages[0].querySelector('svg') !== null && pages[pages.length - 1].querySelector('svg text') !== null, '每页都重画了（最后一页也有字）');
+  assert(getComputedStyle(sheet()).display === 'none', '屏幕上看不见打印页');
+  assert(host.querySelectorAll('[data-rendered="true"]').length < doc.pageCount, '屏幕上的一份没有被迫全量补画');
+  // ② 缩放不影响打印页：它按 zoom = 1 画，尺寸只认纸张
+  view.setZoom(2);
+  assert(pages[0].style.width === `${Math.round(paper.width / 20 * 100) / 100}pt`, '屏幕缩放不改打印页尺寸');
+  window.dispatchEvent(new Event('afterprint'));
+  assert(sheet() === null, 'afterprint 拆掉打印页');
+  // ③ 两个视图同挂：只造一张打印页
+  const second = document.createElement('div'); document.body.append(second);
+  const thumbs = doc.mount(second, { zoom: 0.2, textLayer: false });
+  window.dispatchEvent(new Event('beforeprint'));
+  assert(document.body.querySelectorAll(':scope > [data-uw-print]').length === 1, '两个视图只造一张打印页');
+  window.dispatchEvent(new Event('afterprint'));
+  thumbs.dispose(); second.remove();
+  // ④ print()：走 window.print（桩），不看 printMode
+  view.dispose();
+  const inline = doc.mount(host, { printMode: 'inline' });
+  const nativePrint = window.print; let printed = 0;
+  window.print = () => { printed++; window.dispatchEvent(new Event('beforeprint')); assert(sheet() !== null, 'print() 造了打印页'); window.dispatchEvent(new Event('afterprint')); };
+  inline.print();
+  window.print = nativePrint;
+  assert(printed === 1 && sheet() === null, 'print() 走了 window.print 且拆干净');
+  window.dispatchEvent(new Event('beforeprint'));
+  assert(sheet() === null && inline.root.querySelectorAll('[data-rendered="true"]').length === doc.pageCount, 'inline 模式的 Ctrl+P 原地补画');
+  window.dispatchEvent(new Event('afterprint'));
+  inline.dispose();
+  // 留一个视图给外部的 printToPDF 检查用
+  window.__view = doc.mount(host, { zoom: 0.5 });
+  result.textContent = `PASS: ${passed} print browser assertions`;
+} catch (error) {
+  result.textContent = `FAIL after ${passed}: ${error.stack}`;
+}
+</script>
+</html>

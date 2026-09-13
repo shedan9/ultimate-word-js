@@ -12,6 +12,8 @@ import type {
 } from './annotations-dom.ts';
 import { createAnnotations } from './annotations-dom.ts';
 import { selectedText } from './copy.ts';
+import type { PrintSheet } from './print.ts';
+import { buildPrintSheet, PRINT_SHEET_ATTR } from './print.ts';
 import type { ScrollOptions, ScrollTarget } from './scroll.ts';
 import { scrollTargetRect } from './scroll.ts';
 import { buildTextLayer } from './text-layer.ts';
@@ -37,6 +39,12 @@ export interface ViewOptions extends MountOptions {
   overscan?: number;
   /** 页间距，CSS px，默认 24。 */
   pageGap?: number;
+  /**
+   * Ctrl+P 时怎么印，默认 `document`：按文档自带的页面设置一页一张纸（`print.ts`）。
+   * `inline` 是原地印 —— 只把没画的页补齐，页面怎么排就怎么印，给「文档只是页面一角」的宿主。
+   * `print()` 不看这个选项，它总是按文档印。
+   */
+  printMode?: 'document' | 'inline';
 }
 
 export interface DomView {
@@ -51,6 +59,11 @@ export interface DomView {
    * 走的是 `scrollIntoView`，所以窗口与任意祖先滚动容器都照顾到，宿主不必告诉视图谁在滚。
    */
   scrollTo(target: ScrollTarget, options?: ScrollOptions): boolean;
+  /**
+   * 按文档自带的页面设置打印：一页一张纸、纸张尺寸取自节的页面设置、不重排、不看屏幕缩放。
+   * 走 `window.print()`，打印页在 `beforeprint` 里造、`afterprint` 里拆；没有 `window` 时抛错。
+   */
+  print(): void;
   /** 只改页面占位尺寸，保留文字层、选区与已绘制的内容。 */
   setZoom(zoom: number): void;
   update(layout: DocumentLayout, options?: ViewOptions): void;
@@ -71,7 +84,12 @@ function validate(options: ViewOptions): void {
   if (!Number.isFinite(zoom) || zoom <= 0) throw new RangeError('zoom 必须是大于 0 的有限数');
   if (!Number.isSafeInteger(overscan) || overscan < 0) throw new RangeError('overscan 必须是非负整数');
   if (!Number.isFinite(gap) || gap < 0) throw new RangeError('pageGap 必须是非负有限数');
+  if (options.printMode !== undefined && options.printMode !== 'document' && options.printMode !== 'inline')
+    throw new RangeError('printMode 只能是 document 或 inline');
 }
+
+/** 哪个视图叫的 `print()`，按 Document 记 —— 一个页面里只会有一个打印对话框 */
+const printClaims = new WeakMap<Document, symbol>();
 
 /**
  * 每页保留尺寸固定的壳与原生文字 SVG，只按需挂载复杂的绘制 SVG。
@@ -87,6 +105,9 @@ export function mountView(container: Element, layout: DocumentLayout, options: V
   let observer: IntersectionObserver | undefined;
   let visible = new Set<number>();
   let printing = false;
+  let sheet: PrintSheet | undefined;
+  /** `print()` 期间标出「这一趟是我叫的」，同一页面上别的视图在 beforeprint 里要让开 */
+  const token = Symbol('print');
   let selecting = false;
   let root: HTMLDivElement;
   let slots: PageSlot[] = [];
@@ -243,10 +264,23 @@ export function mountView(container: Element, layout: DocumentLayout, options: V
     text.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
   }
   function beforePrint(): void {
+    const claim = printClaims.get(doc);
+    // 别的视图显式叫了 print()：这一趟印的是它的文档，本视图连原地补画都不必（反正被藏起来了）
+    if (claim !== undefined && claim !== token) return;
+    const byDocument = claim === token || opts.printMode !== 'inline';
+    // 同一页面上先挂的那个视图已经造过打印页 —— 两个视图挂的是同一份布局，印一份就够
+    if (byDocument && doc.body?.querySelector(`[${PRINT_SHEET_ATTR}]`) === null) {
+      sheet = buildPrintSheet(doc, layout.pages, opts);
+    }
+    if (sheet !== undefined) return;
     printing = true;
     refreshPaint();
   }
   function afterPrint(): void {
+    if (printClaims.get(doc) === token) printClaims.delete(doc);
+    sheet?.dispose();
+    sheet = undefined;
+    if (!printing) return;
     printing = false;
     refreshPaint();
   }
@@ -314,6 +348,17 @@ export function mountView(container: Element, layout: DocumentLayout, options: V
       probe.remove();
       return true;
     },
+    print() {
+      assertLive();
+      if (win === null || typeof win.print !== 'function') throw new Error('当前环境没有打印对话框');
+      printClaims.set(doc, token);
+      try {
+        win.print();
+      } finally {
+        // Safari 的 print() 不阻塞、afterprint 稍后才到；阻塞的浏览器里 afterprint 已经把它删了
+        if (sheet === undefined && printClaims.get(doc) === token) printClaims.delete(doc);
+      }
+    },
     setZoom(zoom) {
       assertLive();
       validate({ ...opts, zoom });
@@ -359,6 +404,7 @@ export function mountView(container: Element, layout: DocumentLayout, options: V
       doc.removeEventListener('pointercancel', onPointerEnd);
       win?.removeEventListener('beforeprint', beforePrint);
       win?.removeEventListener('afterprint', afterPrint);
+      afterPrint();
       root.replaceChildren();
       root.remove();
       slots = [];

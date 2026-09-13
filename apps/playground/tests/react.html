@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>@uw/react 浏览器回归</title>
+<style>
+body { margin: 0; font: 14px/1.5 system-ui; }
+#result { position:fixed;top:0;left:0;z-index:20;background:white;margin:0; }
+#app { margin: 60px 40px; }
+.viewer { width: 700px; height: 500px; overflow: auto; padding: 10px; box-sizing: border-box; border: 1px solid #999; }
+.bubble { background: #fff8c5; border: 1px solid #d4a72c; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+</style>
+<pre id="result">正在验证…</pre><div id="app"></div>
+<script type="module">
+import { UltimateWordView, useDecoration, useDocument } from '@uw/react';
+// Phase 6 的 DoD：在任意段落右侧挂一个 React 批注气泡，滚动 / 缩放 / 重排后位置不飘。
+// 真文档 + 真视图 + 真 React；组件的接线（何时挂 / 卸）在 Vitest 里已用假视图钉死，这里只看几何
+import { createElement as h, useEffect, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import fixtureUrl from '../../fidelity/fixtures/gongwen-01.docx?url';
+
+const result = document.querySelector('#result');
+let passed = 0;
+const assert = (condition, label) => { if (!condition) throw new Error(label); passed++; result.textContent = `进行中 ${passed}：${label}`; };
+const near = (a, b, tol = 1) => Math.abs(a - b) < tol;
+const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+const until = async (fn, ms = 3000) => { const t0 = performance.now(); while (!fn()) { if (performance.now() - t0 > ms) return false; await frame(); } return true; };
+
+// 外部驱动的 props：测试脚本改这个对象再 rerender
+const state = { zoom: 1, pageGap: 24, overlays: [], hit: null, view: null };
+let rerender;
+function Bubble({ id }) {
+  const [text, setText] = useState('');
+  return h('div', { className: 'bubble', 'data-bubble': id }, [
+    h('span', { key: 's' }, `批注 ${id}`),
+    h('input', { key: 'i', 'data-input': id, value: text, onChange: (e) => setText(e.target.value) }),
+  ]);
+}
+function App() {
+  const { doc, loading, error } = useDocument(fixtureUrl);
+  const [, tick] = useState(0);
+  rerender = () => tick((n) => n + 1);
+  useDecoration(state.view, state.hit, { className: 'hit', style: { background: '#ffd33d55' } });
+  useEffect(() => { window.__doc = doc; window.__error = error; window.__loading = loading; }, [doc, loading, error]);
+  if (!doc) return h('p', null, error ? `错误：${error.message}` : '加载中…');
+  return h(UltimateWordView, {
+    doc, zoom: state.zoom, pageGap: state.pageGap, className: 'viewer',
+    overlays: state.overlays,
+    onViewChange: (v) => { state.view = v; window.__view = v; },
+  });
+}
+const root = createRoot(document.querySelector('#app'));
+try {
+  root.render(h(App));
+  assert(await until(() => window.__doc || window.__error, 10000), 'useDocument 加载完成');
+  assert(window.__error === null, '没有错误');
+  const doc = window.__doc;
+  assert(await until(() => window.__view), 'onViewChange 给了视图');
+  const view = window.__view;
+  const viewer = document.querySelector('.viewer');
+  assert(viewer.firstElementChild === view.root, '视图挂进了组件的容器');
+  // ① 挂到第 3 与第 6 段右侧
+  const paras = doc.query('paragraph').filter((p) => doc.rangeOf(p.id) !== undefined);
+  const anchorOf = (i) => doc.rangeOf(paras[i].id).start;
+  const third = Math.min(8, paras.length - 1);
+  state.overlays = [
+    { key: 'a', anchor: anchorOf(2), placement: 'right-of-line', render: () => h(Bubble, { id: 'a' }) },
+    { key: 'b', anchor: anchorOf(5), placement: 'right-of-line', offset: { x: 12, y: 0 }, render: () => h(Bubble, { id: 'b' }) },
+  ];
+  rerender();
+  await frame();
+  const bubble = (id) => document.querySelector(`[data-bubble="${id}"]`);
+  assert(await until(() => bubble('a') && bubble('b') && bubble('a').getBoundingClientRect().width > 0), '两个气泡都画出来了');
+  // 位置：与锚点行同高、在锚点右边、贴在页壳内（行右边 + offset 的精确值由 /tests/annotations.html 负责）
+  const check = (id, i, dx, label) => {
+    const b = bubble(id).getBoundingClientRect();
+    const caret = view.caretRect(anchorOf(i));
+    const page = [...view.root.querySelectorAll('[data-page]')].map((el) => el.getBoundingClientRect()).find((r) => caret && r.top <= caret.y && caret.y <= r.bottom);
+    assert(caret && near(b.top, caret.y, 1.5) && b.left > caret.x + caret.width && b.left <= page.right + dx + 1, `${label}：气泡 ${id} 在第 ${i + 1} 段右侧（top ${b.top.toFixed(1)} vs ${caret?.y.toFixed(1)}）`);
+  };
+  check('a', 2, 8, '初始');
+  check('b', 5, 12, '初始（带 offset）');
+  // 在气泡里打字，后面每一步都要还在
+  const input = document.querySelector('[data-input="a"]');
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+  setter.call(input, '张三'); input.dispatchEvent(new Event('input', { bubbles: true }));
+  await frame();
+  assert(input.value === '张三', '气泡里能输入');
+  // ② 滚动：气泡是页壳的子元素，跟着页一起动
+  viewer.scrollTop = 120;
+  await frame();
+  check('a', 2, 8, '滚动后');
+  assert(document.querySelector('[data-input="a"]') === input && input.value === '张三', '滚动后输入框与内容不变');
+  // ③ 缩放：不重挂，气泡跟到新位置
+  state.zoom = 1.5; rerender();
+  await frame(); await frame();
+  assert(window.__view === view, 'zoom 变了没有重挂');
+  check('a', 2, 8, '缩放后');
+  check('b', 5, 12, '缩放后');
+  assert(document.querySelector('[data-input="a"]') === input && input.value === '张三', '缩放后输入框与内容不变');
+  // ④ 换锚点：update()，元素不变
+  state.overlays = [{ ...state.overlays[0], anchor: anchorOf(third) }, state.overlays[1]]; rerender();
+  await frame();
+  check('a', third, 8, '换锚点后');
+  assert(document.querySelector('[data-input="a"]') === input && input.value === '张三', '换锚点后输入框与内容不变');
+  // ⑤ 重排（构造选项 pageGap 变了 → 重挂）：气泡重新挂到新视图上，React 子树不动
+  state.pageGap = 8; rerender();
+  await frame();
+  assert(await until(() => window.__view && window.__view !== view), 'pageGap 变了 → 重挂出新视图');
+  const next = window.__view;
+  await frame();
+  const bubbleA = bubble('a').getBoundingClientRect();
+  const r = next.caretRect(anchorOf(third));
+  assert(near(bubbleA.top, r.y, 1.5) && bubbleA.left > r.x, `重挂后气泡跟到新视图的行上（top ${bubbleA.top.toFixed(1)} vs ${r.y.toFixed(1)}）`);
+  assert(next.root.contains(input) && input.value === '张三', '重挂后输入框还是同一个、内容不丢');
+  // ⑥ useDecoration：find → 高亮，切 range 就换
+  const hits = doc.find('通知');
+  state.hit = hits[0]; rerender();
+  await frame();
+  assert(next.root.querySelectorAll('.hit').length > 0, 'useDecoration 挂上了高亮');
+  state.hit = null; rerender();
+  await frame();
+  assert(next.root.querySelectorAll('.hit').length === 0, 'range 为 null 时高亮摘掉');
+  // ⑦ 摘掉一个气泡；卸载组件把一切摘干净
+  state.overlays = [state.overlays[0]]; rerender();
+  await frame();
+  assert(bubble('b') === null && bubble('a') !== null, '摘掉 b 留下 a');
+  // `?keep` 留着不卸载，肉眼看气泡
+  if (location.search.includes('keep')) { result.textContent = `KEEP: ${passed} 项通过，页面留着看`; throw null; }
+  root.unmount();
+  await frame();
+  assert(document.querySelector('#app').childElementCount === 0 && bubble('a') === null, '卸载后容器为空、气泡也没了');
+  assert(window.__view === null, '卸载后 onViewChange 报了 null');
+  result.textContent = `PASS: ${passed} react browser assertions`;
+} catch (error) {
+  if (error !== null) result.textContent = `FAIL after ${passed}: ${error.stack}`;
+}
+</script>
+</html>

@@ -46,6 +46,11 @@ export interface ViewOptions {
   fontFamily?: (family: string) => string;
   /** 画出版心框与行盒，调试用 */
   debug?: boolean;
+  /**
+   * Ctrl+P 时怎么印，默认 `document`：一页一张纸，纸张取文档自带的页面设置。
+   * `inline` 是原地印（页面怎么排就怎么印），给「文档只是页面一角」的宿主。`print()` 不受它影响
+   */
+  printMode?: 'document' | 'inline';
 }
 
 export interface Disposable {
@@ -68,6 +73,8 @@ export interface UwView extends Disposable {
   scrollTo(target: ScrollTarget, options?: ScrollOptions): boolean;
   /** 只改页面尺寸，不重排、不重建文字层与索引 */
   setZoom(zoom: ZoomSpec): void;
+  /** 按文档自带的页面设置打印：一页一张纸、不重排、与屏幕缩放无关。走 `window.print()` */
+  print(): void;
 }
 
 /** 文档里最宽与最高的一页在 zoom = 1 时的 px 尺寸 —— fit 的分母 */
@@ -125,6 +132,7 @@ export function createView(
   if (options.classPrefix !== undefined) domOptions.classPrefix = options.classPrefix;
   if (options.fontFamily !== undefined) domOptions.fontFamily = options.fontFamily;
   if (options.debug !== undefined) domOptions.debug = options.debug;
+  if (options.printMode !== undefined) domOptions.printMode = options.printMode;
   if (imageHref !== undefined) domOptions.imageHref = imageHref;
 
   const inner: DomView = mountView(container, layout, domOptions);
@@ -159,6 +167,7 @@ export function createView(
     decorate: (range, opts) => inner.decorate(range, opts),
     overlay: (position, element, opts) => inner.overlay(position, element, opts),
     scrollTo: (target, opts) => inner.scrollTo(target, opts),
+    print: () => inner.print(),
     setZoom(next) {
       if (disposed) throw new Error('视图已销毁');
       spec = next;

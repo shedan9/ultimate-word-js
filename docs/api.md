@@ -169,6 +169,8 @@ interface ViewOptions {
   classPrefix?: string;                        // 默认 'uw'
   fontFamily?: (family: string) => string;     // Word 字体名 → CSS font-family
   debug?: boolean;                             // 画版心框与行盒
+  /** Ctrl+P 怎么印：'document'（默认，一页一张纸）| 'inline'（原地印，页面怎么排就怎么印） */
+  printMode?: 'document' | 'inline';
 }
 ```
 
@@ -306,7 +308,7 @@ view.destroy(); // 可重复调用；销毁后查询返回空结果，更新操�
 `locate` 在纸外、页间空隙、视口外或遮挡处返回 `null`。每页保留占位壳与坐标 SVG，
 因此 `rectsOf` / `caretRect` 可返回尚未绘制页面的位置；矩形**不裁剪到当前视口**，
 旋转时返回轴对齐包围盒。矩形是瞬时结果，宿主应在滚动、缩放或重排后重新查询；
-自动跟随的 overlay 尚未实现。页面默认纵向居中排列，间距由 `pageGap` 设置，
+要自动跟随就用 §8 的 `overlay`（或 `@uw/react` 的 `overlays`，§14）。页面默认纵向居中排列，间距由 `pageGap` 设置，
 滚动容器与页面壳的外观由宿主控制，`apps/playground` 提供接入示例。
 
 `textLayer` 默认开启。透明文字层全文常驻，支持浏览器查找（包括离屏与同一行跨样式文字）、
@@ -317,7 +319,7 @@ view.destroy(); // 可重复调用；销毁后查询返回空结果，更新操�
 
 `virtualize` 使用 `IntersectionObserver`，同时遵守窗口和祖先滚动容器的裁剪；
 无此 API 时全量绘制。滚动与缩放保留文字节点和原生选区，`update()` 会重建它们。
-打印前临时补画所有页面，打印后恢复窗口，但完整打印分页仍待实现。
+打印见 §13：默认 Ctrl+P 就按文档分页印，`printMode: 'inline'` 才是原地补画。
 `zoom` 必须为正有限数，`overscan` 为非负整数，`pageGap` 为非负有限数；
 `destroy()` 清理观察器、事件监听与 DOM。
 
@@ -514,32 +516,46 @@ interface Diagnostic {
 
 ---
 
-## 13. 导出与打印 🟡
+## 13. 导出与打印 🟡（打印 🟢 2026-09-13）
 
 ```ts
-await doc.toDocx(): Promise<Blob>;     // round-trip 安全：未识别的 XML 原样保留
-await view.toPNG(page: number, options?: { scale?: number }): Promise<Blob>;
-view.print(): void;                    // 走文档自带页面设置，不重排
+await doc.toDocx(): Promise<Blob>;     // round-trip 安全：未识别的 XML 原样保留（Phase 8）
+await view.toPNG(page: number, options?: { scale?: number }): Promise<Blob>;   // 未做
+view.print(): void;                    // 走文档自带页面设置，不重排，与屏幕缩放无关
 ```
+
+> **已实现的与原方案的差别**：`print()` 走 `window.print()`，印的**不是屏幕上那一份** ——
+> 它住在宿主的滚动容器里（`overflow:auto` 打印时只印第一屏）、带着缩放与页间距。
+> 视图在 `beforeprint` 里往 `<body>` 直下造一张「打印页」：每页一个 pt 尺寸的盒子、
+> 同一份布局在 zoom = 1 下的重画，`@page { size }` 取纸张、边距 0（页边距早已算进版心），
+> 打印样式把 body 的其余直接子元素藏起来；`afterprint` 拆掉。**Ctrl+P 默认也走这条路**
+> （`printMode: 'document'`），宿主想让 Ctrl+P 印整个页面（文档只是一角）就设 `'inline'`，
+> 那时只把没画的页补齐。混合纸张的文档按每页各自的尺寸出（CSS 命名页，Chrome / Firefox 认）。
+> 装饰与 overlay **不打**；同一页面几个视图只造一张打印页。实测：22 页样本 `printToPDF`
+> 出 22 页、每页正好纸张尺寸，gongwen-01 印出来的基线与 Word 真值差 0.06pt。
 
 ---
 
-## 14. React 🟡
+## 14. React 🟢（2026-09-13，`packages/react`）
 
 ```tsx
 import { UltimateWordView, useDocument, useDecoration } from '@uw/react';
 
 function Viewer({ url }: { url: string }) {
-  const { doc, loading, error } = useDocument(url, { fonts: { /* ... */ } });
-  if (loading) return <Spinner />;
+  const { doc, loading, error } = useDocument(url, { fonts: /* 可选，按文档覆盖注册表 */ });
+  const [view, setView] = useState<UwView | null>(null);
+  useDecoration(view, hit, { className: 'hit' });       // hit 为 null 时什么都不挂
   if (error) return <ErrorPane error={error} />;
+  if (!doc) return <Spinner />;                          // loading 期间 doc 为 null；换 url 时上一份留着
 
   return (
     <UltimateWordView
       doc={doc}
       zoom="fit-width"
-      onSelectionChange={setSel}
+      className="viewer"                                  // 滚动容器就是它：给它 overflow:auto 与高度
+      onViewChange={setView}                              // 挂上 / 重挂 / 销毁（null）时叫；想直接拿句柄用 ref
       overlays={comments.map(c => ({
+        key: c.id,                                        // 同一列里唯一；换 key = 换气泡，输入状态不保留
         anchor: c.range.start,
         placement: 'right-of-line',
         render: () => <CommentBubble comment={c} />,
@@ -549,8 +565,21 @@ function Viewer({ url }: { url: string }) {
 }
 ```
 
-`overlays` 走声明式：React 侧只描述「哪些批注、锚在哪」，
-挂载 / 卸载 / 重排跟随由组件内部转成命令式的 `view.overlay()` 调用。
+`overlays` 走声明式：React 侧只描述「哪些批注、锚在哪」，挂载 / 卸载 / 重排跟随由组件内部
+转成命令式的 `view.overlay()` 调用（`overlays.ts` 的 `reconcileOverlays`，纯函数）。
+气泡是 portal 进宿主元素的**正常 React 子树** —— context、事件、state 都在，视图只管它摆在哪。
+
+> **已实现的与原方案的差别**：
+> - 没有 `onSelectionChange`：选区是 Phase 7 的事，不摆不生效的 prop
+> - **构造选项变了就重挂**（`pageGap` / `textLayer` / `virtualize` / `overscan` / `classPrefix` /
+>   `fontFamily` / `debug` / `printMode`）—— `UwView` 没有 `update()`（§5）。所以 `fontFamily`
+>   要给稳定引用（`useCallback`）；`zoom` 单独走 `setZoom()`，改它不重挂
+> - 重挂后 overlay 在新视图上重新挂，**宿主元素与其中的 React 子树不动**，气泡里打了一半的字还在
+>   （`/tests/react.html` 里有这条断言）；锚点变了走 `handle.update()`，placement / offset 变了
+>   只能摘了重挂（底层句柄只认锚点）
+> - `useDocument` 的 `source` 按引用比：字符串 URL 天然稳定，`ArrayBuffer` / `Blob` 要调用方 memo。
+>   换来源时上一份文档留着（不闪白），上一趟没回来的用 `AbortSignal` 掐掉（只掐得住取字节那一步）
+> - `useDecoration` 的 range 与 options 按**值**比 —— 调用方每次渲染都会造新对象
 
 ---
 
@@ -618,8 +647,9 @@ main.on('viewport:change', ({ visiblePages }) => thumbs.scrollTo({ page: visible
 | API | 阶段 |
 |---|---|
 | `load` · `mount` · 只读渲染 | Phase 2–3 ✅（门面 2026-09-13） |
+| `print` | Phase 6 ✅（2026-09-13） |
 | `query` · `find` · `locate` · `rectsOf` · `decorate` · `overlay` · `scrollTo` | Phase 6 ✅（门面 2026-09-13） |
 | `tx` · `undo` / `redo` · 选区 · IME | Phase 7 |
 | `toDocx` | Phase 8 |
 | `bindings` | Phase 5–6 |
-| `@uw/react` | Phase 6 之后 |
+| `@uw/react` | Phase 6 ✅（2026-09-13） |

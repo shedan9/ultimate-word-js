@@ -14,10 +14,13 @@
     "@uw/core": "workspace:*",
     "@uw/fonts": "workspace:*",
     "@uw/layout": "workspace:*",
-    "@uw/render-dom": "workspace:*",
     "@uw/model": "workspace:*",
     "@uw/ooxml": "workspace:*",
+    "@uw/react": "workspace:*",
+    "@uw/render-dom": "workspace:*",
     "@uw/view": "workspace:*",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
     "ultimate-word": "workspace:*"
   },
   "devDependencies": {

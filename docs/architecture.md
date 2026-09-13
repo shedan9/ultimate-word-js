@@ -209,10 +209,11 @@ flowchart BT
 | `@uw/model` | 🟢 样式级联（含编号层与表格样式层）· 主题字体 · 正文节点树 · 分节 · 设置 · 字体表 · 编号（解析 + 计数器 + 编号文字）· 表格（属性 + 级联 + `w:tblStylePr` 条件格式**（层序实测标定）** + `w:tblPrEx` 行级例外）· 域的结构还原（界桩配对 + 指令解析 + HYPERLINK；**求值在 layout 那一侧**，见 §6）· **页眉页脚部件**（按引用解析 + 各带 id 前缀 + 单独级联）· **图片**（`w:drawing` / VML `w:pict` 的外框 + blip 引用 + 裁剪 / 旋转 + 浮动锚点；字节按引用收进 `LoadedDocument.images`）· **查找与查询**（`search.ts` 的 `findText()`：跨 run 不跨段落、与排版看见的一致；`query.ts` 的 `queryNodes()`：类 CSS 选择器；`order.ts`：模型侧的文档序 + `rangeOfNode()`） |
 | `@uw/layout` | 🟢 断行（禁则 / 挤压 / 悬挂，四条补救顺序与三个常数全部实测标定）· 缩进（含字符单位）· 对齐 · 制表位 · 列表编号 · 行高 + 网格吸附 + **行内基线** · 表格列宽与格内几何 + 边框冲突解析（**格线几何与相邻竞争都已实测标定**：横向不吃宽、纵向吃高；竞争先分类再比厚度，见 §5.6）· **分页**（`layoutDocument()`：页面几何 · 分节 · 孤行寡行 · keepNext / keepLines · 硬分页符 · 表格按行拆页 · 页码，见 §5.4）· **域求值**（`layoutDocumentWithFields()`：PAGE / NUMPAGES / SECTIONPAGES 迭代到自洽，见 §6）· **页眉页脚**（选哪一份 · 框的定位 · 反过来挤版心，三条几何规则实测标定，见 §5.4）· **对象**（内嵌图占宽占高，行盒四条规则与浮动图的参照框全部实测标定，见 §5.5；**带 `wp:anchor` 的图**一律不占文字流、按锚点算成纸坐标）· **表格拆行**（`table-split.ts`：一行放不下时从行间切开，`w:cantSplit` 与表头行除外；**四条规则全部实测标定**，见 §5.4）· **中西文自动间距**（**1/4 em，实测**，按接缝前面那个字符的字号算，见 §5.2）· **布局索引**（`layout-index.ts`：命中测试 · range → 矩形 · 光标 · 文档序比较，架构 §4 的 ①↔②）· ⏸ 方形 / 上下型环绕的**文字让开**未做（位置与大小是对的，文字不绕着它走）|
 | `@uw/render-dom` | 🟢 v1：一页一个 `<svg>`（viewBox 单位 **pt**）· 逐字 x 走 `<text x="…">` · 下划线 / 删除线 / 上下标 / 横向缩放 · 制表位前导符 · 表格底纹 + 格线（共享的线只画一次）· 页眉页脚（与版心平级的两个框）· 缩放只改 `<svg>` 尺寸不重排 · **图片**（`<image>` + 裁剪 `clipPath` + 旋转翻转；画不出来的画尺寸正确的占位框）· ⏸ 增量更新（可选文本层归 view） |
-| `@uw/view` | 🟢 屏幕坐标转换（页面仿射矩阵）· `locate` / `rectsOf` / `caretRect` · DOM 挂载 / 更新 / 销毁 · 缩放保留选区与布局索引 · 视口 ±2 页绘制 · 全文原生文字层 / 查找 / 纯文本复制 · **装饰与 overlay**（住在页壳上，滚动与 CSS 变换由浏览器继承，缩放 / 重排 / 壳尺寸变化才重算）· **`scrollTo`**（位置 / range 首行 / 页，走 `scrollIntoView`）；⏸ `below-text` 装饰、打印分页 |
+| `@uw/view` | 🟢 屏幕坐标转换（页面仿射矩阵）· `locate` / `rectsOf` / `caretRect` · DOM 挂载 / 更新 / 销毁 · 缩放保留选区与布局索引 · 视口 ±2 页绘制 · 全文原生文字层 / 查找 / 纯文本复制 · **装饰与 overlay**（住在页壳上，滚动与 CSS 变换由浏览器继承，缩放 / 重排 / 壳尺寸变化才重算）· **`scrollTo`**（位置 / range 首行 / 页，走 `scrollIntoView`）· **打印**（2026-09-13，`print.ts`：`<body>` 直下另造一份 pt 尺寸的打印页，`@page { size }` 取纸张、边距 0，Ctrl+P 与 `print()` 都走它，见 §8.5）；⏸ `below-text` 装饰 |
 | `@uw/fonts/packs` | 🟢 随库 17 款度量包的**无 fs** 入口（JSON import attributes），浏览器与 Node 同一条路；`@uw/fonts/node` 的 `loadBundledPacks()` 只剩离线工具在用 |
 | `ultimate-word` | 🟢 门面（2026-09-13）：`UltimateWord.load()`（ArrayBuffer / Uint8Array / Blob / Response / URL）→ `UwDocument`（`pageCount` · `diagnostics` · `find` · `query` · `compare` · `rangeOf` · `mount`）→ `UwView`（`locate` / `rectsOf` / `caretRect` / `decorate` / `overlay` / `scrollTo` / `setZoom` 认 `fit-width` / `fit-page` 并跟随容器 / `dispose`）· `UltimateWord.fonts` 全局注册表（随库度量包模块加载时就注册；`register()` **异步**，fontkit 走动态 import 不进主 chunk）。**它不实现任何东西**，只把六个包接成 api.md 的形状；`layout` 暴露但不在稳定性承诺内 |
-| `@uw/render-canvas` `@uw/editor` `@uw/serialize` `@uw/react` | ⚪ 未创建 |
+| `@uw/react` | 🟢（2026-09-13）`<UltimateWordView>`（`doc.mount()` 的声明式形态：构造选项变了重挂、`zoom` 只 `setZoom`、`overlays` 按 key 调和成 `view.overlay()`，气泡是 portal 进宿主元素的正常 React 子树）· `useDocument` · `useDecoration`。**不另起 API**，`ref` 拿到的就是 `UwView` |
+| `@uw/render-canvas` `@uw/editor` `@uw/serialize` | ⚪ 未创建 |
 
 ---
 
@@ -655,8 +656,19 @@ run 级高亮（model 里没解析）、增量更新（等增量排版，见 §7
 视口前后各两页挂载。文字层复用绘制片段的字体与坐标，每行一个 `<text>`、片段用 `<tspan>`，
 横向压缩用 `textLength` 与逐字 x。绘制层设为 `inert`，浏览器查找只命中文字层；
 编号与重复表头不进入文字层，计算域保留，图片另留辅助说明。复制按视觉行换行。
-滚动 / 缩放不重建文字节点，因此跨页选区保留；重排重建文字层。打印事件临时补画全部页，
-尚未提供完整的打印分页样式。
+滚动 / 缩放不重建文字节点，因此跨页选区保留；重排重建文字层。
+
+**打印**（`packages/view/src/print.ts`）不印屏幕上那一份：它住在宿主的滚动容器里
+（`overflow:auto` 打印时只印第一屏）、带着屏幕缩放、页与页之间隔着页间距。打印走的是
+**另一份 DOM** —— `beforeprint` 那一刻在 `<body>` 直下造一张「打印页」，每页一个 pt 尺寸的盒子、
+里面是同一份 `PageLayout` 在 zoom = 1 下的重画，`@page { size }` 取纸张尺寸、边距 0
+（页面设置的边距早已算进版心），一段打印样式把 `<body>` 的其余直接子元素藏起来；`afterprint` 拆掉。
+这正是 §4.1 说的「打印不需要按打印尺寸重新排版」落到 DOM 上的样子。不走 `<iframe>`，
+因为 iframe 拿不到宿主的 `@font-face`。实测（headless Chrome `printToPDF`）：22 页样本印出 22 页、
+每页正好纸张尺寸，gongwen-01 印出来的基线 y 与 Word 真值差 0.06pt —— 与屏幕上同一个数。
+装饰与 overlay 不进打印页（它是从布局重画的，不是屏幕 DOM 的克隆）。
+同一页面几个视图：先挂的造，后挂的看见已有打印页就让开；`print()` 显式叫的那个视图优先。
+`printMode: 'inline'` 保留原地印（只补画没画的页），给「文档只是页面一角」的宿主。
 
 ---
 

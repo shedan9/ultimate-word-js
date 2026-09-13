@@ -96,10 +96,28 @@ try{
   await until(()=>rendered().includes(0),'跨片段查找未滚回第一页');
   window.getSelection().collapse(view.root,0);
   assert(!window.find('编号排除',false,false,false),'编号进入原生查找');
+  // 默认按文档印：beforeprint 在 body 直下造一张打印页（每页一个 pt 尺寸的盒子），屏幕上的一份不动
+  const sheet=()=>document.body.querySelector(':scope > [data-uw-print]');
   window.dispatchEvent(new Event('beforeprint'));
-  assert(rendered().length===12,'打印前没有补齐所有页面');
+  assert(sheet()!==null&&sheet().querySelectorAll('.uw-print-page').length===12,'打印前没有造出 12 页的打印页');
+  assert(sheet().querySelector('.uw-print-page').style.width==='300pt'&&getComputedStyle(sheet()).display==='none','打印页尺寸不是纸张的 pt 尺寸或在屏幕上露了出来');
+  assert(sheet().querySelector('style').textContent.includes('@page {size:300pt 450pt;margin:0}'),'@page 尺寸不对');
+  assert(rendered().length<12,'按文档印时不该原地补画');
+  window.dispatchEvent(new Event('afterprint'));
+  assert(sheet()===null,'打印后没有拆掉打印页');
+  // 原地印：只补画没画的页
+  view.update(layout,{printMode:'inline'});
+  await frame();
+  window.dispatchEvent(new Event('beforeprint'));
+  assert(sheet()===null&&rendered().length===12,'原地印没有补齐所有页面');
   window.dispatchEvent(new Event('afterprint'));
   assert(rendered().length<12,'打印后没有恢复按需绘制');
+  // print()：不看 printMode，总是按文档印；window.print 用桩替掉（真对话框会卡住测试）
+  const nativePrint=window.print;let printed=0;
+  window.print=()=>{printed++;window.dispatchEvent(new Event('beforeprint'));assert(sheet()!==null,'print() 没有造打印页');window.dispatchEvent(new Event('afterprint'));};
+  view.print();
+  window.print=nativePrint;
+  assert(printed===1&&sheet()===null,'print() 没有走 window.print 或没拆干净');
   const oldRoot=view.root;
   view.update(layout,{virtualize:false});
   assert(rendered().length===12&&!oldRoot.isConnected,'切换全量绘制或更新失效');
@@ -116,7 +134,8 @@ try{
   view.destroy();view.destroy();
   assert(host.children.length===0,'销毁残留页面');
   window.dispatchEvent(new Event('beforeprint'));
-  assert(host.children.length===0,'销毁后打印监听仍在重建页面');
+  assert(host.children.length===0&&sheet()===null,'销毁后打印监听仍在重建页面');
+  window.dispatchEvent(new Event('afterprint'));
   output.textContent=`PASS: ${passed} virtual/text browser assertions`;
 }catch(error){output.textContent=`FAIL after ${passed}: ${error.stack}`;}
 </script>
