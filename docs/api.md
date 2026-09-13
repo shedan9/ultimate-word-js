@@ -85,109 +85,12 @@ interface LoadOptions {
 }
 ```
 
-> **已实现的与原方案的差别**（2026-09-13）：`layoutOnLoad` / `worker` / `pageSetup` 三个字段
-> **没有**。前两个是增量排版与 Worker 化（架构 §7 / §9）的开关，那两件事还没做，先摆一个
-> 不生效的选项等于骗人；`pageSetup` 要等「按容器宽度重排」有真实需求再定形状。
-> `fonts` 从形状待定的 `FontOptions` 收成了一个 `FontRegistry` —— 「按文档覆盖」就是换一份注册表，
-> 没有第二种含义。
-
-`load` 是唯一的异步入口（要解压、解析、可能要 fetch 字体）。
-**之后所有查询都是同步的**——布局结果已经在内存里，
-`doc.find()` 没有理由返回 Promise。这条对调用方的心智负担差别很大。
-
----
-
-## 4. 字体 🟢
-
-字体是这个库保真度的地基，所以它有一个独立的、全局的注册表。
-
-```ts
-UltimateWord.fonts.register(family: string, data: ArrayBuffer | Uint8Array, postscriptName?: string): Promise<void>;
-UltimateWord.fonts.registerMetrics(pack: MetricsPack): void;
-UltimateWord.fonts.substitute(map: Record<string, string>): void;
-UltimateWord.fonts.status(family: string | string[]): 'file' | 'metrics' | 'fallback' | 'missing';
-UltimateWord.fonts.registry: FontRegistry; // 底层注册表，按文档覆盖时拿它造一份新的
-```
-
-> ⚠️ **`register()` 是异步的**（原来写的 `void`，2026-09-13 改）：解码字体要 fontkit，而门面的
-> 主 chunk 刻意不带它 —— `@uw/fonts` 把解码关在 `/decode` 子路径里正是为了让只带度量包的
-> 部署不必打包 fontkit，门面若静态 import 那条路就把这个好处整个吃掉了。动态 `import()`
-> 让打包器自然拆出一个 chunk，第一次调 `register` 才加载。`.ttc` 字体集要用
-> `postscriptName` 指定其中一款（simsun.ttc 里同时有 SimSun 与 NSimSun）。
-
-对应[三级降级策略](./architecture.md#53-度量的三级降级)：
-
-```ts
-// ① 有真实字体文件：度量与渲染都准
-UltimateWord.fonts.register('FangSong', await fetch('/fonts/simfang.ttf').then(r => r.arrayBuffer()));
-
-// ② 只有度量包：排版与 Word 一致（断行点、页数），字形用替代字体
-UltimateWord.fonts.registerMetrics(await fetch('/metrics/fangsong.json').then(r => r.json()));
-UltimateWord.fonts.substitute({ '仿宋_GB2312': 'Noto Serif CJK SC' });
-
-// ③ 什么都没有：等宽近似，页数可能对不上
-UltimateWord.fonts.status('方正小标宋简体'); // → 'missing'
-```
-
-`status()` 的四态里 `fallback` 与 `missing` 别搞反（`FontRegistry.status()` 的实际语义）：
-**`fallback` = 替换表命中了另一款已注册的字体**（字形还算像，度量已经偏离 Word，
-但注册一份度量包就能修好）；**`missing` = 什么都没命中**，走等宽近似。
-
-> **随库那 17 款不需要调用方操心**：A/B/C/D 四类度量包已经入库
-> （`packages/fonts/packs`，88 KB），门面在**模块加载时**就注册进全局注册表
-> （走 `@uw/fonts/packs` 的 `bundledPacks()` —— JSON import，浏览器与 Node 同一条路；
-> `@uw/fonts/node` 的 `loadBundledPacks()` 靠 `readFileSync`，只剩离线工具在用）。
-> 上面的 `registerMetrics` 是给**清单之外**的字体用的（比如 `仿宋_GB2312`）。
-
-> **级别③ 现在是等宽近似，不是 `canvas.measureText`**：canvas 是 DOM API，
-> 而 `@uw/fonts` 在无 DOM 区（架构原则 1.2），调不到它。这个洞的三条出路见
-> [架构 §5.3](./architecture.md#53-度量的三级降级)，Phase 3 再定归属。
->
-> 门面的 `register(family, data)` 由 `@uw/fonts/decode` 的 `fontSourceFromBytes()` 实现，
-> `registerMetrics(pack)` 对应 `FontRegistry.registerMetrics()`。分成子路径是为了让
-> 只带度量包的部署不必把 fontkit 打进去。
-
-> **为什么是全局注册表而不是每个文档传一遍**：字体解析和度量缓存是纯开销，
-> 同一个页面开十份公文没有理由解析十次宋体。`LoadOptions.fonts` 仍可做**每文档覆盖**，
-> 但默认继承全局。
-
----
-
-## 5. 挂载与视图 🟢
-
-```ts
-doc.mount(target: string | Element, options?: ViewOptions): UwView; // 先清空容器
-
-interface ViewOptions {
-  zoom?: number | 'fit-width' | 'fit-page';   // 默认 1
-  pageGap?: number;                            // CSS px，默认 24
-  /** 额外渲染一层原生可选文本，让 Ctrl+F / 划词复制 / 屏幕阅读器可用（默认 true） */
-  textLayer?: boolean;
-  /** 只绘制可见页前后几页（默认 true）；视口外多绘制几页由 overscan 定（默认 2） */
-  virtualize?: boolean;
-  overscan?: number;
-  classPrefix?: string;                        // 默认 'uw'
-  fontFamily?: (family: string) => string;     // Word 字体名 → CSS font-family
-  debug?: boolean;                             // 画版心框与行盒
-  /** Ctrl+P 怎么印：'document'（默认，一页一张纸）| 'inline'（原地印，页面怎么排就怎么印） */
-  printMode?: 'document' | 'inline';
-}
-```
-
-```ts
-view.setZoom(1.5);
-view.setZoom('fit-width');            // 按最宽的那一页算；容器变宽变窄时自动跟（ResizeObserver）
-view.zoom;                            // 当前生效的倍率，fit 模式下是算出来的那个数
-view.dispose();                       // 摘掉所有 DOM、解绑所有事件、停掉观察器
-```
-
-> **已实现的与原方案的差别**（2026-09-13）：`mode` 与 `renderer` 两个字段**没有** ——
-> 现在只有预览态与 DOM 渲染器，摆一个只有一个取值的选项没有意义（Phase 7 / canvas 进来再加，
-> 加字段不破坏兼容）。多出来的 `virtualize` / `classPrefix` / `fontFamily` / `debug`
-> 是底层 `@uw/view/dom` 本来就认的，门面原样透出。
+> **当前实现**（2026-09-13）：`mode: 'preview' | 'edit'` 已可用，默认预览。
+> 编辑态接入文字 / 段落事务、模型选区与 IME。只有 DOM 渲染器，因此仍没有 `renderer`。
+> `virtualize` / `classPrefix` / `fontFamily` / `debug` 从底层原样透出。
 > **fit 的分母是最宽 / 最高的那一页**（混合纸张的文档不会有哪一页出界），分子是容器的
 > **内容盒**（去掉 padding 与滚动条）再减一个页间距；容器还没排出尺寸时退回 1，等观察器补。
-> 视图**没有 `update()`**：重排是 Phase 7 的事，现在改构造选项就是 `dispose()` 再 `mount()`。
+> 视图**没有公开 `update()`**：文档事务自动更新所有视图；改构造选项仍是 `dispose()` 再 `mount()`。
 
 > **为什么 `textLayer` 在预览态默认开、编辑态默认关**：预览态用户期待 Ctrl+F 能搜到字；
 > 编辑态有自己的选区系统，再叠一层原生可选文本会导致双重选区打架。
@@ -223,8 +126,8 @@ doc.rangeOf(node: NodeId | DocNode): DocRange | undefined; // 🟢 空段落 / �
 > `buildRunOrder(body)` 一次建好 run 的文档序（消费侧现建，与 `LayoutIndex` 同理），
 > 再用 `compareDocPositions(order, a, b)` / `rangeContains(order, range, x)` / `rangeOfNode(node)`。
 > 它与 `LayoutIndex.compare()` 的差别：**树里有的 run 都算**，空 run、隐藏 run 也能比 ——
-> 布局那一份只认排出来的。`rangeOfNode` 对一个 run 都没有的节点（空段落）答 `undefined`：
-> `DocPosition` 只能指 run，段落标记还不是 run（Phase 7 的光标模型再补）。
+> 布局那一份只认排出来的。空段落现以段落 id + `{ contentIndex: 0, offset: 0 }`
+> 表示唯一插入点，`rangeOfNode` 返回该点的折叠范围。空单元格的范围也包含其空段落。
 
 > ⚠️ **`contentIndex` 是 2026-08-30 补上的第三个字段**（实现 `LayoutIndex` 时才看清）：
 > 一个 run 的内容是一列片段，片段**没有自己的 id**，而「run 内的全局字符偏移」要把前面
@@ -406,6 +309,9 @@ doc.bindings.apply();                            // 一次性提交 → 触发�
 
 ## 10. 编辑与事务 🟡
 
+> 门面 `doc.tx()` / `undo()` / `redo()` 已接入文字与段落命令，并自动全量级联 / 排版。
+> 下方格式命令与公开事件仍是设计目标；当前可用接口见 §10.1–10.2。
+
 **唯一的模型修改入口是 `doc.tx()`。** 没有零散的 setter。
 
 ```ts
@@ -431,6 +337,78 @@ doc.canUndo;  // boolean
 > **为什么强制事务而不是提供 `doc.insertText()` 便捷方法**：
 > 便捷方法一旦存在，就会有人连着调 50 次，得到 50 次重排和 50 个 undo 单元。
 > 把事务作为唯一入口，性能与撤销语义就是**结构性正确**的，不依赖调用方自觉。
+
+### 10.1 模型层文字事务 🟢
+
+```ts
+import { createTextEditor, mapTextPosition, resolveBody } from '@uw/model';
+
+// loaded 是 @uw/model 的 loadDocument() 返回值，pos 指向其中一个 text 片段。
+const editor = createTextEditor(loaded.body);
+let caret = pos;
+const changes = editor.tx(t => {
+  t.insertText(caret, '正文内容');
+}, { origin: 'input' });
+if (changes) caret = mapTextPosition(caret, changes);
+const resolved = resolveBody(loaded.cascade, editor.body);
+// resolved 可交给布局；此低层入口不会更新 loaded.resolved 或已挂载的视图。
+
+editor.undo(); // 返回反向 TextChangeSet，无历史时为 undefined
+editor.redo();
+editor.breakHistory(); // 光标移动、焦点切换等输入边界中断合并
+```
+
+`createTextEditor(body, { historyLimit?, mergeDelay?, now?, validate? })` 克隆并冻结直接格式树，
+`editor.body` 是当前快照；不要直接修改。文字修改保留未修改的 run；结构命令重建块容器路径。`validate` 在提交 / 历史跳转前接收冻结候选树，抛错时保留模型和历史。
+`tx` 接受同步回调（返回 `undefined`），返回本次的 `TextChangeSet` 或 `undefined`（无修改）。
+回调抛错或任一命令失败，整次事务回滚；捕获命令错误也不能提交前半次修改。
+回调结束后句柄失效，不允许重入事务或在回调中操作历史。
+
+- `t.insertText(position, text)` 返回插入后的光标位置；文字不能含换行、制表位或孤立代理项。
+- `t.deleteRange(range)` 返回删除起点，支持跨 run / 文字片段，以及同一块容器内连续段落；合段保留前段格式和剩余 run 的样式 / 链接。
+  只接受正向范围；位置按 UTF-16 计数，但不能切开合法代理对。
+- 空段落锚点可输入，首次输入建立带段落标记直接格式的 run；撤销恢复无 run 的原树。
+- `t.splitParagraph(position)` 返回新段开头，继承段落和字符格式，后段使用新 id。
+- `t.joinParagraph(paragraphId)` 合并同一节 / 单元格中紧邻的两段，返回接缝位置。
+- 跨表格、单元格、分节删除或合段，以及修改域、删除图片 / 制表位 / 换行等片段会抛错。
+  结构命令可原样搬运未被切开的对象；格式命令尚未实现。
+- 默认最多 100 个撤销单元。只有显式 `origin: 'input'` 的单次纯插入、位置紧接上次末端、
+  间隔不超过 1000ms 才合并；默认命令、超时、`breakHistory()`、undo/redo 都打断合并。
+  `historyLimit: 0` 关闭历史，`mergeDelay: 0` 关闭合并。每次提交的变更集仍只含本次修改。
+
+`TextChangeSet` 是可结构化克隆的数据：`paragraphIds` 标出受影响段落，`changes` 按执行顺序
+记录 `{ paragraphId, nodeId, contentIndex, offset, deletedText, insertedText }`，每项位置相对
+上一项应用后的树。结构记录带 `moves` / `inverseMoves`（片段区间迁移）及 `affectedParagraphIds`，其文字字段为空，不应按普通插入处理。undo 返回逆序的反向修改，redo 返回正向修改。
+`mapTextPosition(pos, changes, 'before' | 'after')` 映射旧位置，默认跟随插入点之后；
+删除区内的位置收拢到删除点。`mapTextRange` 默认排除两端新插入的文字，折叠范围保持折叠。
+**这些函数返回新位置，不会自动修改已存的批注 / 选区**；删除区内部的原始偏移会丢失，
+若撤销时需要恢复原始选区，输入层须另存选区快照。
+
+### 10.2 门面编辑态与 IME 🟢
+
+```ts
+const doc = await UltimateWord.load(bytes);
+const view = doc.mount('#container', { mode: 'edit' });
+const range = doc.rangeOf(doc.query('paragraph')[0]);
+if (range) view.select?.({ start: range.start, end: range.start });
+view.focus?.();
+doc.tx(t => { t.insertText(pos, '正文'); });
+doc.undo();
+doc.redo();
+console.log(doc.canUndo, doc.canRedo, view.selection);
+```
+
+光标来自布局索引的字缝；空段落通过附加位置元数据定位，不插入占位字形，不改变行高。
+点击 / 拖选、左右按字素移动（含 Shift 扩选）、上下按屏幕位置移动、Enter 拆段、
+Backspace / Delete 删除或合段、纯文本多行粘贴和 Ctrl/Cmd+Z 撤销均已接通。
+textarea 常驻挂载容器，提交后更新页树与全部挂载视图，重排不会替换输入节点。
+组合输入期间不修改模型，`compositionend` 作为一次独立事务提交；尾随输入事件去重，
+取消 / 失焦丢弃未提交组合串。缩放与滚动会刷新输入位置。
+
+当前为全量级联和重排；增量布局、格式命令、富文本粘贴、完整剪贴板 / 屏幕阅读器编辑、
+Ctrl 按词移动、双击选词、跨页上下导航和公开 `document:change` 事件仍待实现。
+浏览器回归 `/tests/editing.html` 使用组合事件验证接线；系统拼音候选窗的实际行为仍需人工验证。
+
 
 ---
 

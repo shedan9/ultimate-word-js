@@ -13,7 +13,7 @@ import { join } from 'node:path';
 
 const CHROME = process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const BASE = process.env.PLAYGROUND ?? 'http://localhost:5273';
-const ALL = ['view', 'virtual-text', 'annotations', 'scroll', 'facade', 'print', 'react'];
+const ALL = ['view', 'virtual-text', 'annotations', 'scroll', 'facade', 'print', 'react', 'editing'];
 const pages = process.argv.length > 2 ? process.argv.slice(2) : ALL;
 const port = 9333;
 const profile = mkdtempSync(join(tmpdir(), 'uw-chrome-'));

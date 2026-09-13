@@ -86,6 +86,52 @@ export function layoutParagraph(p: ResolvedParagraph, opts: LayoutParagraphOptio
     }),
   );
 
+  if (
+    lines[0] !== undefined &&
+    p.runs.every(
+      (r) =>
+        r.fieldSimple === undefined &&
+        !r.props.hidden &&
+        r.content.every((c) => c.kind === 'text' && c.text === ''),
+    )
+  ) {
+    lines[0].emptyPosition = { nodeId: p.runs[0]?.id ?? p.id, contentIndex: 0, offset: 0 };
+  }
+  // 空片段没有字形，但仍是事务返回的合法位置；借相邻片段的字缝定位，不改行盒。
+  const runOrder = new Map(p.runs.map((r, i) => [r.id, i]));
+  const fragments = lines.flatMap((line) =>
+    line.fragments.filter((f) => f.offset >= 0).map((frag) => ({ line, frag })),
+  );
+  for (const [ri, run] of p.runs.entries()) {
+    if (run.props.hidden || run.fieldSimple !== undefined) continue;
+    const emptyIndices = run.content.length
+      ? run.content.flatMap((c, i) => (c.kind === 'text' && c.text === '' ? [i] : []))
+      : [0];
+    for (const ci of emptyIndices) {
+      const next = fragments.find(
+        ({ frag }) =>
+          (runOrder.get(frag.runId) ?? -1) > ri || (frag.runId === run.id && frag.contentIndex > ci),
+      );
+      const prev = fragments.findLast(
+        ({ frag }) =>
+          (runOrder.get(frag.runId) ?? Infinity) < ri || (frag.runId === run.id && frag.contentIndex < ci),
+      );
+      const line = next?.line ?? prev?.line ?? lines[0];
+      if (!line) continue;
+      const x = next?.frag.x ?? (prev ? prev.frag.x + prev.frag.width : line.x + line.width);
+      line.caretAnchors ??= [];
+      line.caretAnchors.push({ position: { nodeId: run.id, contentIndex: ci, offset: 0 }, x });
+    }
+  }
+  if (lines[0]) {
+    const ids = new Set(
+      lines.flatMap((l) => [
+        ...l.fragments.map((f) => f.runId),
+        ...(l.caretAnchors ?? []).map((a) => a.position.nodeId),
+      ]),
+    );
+    lines[0].sourceRunOrder = p.runs.filter((r) => ids.has(r.id)).map((r) => r.id);
+  }
   const firstHeight = lines[0]?.height ?? 0;
   return {
     paragraphId: p.id,

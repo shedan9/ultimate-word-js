@@ -22,8 +22,20 @@ import type {
   NodeId,
   QueryNode,
   RunOrder,
+  TextChangeSet,
+  TextEditor,
+  TextTransaction,
+  TextTransactionOptions,
 } from '@uw/model';
-import { buildRunOrder, compareDocPositions, findText, queryNodes, rangeOfNode, walkBlocks } from '@uw/model';
+import {
+  buildRunOrder,
+  compareDocPositions,
+  createTextEditor,
+  findText,
+  queryNodes,
+  rangeOfNode,
+  walkBlocks,
+} from '@uw/model';
 import { imageHrefResolver } from '@uw/render-dom';
 import type { UwView, ViewOptions } from './view.ts';
 import { createView } from './view.ts';
@@ -35,6 +47,11 @@ export type { FindOptions };
 
 export interface UwDocumentInit {
   loaded: LoadedDocument;
+  reflow?: (body: LoadedDocument['body']) => {
+    loaded: LoadedDocument;
+    layout: DocumentLayout;
+    values: ReadonlyMap<NodeId, string>;
+  };
   layout: DocumentLayout;
   /** 与 `layout` 自洽的域求值结果（run id → 显示的文字），查找时用它跳过旧值 */
   fieldValues: ReadonlyMap<NodeId, string>;
@@ -46,20 +63,68 @@ export class UwDocument {
    * 排版结果。**不在稳定性承诺内**（api.md §16）：它是流水线的中间数据，增量排版与
    * Worker 化都会动它的形状。暴露出来是给调试台与保真度工具用的，产品代码别依赖它
    */
-  readonly layout: DocumentLayout;
+  #layout: DocumentLayout;
+  get layout(): DocumentLayout {
+    return this.#layout;
+  }
   /** 解析与排版期记下的内容问题（结构性错误早在 `load()` 就抛了） */
   readonly diagnostics: readonly Diagnostic[];
-  readonly #loaded: LoadedDocument;
-  readonly #fieldValues: ReadonlyMap<NodeId, string>;
+  #loaded: LoadedDocument;
+  #fieldValues: ReadonlyMap<NodeId, string>;
+  readonly #editor: TextEditor;
+  readonly #reflow: UwDocumentInit['reflow'];
+  #prepared: ReturnType<NonNullable<UwDocumentInit['reflow']>> | undefined;
+  readonly #listeners = new Set<(change: TextChangeSet) => void>();
+  readonly #views = new Set<(layout: DocumentLayout) => void>();
   #order: RunOrder | undefined;
   #nodes: Map<NodeId, DocNode> | undefined;
   #imageHref: ((id: string) => string | undefined) | undefined;
 
   constructor(init: UwDocumentInit) {
     this.#loaded = init.loaded;
-    this.layout = init.layout;
+    this.#layout = init.layout;
+    this.#editor = createTextEditor(init.loaded.body, {
+      validate: (body) => {
+        this.#prepared = this.#reflow?.(body);
+      },
+    });
+    this.#reflow = init.reflow;
     this.#fieldValues = init.fieldValues;
     this.diagnostics = init.diagnostics;
+  }
+
+  get canUndo(): boolean {
+    return this.#editor.canUndo;
+  }
+  get canRedo(): boolean {
+    return this.#editor.canRedo;
+  }
+  tx(
+    callback: (tx: TextTransaction) => undefined,
+    options?: TextTransactionOptions,
+  ): TextChangeSet | undefined {
+    if (!this.#reflow) throw new Error('文档未配置编辑重排');
+    return this.#changed(this.#editor.tx(callback, options));
+  }
+  undo(): TextChangeSet | undefined {
+    return this.#changed(this.#editor.undo());
+  }
+  redo(): TextChangeSet | undefined {
+    return this.#changed(this.#editor.redo());
+  }
+  #changed(change: TextChangeSet | undefined): TextChangeSet | undefined {
+    if (!change || !this.#reflow) return change;
+    const result = this.#prepared;
+    if (!result) throw new Error('缺少预排版结果');
+    this.#prepared = undefined;
+    this.#loaded = result.loaded;
+    this.#layout = result.layout;
+    this.#fieldValues = result.values;
+    this.#order = undefined;
+    this.#nodes = undefined;
+    for (const update of this.#views) update(this.layout);
+    for (const listener of this.#listeners) listener(change);
+    return change;
   }
 
   get pageCount(): number {
@@ -88,8 +153,8 @@ export class UwDocument {
   }
 
   /**
-   * 一个节点覆盖的 range（首 run 开头到末 run 结尾）。一个 run 都没有的节点（空段落）
-   * 答 undefined —— `DocPosition` 只能指 run，段落标记还不是 run。不存在的 id 也答 undefined
+   * 一个节点覆盖的 range（首 run 开头到末 run 结尾）。空段落返回段落 id 的折叠范围。
+   * 不存在的 id 返回 undefined
    */
   rangeOf(node: NodeId | DocNode): DocRange | undefined {
     const target = typeof node === 'string' ? this.#nodeById(node) : node;
@@ -104,7 +169,46 @@ export class UwDocument {
     }
     // 图片 → data URI 的编码每份文档只做一次，挂几个视图共用一份缓存
     this.#imageHref ??= imageHrefResolver(this.#loaded.images);
-    return createView(container, this.layout, options, this.#imageHref);
+    if (options.mode === 'edit' && !this.#reflow) throw new Error('文档未配置编辑重排');
+    const owner = this;
+    const editor: TextEditor = {
+      get body() {
+        return owner.#editor.body;
+      },
+      get canUndo() {
+        return owner.canUndo;
+      },
+      get canRedo() {
+        return owner.canRedo;
+      },
+      tx: (callback, opts) => this.tx(callback, opts),
+      undo: () => this.undo(),
+      redo: () => this.redo(),
+      breakHistory: () => this.#editor.breakHistory(),
+    };
+    return createView(
+      container,
+      this.layout,
+      options,
+      this.#imageHref,
+      {
+        editor,
+        subscribe: (listener) => {
+          this.#listeners.add(listener);
+          return () => {
+            this.#listeners.delete(listener);
+          };
+        },
+      },
+      {
+        subscribe: (update) => {
+          this.#views.add(update);
+          return () => {
+            this.#views.delete(update);
+          };
+        },
+      },
+    );
   }
 
   #nodeById(id: NodeId): DocNode | undefined {

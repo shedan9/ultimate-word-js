@@ -369,6 +369,7 @@ export function mountView(container: Element, layout: DocumentLayout, options: V
     },
     update(next, nextOptions = {}) {
       assertLive();
+      layout = next;
       const merged = { ...opts, ...nextOptions };
       validate(merged);
       // 先构建新索引与 DOM，调用方的字体解析器抛错时保留旧视图。
@@ -412,3 +413,6 @@ export function mountView(container: Element, layout: DocumentLayout, options: V
     },
   };
 }
+
+export type { DomEditing, EditingBinding } from './editing-dom.ts';
+export { mountEditing } from './editing-dom.ts';

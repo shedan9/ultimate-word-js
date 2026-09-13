@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>段落与 IME 浏览器回归</title>
+<style>
+body { margin: 0; font: 14px/1.5 system-ui; }
+#result { position: fixed; inset: 0 0 auto; z-index: 20; background: white; }
+#host { margin: 70px 30px; height: 600px; overflow: auto; }
+</style>
+<pre id="result">正在验证…</pre><div id="host"></div><div id="second"></div>
+<script type="module">
+import { UltimateWord } from 'ultimate-word';
+import fixtureUrl from '../../fidelity/fixtures/gongwen-01.docx?url';
+const result = document.querySelector('#result');
+const host = document.querySelector('#host');
+let passed = 0;
+function assert(value, label) { if (!value) throw new Error(label); passed++; }
+const frame = () => new Promise(requestAnimationFrame);
+try {
+  const doc = await UltimateWord.load(fixtureUrl);
+  const view = doc.mount(host, { mode: 'edit' });
+  const preview = doc.mount('#second');
+  const range = doc.rangeOf(doc.query('paragraph')[0]);
+  view.select({ start: range.start, end: range.start }); view.focus();
+  await frame();
+  const input = host.querySelector('textarea');
+  assert(input === document.activeElement, '编辑输入获得焦点');
+  const before = (type, data) => input.dispatchEvent(new InputEvent('beforeinput', { inputType: type, data, bubbles: true, cancelable: true }));
+  before('insertText', '测试');
+  assert(doc.find('测试').length === 1, '输入提交到模型与查找');
+  assert(input === host.querySelector('textarea') && document.activeElement === input, '重排保留输入节点与焦点');
+  assert(preview.root.textContent.includes('测试'), '同一文档的预览视图同步重排');
+  input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+  input.value = '中文';
+  input.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertCompositionText', data: '中文', isComposing: true, bubbles: true }));
+  assert(doc.find('测试中文').length === 0, '组合期不写模型');
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true }));
+  input.dispatchEvent(new CompositionEvent('compositionend', { data: '中文', bubbles: true }));
+  before('insertText', '中文');
+  assert(doc.find('测试中文').length === 1 && doc.find('中文中文').length === 0, 'IME 提交一次，尾随输入不重复');
+  const count = doc.query('paragraph').length;
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  assert(doc.query('paragraph').length === count + 1, 'Enter 拆段');
+  assert(view.caretRect(view.selection.end) !== null, '拆段后光标可定位');
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true }));
+  assert(doc.query('paragraph').length === count, '段首退格合段');
+  doc.undo(); assert(doc.query('paragraph').length === count + 1, '撤销恢复段落结构');
+  doc.undo(); doc.undo();
+  assert(doc.find('测试中文').length === 0 && doc.find('测试').length === 1, '组合输入独立撤销');
+  doc.redo(); assert(doc.find('测试中文').length === 1, '重做恢复组合结果');
+  const at = doc.rangeOf(doc.query('paragraph')[0]).start;
+  doc.tx((tx) => { tx.splitParagraph(at); });
+  const empty = doc.rangeOf(doc.query('paragraph')[0]);
+  view.select(empty); view.focus(); await frame();
+  const rect = view.caretRect(empty.start);
+  assert(rect !== null && rect.height > 0, '空段落有光标行高');
+  const located = view.locate({ clientX: rect.x + 2, clientY: rect.y + rect.height / 2 });
+  assert(located?.nodeId === empty.start.nodeId, '点击空段落命中插入点');
+  view.setZoom(1.25); await frame();
+  const zoomed = view.caretRect(empty.start);
+  assert(Math.abs(parseFloat(input.style.left) - zoomed.x) < 1, '缩放更新输入候选位置');
+  input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+  input.blur();
+  input.dispatchEvent(new CompositionEvent('compositionend', { data: '取消', bubbles: true }));
+  assert(doc.find('取消').length === 0, '失焦取消未提交组合');
+  view.dispose(); preview.dispose();
+  assert(host.childElementCount === 0, '销毁清理输入与页树');
+  result.textContent = `PASS ${passed} 项`;
+} catch (error) { result.textContent = `FAIL ${passed} 项后\n${error.stack ?? error}`; }
+</script>
+</html>

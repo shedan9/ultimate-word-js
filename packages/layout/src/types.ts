@@ -13,7 +13,7 @@
  */
 import type { Twips } from '@uw/core';
 import type { ScriptKind } from '@uw/fonts';
-import type { DrawingAnchor, ImageRef, NodeId, ObjectContent, VerticalAlign } from '@uw/model';
+import type { DocPosition, DrawingAnchor, ImageRef, NodeId, ObjectContent, VerticalAlign } from '@uw/model';
 
 /**
  * 一段文字**位置以外**的一切 —— 渲染层照着画，不必回头去查 `ResolvedRunProps`。
@@ -264,6 +264,10 @@ export interface LineFragment {
 }
 
 export interface LineLayout {
+  /** 空段落的插入点，不生成占位字形，不影响排版几何。 */
+  emptyPosition?: DocPosition;
+  sourceRunOrder?: NodeId[];
+  caretAnchors?: { position: DocPosition; x: Twips }[];
   /** 对应 `LayoutItem[]` 的区间 `[start, end)` */
   start: number;
   end: number;

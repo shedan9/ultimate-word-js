@@ -31,5 +31,7 @@ export * from './section.ts';
 export * from './settings.ts';
 export * from './styles.ts';
 export * from './table-props.ts';
+export * from './text-change.ts';
+export * from './text-transaction.ts';
 export * from './theme.ts';
 export * from './xml-values.ts';

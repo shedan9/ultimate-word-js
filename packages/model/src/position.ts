@@ -22,6 +22,7 @@ import type { NodeId } from './nodes.ts';
  * `contentIndex` 是数组下标、会被编辑挪动，这一点与 `nodeId` 的「稳定标识」不同 ——
  * 但它只在**本 run 内**挪，平移由事务系统负责，代价远小于全局字符偏移。
  */
+/** 无 run 的空段落以段落 id + {contentIndex: 0, offset: 0} 表示唯一插入点。 */
 export interface DocPosition {
   nodeId: NodeId;
   /** `RunNode.content` 里的下标 */

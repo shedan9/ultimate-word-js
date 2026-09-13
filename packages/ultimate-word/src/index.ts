@@ -22,7 +22,14 @@ import { load } from './load.ts';
 export type { Diagnostic, DiagnosticSeverity } from '@uw/core';
 export { UwError, UwErrorCode } from '@uw/core';
 export type { FontRegistry, FontStatus, MetricsPack } from '@uw/fonts';
-export type { DocPosition, DocRange, NodeId } from '@uw/model';
+export type {
+  DocPosition,
+  DocRange,
+  NodeId,
+  TextChangeSet,
+  TextTransaction,
+  TextTransactionOptions,
+} from '@uw/model';
 export type { ClientPoint, ClientRect } from '@uw/view';
 export type {
   DecorationHandle,

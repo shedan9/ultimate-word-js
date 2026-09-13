@@ -26,6 +26,7 @@ app.innerHTML = `
     <label>缩放 <input type="range" min="50" max="300" step="10" value="100"><button type="button" class="fit">适应宽度</button></label>
     <label><input type="checkbox" class="debug"> 画版心与行盒</label>
     <label><input type="checkbox" class="text-layer" checked> 原生选区</label>
+    <label><input type="checkbox" class="edit-mode"> 编辑</label>
     <label><input type="checkbox" class="virtualize" checked> 按需绘制</label>
     <label class="find">查找 <input type="search" placeholder="回车到下一处" disabled><span class="hits"></span></label>
     <span class="status">把一份 .docx 拖进来</span>
@@ -39,6 +40,7 @@ const zoomInput = app.querySelector<HTMLInputElement>('input[type=range]') as HT
 const fitButton = app.querySelector<HTMLButtonElement>('.fit') as HTMLButtonElement;
 const debugInput = app.querySelector<HTMLInputElement>('.debug') as HTMLInputElement;
 const textLayerInput = app.querySelector<HTMLInputElement>('.text-layer') as HTMLInputElement;
+const editInput = app.querySelector<HTMLInputElement>('.edit-mode') as HTMLInputElement;
 const virtualizeInput = app.querySelector<HTMLInputElement>('.virtualize') as HTMLInputElement;
 const fileInput = app.querySelector<HTMLInputElement>('input[type=file]') as HTMLInputElement;
 const findInput = app.querySelector<HTMLInputElement>('input[type=search]') as HTMLInputElement;
@@ -59,6 +61,7 @@ function remount(): void {
     debug: debugInput.checked,
     textLayer: textLayerInput.checked,
     virtualize: virtualizeInput.checked,
+    mode: editInput.checked ? 'edit' : 'preview',
   });
   search.rerun();
 }
@@ -139,6 +142,7 @@ fitButton.addEventListener('click', () => {
 debugInput.addEventListener('change', remount);
 textLayerInput.addEventListener('change', remount);
 virtualizeInput.addEventListener('change', remount);
+editInput.addEventListener('change', remount);
 findInput.addEventListener('input', search.rerun);
 findInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {

@@ -23,12 +23,15 @@ import type {
 import { walkParagraphs } from './nodes.ts';
 import type { DocPosition, DocRange } from './position.ts';
 
-/** run id → 文档序号。只有 run 有序号 —— `DocPosition` 只指 run */
+/** run id → 文档序号。run 与无 run 的空段落均有序号 */
 export type RunOrder = ReadonlyMap<NodeId, number>;
 
 export function buildRunOrder<S extends PropSet>(body: DocumentBody<S>): RunOrder {
   const order = new Map<NodeId, number>();
-  for (const p of walkParagraphs(body)) for (const run of p.runs) order.set(run.id, order.size);
+  for (const p of walkParagraphs(body)) {
+    if (!p.runs.length) order.set(p.id, order.size);
+    for (const run of p.runs) order.set(run.id, order.size);
+  }
   return order;
 }
 
@@ -67,16 +70,25 @@ export type RangeableNode<S extends PropSet> = BlockNode<S> | RunNode<S> | Table
 /**
  * 一个节点覆盖的 range：首 run 的开头到末 run 的结尾。
  *
- * 一个 run 都没有的节点（空段落、空单元格）**没有 range**（返回 `undefined`）——
- * `DocPosition` 只能指 run，空段落里没有任何一个能指的东西。
- * Word 的段落标记本可以充当这个位置，但模型里段落标记不是 run（它的属性在
- * `ParaProps.markRunProps`），Phase 7 的光标模型要为它补一个表示，这里不抢先猜。
+ * 空段落以段落 id 的折叠范围表示，单元格 / 表格的范围也包含首末空段落。
+ * 原先只有 run 可定位时这里返回 undefined；输入层接入后必须保留空段落插入点。
  */
 export function rangeOfNode<S extends PropSet>(node: RangeableNode<S>): DocRange | undefined {
-  const first = firstRun(node);
-  const last = lastRun(node);
-  if (first === undefined || last === undefined) return undefined;
-  return { start: runStart(first), end: runEnd(last) };
+  if (node.kind === 'paragraph' && !node.runs.length) {
+    const position = { nodeId: node.id, contentIndex: 0, offset: 0 };
+    return { start: { ...position }, end: { ...position } };
+  }
+  if (node.kind === 'run') return { start: runStart(node), end: runEnd(node) };
+  if (node.kind === 'paragraph')
+    return { start: runStart(node.runs[0] as RunNode<S>), end: runEnd(node.runs.at(-1) as RunNode<S>) };
+  const children = node.kind === 'table' ? node.rows : node.kind === 'row' ? node.cells : node.blocks;
+  const ranges = children.flatMap((child) => {
+    const range = rangeOfNode(child);
+    return range ? [range] : [];
+  });
+  const first = ranges[0];
+  const last = ranges.at(-1);
+  return first && last ? { start: first.start, end: last.end } : undefined;
 }
 
 export function runStart<S extends PropSet>(run: RunNode<S>): DocPosition {
@@ -112,17 +124,6 @@ export function contentLength(c: RunNode<PropSet>['content'][number]): number {
     default:
       return 1;
   }
-}
-
-function firstRun<S extends PropSet>(node: RangeableNode<S>): RunNode<S> | undefined {
-  for (const run of runsOf(node)) return run;
-  return undefined;
-}
-
-function lastRun<S extends PropSet>(node: RangeableNode<S>): RunNode<S> | undefined {
-  let found: RunNode<S> | undefined;
-  for (const run of runsOf(node)) found = run;
-  return found;
 }
 
 /** 节点下的全部 run，文档序（表格按行 → 格 → 块下钻） */

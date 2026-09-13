@@ -17,19 +17,23 @@ import type { ClientPoint, ClientRect } from '@uw/view';
 import type {
   DecorationHandle,
   DecorationOptions,
+  DomEditing,
   DomView,
   ViewOptions as DomViewOptions,
+  EditingBinding,
   OverlayHandle,
   OverlayOptions,
   ScrollOptions,
   ScrollTarget,
 } from '@uw/view/dom';
-import { mountView } from '@uw/view/dom';
+import { mountEditing, mountView } from '@uw/view/dom';
 
 /** 数字是倍率（1 = 100%）；两个 fit 按**最宽 / 最高的那一页**算，混合纸张的文档不会有哪一页出界 */
 export type ZoomSpec = number | 'fit-width' | 'fit-page';
 
 export interface ViewOptions {
+  /** 默认 preview；edit 接入模型事务与 IME。 */
+  mode?: 'preview' | 'edit';
   /** 默认 1 */
   zoom?: ZoomSpec;
   /** 页间距，CSS px，默认 24 */
@@ -62,6 +66,9 @@ export interface UwView extends Disposable {
   readonly root: HTMLElement;
   /** 当前生效的倍率。fit 模式下是算出来的那个数 */
   readonly zoom: number;
+  readonly selection?: DocRange | undefined;
+  select?(range: DocRange): void;
+  focus?(): void;
   /** 屏幕坐标 → 模型位置；纸外、页间空隙、被遮挡时为 null */
   locate(point: ClientPoint): DocPosition | null;
   /** 一个 range 跨行 / 跨页会有多个矩形，CSS px，不裁剪到视口 */
@@ -118,6 +125,8 @@ export function createView(
   layout: DocumentLayout,
   options: ViewOptions,
   imageHref: ((id: string) => string | undefined) | undefined,
+  editing?: EditingBinding,
+  updates?: { subscribe(callback: (layout: DocumentLayout) => void): () => void },
 ): UwView {
   const gap = options.pageGap ?? 24;
   let spec: ZoomSpec = options.zoom ?? 1;
@@ -126,7 +135,7 @@ export function createView(
 
   // exactOptionalPropertyTypes：可选字段要么不写，要么给确定值
   const domOptions: DomViewOptions = { zoom, pageGap: gap };
-  if (options.textLayer !== undefined) domOptions.textLayer = options.textLayer;
+  domOptions.textLayer = options.textLayer ?? options.mode !== 'edit';
   if (options.virtualize !== undefined) domOptions.virtualize = options.virtualize;
   if (options.overscan !== undefined) domOptions.overscan = options.overscan;
   if (options.classPrefix !== undefined) domOptions.classPrefix = options.classPrefix;
@@ -153,6 +162,14 @@ export function createView(
     observer.observe(container);
   }
   observe();
+  let input: DomEditing | undefined;
+  if (options.mode === 'edit' && editing !== undefined) input = mountEditing(container, inner, editing);
+  const unsubscribe = updates?.subscribe((next) => {
+    layout = next;
+    zoom = resolveZoom(spec, container, layout, gap);
+    inner.update(layout, { zoom });
+    input?.refresh();
+  });
 
   return {
     get root() {
@@ -160,6 +177,17 @@ export function createView(
     },
     get zoom() {
       return zoom;
+    },
+    get selection() {
+      return input?.selection;
+    },
+    select(range) {
+      if (!input) throw new Error('视图不是编辑态');
+      input.select(range);
+    },
+    focus() {
+      if (input) input.focus();
+      else inner.root.focus();
     },
     locate: (point) => inner.locate(point),
     rectsOf: (range) => inner.rectsOf(range),
@@ -173,6 +201,7 @@ export function createView(
       spec = next;
       zoom = resolveZoom(spec, container, layout, gap);
       inner.setZoom(zoom);
+      input?.refresh();
       if (typeof spec === 'number') {
         observer?.disconnect();
         observer = undefined;
@@ -183,6 +212,8 @@ export function createView(
       disposed = true;
       observer?.disconnect();
       observer = undefined;
+      unsubscribe?.();
+      input?.dispose();
       inner.destroy();
     },
   };

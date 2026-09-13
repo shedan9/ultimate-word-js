@@ -294,3 +294,21 @@ describe('容器 · 表格与页眉页脚', () => {
     expect(idx.positionAt({ page: 0, x: CX + 50, y: 300 + 10 })?.nodeId).toBe(h.id);
   });
 });
+
+it('无 run 的空段落有稳定命中与光标，空片段保留合法字缝', () => {
+  const empty = para([]);
+  const a = run('甲');
+  const blank = run('');
+  const b = run('乙');
+  const text = para([a, blank, b]);
+  const idx = index([empty, text]);
+  const at = { nodeId: empty.id, contentIndex: 0, offset: 0 };
+  const rect = idx.caretRect(at);
+  expect(rect?.height).toBeGreaterThan(0);
+  if (!rect) throw new Error('空段落缺少光标');
+  expect(idx.positionAt({ page: rect.page, x: rect.x + 5, y: rect.y + rect.height / 2 })).toEqual(at);
+  const middle = { nodeId: blank.id, contentIndex: 0, offset: 0 };
+  expect(idx.caretRect(middle)?.x).toBe(idx.caretRect({ nodeId: b.id, contentIndex: 0, offset: 0 })?.x);
+  expect(idx.compare({ nodeId: a.id, contentIndex: 0, offset: 1 }, middle)).toBe(-1);
+  expect(idx.compare(middle, { nodeId: b.id, contentIndex: 0, offset: 0 })).toBe(-1);
+});

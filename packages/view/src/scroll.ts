@@ -6,7 +6,7 @@ export type ScrollTarget = DocPosition | DocRange | { page: number };
 
 export interface ScrollOptions {
   /** 目标行贴视口的哪一边，默认 `start`。 */
-  align?: 'start' | 'center' | 'end';
+  align?: 'start' | 'center' | 'end' | 'nearest';
   behavior?: 'auto' | 'smooth';
 }
 

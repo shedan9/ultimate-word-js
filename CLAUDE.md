@@ -36,6 +36,10 @@ SECTIONPAGES 迭代到自洽）都做完了，TOC / SEQ 的求值还没写。
 判据是接线不是真值（Vitest 14 项 + `/tests/facade.html` 15 项）。随库度量包在浏览器里的路
 是 `@uw/fonts/packs`（JSON import，无 fs）。**Phase 6 至此全部做完**（2026-09-13）：
 **打印**（`@uw/view` 的 `print.ts`）与 **`@uw/react`**（`packages/react`），见下。
+**Phase 7 已开始**（2026-09-13）：`@uw/model` 的 `createTextEditor()` 提供段内文字事务、
+undo/redo、连续输入合并与 `TextChangeSet` 位置映射。空段落锚点、拆段 / 合段与跨段删除已补齐；
+门面 `tx` / undo / redo 自动全量重排，`mode: 'edit'` 接入光标和 IME 独立提交。
+输入节点重排时常驻，预提交检查失败保留模型和历史；增量布局与高级编辑仍待做，见 api.md §10.1–10.2。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、
 `@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 制表位 + **模型位置（`DocPosition`）** + **编号（解析 + 计数器 + 编号文字 + 接进级联）** + **表格（属性 + 级联 + 条件格式）** + **域（界桩配对 + 指令解析 + HYPERLINK）** + **页眉页脚部件** + **图片（外框 + blip 引用 + 裁剪 / 旋转 + 浮动锚点 + 字节表）** + **查找 / 选择器 / 模型侧文档序**）、
 `@uw/fonts`（行高规则 + 脚本分桶（**歧义字符 / 中性字符两条都实测**）+ 度量包 + 注册表 + `TextMeasurer`）、
@@ -59,11 +63,11 @@ SECTIONPAGES 迭代到自洽）都做完了，TOC / SEQ 的求值还没写。
 全局注册表，走 `@uw/fonts/packs`（JSON import attributes，列表手写、`packs.test.ts` 对着
 `index.json` 校验），不是 `@uw/fonts/node`（`readFileSync`，浏览器没有）；③ `doc.find` **自动带上**
 求值过的域（`fieldValues`），`doc.compare` 对不属于这份文档的位置**抛错**，`doc.rangeOf` 对空段落答
-undefined；④ `UwView` 没有 `update()`（重排是 Phase 7 的事），改构造选项就是 `dispose()` 再
+段落 id 的折叠范围；④ `UwView` 没有公开 `update()`（事务内部会重排），改构造选项就是 `dispose()` 再
 `mount()`；`fit-width` / `fit-page` 按**最宽 / 最高的那一页**与容器**内容盒**算、`ResizeObserver`
 跟随容器（观察的是容器不是 root —— root 的尺寸是页面撑出来的，观察它会自己触发自己）。
 `doc.layout` 暴露但**不在稳定性承诺内**（api.md §16），给调试台与保真度工具用。
-`ViewOptions` 没有 `mode` / `renderer`、`LoadOptions` 没有 `worker` / `layoutOnLoad` ——
+`ViewOptions.mode` 支持 preview / edit，仍没有 `renderer`、`LoadOptions` 没有 `worker` / `layoutOnLoad` ——
 对应的能力还没有，不摆不生效的选项。
 
 **打印**（`packages/view/src/print.ts`）三处容易搞反：① **不印屏幕上那一份** —— 它住在宿主的

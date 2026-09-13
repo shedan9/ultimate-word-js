@@ -235,7 +235,7 @@ describe('文档序与 rangeOf', () => {
     expect(rangeContains(order, range, { start: at(1), end: at(3) })).toBe(false);
   });
 
-  it('rangeOfNode：段落 / 表格覆盖首 run 到末 run；空段落没有 range', () => {
+  it('rangeOfNode：段落 / 表格覆盖首 run 到末 run；空段落返回折叠锚点', () => {
     const body = parse(
       `${p('ab', 'cd')}<w:p/><w:tbl><w:tr><w:tc>${p('x')}</w:tc><w:tc>${p('yz')}</w:tc></w:tr></w:tbl>`,
     );
@@ -244,7 +244,10 @@ describe('文档序与 rangeOf', () => {
       start: { nodeId: para?.runs[0]?.id, contentIndex: 0, offset: 0 },
       end: { nodeId: para?.runs[1]?.id, contentIndex: 0, offset: 2 },
     });
-    expect(rangeOfNode(empty as NonNullable<typeof empty>)).toBeUndefined();
+    expect(rangeOfNode(empty as NonNullable<typeof empty>)).toEqual({
+      start: { nodeId: empty?.id, contentIndex: 0, offset: 0 },
+      end: { nodeId: empty?.id, contentIndex: 0, offset: 0 },
+    });
     const table = queryNodes(body, 'table')[0];
     const cells = queryNodes(body, 'cell');
     expect(rangeOfNode(table as NonNullable<typeof table>)?.end).toEqual({

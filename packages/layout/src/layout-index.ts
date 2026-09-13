@@ -117,6 +117,9 @@ export function buildLayoutIndex(doc: DocumentLayout): LayoutIndex {
   // run 的文档序 + 每个 run 的片段落在哪几行。两张表一趟建完：
   // 顺序取**第一次出现**，重复表头与跨页拆开的段落因此不会把顺序搅乱
   const order = new Map<NodeId, number>();
+  const empty = new Map<NodeId, IndexedLine>();
+  const anchors = new Map<string, { line: IndexedLine; x: number }>();
+  const anchorKey = (p: DocPosition) => JSON.stringify([p.nodeId, p.contentIndex, p.offset]);
   const byRun = new Map<NodeId, FragRef[]>();
   const byPage = new Map<number, number[]>();
   for (let li = 0; li < lines.length; li++) {
@@ -124,6 +127,21 @@ export function buildLayoutIndex(doc: DocumentLayout): LayoutIndex {
     const bucket = byPage.get(l.page);
     if (bucket === undefined) byPage.set(l.page, [li]);
     else bucket.push(li);
+    if (l.line.emptyPosition !== undefined) {
+      const id = l.line.emptyPosition.nodeId;
+      if (!order.has(id)) order.set(id, order.size);
+      if (!empty.has(id)) empty.set(id, l);
+    }
+    for (const id of l.line.sourceRunOrder ?? []) if (!order.has(id)) order.set(id, order.size);
+    const ordered = [
+      ...l.line.fragments.map((f) => ({ id: f.runId, x: f.x })),
+      ...(l.line.caretAnchors ?? []).map((a) => ({ id: a.position.nodeId, x: a.x })),
+    ].sort((a, b) => a.x - b.x);
+    for (const entry of ordered) if (!order.has(entry.id)) order.set(entry.id, order.size);
+    for (const anchor of l.line.caretAnchors ?? []) {
+      const key = anchorKey(anchor.position);
+      if (!anchors.has(key)) anchors.set(key, { line: l, x: anchor.x });
+    }
     for (let fi = 0; fi < l.line.fragments.length; fi++) {
       const frag = l.line.fragments[fi] as LineFragment;
       if (!order.has(frag.runId)) order.set(frag.runId, order.size);
@@ -203,6 +221,24 @@ export function buildLayoutIndex(doc: DocumentLayout): LayoutIndex {
     },
 
     caretRect(pos: DocPosition): LayoutRect | undefined {
+      const point = anchors.get(anchorKey(pos));
+      if (point)
+        return {
+          page: point.line.page,
+          x: point.line.originX + point.x,
+          y: point.line.top,
+          width: 0,
+          height: point.line.line.height,
+        };
+      const anchor = empty.get(pos.nodeId);
+      if (anchor !== undefined && pos.contentIndex === 0 && pos.offset === 0)
+        return {
+          page: anchor.page,
+          x: anchor.originX + anchor.line.x + anchor.line.width,
+          y: anchor.top,
+          width: 0,
+          height: anchor.line.height,
+        };
       const refs = byRun.get(pos.nodeId);
       if (refs === undefined) return undefined;
       let tail: LayoutRect | undefined;
@@ -356,6 +392,7 @@ function push(
  * 全扫一遍的代价可以忽略。
  */
 function caretIn(l: IndexedLine, x: Twips): DocPosition | undefined {
+  if (l.line.emptyPosition !== undefined) return { ...l.line.emptyPosition };
   let best: DocPosition | undefined;
   let bestD = Number.POSITIVE_INFINITY;
   for (const frag of l.line.fragments) {

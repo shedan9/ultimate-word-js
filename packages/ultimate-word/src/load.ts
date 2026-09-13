@@ -13,7 +13,14 @@ import { createDiagnosticSink } from '@uw/core';
 import type { FontRegistry } from '@uw/fonts';
 import { createTextMeasurer } from '@uw/fonts';
 import { layoutDocumentWithFields } from '@uw/layout';
-import { fontNameCandidates, loadDocument } from '@uw/model';
+import {
+  DEFAULT_SECTION_PROPS,
+  fieldHyperlinks,
+  fontNameCandidates,
+  loadDocument,
+  resolveBody,
+  scanFields,
+} from '@uw/model';
 import { OpcPackage } from '@uw/ooxml';
 import { UwDocument } from './document.ts';
 
@@ -68,6 +75,32 @@ export async function load(
   });
   return new UwDocument({
     loaded,
+    reflow(body) {
+      const fields = scanFields(body, sink);
+      for (const hf of Object.values(loaded.headerFooters))
+        fields.push(
+          ...scanFields(
+            {
+              sections: [
+                {
+                  id: hf.relId,
+                  props: loaded.body.sections[0]?.props ?? DEFAULT_SECTION_PROPS,
+                  blocks: hf.blocks,
+                },
+              ],
+            },
+            sink,
+          ),
+        );
+      const resolved = resolveBody(loaded.cascade, body, { hyperlinks: fieldHyperlinks(fields) });
+      const result = layoutDocumentWithFields(resolved, fields, {
+        measurer,
+        settings: loaded.cascade.settings,
+        headerFooters: loaded.headerFooters,
+        diagnostics: sink,
+      });
+      return { loaded: { ...loaded, body, resolved, fields }, layout: result.layout, values: result.values };
+    },
     layout: result.layout,
     fieldValues: result.values,
     diagnostics: sink.list(),
