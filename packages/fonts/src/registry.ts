@@ -81,6 +81,11 @@ function normalize(name: string): string {
 }
 
 export class FontRegistry {
+  #revision = 0;
+  /** 度量与替换关系变化都影响断行；消费侧用版本号丢弃派生缓存。 */
+  get revision(): number {
+    return this.#revision;
+  }
   readonly #sources = new Map<string, ResolvedFont>();
   /** 替换表：找不到 A 时改用 B。存归一化后的名字 */
   readonly #substitutes = new Map<string, string>();
@@ -88,6 +93,7 @@ export class FontRegistry {
   /** 注册一款字体。同名重复注册以后来者为准 —— 调用方通常是想升级降级等级 */
   register(family: string, source: FontSource): void {
     this.#sources.set(normalize(family), { family, source });
+    this.#revision++;
   }
 
   /** 注册度量包，字体名取包里的 `family`（那是文档里会出现的名字） */
@@ -101,7 +107,10 @@ export class FontRegistry {
    * 真装了原字体就该用原字体，否则度量会偏离 Word。
    */
   substitute(map: Readonly<Record<string, string>>): void {
-    for (const [from, to] of Object.entries(map)) this.#substitutes.set(normalize(from), to);
+    for (const [from, to] of Object.entries(map)) {
+      this.#substitutes.set(normalize(from), to);
+      this.#revision++;
+    }
   }
 
   /**

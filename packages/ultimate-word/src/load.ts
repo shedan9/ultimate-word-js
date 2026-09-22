@@ -12,7 +12,7 @@
 import { createDiagnosticSink } from '@uw/core';
 import type { FontRegistry } from '@uw/fonts';
 import { createTextMeasurer } from '@uw/fonts';
-import { layoutDocumentWithFields } from '@uw/layout';
+import { layoutDocumentWithFields, ParagraphLayoutCache } from '@uw/layout';
 import {
   DEFAULT_SECTION_PROPS,
   fieldHyperlinks,
@@ -67,7 +67,9 @@ export async function load(
     candidates: (family) => fontNameCandidates(loaded.fonts, family),
     diagnostics: sink,
   });
+  const paragraphCache = new ParagraphLayoutCache();
   const result = layoutDocumentWithFields(loaded.resolved, loaded.fields, {
+    paragraphCache,
     measurer,
     settings: loaded.cascade.settings,
     headerFooters: loaded.headerFooters,
@@ -94,6 +96,7 @@ export async function load(
         );
       const resolved = resolveBody(loaded.cascade, body, { hyperlinks: fieldHyperlinks(fields) });
       const result = layoutDocumentWithFields(resolved, fields, {
+        paragraphCache,
         measurer,
         settings: loaded.cascade.settings,
         headerFooters: loaded.headerFooters,

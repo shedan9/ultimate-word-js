@@ -39,6 +39,44 @@ function pack(): MetricsPack {
   return buildMetricsPack(fakeFont, songMetrics, { family: '宋体' });
 }
 
+describe('字体变化使已有度量器失效', () => {
+  it('补注册与同名替换同时刷新字宽、行高和东亚判定', () => {
+    const registry = new FontRegistry();
+    const measurer = createTextMeasurer(registry);
+    const before = registry.revision;
+    const oldLine = measurer.lineMetrics('新字体', 200);
+    expect(measurer.eastAsianFont('新字体')).toBeUndefined();
+    expect(measurer.advance('新字体', 200, 65)).toBe(100);
+    registry.register('新字体', {
+      kind: 'file',
+      metrics: { ...songMetrics, os2: { ...songMetrics.os2, winAscent: 440 } },
+      advance: () => 256,
+    });
+    expect(measurer.revision).toBeGreaterThan(before);
+    expect(measurer.lineMetrics('新字体', 200).ascent).toBeGreaterThan(oldLine.ascent);
+    expect(measurer.eastAsianFont('新字体')).toBe(true);
+    expect(measurer.advance('新字体', 200, 65)).toBe(200);
+    registry.register('新字体', {
+      kind: 'file',
+      metrics: songMetrics,
+      advance: (cp) => (cp < 128 ? 64 : undefined),
+    });
+    expect(measurer.eastAsianFont('新字体')).toBe(false);
+    const out = new Float64Array(1);
+    measurer.advances('新字体', 200, new Uint32Array([65]), out);
+    expect(out[0]).toBe(50);
+  });
+
+  it('替换表更新后原来的缺失字体也重新解析', () => {
+    const registry = new FontRegistry();
+    registry.register('目标字体', { kind: 'file', metrics: songMetrics, advance: () => 256 });
+    const measurer = createTextMeasurer(registry);
+    expect(measurer.advance('缺失字体', 200, 65)).toBe(100);
+    registry.substitute({ 缺失字体: '目标字体' });
+    expect(measurer.advance('缺失字体', 200, 65)).toBe(200);
+  });
+});
+
 describe('度量包', () => {
   it('只存与默认宽度不同的码点 —— CJK 字体里例外只有 ASCII 那一小段', () => {
     const p = pack();

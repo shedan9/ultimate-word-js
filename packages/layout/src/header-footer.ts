@@ -44,6 +44,7 @@ import type { TextMeasurer } from '@uw/fonts';
 import type { DocumentSettings, HeaderFooterRef, NodeId, ResolvedBlock, SectionProps } from '@uw/model';
 import type { PageGeometry, PlacedBlock, PlacedLine } from './page.ts';
 import { layoutParagraph } from './paragraph.ts';
+import type { ParagraphLayoutCache } from './paragraph-cache.ts';
 import { layoutTable } from './table.ts';
 
 /** 页眉 / 页脚的内容来源：关系 id → 级联完的块。形状与 `LoadedDocument.headerFooters` 对得上 */
@@ -106,6 +107,7 @@ export function pickHeaderFooter(
 }
 
 export interface StackOptions {
+  paragraphCache?: ParagraphLayoutCache;
   measurer: TextMeasurer;
   settings: DocumentSettings;
   docGrid: SectionProps['docGrid'];
@@ -129,6 +131,7 @@ export interface StackResult {
  */
 export function stackBlocks(blocks: readonly ResolvedBlock[], opts: StackOptions): StackResult {
   const shared = {
+    ...(opts.paragraphCache === undefined ? {} : { paragraphCache: opts.paragraphCache }),
     measurer: opts.measurer,
     settings: opts.settings,
     docGrid: opts.docGrid,

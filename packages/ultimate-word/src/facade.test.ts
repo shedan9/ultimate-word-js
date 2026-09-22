@@ -5,6 +5,7 @@
  * `apps/playground/tests/facade.html`。
  */
 import { readFileSync } from 'node:fs';
+import { FALLBACK_METRICS, FontRegistry } from '@uw/fonts';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { UwDocument } from './index.ts';
 import { UltimateWord, UwError, UwErrorCode } from './index.ts';
@@ -112,5 +113,41 @@ describe('UltimateWord.fonts', () => {
   it('register 走动态 import 的 decode，字节不对时拒绝而不是静默注册', async () => {
     await expect(UltimateWord.fonts.register('坏字体', new Uint8Array([0, 1, 2, 3]))).rejects.toThrow();
     expect(UltimateWord.fonts.status('坏字体')).toBe('missing');
+  });
+});
+
+describe('门面编辑复用段落缓存', () => {
+  it('事务后可查询新增文字，撤销恢复原布局，重做恢复编辑布局', async () => {
+    const editing = await UltimateWord.load(bytes);
+    const initial = structuredClone(editing.layout);
+    const pos = editing.find('通知')[0]?.start;
+    if (!pos) throw new Error('样本缺少通知');
+    editing.tx((tx) => {
+      tx.insertText(pos, '缓存回归内容'.repeat(40));
+    });
+    const changed = structuredClone(editing.layout);
+    expect(editing.find('缓存回归内容')).toHaveLength(40);
+    expect(changed).not.toEqual(initial);
+    editing.undo();
+    expect(editing.layout).toEqual(initial);
+    expect(editing.find('缓存回归内容')).toHaveLength(0);
+    editing.redo();
+    expect(editing.layout).toEqual(changed);
+  });
+
+  it('字体注册后下一次事务与重新加载使用同一度量，不复用旧布局', async () => {
+    const fonts = new FontRegistry();
+    const editing = await UltimateWord.load(bytes, { fonts });
+    const initial = structuredClone(editing.layout);
+    const pos = editing.find('通知')[0]?.start;
+    if (!pos) throw new Error('样本缺少通知');
+    fonts.register('仿宋', { kind: 'file', metrics: FALLBACK_METRICS, advance: () => 1600 });
+    editing.tx((tx) => {
+      tx.insertText(pos, '刷新');
+    });
+    editing.undo();
+    const fresh = await UltimateWord.load(bytes, { fonts });
+    expect(editing.layout).toEqual(fresh.layout);
+    expect(editing.layout).not.toEqual(initial);
   });
 });

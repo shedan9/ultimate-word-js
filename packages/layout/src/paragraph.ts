@@ -16,6 +16,7 @@ import type { ObjectRules, ScriptRules } from './line-height.ts';
 import { lineHeight, OBJECT_RULES, objectBoxHeight } from './line-height.ts';
 import type { BrokenLine, LineBreakContext } from './linebreak.ts';
 import { breakLines } from './linebreak.ts';
+import type { ParagraphLayoutCache } from './paragraph-cache.ts';
 import type {
   LayoutItem,
   LineFloat,
@@ -28,6 +29,8 @@ import type {
 import { CHAR_UNIT_EM } from './uncalibrated.ts';
 
 export interface LayoutParagraphOptions {
+  /** 消费侧持有，复用未变化段落；不会进入布局纯数据输出。 */
+  paragraphCache?: ParagraphLayoutCache;
   measurer: TextMeasurer;
   /** 版心宽度（页宽减左右页边距）。表格单元格里就是单元格的可用宽 */
   contentWidth: Twips;
@@ -46,6 +49,12 @@ export interface LayoutParagraphOptions {
 }
 
 export function layoutParagraph(p: ResolvedParagraph, opts: LayoutParagraphOptions): ParagraphLayout {
+  return opts.paragraphCache
+    ? opts.paragraphCache.getOrCreate(p, opts, () => computeParagraph(p, opts))
+    : computeParagraph(p, opts);
+}
+
+function computeParagraph(p: ResolvedParagraph, opts: LayoutParagraphOptions): ParagraphLayout {
   const kinsoku: KinsokuSets = kinsokuFrom(opts.settings);
   const itemOpts = {
     measurer: opts.measurer,

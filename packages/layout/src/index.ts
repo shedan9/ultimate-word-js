@@ -43,6 +43,7 @@ export * from './line-height.ts';
 export * from './linebreak.ts';
 export * from './page.ts';
 export * from './paragraph.ts';
+export * from './paragraph-cache.ts';
 export * from './table.ts';
 export * from './table-borders.ts';
 export * from './table-split.ts';

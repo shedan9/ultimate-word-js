@@ -61,6 +61,7 @@ import { WIDTH_RULES, type WidthRules } from './items.ts';
 import type { ObjectRules, ScriptRules } from './line-height.ts';
 import { OBJECT_RULES, SCRIPT_RULES } from './line-height.ts';
 import { layoutParagraph } from './paragraph.ts';
+import type { ParagraphLayoutCache } from './paragraph-cache.ts';
 import type { RowLayout, TableLayout, TableRules } from './table.ts';
 import { layoutTable, TABLE_RULES } from './table.ts';
 import type { SplitRowOptions, TableSplitRules } from './table-split.ts';
@@ -216,6 +217,8 @@ export interface HeaderFieldPlan {
 }
 
 export interface LayoutDocumentOptions {
+  /** 跨排版复用段落几何；分页仍完整重算。 */
+  paragraphCache?: ParagraphLayoutCache;
   measurer: TextMeasurer;
   settings: DocumentSettings;
   /** 四个字体桶全空时用哪款字体 */
@@ -595,6 +598,7 @@ function buildFrame(flow: Flow, kind: 'header' | 'footer', number: number): Plac
       settings: flow.opts.settings,
       docGrid: props.docGrid,
       contentWidth: flow.geometry.content.width,
+      ...(flow.opts.paragraphCache === undefined ? {} : { paragraphCache: flow.opts.paragraphCache }),
       ...(flow.opts.defaultFont === undefined ? {} : { defaultFont: flow.opts.defaultFont }),
       ...(values === undefined ? {} : { fieldValues: values }),
     });
@@ -674,6 +678,7 @@ function availHeight(flow: Flow): Twips {
 
 function prepare(b: ResolvedBlock, section: SectionProps, opts: LayoutDocumentOptions): Prepared {
   const shared = {
+    ...(opts.paragraphCache === undefined ? {} : { paragraphCache: opts.paragraphCache }),
     measurer: opts.measurer,
     settings: opts.settings,
     docGrid: section.docGrid,

@@ -19,6 +19,8 @@ import type { FontRegistry, FontStatus } from './registry.ts';
 import { isEastAsianCodePoint } from './script.ts';
 
 export interface TextMeasurer {
+  /** 度量来源变化时递增；未提供版本的自定义度量器不参与段落布局缓存。 */
+  readonly revision?: number;
   status(family: string): FontStatus;
   /** 单倍行距的行度量。`family` 用**候选名**里的第一个即可，内部走同一套解析 */
   lineMetrics(family: string, fontSize: Twips, opts?: LineMetricsOptions): LineMetrics;
@@ -101,8 +103,18 @@ export function createTextMeasurer(registry: FontRegistry, opts: MeasurerOptions
   const lineCacheMax = opts.lineMetricsCacheSize ?? 512;
   /** 同一款缺失字体只报一次，否则一页公文能刷出上千条一模一样的诊断 */
   const reported = new Set<string>();
+  let revision = registry.revision;
+
+  function refresh(): void {
+    if (revision === registry.revision) return;
+    revision = registry.revision;
+    families.clear();
+    lineCache.clear();
+    reported.clear();
+  }
 
   function familyCache(family: string): FamilyCache {
+    refresh();
     const cached = families.get(family);
     if (cached !== undefined) return cached;
 
@@ -151,11 +163,15 @@ export function createTextMeasurer(registry: FontRegistry, opts: MeasurerOptions
   }
 
   return {
+    get revision() {
+      return registry.revision;
+    },
     status: (family) => registry.status(candidatesOf(family)),
 
     eastAsianFont: (family) => familyCache(family).eastAsian,
 
     lineMetrics(family, fontSize, o = {}) {
+      refresh();
       const key = `${family}|${fontSize}|${o.source ?? 'win'}|${o.eastAsian === true ? 1 : 0}`;
       const cached = lineCache.get(key);
       if (cached !== undefined) {
