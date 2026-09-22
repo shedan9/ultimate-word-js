@@ -1,6 +1,7 @@
 import type { DocPosition, DocRange, TextChangeSet, TextEditor } from '@uw/model';
 import type { DomView } from './dom.ts';
 import { createEditingController } from './editing.ts';
+import { moveVertically } from './vertical-navigation.ts';
 
 export interface EditingBinding {
   editor: TextEditor;
@@ -38,6 +39,7 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
   let dragAnchor: DocPosition | undefined;
   let suppressCommit: string | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let preferredX: number | undefined;
   function refresh(): void {
     if (dead) return;
     const range = state.selection;
@@ -60,7 +62,8 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
     if (doc.activeElement === input)
       decoration = view.decorate(range, { style: { background: 'Highlight', opacity: '0.3' } });
   }
-  function run(action: () => void): void {
+  function run(action: () => void, vertical = false): void {
+    if (!vertical) preferredX = undefined;
     try {
       action();
       status.textContent = '';
@@ -171,14 +174,20 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
       if (event.key === 'ArrowUp' || event.key === 'ArrowDown')
         action = () => {
           const range = state.selection;
-          const rect = range && view.caretRect(state.focus ?? range.end);
-          if (!range || !rect) return;
-          const direction = event.key === 'ArrowUp' ? -1 : 1;
-          const at = view.locate({
-            clientX: rect.x + 1,
-            clientY: rect.y + rect.height / 2 + direction * rect.height,
-          });
-          if (at) state.select({ start: event.shiftKey ? (state.anchor ?? range.start) : at, end: at });
+          if (!range) return;
+          const move = moveVertically(
+            view.index,
+            state.focus ?? range.end,
+            event.key === 'ArrowUp' ? 'up' : 'down',
+            preferredX,
+          );
+          if (move) {
+            preferredX = move.x;
+            state.select({
+              start: event.shiftKey ? (state.anchor ?? range.start) : move.position,
+              end: move.position,
+            });
+          }
         };
       else if (event.key === 'Enter') action = () => state.enter();
       else if (event.key === 'Backspace' || event.key === 'Delete')
@@ -186,7 +195,7 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
     }
     if (action) {
       event.preventDefault();
-      run(action);
+      run(action, event.key === 'ArrowUp' || event.key === 'ArrowDown');
       const at = state.focus;
       if (at) view.scrollTo(at, { align: 'nearest' });
     }
@@ -215,6 +224,7 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
     if (!state.composing) run(() => state.insert(event.clipboardData?.getData('text/plain') ?? ''));
   }
   const unsubscribe = binding.subscribe((change) => {
+    preferredX = undefined;
     state.apply(change);
     refresh();
   });
@@ -241,6 +251,7 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
       return state.selection;
     },
     select(range) {
+      preferredX = undefined;
       state.select(range);
       refresh();
     },

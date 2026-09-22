@@ -9,6 +9,7 @@ body { margin: 0; font: 14px/1.5 system-ui; }
 </style>
 <pre id="result">正在验证…</pre><div id="host"></div><div id="second"></div>
 <script type="module">
+import { buildLayoutIndex } from '@uw/layout';
 import { UltimateWord } from 'ultimate-word';
 import fixtureUrl from '../../fidelity/fixtures/gongwen-01.docx?url';
 
@@ -97,6 +98,50 @@ try {
   assert(doc.find('hello 地球 😀').length === 1, '双击选词后输入替换该词');
   doc.undo();
   assert(doc.find('hello 世界 😀').length === 1, '词替换一次撤销恢复');
+  view.select({ start: position(0), end: position(0) });
+  before('insertText', ['一二三四五六七八九十', '短', '甲乙丙丁戊己庚辛壬癸', ...Array(60).fill('跨页导航测试正文'), ''].join('\n'));
+  let index = buildLayoutIndex(doc.layout);
+  const long = doc.find('一二三四五六七八九十')[0];
+  const third = doc.find('甲乙丙丁戊己庚辛壬癸')[0];
+  const longAt = { ...long.start, offset: long.start.offset + 7 };
+  const thirdAt = { ...third.start, offset: third.start.offset + 7 };
+  view.select({ start: longAt, end: longAt }); view.focus();
+  key('ArrowDown'); key('ArrowDown');
+  assert(doc.compare(view.selection.end, thirdAt) === 0, '经过短行后恢复原横向位置');
+  key('ArrowUp'); view.setZoom(0.8); await frame(); key('ArrowUp');
+  assert(doc.compare(view.selection.end, longAt) === 0, '缩放后连续上下键仍保留布局横坐标');
+  key('ArrowDown'); key('ArrowLeft'); key('ArrowDown');
+  assert(doc.compare(view.selection.end, thirdAt) !== 0, '左右键清除上下导航的横向记忆');
+  view.select({ start: longAt, end: longAt });
+  key('ArrowDown', { shiftKey: true }); key('ArrowDown', { shiftKey: true });
+  assert(doc.compare(view.selection.start, longAt) === 0 && doc.compare(view.selection.end, thirdAt) === 0, 'Shift 下键跨短行扩选并保留锚点');
+  key('ArrowUp', { shiftKey: true }); key('ArrowUp', { shiftKey: true });
+  assert(doc.compare(view.selection.start, view.selection.end) === 0, 'Shift 上键回到锚点折叠');
+  const bodyLines = index.lines.filter((line) => !line.frame && !line.repeated && line.line.fragments.some((f) => f.offset >= 0));
+  const page0 = bodyLines[0].page;
+  const last = bodyLines.filter((line) => line.page === page0).at(-1);
+  const next = bodyLines.find((line) => line.page > page0);
+  const tailFragment = last.line.fragments.find((f) => f.offset >= 0);
+  const tail = { nodeId: tailFragment.runId, contentIndex: tailFragment.contentIndex, offset: tailFragment.offset };
+  view.select({ start: tail, end: tail }); view.focus();
+  key('ArrowDown', { shiftKey: true }); await frame();
+  let current = index.caretRect(view.selection.end);
+  assert(current.page === next.page && current.y === next.top, 'Shift 下键从页末进入下一页首行');
+  assert(doc.compare(view.selection.start, tail) === 0, '跨页扩选保留原锚点');
+  const visible = view.caretRect(view.selection.end);
+  const hostRect = host.getBoundingClientRect();
+  assert(visible.y >= hostRect.top - 1 && visible.y + visible.height <= hostRect.bottom + 1, '跨页导航滚动到移动端');
+  key('ArrowUp', { shiftKey: true });
+  assert(doc.compare(view.selection.start, view.selection.end) === 0, '跨页反向扩选回到锚点');
+  input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+  const during = JSON.stringify(view.selection);
+  assert(!key('ArrowDown') && JSON.stringify(view.selection) === during, 'IME 组合期间不拦截上下键');
+  input.blur(); view.focus();
+  before('insertText', '新增');
+  index = buildLayoutIndex(doc.layout);
+  key('ArrowDown');
+  current = index.caretRect(view.selection.end);
+  assert(current !== undefined && input === host.querySelector('textarea'), '编辑重排后上下导航使用新索引且输入节点常驻');
   view.dispose(); preview.dispose();
   assert(host.childElementCount === 0, '销毁清理输入与页树');
   result.textContent = `PASS ${passed} 项`;

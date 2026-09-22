@@ -1,5 +1,5 @@
 import { TWIP_PER_PT, twipsToPx } from '@uw/core';
-import type { DocumentLayout, IndexedLine, PageLayout } from '@uw/layout';
+import type { DocumentLayout, IndexedLine, LayoutIndex, PageLayout } from '@uw/layout';
 import type { DocPosition, DocRange } from '@uw/model';
 import type { MountOptions } from '@uw/render-dom/dom';
 import { renderPage, toDom } from '@uw/render-dom/dom';
@@ -49,6 +49,8 @@ export interface ViewOptions extends MountOptions {
 
 export interface DomView {
   readonly root: HTMLElement;
+  /** 编辑导航复用当前索引；滚动与缩放不改变这份布局几何。 */
+  readonly index: LayoutIndex;
   locate(point: ClientPoint): DocPosition | null;
   rectsOf(range: DocRange): ClientRect[];
   caretRect(position: DocPosition): ClientRect | null;
@@ -304,6 +306,9 @@ export function mountView(container: Element, layout: DocumentLayout, options: V
     if (destroyed) throw new Error('视图已销毁');
   }
   return {
+    get index() {
+      return view.index;
+    },
     get root() {
       return root;
     },
