@@ -209,7 +209,7 @@ flowchart BT
 | `@uw/model` | 🟢 样式级联（含编号层与表格样式层）· 主题字体 · 正文节点树 · 分节 · 设置 · 字体表 · 编号（解析 + 计数器 + 编号文字）· 表格（属性 + 级联 + `w:tblStylePr` 条件格式**（层序实测标定）** + `w:tblPrEx` 行级例外）· 域的结构还原（界桩配对 + 指令解析 + HYPERLINK；**求值在 layout 那一侧**，见 §6）· **页眉页脚部件**（按引用解析 + 各带 id 前缀 + 单独级联）· **图片**（`w:drawing` / VML `w:pict` 的外框 + blip 引用 + 裁剪 / 旋转 + 浮动锚点；字节按引用收进 `LoadedDocument.images`）· **查找与查询**（`search.ts` 的 `findText()`：跨 run 不跨段落、与排版看见的一致；`query.ts` 的 `queryNodes()`：类 CSS 选择器；`order.ts`：模型侧的文档序 + `rangeOfNode()`） · **文字事务**（`text-transaction.ts`：文字修改 / 空段落锚点 / 拆段合段 / 跨段删除 / 原子回滚 / undo-redo / 连续输入合并；`text-change.ts`：可克隆变更集与片段迁移；门面自动排版并复用段落缓存，编辑视图接入常驻 textarea 和 IME 单次提交） |
 | `@uw/layout` | 🟢 断行（禁则 / 挤压 / 悬挂，四条补救顺序与三个常数全部实测标定）· 缩进（含字符单位）· 对齐 · 制表位 · 列表编号 · 行高 + 网格吸附 + **行内基线** · 表格列宽与格内几何 + 边框冲突解析（**格线几何与相邻竞争都已实测标定**：横向不吃宽、纵向吃高；竞争先分类再比厚度，见 §5.6）· **分页**（`layoutDocument()`：页面几何 · 分节 · 孤行寡行 · keepNext / keepLines · 硬分页符 · 表格按行拆页 · 页码，见 §5.4）· **域求值**（`layoutDocumentWithFields()`：PAGE / NUMPAGES / SECTIONPAGES 迭代到自洽，见 §6）· **页眉页脚**（选哪一份 · 框的定位 · 反过来挤版心，三条几何规则实测标定，见 §5.4）· **对象**（内嵌图占宽占高，行盒四条规则与浮动图的参照框全部实测标定，见 §5.5；**带 `wp:anchor` 的图**一律不占文字流、按锚点算成纸坐标）· **表格拆行**（`table-split.ts`：一行放不下时从行间切开，`w:cantSplit` 与表头行除外；**四条规则全部实测标定**，见 §5.4）· **中西文自动间距**（**1/4 em，实测**，按接缝前面那个字符的字号算，见 §5.2）· **布局索引**（`layout-index.ts`：命中测试 · range → 矩形 · 光标 · 文档序比较，架构 §4 的 ①↔②）· **段落布局缓存**（有界 LRU，正文 / 表格 / 页眉页脚复用，字体版本失效；分页仍完整重算，见 §7）· ⏸ 方形 / 上下型环绕的**文字让开**未做（位置与大小是对的，文字不绕着它走）|
 | `@uw/render-dom` | 🟢 v1：一页一个 `<svg>`（viewBox 单位 **pt**）· 逐字 x 走 `<text x="…">` · 下划线 / 删除线 / 上下标 / 横向缩放 · 制表位前导符 · 表格底纹 + 格线（共享的线只画一次）· 页眉页脚（与版心平级的两个框）· 缩放只改 `<svg>` 尺寸不重排 · **图片**（`<image>` + 裁剪 `clipPath` + 旋转翻转；画不出来的画尺寸正确的占位框）· ⏸ 增量更新（可选文本层归 view） |
-| `@uw/view` | 🟢 屏幕坐标转换（页面仿射矩阵）· `locate` / `rectsOf` / `caretRect` · DOM 挂载 / 更新 / 销毁 · 缩放保留选区与布局索引 · 视口 ±2 页绘制 · 全文原生文字层 / 查找 / 纯文本复制 · **装饰与 overlay**（住在页壳上，滚动与 CSS 变换由浏览器继承，缩放 / 重排 / 壳尺寸变化才重算）· **`scrollTo`**（位置 / range 首行 / 页，走 `scrollIntoView`）· **打印**（2026-09-13，`print.ts`：`<body>` 直下另造一份 pt 尺寸的打印页，`@page { size }` 取纸张、边距 0，Ctrl+P 与 `print()` 都走它，见 §8.5）；⏸ `below-text` 装饰 |
+| `@uw/view` | 🟢 屏幕坐标转换（页面仿射矩阵）· `locate` / `rectsOf` / `caretRect` · DOM 挂载 / 更新 / 销毁 · 缩放保留选区与布局索引 · 视口 ±2 页绘制 · 全文原生文字层 / 查找 / 纯文本复制 · **编辑导航**（按字素 / 词移动、Shift 扩选、双击选词，跨 run 分词与反向选区 focus，见 §8）· **装饰与 overlay**（住在页壳上，滚动与 CSS 变换由浏览器继承，缩放 / 重排 / 壳尺寸变化才重算）· **`scrollTo`**（位置 / range 首行 / 页，走 `scrollIntoView`）· **打印**（2026-09-13，`print.ts`：`<body>` 直下另造一份 pt 尺寸的打印页，`@page { size }` 取纸张、边距 0，Ctrl+P 与 `print()` 都走它，见 §8.5）；⏸ `below-text` 装饰 |
 | `@uw/fonts/packs` | 🟢 随库 17 款度量包的**无 fs** 入口（JSON import attributes），浏览器与 Node 同一条路；`@uw/fonts/node` 的 `loadBundledPacks()` 只剩离线工具在用 |
 | `ultimate-word` | 🟢 门面（2026-09-13）：`UltimateWord.load()`（ArrayBuffer / Uint8Array / Blob / Response / URL）→ `UwDocument`（`pageCount` · `diagnostics` · `find` · `query` · `compare` · `rangeOf` · `mount`）→ `UwView`（`locate` / `rectsOf` / `caretRect` / `decorate` / `overlay` / `scrollTo` / `setZoom` 认 `fit-width` / `fit-page` 并跟随容器 / `dispose`）· `UltimateWord.fonts` 全局注册表（随库度量包模块加载时就注册；`register()` **异步**，fontkit 走动态 import 不进主 chunk）。**它不实现任何东西**，只把六个包接成 api.md 的形状；`layout` 暴露但不在稳定性承诺内 |
 | `@uw/react` | 🟢（2026-09-13）`<UltimateWordView>`（`doc.mount()` 的声明式形态：构造选项变了重挂、`zoom` 只 `setZoom`、`overlays` 按 key 调和成 `view.overlay()`，气泡是 portal 进宿主元素的正常 React 子树）· `useDocument` · `useDecoration`。**不另起 API**，`ref` 拿到的就是 `UwView` |
@@ -750,15 +750,15 @@ flowchart TB
 撤销记录保留前后快照，快照之间共享未修改子树，默认限制 100 个单元；相邻纯输入需显式标为
 `origin: 'input'` 才按时间窗合并，光标移动等语义边界由输入层调用 `breakHistory()`。
 `mapTextPosition` / `mapTextRange` 映射位置，但不会自动更新外部批注；删除区内的位置映射有损，
-输入层恢复选区需要另存快照。范围只支持同段文字，结构和域编辑暂时拒绝，防止先破坏节点关系。
+输入层恢复选区需要另存快照。范围支持同一块容器内的跨段文字，拆段 / 合段已接入；域编辑仍拒绝。
 
 目前每次事务会扫描正文建立 run 索引，提交遍历祖先并复制修改路径；还没有行级增量优化。
-门面 `doc.tx()`、视图更新、事件和下面的 IME 流程仍待接入。`TextChangeSet.paragraphIds` 是
+门面 `doc.tx()`、视图更新和下面的 IME 流程已接入，公开事件仍待实现。`TextChangeSet.paragraphIds` 是
 受影响段落的入口，但不能仅凭行数没变就认定后续页面不变——字号、对象等也可能改变段落高度。
 
 **正文不是 contenteditable。** 正文是绝对定位的只读 DOM；
-一个 1×1 px 的隐藏 contenteditable 跟随光标接管输入事件
-（Monaco / CodeMirror 6 的做法）。中文输入法是这个设计的直接原因：
+常驻 textarea 跟随光标接管输入事件；原设计的隐藏 contenteditable 改为 textarea，
+以便保留原生组合串和光标，同时避免浏览器富文本修改正文。中文输入法是这个设计的直接原因：
 
 ```mermaid
 sequenceDiagram
@@ -864,3 +864,10 @@ Worker 传输需要一个可结构化克隆的度量快照，跨平台分发也�
 `@uw/view` 的纯输入状态存模型选区；`@uw/view/dom` 的输入适配器持有常驻 textarea，
 组合串只在 compositionend 提交一次。当前复用段落布局缓存，分页与视图仍完整更新，公开事件尚未接入；
 系统输入法候选窗仍需人工验证，合成浏览器事件只验证输入链路与重复提交防护。
+
+**导航与选词（2026-09-22）**：`text-navigation.ts` 将同段 text 片段拼接后统一分词 / 字素，
+再把 UTF-16 边界映射回 run / contentIndex / offset。原先逐片段切分会拆开跨样式的词与组合字素；
+非文字片段用屏障隔开，导航不会合并它们两侧的词。Ctrl / Option + 左右键跳过空白，
+Shift 保留 anchor，双击按点击点在最近字缝的哪一侧选词。范围始终按文档序返回，
+另存 focus 驱动光标和滚动；原先只读 range.end 会把反向选区的输入框留在锚点。
+变更映射保留方向，组合输入期间忽略选词与移动。跨页上下导航与完整选区历史仍待实现。

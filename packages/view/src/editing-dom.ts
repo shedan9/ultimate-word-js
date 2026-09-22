@@ -47,7 +47,7 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
       input.style.visibility = 'hidden';
       return;
     }
-    const rect = view.caretRect(range.end);
+    const rect = view.caretRect(state.focus ?? range.end);
     input.style.visibility = rect ? 'visible' : 'hidden';
     input.style.opacity = doc.activeElement === input ? '1' : '0';
     input.style.pointerEvents = 'none';
@@ -87,7 +87,7 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
     const at = view.locate(event);
     if (!at) return;
     event.preventDefault();
-    const start = event.shiftKey ? (state.selection?.start ?? at) : at;
+    const start = event.shiftKey ? (state.anchor ?? at) : at;
     run(() => state.select({ start, end: at }));
     drag = true;
     dragAnchor = start;
@@ -101,6 +101,17 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
   }
   function pointerEnd(): void {
     drag = false;
+  }
+  function doubleClick(event: MouseEvent): void {
+    if (event.button !== 0 || state.composing || win === null || !(event.target instanceof win.Node)) return;
+    if (!view.root.contains(event.target)) return;
+    const at = view.locate(event);
+    if (!at) return;
+    event.preventDefault();
+    drag = false;
+    const caret = view.caretRect(at);
+    run(() => state.selectWord(at, caret && event.clientX < caret.x ? 'before' : 'after'));
+    focus();
   }
   function beforeInput(event: InputEvent): void {
     if (event.isComposing || state.composing || event.inputType === 'insertCompositionText') return;
@@ -145,20 +156,29 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
     if (mod && event.key.toLowerCase() === 'z')
       action = () => (event.shiftKey ? binding.editor.redo() : binding.editor.undo());
     else if (mod && event.key.toLowerCase() === 'y') action = () => binding.editor.redo();
+    else if (
+      !event.metaKey &&
+      !(event.ctrlKey && event.altKey) &&
+      (event.key === 'ArrowLeft' || event.key === 'ArrowRight')
+    )
+      action = () =>
+        state.move(
+          event.key === 'ArrowLeft' ? 'backward' : 'forward',
+          event.shiftKey,
+          event.ctrlKey || event.altKey ? 'word' : 'grapheme',
+        );
     else if (!mod && !event.altKey) {
-      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight')
-        action = () => state.move(event.key === 'ArrowLeft' ? 'backward' : 'forward', event.shiftKey);
-      else if (event.key === 'ArrowUp' || event.key === 'ArrowDown')
+      if (event.key === 'ArrowUp' || event.key === 'ArrowDown')
         action = () => {
           const range = state.selection;
-          const rect = range && view.caretRect(range.end);
+          const rect = range && view.caretRect(state.focus ?? range.end);
           if (!range || !rect) return;
           const direction = event.key === 'ArrowUp' ? -1 : 1;
           const at = view.locate({
             clientX: rect.x + 1,
             clientY: rect.y + rect.height / 2 + direction * rect.height,
           });
-          if (at) state.select({ start: event.shiftKey ? range.start : at, end: at });
+          if (at) state.select({ start: event.shiftKey ? (state.anchor ?? range.start) : at, end: at });
         };
       else if (event.key === 'Enter') action = () => state.enter();
       else if (event.key === 'Backspace' || event.key === 'Delete')
@@ -167,8 +187,8 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
     if (action) {
       event.preventDefault();
       run(action);
-      const range = state.selection;
-      if (range) view.scrollTo(range.end, { align: 'nearest' });
+      const at = state.focus;
+      if (at) view.scrollTo(at, { align: 'nearest' });
     }
   }
   function compositionStart(): void {
@@ -209,6 +229,7 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
   input.addEventListener('focus', refresh);
   input.addEventListener('blur', blur);
   container.addEventListener('pointerdown', pointer as EventListener);
+  container.addEventListener('dblclick', doubleClick as EventListener);
   doc.addEventListener('pointermove', pointerMove);
   doc.addEventListener('pointerup', pointerEnd);
   doc.addEventListener('pointercancel', pointerEnd);
@@ -231,6 +252,7 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
       unsubscribe();
       decoration?.dispose();
       container.removeEventListener('pointerdown', pointer as EventListener);
+      container.removeEventListener('dblclick', doubleClick as EventListener);
       doc.removeEventListener('pointermove', pointerMove);
       doc.removeEventListener('pointerup', pointerEnd);
       doc.removeEventListener('pointercancel', pointerEnd);

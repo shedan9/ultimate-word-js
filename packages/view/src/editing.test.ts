@@ -1,3 +1,4 @@
+import type { Run } from '@uw/model';
 import {
   createTextEditor,
   DEFAULT_SECTION_PROPS,
@@ -8,7 +9,7 @@ import {
 import { describe, expect, it } from 'vitest';
 import { createEditingController } from './editing.ts';
 
-function setup(text = '') {
+function setup(text: string | Run[] = '') {
   const editor = createTextEditor({
     sections: [
       {
@@ -19,7 +20,12 @@ function setup(text = '') {
             kind: 'paragraph',
             id: 'p',
             props: {},
-            runs: text ? [{ kind: 'run', id: 'r', props: {}, content: [{ kind: 'text', text }] }] : [],
+            runs:
+              typeof text !== 'string'
+                ? text
+                : text
+                  ? [{ kind: 'run', id: 'r', props: {}, content: [{ kind: 'text', text }] }]
+                  : [],
           },
         ],
       },
@@ -77,5 +83,108 @@ describe('编辑输入状态', () => {
     editor.undo();
     editor.undo();
     expect(texts()).toEqual(['']);
+  });
+});
+
+const pos = (offset: number, nodeId = 'r', contentIndex = 0) => ({ nodeId, contentIndex, offset });
+const run = (id: string, text: string): Run => ({
+  kind: 'run',
+  id,
+  props: {},
+  content: [{ kind: 'text', text }],
+});
+
+describe('按词与跨样式导航', () => {
+  it('按词跳过空白，Shift 反向扩选跨过锚点后仍保留方向', () => {
+    const { state, editor } = setup('hello  world');
+    state.move('forward', false, 'word');
+    expect(state.focus).toEqual(pos(5));
+    state.move('forward', false, 'word');
+    expect(state.focus).toEqual(pos(12));
+    state.move('backward', true, 'word');
+    expect(state.selection).toEqual({ start: pos(7), end: pos(12) });
+    const changes = editor.tx((tx) => {
+      tx.insertText(pos(0), '!');
+    });
+    if (changes) state.apply(changes);
+    expect(state.anchor).toEqual(pos(13));
+    expect(state.focus).toEqual(pos(8));
+    state.move('forward', true, 'word');
+    expect(state.selection).toEqual({ start: pos(13), end: pos(13) });
+    state.select({ start: pos(6), end: pos(6) });
+    state.move('backward', true, 'word');
+    state.move('forward', true, 'word');
+    state.move('forward', true, 'word');
+    expect(state.selection).toEqual({ start: pos(6), end: pos(13) });
+    state.move('backward');
+    expect(state.focus).toEqual(pos(6));
+  });
+
+  it('中文词语跨 run / 片段选中，替换与撤销保留原样式和链接', () => {
+    const left = run('a', '你好世');
+    const right = run('b', '界');
+    right.props = { bold: true };
+    right.hyperlink = { url: 'https://example.test' };
+    right.content.push({ kind: 'text', text: '欢迎' });
+    const { state, editor, texts } = setup([left, right]);
+    state.selectWord(pos(0, 'b'));
+    expect(state.selection).toEqual({ start: pos(2, 'a'), end: pos(1, 'b') });
+    state.insert('地球');
+    expect(texts()).toEqual(['你好地球欢迎']);
+    editor.undo();
+    expect([...walkParagraphs(editor.body)][0]?.runs).toEqual([left, right]);
+    state.select({ start: pos(2, 'a'), end: pos(2, 'a') });
+    state.move('forward', false, 'word');
+    expect(state.focus).toEqual(pos(1, 'b'));
+    state.move('forward', false, 'word');
+    expect(state.focus).toEqual(pos(2, 'b', 1));
+  });
+
+  it('跨样式的组合音标和 ZWJ emoji 按完整字素移动与删除', () => {
+    const { state, texts, editor } = setup([run('a', 'e'), run('b', '\u0301👩'), run('c', '\u200d💻!')]);
+    state.move('forward');
+    expect(state.focus).toEqual(pos(1, 'b'));
+    state.move('forward');
+    expect(state.focus).toEqual(pos(3, 'c'));
+    state.delete('backward');
+    expect(texts()).toEqual(['e\u0301!']);
+    editor.undo();
+    state.selectWord(pos(2, 'c'));
+    expect(state.selection).toEqual({ start: pos(1, 'b'), end: pos(3, 'c') });
+  });
+
+  it('词中点击、段尾点击与空段落不产生无效位置，组合期忽略选词和移动', () => {
+    const { state } = setup('hello 😀!');
+    state.selectWord(pos(3));
+    expect(state.selection).toEqual({ start: pos(0), end: pos(5) });
+    state.selectWord(pos(5), 'before');
+    expect(state.selection).toEqual({ start: pos(0), end: pos(5) });
+    state.selectWord(pos(9));
+    expect(state.selection).toEqual({ start: pos(8), end: pos(9) });
+    state.compositionStart();
+    state.selectWord(pos(1));
+    state.move('backward', true, 'word');
+    expect(state.selection).toEqual({ start: pos(8), end: pos(9) });
+    const empty = setup().state;
+    empty.selectWord(pos(0, 'p'));
+    empty.move('forward', false, 'word');
+    expect(empty.focus).toEqual(pos(0, 'p'));
+  });
+
+  it('制表位阻断选词，空片段不多停一次，段落边界逐段移动', () => {
+    const r = run('r', 'one');
+    r.content.push({ kind: 'tab' }, { kind: 'text', text: 'two' }, { kind: 'text', text: '' });
+    const { state } = setup([r]);
+    state.selectWord(pos(1, 'r', 2));
+    expect(state.selection).toEqual({ start: pos(0, 'r', 2), end: pos(3, 'r', 2) });
+    const second = setup('one').state;
+    second.move('forward', false, 'word');
+    second.enter();
+    second.insert('two');
+    second.move('backward', false, 'word');
+    second.move('backward', false, 'word');
+    expect(second.focus).toEqual(pos(3));
+    second.move('backward', false, 'word');
+    expect(second.focus).toEqual(pos(0));
   });
 });
