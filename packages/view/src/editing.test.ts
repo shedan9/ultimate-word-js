@@ -830,4 +830,56 @@ describe('列表层级', () => {
     state.toggleList('bullet');
     expect(Object.keys(editor.body.numbering?.instances ?? {})).toEqual(['1']);
   });
+
+  it('粘贴带格式段落：源对齐跟着源段落标记，末块保留原段对齐；格式补丁叠在暂存格式上，一次撤销', () => {
+    const { editor, state, texts } = setup('前后');
+    editor.tx((tx) => {
+      tx.setParagraphProps({ start: at('r', 0), end: at('r', 0) }, { justification: 'right' });
+    });
+    state.select({ start: at('r', 1), end: at('r', 1) });
+    state.toggleFormat('italic');
+    state.insertParagraphs([
+      { justification: 'center', runs: [{ text: '甲\t', patch: { bold: true } }] },
+      { justification: 'both', runs: [] },
+      { justification: 'left', runs: [{ text: '乙', patch: {} }] },
+    ]);
+    expect(texts()).toEqual(['前甲 ', '', '乙后']);
+    const paragraphs = [...walkParagraphs(editor.body)];
+    expect(paragraphs.map((p) => p.props.justification)).toEqual(['center', 'both', 'right']);
+    const pasted = paragraphs[0]?.runs.find((r) =>
+      r.content.some((c) => c.kind === 'text' && c.text === '甲 '),
+    );
+    expect(pasted?.props).toEqual({ bold: true, italic: true });
+    expect(state.pendingFormat).toBeUndefined();
+    editor.undo();
+    expect(texts()).toEqual(['前后']);
+  });
+
+  it('粘贴时前一块改过、后一块没写的格式还原成光标处的直接格式，跨段同样还原', () => {
+    const { editor, state } = setup([
+      {
+        kind: 'run',
+        id: 'r',
+        props: { italic: true, color: '00FF00' },
+        content: [{ kind: 'text', text: '末' }],
+      },
+    ]);
+    state.select({ start: at('r', 1), end: at('r', 1) });
+    state.insertParagraphs([
+      {
+        runs: [
+          { text: '粗', patch: { bold: true, color: 'FF0000' } },
+          { text: '常', patch: {} },
+        ],
+      },
+      { runs: [{ text: '二', patch: {} }] },
+    ]);
+    const props = (text: string) =>
+      [...walkParagraphs(editor.body)]
+        .flatMap((p) => p.runs)
+        .find((r) => r.content.some((c) => c.kind === 'text' && c.text === text))?.props;
+    expect(props('粗')).toEqual({ italic: true, bold: true, color: 'FF0000' });
+    expect(props('常')).toEqual({ italic: true, color: '00FF00' });
+    expect(props('二')).toEqual({ italic: true, color: '00FF00' });
+  });
 });

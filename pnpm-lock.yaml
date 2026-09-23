@@ -257,6 +257,9 @@ importers:
         specifier: workspace:*
         version: link:../render-dom
     devDependencies:
+      jsdom:
+        specifier: ^28.1.0
+        version: 28.1.0
       tsdown:
         specifier: ^0.22.14
         version: 0.22.14(typescript@7.0.2)

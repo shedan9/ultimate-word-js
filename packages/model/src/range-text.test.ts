@@ -5,7 +5,7 @@ import { walkParagraphs } from './nodes.ts';
 import { EMPTY_NUMBERING } from './numbering.ts';
 import { rangeOfNode } from './order.ts';
 import { parseBody } from './parse-body.ts';
-import { textOfRange } from './range-text.ts';
+import { fragmentOfRange, textOfRange } from './range-text.ts';
 import { resolveBody } from './resolve-body.ts';
 import { DEFAULT_SETTINGS } from './settings.ts';
 import { parseStyles } from './styles.ts';
@@ -107,5 +107,21 @@ describe('模型选区纯文本', () => {
       { ...range.start, contentIndex: 1 },
     ])
       expect(() => textOfRange(body, { start, end: range.end })).toThrow(RangeError);
+  });
+
+  it('带格式片段：级联后的格式与段落对齐，同一 run 的内容片拼回一段，与纯文本同一套取舍', () => {
+    const { body, range } = setup(
+      '<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>甲</w:t><w:tab/><w:t>乙</w:t></w:r>' +
+        '<w:r><w:rPr><w:rStyle w:val="Secret"/></w:rPr><w:t>藏</w:t></w:r><w:r><w:t>丙</w:t></w:r></w:p><w:p/>',
+    );
+    const fragment = fragmentOfRange(body, range);
+    expect(fragment.paragraphs.map((p) => p.justification)).toEqual(['center', 'left']);
+    expect(fragment.paragraphs[0]?.runs.map((r) => [r.text, r.props.bold])).toEqual([
+      ['甲\t乙', true],
+      ['丙', false],
+    ]);
+    expect(fragment.paragraphs[1]?.runs).toEqual([]);
+    expect(structuredClone(fragment)).toEqual(fragment);
+    expect(fragmentOfRange(body, { start: range.start, end: range.start })).toEqual({ paragraphs: [] });
   });
 });

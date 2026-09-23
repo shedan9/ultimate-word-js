@@ -8,6 +8,7 @@ import type {
   ParaPropsPatch,
   ResolvedParaProps,
   ResolvedRunProps,
+  RunProps,
   RunPropsPatch,
   TextChangeSet,
   TextEditor,
@@ -20,6 +21,7 @@ import {
   rangeOfNode,
   walkParagraphs,
 } from '@uw/model';
+import type { PasteParagraph } from './clipboard.ts';
 import type { TextGranularity } from './text-navigation.ts';
 import { paragraphNavigation } from './text-navigation.ts';
 
@@ -75,6 +77,12 @@ export interface EditingController {
   /** Word 的 Ctrl+1 / 2 / 5：单倍 / 双倍 / 1.5 倍行距，改为多倍行距规则（固定值行距一并改掉）。 */
   lineSpacing(multiple: 1 | 1.5 | 2): void;
   insert(text: string, input?: boolean): void;
+  /**
+   * 粘贴带格式的段落（见 clipboard.ts）：首段并进光标所在段、其后每段拆出新段，一个撤销单元。
+   * 源段落的对齐落在**以源段落标记结尾**的那几段上，最后一块并进原段落的后半截、保留原段落的对齐
+   * —— Word 的段落格式跟着段落标记走。
+   */
+  insertParagraphs(paragraphs: readonly PasteParagraph[]): void;
   enter(): void;
   delete(direction: 'backward' | 'forward', granularity?: TextGranularity): void;
   move(direction: 'backward' | 'forward', extend?: boolean, granularity?: TextGranularity): void;
@@ -191,6 +199,62 @@ export function createEditingController(
     const adjacent = paragraphs[pi + step];
     const range = adjacent && rangeOfNode(adjacent);
     return direction === 'backward' ? range?.end : range?.start;
+  }
+  function insertParagraphs(paragraphs: readonly PasteParagraph[], origin: 'input' | 'command'): void {
+    if (!selection || composing) return;
+    let at = selection.start;
+    const range = selection;
+    const format = pending;
+    const first =
+      (compareDocPositions(buildRunOrder(editor.body), range.start, range.end) ?? 0) > 0
+        ? range.end
+        : range.start;
+    // 删除选区后剩下的是前一段（合段保留前段格式），光标所在的就是它。
+    const host = [...walkParagraphs(editor.body)].find(
+      (p) => p.id === first.nodeId || p.runs.some((r) => r.id === first.nodeId),
+    );
+    // 插入的文字继承左边的 run —— 前一块刚粘进来的那个。前一块改过、这一块没写的格式，
+    // 要显式还原成光标处原来的直接格式，否则「粗体 + 普通」粘出来是两段粗体。
+    const destination: RunProps =
+      host?.runs.find((r) => r.id === first.nodeId)?.props ?? host?.props.markRunProps ?? {};
+    // 拆段会把对齐带进新段；源段对齐改过之后，下一段先还原成原段落自己的直接格式。
+    const original = host?.props.justification ?? null;
+    editor.tx(
+      (tx) => {
+        if (!equal(range.start, range.end)) at = tx.deleteRange(range);
+        let changed = false;
+        // 跨段累计：拆出来的空段从拆点那个 run（刚粘进来的）继承格式，同样要还原。
+        const touched = new Set<string>();
+        for (const [i, paragraph] of paragraphs.entries()) {
+          if (i > 0) {
+            at = tx.splitParagraph(at);
+            if (changed) tx.setParagraphProps({ start: at, end: at }, { justification: original });
+            changed = false;
+          }
+          for (const run of paragraph.runs) {
+            // 模型还没有插入制表位的命令，粘贴进来的制表符先当空格，不让整次粘贴失败。
+            const text = run.text.replace(/[\t\r\n]/g, ' ');
+            if (!text) continue;
+            at = tx.insertText(at, text);
+            const reset: Record<string, unknown> = {};
+            for (const key of touched)
+              if (!(key in run.patch)) reset[key] = destination[key as keyof RunProps] ?? null;
+            const patch: RunPropsPatch = { ...(reset as RunPropsPatch), ...format, ...run.patch };
+            for (const key of Object.keys(patch)) touched.add(key);
+            // 空段落首次输入会先建 run，插入起点只能从返回的终点倒推。
+            if (Object.keys(patch).length)
+              at = tx.setRunProps({ start: { ...at, offset: at.offset - text.length }, end: at }, patch).end;
+          }
+          if (paragraph.justification && i < paragraphs.length - 1) {
+            tx.setParagraphProps({ start: at, end: at }, { justification: paragraph.justification });
+            changed = true;
+          }
+        }
+      },
+      { origin },
+    );
+    pending = undefined;
+    collapse(at);
   }
   const controller: EditingController = {
     get selection() {
@@ -331,27 +395,15 @@ export function createEditingController(
       });
     },
     insert(text, input = false) {
-      if (!selection || composing || text === '') return;
-      let at = selection.start;
-      const range = selection;
-      const format = pending;
-      editor.tx(
-        (tx) => {
-          if (!equal(range.start, range.end)) at = tx.deleteRange(range);
-          const lines = text.replace(/\r\n?/g, '\n').split('\n');
-          for (const [i, line] of lines.entries()) {
-            if (i > 0) at = tx.splitParagraph(at);
-            if (!line) continue;
-            at = tx.insertText(at, line);
-            // 空段落首次输入会先建 run，插入起点只能从返回的终点倒推。
-            if (format)
-              at = tx.setRunProps({ start: { ...at, offset: at.offset - line.length }, end: at }, format).end;
-          }
-        },
-        { origin: input ? 'input' : 'command' },
+      if (text === '') return;
+      const lines = text.replace(/\r\n?/g, '\n').split('\n');
+      insertParagraphs(
+        lines.map((line) => ({ runs: line ? [{ text: line, patch: {} }] : [] })),
+        input ? 'input' : 'command',
       );
-      pending = undefined;
-      collapse(at);
+    },
+    insertParagraphs(paragraphs) {
+      if (paragraphs.length) insertParagraphs(paragraphs, 'command');
     },
     enter() {
       if (!selection || composing) return;

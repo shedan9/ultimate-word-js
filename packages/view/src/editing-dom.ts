@@ -1,4 +1,12 @@
-import type { DocPosition, DocRange, Justification, TextChangeSet, TextEditor } from '@uw/model';
+import type {
+  DocPosition,
+  DocRange,
+  Justification,
+  RichFragment,
+  TextChangeSet,
+  TextEditor,
+} from '@uw/model';
+import { fragmentToHtml, htmlToParagraphs } from './clipboard.ts';
 import type { DomView } from './dom.ts';
 import type { FormatQuery, ParagraphQuery, ToggleFormat } from './editing.ts';
 import { createEditingController } from './editing.ts';
@@ -7,6 +15,8 @@ import { moveVertically } from './vertical-navigation.ts';
 export interface EditingBinding {
   editor: TextEditor;
   text(range: DocRange): string;
+  /** 缺省时复制只写纯文本；给了就同时写一份 text/html（字体、字号、加粗…与对齐）。 */
+  fragment?(range: DocRange): RichFragment;
   /** 缺省时切换只看暂存格式，选区一律按「未设置」处理。 */
   format?: FormatQuery;
   /** 缺省时对齐快捷键一律设置，不做「再按一次回到左对齐」。 */
@@ -301,7 +311,16 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
   }
   function paste(event: ClipboardEvent): void {
     event.preventDefault();
-    if (!state.composing) run(() => state.insert(event.clipboardData?.getData('text/plain') ?? ''));
+    if (state.composing) return;
+    const data = event.clipboardData;
+    const html = data?.getData('text/html') ?? '';
+    const plain = data?.getData('text/plain') ?? '';
+    run(() => {
+      // HTML 读不出一个字（只有图片、或是空壳）时退回纯文本，别让粘贴什么都不做。
+      const paragraphs = html && win ? htmlToParagraphs(html, new win.DOMParser()) : [];
+      if (paragraphs.some((p) => p.runs.length)) state.insertParagraphs(paragraphs);
+      else state.insert(plain);
+    });
   }
   function clipboard(event: ClipboardEvent): void {
     if (event.defaultPrevented || state.composing) return;
@@ -312,7 +331,11 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
     run(() => {
       const text = binding.text(range);
       if (text === '') return;
-      const write = () => data.setData('text/plain', text);
+      const fragment = binding.fragment?.(range);
+      const write = () => {
+        data.setData('text/plain', text);
+        if (fragment) data.setData('text/html', fragmentToHtml(fragment));
+      };
       if (event.type === 'cut') state.cut(write);
       else write();
     });

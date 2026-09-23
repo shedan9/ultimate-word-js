@@ -20,6 +20,7 @@
     "@uw/render-dom": "workspace:*"
   },
   "devDependencies": {
+    "jsdom": "^28.1.0",
     "tsdown": "^0.22.14"
   }
 }

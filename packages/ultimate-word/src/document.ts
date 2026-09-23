@@ -32,6 +32,7 @@ import {
   compareDocPositions,
   createTextEditor,
   findText,
+  fragmentOfRange,
   paragraphsOfRange,
   queryNodes,
   rangeOfNode,
@@ -197,6 +198,7 @@ export class UwDocument {
       {
         editor,
         text: (range) => textOfRange(this.#loaded.resolved, range, this.#fieldValues),
+        fragment: (range) => fragmentOfRange(this.#loaded.resolved, range, this.#fieldValues),
         format: (range) => runPropsOfRange(this.#loaded.resolved, range),
         paragraphFormat: (range) => paragraphsOfRange(this.#loaded.resolved, range),
         tabStop: this.#loaded.cascade.settings.defaultTabStop,
