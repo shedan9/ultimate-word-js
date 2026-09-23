@@ -2,7 +2,7 @@ import type { ResolvedBody } from './nodes.ts';
 import { walkParagraphs } from './nodes.ts';
 import { buildRunOrder, compareDocPositions, runEnd, runStart } from './order.ts';
 import type { DocRange } from './position.ts';
-import type { ResolvedRunProps } from './props.ts';
+import type { ResolvedParaProps, ResolvedRunProps } from './props.ts';
 
 /**
  * 选区里的字符格式，给工具栏状态与 Ctrl+B 这类「全是才取消」的切换用。
@@ -47,4 +47,17 @@ export function runPropsOfRange(body: ResolvedBody, range: DocRange): ResolvedRu
     }
   }
   return out;
+}
+
+/** 选区触及的每个段落（含其间的单元格段落）的级联段落格式；折叠光标即所在段。 */
+export function paraPropsOfRange(body: ResolvedBody, range: DocRange): ResolvedParaProps[] {
+  const paragraphs = [...walkParagraphs(body)];
+  const indexOf = (nodeId: string) => {
+    const i = paragraphs.findIndex((p) => p.id === nodeId || p.runs.some((r) => r.id === nodeId));
+    if (i < 0) throw new RangeError('选区不在正文中');
+    return i;
+  };
+  const a = indexOf(range.start.nodeId);
+  const b = indexOf(range.end.nodeId);
+  return paragraphs.slice(Math.min(a, b), Math.max(a, b) + 1).map((p) => p.props);
 }

@@ -1,6 +1,6 @@
-import type { DocPosition, DocRange, TextChangeSet, TextEditor } from '@uw/model';
+import type { DocPosition, DocRange, Justification, TextChangeSet, TextEditor } from '@uw/model';
 import type { DomView } from './dom.ts';
-import type { FormatQuery, ToggleFormat } from './editing.ts';
+import type { FormatQuery, ParagraphQuery, ToggleFormat } from './editing.ts';
 import { createEditingController } from './editing.ts';
 import { moveVertically } from './vertical-navigation.ts';
 
@@ -9,6 +9,8 @@ export interface EditingBinding {
   text(range: DocRange): string;
   /** 缺省时切换只看暂存格式，选区一律按「未设置」处理。 */
   format?: FormatQuery;
+  /** 缺省时对齐快捷键一律设置，不做「再按一次回到左对齐」。 */
+  paragraphFormat?: ParagraphQuery;
   subscribe(listener: (change: TextChangeSet) => void): () => void;
 }
 export interface DomEditing {
@@ -21,12 +23,14 @@ export interface DomEditing {
 
 /** Word 与浏览器富文本共用的 B / I / U；Ctrl 与 Cmd 都认，Alt / Shift 组合留给系统与宿主。 */
 const TOGGLE_KEYS: Readonly<Record<string, ToggleFormat>> = { b: 'bold', i: 'italic', u: 'underline' };
+/** Word 的段落对齐快捷键；J 是两端对齐（`both`），中文公文的默认对齐。 */
+const ALIGN_KEYS: Readonly<Record<string, Justification>> = { l: 'left', e: 'center', r: 'right', j: 'both' };
 
 /** textarea 常驻容器，重排只替换页树，不能打断操作系统持有的 IME 节点。 */
 export function mountEditing(container: Element, view: DomView, binding: EditingBinding): DomEditing {
   const doc = container.ownerDocument;
   const win = doc.defaultView;
-  const state = createEditingController(binding.editor, binding.format);
+  const state = createEditingController(binding.editor, binding.format, binding.paragraphFormat);
   const input = doc.createElement('textarea');
   input.dataset.uwInput = 'true';
   input.setAttribute('aria-label', '文档编辑输入');
@@ -186,6 +190,9 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
     else if (mod && !event.altKey && !event.shiftKey && event.key.toLowerCase() in TOGGLE_KEYS) {
       const format = TOGGLE_KEYS[event.key.toLowerCase()] as ToggleFormat;
       action = () => state.toggleFormat(format);
+    } else if (mod && !event.altKey && !event.shiftKey && event.key.toLowerCase() in ALIGN_KEYS) {
+      const justification = ALIGN_KEYS[event.key.toLowerCase()] as Justification;
+      action = () => state.align(justification);
     } else if (
       !event.altKey &&
       ((event.ctrlKey && !event.metaKey && (event.key === 'Home' || event.key === 'End')) ||

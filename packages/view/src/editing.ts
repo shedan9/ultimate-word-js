@@ -2,6 +2,8 @@
 import type {
   DocPosition,
   DocRange,
+  Justification,
+  ResolvedParaProps,
   ResolvedRunProps,
   RunPropsPatch,
   TextChangeSet,
@@ -15,6 +17,8 @@ import { paragraphNavigation } from './text-navigation.ts';
 export type ToggleFormat = 'bold' | 'italic' | 'underline';
 /** 选区当前的最终格式（级联后），切换按「全部都是才取消」判断。 */
 export type FormatQuery = (range: DocRange) => readonly Pick<ResolvedRunProps, ToggleFormat>[];
+/** 选区触及段落的级联对齐方式。 */
+export type ParagraphQuery = (range: DocRange) => readonly Pick<ResolvedParaProps, 'justification'>[];
 
 export interface EditingController {
   readonly selection: DocRange | undefined;
@@ -25,6 +29,8 @@ export interface EditingController {
   readonly pendingFormat: RunPropsPatch | undefined;
   select(range: DocRange): void;
   toggleFormat(format: ToggleFormat): void;
+  /** Word 的 Ctrl+L/E/R/J：全部已是该对齐时回到左对齐，否则设置；选区不变。 */
+  align(justification: Justification): void;
   insert(text: string, input?: boolean): void;
   enter(): void;
   delete(direction: 'backward' | 'forward', granularity?: TextGranularity): void;
@@ -41,7 +47,11 @@ export interface EditingController {
 
 const underlined = (value: string) => value !== 'none' && value !== '';
 
-export function createEditingController(editor: TextEditor, formatOf?: FormatQuery): EditingController {
+export function createEditingController(
+  editor: TextEditor,
+  formatOf?: FormatQuery,
+  paragraphsOf?: ParagraphQuery,
+): EditingController {
   let selection: DocRange | undefined;
   let pending: RunPropsPatch | undefined;
   let composing = false;
@@ -138,6 +148,17 @@ export function createEditingController(editor: TextEditor, formatOf?: FormatQue
         return;
       }
       select(backward ? { start: next.end, end: next.start } : next);
+    },
+    align(justification) {
+      if (!selection || composing) return;
+      const range = selection;
+      const current = paragraphsOf?.(range) ?? [];
+      const active = current.length > 0 && current.every((p) => p.justification === justification);
+      editor.breakHistory();
+      // 段落格式不拆 run、不动位置，选区与方向原样保留，无需重新 select。
+      editor.tx((tx) => {
+        tx.setParagraphProps(range, { justification: active ? 'left' : justification });
+      });
     },
     insert(text, input = false) {
       if (!selection || composing || text === '') return;

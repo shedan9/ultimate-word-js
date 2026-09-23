@@ -32,6 +32,7 @@ import {
   compareDocPositions,
   createTextEditor,
   findText,
+  paraPropsOfRange,
   queryNodes,
   rangeOfNode,
   runPropsOfRange,
@@ -197,6 +198,7 @@ export class UwDocument {
         editor,
         text: (range) => textOfRange(this.#loaded.resolved, range, this.#fieldValues),
         format: (range) => runPropsOfRange(this.#loaded.resolved, range),
+        paragraphFormat: (range) => paraPropsOfRange(this.#loaded.resolved, range),
         subscribe: (listener) => {
           this.#listeners.add(listener);
           return () => {

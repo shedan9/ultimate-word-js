@@ -593,3 +593,34 @@ describe('字符格式切换', () => {
     ]);
   });
 });
+
+describe('段落对齐切换', () => {
+  it('折叠光标改所在段，再按一次回到左对齐，选区与方向不变', () => {
+    const ctx = setup('甲乙丙');
+    const state = createEditingController(ctx.editor, undefined, (range) =>
+      [...walkParagraphs(ctx.editor.body)]
+        .filter((p) => p.id === range.start.nodeId || p.runs.some((r) => r.id === range.start.nodeId))
+        .map((p) => ({ justification: p.props.justification ?? 'both' })),
+    );
+    const range = {
+      start: { nodeId: 'r', contentIndex: 0, offset: 2 },
+      end: { nodeId: 'r', contentIndex: 0, offset: 1 },
+    };
+    state.select(range);
+    const before = { selection: state.selection, focus: state.focus };
+    const justification = () => [...walkParagraphs(ctx.editor.body)][0]?.props.justification;
+    state.align('center');
+    expect(justification()).toBe('center');
+    expect({ selection: state.selection, focus: state.focus }).toEqual(before);
+    state.align('center');
+    expect(justification()).toBe('left');
+    state.align('right');
+    expect(justification()).toBe('right');
+    ctx.editor.undo();
+    ctx.editor.undo();
+    expect(justification()).toBe('center');
+    state.compositionStart();
+    state.align('both');
+    expect(justification()).toBe('center');
+  });
+});

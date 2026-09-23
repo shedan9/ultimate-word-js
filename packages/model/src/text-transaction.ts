@@ -9,12 +9,24 @@ import type { Block, Body, NodeId, Paragraph, Run } from './nodes.ts';
 import { walkBlocks, walkParagraphs } from './nodes.ts';
 import { buildRunOrder, compareDocPositions, contentLength, rangeOfNode, runEnd, runStart } from './order.ts';
 import type { DocPosition, DocRange } from './position.ts';
-import type { RunProps } from './props.ts';
+import type { Indent, ParagraphSpacing, ParaProps, RunProps } from './props.ts';
 import type { PositionMove, TextChange, TextChangeSet } from './text-change.ts';
 import { invertTextChanges, mapTextRange } from './text-change.ts';
 
 /** 直接字符格式的修改：给值即写入，`null` 删除这一项直接格式、回到样式的值。 */
 export type RunPropsPatch = { [K in keyof RunProps]?: RunProps[K] | null };
+
+/**
+ * 直接段落格式的修改。`indent` / `spacing` 按字段合并（只改首行缩进不该抹掉左缩进），
+ * 其中的 `null` 删除单个字段，整项 `null` 删除整组。段落标记格式走 `setRunProps`。
+ * 注意字符单位优先（`firstLineChars` 盖过 `firstLine`）：改 twips 版本时要把对应的 `*Chars` 置 null。
+ */
+export type ParaPropsPatch = {
+  [K in Exclude<keyof ParaProps, 'markRunProps' | 'indent' | 'spacing'>]?: ParaProps[K] | null;
+} & {
+  indent?: { [K in keyof Indent]?: Indent[K] | null } | null;
+  spacing?: { [K in keyof ParagraphSpacing]?: ParagraphSpacing[K] | null } | null;
+};
 
 export interface TextTransaction {
   /** 在位置处拆段，返回新段开头；继承段落与字符直接格式。 */
@@ -31,6 +43,11 @@ export interface TextTransaction {
    * 返回拆分后的同一段文字范围，供后续命令继续使用。
    */
   setRunProps(range: DocRange, patch: RunPropsPatch): DocRange;
+  /**
+   * 修改范围触及的每个段落（含其间的单元格段落）的直接段落格式；折叠范围即光标所在段。
+   * 不拆 run、不移动位置，返回原范围。
+   */
+  setParagraphProps(range: DocRange, patch: ParaPropsPatch): DocRange;
 }
 
 export interface TextHistoryOptions {
@@ -166,7 +183,31 @@ function textAt(entry: RunEntry, position: DocPosition): string {
 
 /** 仅应用有变化的项；全部相同返回 undefined，调用方据此不拆 run、不记变更。 */
 function patchRunProps(props: RunProps, patch: RunPropsPatch): RunProps | undefined {
-  const next: Record<string, unknown> = { ...props };
+  return patchFields(props, patch);
+}
+
+/** 缩进与间距是一组独立字段，按字段合并；合并后为空的组整个删掉，不留 `<w:ind/>` 空壳。 */
+function patchParaProps(props: ParaProps, patch: ParaPropsPatch): ParaProps | undefined {
+  if ('markRunProps' in patch) throw new TypeError('段落标记格式请用 setRunProps');
+  const { indent, spacing, ...rest } = patch;
+  let next = patchFields(props, rest) ?? props;
+  for (const [key, group] of [
+    ['indent', indent],
+    ['spacing', spacing],
+  ] as const) {
+    if (group === undefined || group === null) {
+      if (group === null) next = patchFields(next, { [key]: null }) ?? next;
+      continue;
+    }
+    if (typeof group !== 'object' || Array.isArray(group)) throw new TypeError(`${key} 需要属性对象`);
+    const merged = patchFields(next[key] ?? {}, group);
+    if (merged) next = patchFields(next, { [key]: Object.keys(merged).length ? merged : null }) ?? next;
+  }
+  return next === props ? undefined : next;
+}
+
+function patchFields<T extends object>(props: T, patch: object): T | undefined {
+  const next: Record<string, unknown> = { ...(props as Record<string, unknown>) };
   let changed = false;
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined) continue;
@@ -181,7 +222,7 @@ function patchRunProps(props: RunProps, patch: RunPropsPatch): RunProps | undefi
       changed = true;
     }
   }
-  return changed ? (next as RunProps) : undefined;
+  return changed ? (next as T) : undefined;
 }
 
 function samePosition(a: DocPosition, b: DocPosition): boolean {
@@ -671,6 +712,32 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             changes.push(...local);
             structural([...updates.keys()], []);
             return mapTextRange(range, { changes: local, paragraphIds: [] });
+          });
+        },
+        setParagraphProps(range, patch) {
+          return command(() => {
+            if (patch === null || typeof patch !== 'object' || Array.isArray(patch))
+              throw new TypeError('setParagraphProps 需要属性对象');
+            flush();
+            for (const at of [range.start, range.end]) checkPosition(at);
+            const order = buildRunOrder(draft);
+            if ((compareDocPositions(order, range.start, range.end) as number) > 0)
+              throw new RangeError('格式范围的起点必须在终点之前');
+            const paragraphs = [...walkParagraphs(draft)];
+            const indexOf = (at: DocPosition) =>
+              paragraphs.findIndex((p) => p.id === at.nodeId || p.runs.some((r) => r.id === at.nodeId));
+            const updates = new Map<NodeId, Paragraph>();
+            for (let i = indexOf(range.start); i <= indexOf(range.end); i++) {
+              const paragraph = paragraphs[i] as Paragraph;
+              const props = patchParaProps(paragraph.props, patch);
+              if (props) updates.set(paragraph.id, { ...paragraph, props });
+            }
+            if (updates.size) {
+              draft = mapParagraphs(draft, (p) => updates.get(p.id) ?? p);
+              entries = indexRuns(draft);
+              structural([...updates.keys()], []);
+            }
+            return structuredClone(range);
           });
         },
       };

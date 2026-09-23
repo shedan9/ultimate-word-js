@@ -168,3 +168,57 @@ describe('字符格式命令', () => {
     expect(editor.body).toBe(before);
   });
 });
+
+describe('段落格式命令', () => {
+  it('作用于范围触及的每段（含单元格段落），缩进按字段合并，不拆 run 不动位置', () => {
+    const editor = createTextEditor(
+      parse(
+        '<w:p><w:pPr><w:ind w:left="420" w:firstLine="200"/></w:pPr><w:r><w:t>前段</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>格内</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>末段</w:t></w:r></w:p><w:p><w:r><w:t>范围外</w:t></w:r></w:p>',
+      ),
+    );
+    const before = editor.body;
+    const range = { start: pos(before, 1), end: pos(before, 1, 0, 0, 2) };
+    let result: DocRange | undefined;
+    const changes = editor.tx((t) => {
+      result = t.setParagraphProps(range, {
+        justification: 'center',
+        indent: { firstLine: null, firstLineChars: 200 },
+      });
+    });
+    expect(result).toEqual(range);
+    expect([0, 1, 2, 3].map((i) => para(editor.body, i).props.justification)).toEqual([
+      'center',
+      'center',
+      'center',
+      undefined,
+    ]);
+    expect(para(editor.body).props.indent).toEqual({ left: 420, firstLineChars: 200 });
+    expect(para(editor.body).runs).toBe(para(before).runs);
+    expect(para(editor.body, 3)).toBe(para(before, 3));
+    expect(changes?.paragraphIds).toHaveLength(3);
+    expect(mapTextRange(range, changes as never)).toEqual(range);
+    editor.undo();
+    expect(editor.body).toBe(before);
+  });
+
+  it('折叠光标改所在段；整组 null 删除、合并后为空的组不留空壳；无变化不记撤销', () => {
+    const editor = createTextEditor(
+      parse('<w:p><w:pPr><w:jc w:val="right"/><w:spacing w:before="120"/></w:pPr></w:p><w:p/>'),
+    );
+    const at = { nodeId: para(editor.body).id, contentIndex: 0, offset: 0 };
+    editor.tx((t) => {
+      t.setParagraphProps({ start: at, end: at }, { justification: null, spacing: { before: null } });
+    });
+    expect(para(editor.body).props).toEqual({});
+    expect(
+      editor.tx((t) => {
+        t.setParagraphProps({ start: at, end: at }, { justification: null, indent: null });
+      }),
+    ).toBeUndefined();
+    expect(() =>
+      editor.tx((t) => {
+        t.setParagraphProps({ start: at, end: at }, { markRunProps: {} } as never);
+      }),
+    ).toThrow('setRunProps');
+  });
+});
