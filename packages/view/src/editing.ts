@@ -14,6 +14,8 @@ export interface EditingController {
   enter(): void;
   delete(direction: 'backward' | 'forward', granularity?: TextGranularity): void;
   move(direction: 'backward' | 'forward', extend?: boolean, granularity?: TextGranularity): void;
+  moveToDocumentBoundary(boundary: 'start' | 'end', extend?: boolean): void;
+  selectAll(): void;
   selectWord(at: DocPosition, affinity?: 'before' | 'after'): void;
   cut(write: () => void): void;
   compositionStart(): void;
@@ -39,6 +41,18 @@ export function createEditingController(editor: TextEditor): EditingController {
   }
   function collapse(at: DocPosition): void {
     select({ start: at, end: at });
+  }
+  function documentRange(): DocRange | undefined {
+    let start: DocPosition | undefined;
+    let end: DocPosition | undefined;
+    // 从模型取正文边界，分页、重复表头和虚拟化不能改变全文选区；保留首末空段。
+    for (const paragraph of walkParagraphs(editor.body)) {
+      const range = rangeOfNode(paragraph);
+      if (!range) continue;
+      start ??= range.start;
+      end = range.end;
+    }
+    return start && end ? { start, end } : undefined;
   }
   function neighbor(
     at: DocPosition,
@@ -136,6 +150,16 @@ export function createEditingController(editor: TextEditor): EditingController {
       }
       const next = neighbor(focus ?? selection.end, direction, granularity);
       if (next) select({ start: extend ? (anchor ?? selection.start) : next, end: next });
+    },
+    moveToDocumentBoundary(boundary, extend = false) {
+      if (composing) return;
+      const at = documentRange()?.[boundary];
+      if (at) controller.select({ start: extend ? (anchor ?? at) : at, end: at });
+    },
+    selectAll() {
+      if (composing) return;
+      const range = documentRange();
+      if (range) controller.select(range);
     },
     selectWord(at, affinity) {
       if (composing) return;

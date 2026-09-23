@@ -82,7 +82,7 @@ try {
   let failed = false;
   for (const page of pages) {
     const text = await run(`${BASE}/tests/${page}.html`);
-    console.log(`${page.padEnd(14)} ${text.split('\n')[0]}`);
+    console.log(`${page.padEnd(14)} ${text.startsWith('PASS') ? text.split('\n')[0] : text}`);
     if (!text.startsWith('PASS')) failed = true;
   }
   process.exitCode = failed ? 1 : 0;

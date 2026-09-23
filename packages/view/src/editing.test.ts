@@ -1,4 +1,4 @@
-import type { Run } from '@uw/model';
+import type { Paragraph, Run, Table } from '@uw/model';
 import {
   createTextEditor,
   DEFAULT_SECTION_PROPS,
@@ -92,6 +92,137 @@ const run = (id: string, text: string): Run => ({
   id,
   props: {},
   content: [{ kind: 'text', text }],
+});
+
+describe('全文选区与文档边界', () => {
+  it('首末空段也属于全文，替换全文单次撤销恢复段落结构', () => {
+    const { state, editor, texts } = setup();
+    state.insert('\n甲\n\n乙\n');
+    const paragraphs = [...walkParagraphs(editor.body)];
+    const first = paragraphs[0];
+    const last = paragraphs.at(-1);
+    const start = first && rangeOfNode(first)?.start;
+    const end = last && rangeOfNode(last)?.end;
+    if (!start || !end) throw new Error('缺少测试段落');
+    state.selectAll();
+    expect(state.selection).toEqual({ start, end });
+    expect(state.anchor).toEqual(start);
+    expect(state.focus).toEqual(end);
+    state.insert('替换');
+    expect(texts()).toEqual(['替换']);
+    editor.undo();
+    expect(texts()).toEqual(['', '甲', '', '乙', '']);
+    editor.redo();
+    expect(texts()).toEqual(['替换']);
+  });
+
+  it('边界扩选保留原锚点，跨过锚点后反向，普通导航折叠到指定边界', () => {
+    const { state, editor } = setup('甲乙丙丁');
+    state.select({ start: pos(2), end: pos(3) });
+    state.moveToDocumentBoundary('start', true);
+    expect(state.selection).toEqual({ start: pos(0), end: pos(2) });
+    expect(state.anchor).toEqual(pos(2));
+    expect(state.focus).toEqual(pos(0));
+    state.moveToDocumentBoundary('end', true);
+    expect(state.selection).toEqual({ start: pos(2), end: pos(4) });
+    state.moveToDocumentBoundary('start');
+    expect(state.selection).toEqual({ start: pos(0), end: pos(0) });
+    state.moveToDocumentBoundary('end');
+    expect(state.selection).toEqual({ start: pos(4), end: pos(4) });
+    expect(editor.canUndo).toBe(false);
+  });
+
+  it('跨节下钻首末表格，全选范围覆盖不同单元格但不放宽删除限制', () => {
+    const paragraph = (id: string, runs: Run[]): Paragraph => ({ kind: 'paragraph', id, props: {}, runs });
+    const table = (id: string, blocks: (Paragraph | Table)[]): Table => ({
+      kind: 'table',
+      id,
+      props: {},
+      grid: [],
+      rows: [
+        {
+          kind: 'row',
+          id: `${id}-row`,
+          props: {},
+          cells: [
+            {
+              kind: 'cell',
+              id: `${id}-cell`,
+              props: {},
+              gridSpan: 1,
+              vMerge: 'none',
+              blocks,
+            },
+          ],
+        },
+      ],
+    });
+    const lastRun = run('last', '乙');
+    lastRun.content.push({ kind: 'text', text: '😀' });
+    const editor = createTextEditor({
+      sections: [
+        { id: 'empty-section', props: DEFAULT_SECTION_PROPS, blocks: [] },
+        {
+          id: 'first-section',
+          props: DEFAULT_SECTION_PROPS,
+          blocks: [table('first-table', [paragraph('empty', [])])],
+        },
+        {
+          id: 'last-section',
+          props: DEFAULT_SECTION_PROPS,
+          blocks: [table('outer', [table('inner', [paragraph('last-p', [lastRun])])])],
+        },
+      ],
+    });
+    const state = createEditingController(editor);
+    state.moveToDocumentBoundary('end');
+    expect(state.focus).toEqual(pos(2, 'last', 1));
+    state.moveToDocumentBoundary('start');
+    expect(state.focus).toEqual(pos(0, 'empty'));
+    state.selectAll();
+    const selection = { start: pos(0, 'empty'), end: pos(2, 'last', 1) };
+    expect(state.selection).toEqual(selection);
+    const original = editor.body;
+    expect(() => state.insert('替换')).toThrow();
+    expect(editor.body).toBe(original);
+    expect(state.selection).toEqual(selection);
+    expect(editor.canUndo).toBe(false);
+  });
+
+  it('空文档与空段安全处理，组合期不改变选区', () => {
+    const state = createEditingController(createTextEditor({ sections: [] }));
+    state.selectAll();
+    state.moveToDocumentBoundary('end', true);
+    expect(state.selection).toBeUndefined();
+    const empty = setup().state;
+    empty.selectAll();
+    empty.moveToDocumentBoundary('end');
+    expect(empty.selection).toEqual({ start: pos(0, 'p'), end: pos(0, 'p') });
+    const composing = setup('甲乙丙').state;
+    composing.select({ start: pos(2), end: pos(1) });
+    composing.compositionStart();
+    composing.selectAll();
+    composing.moveToDocumentBoundary('start', true);
+    composing.moveToDocumentBoundary('end');
+    expect(composing.anchor).toEqual(pos(2));
+    expect(composing.focus).toEqual(pos(1));
+  });
+
+  it('边界导航打断连续输入合并，编辑后全选和导航重新读取文档边界', () => {
+    const { state, editor, texts } = setup('甲');
+    state.moveToDocumentBoundary('end');
+    state.insert('乙', true);
+    state.moveToDocumentBoundary('end');
+    state.insert('丙', true);
+    editor.undo();
+    expect(texts()).toEqual(['甲乙']);
+    state.moveToDocumentBoundary('end');
+    expect(state.focus).toEqual(pos(2));
+    editor.undo();
+    expect(texts()).toEqual(['甲']);
+    state.selectAll();
+    expect(state.selection).toEqual({ start: pos(0), end: pos(1) });
+  });
 });
 
 describe('按词删除', () => {

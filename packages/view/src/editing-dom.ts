@@ -166,6 +166,18 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
     if (mod && event.key.toLowerCase() === 'z')
       action = () => (event.shiftKey ? binding.editor.redo() : binding.editor.undo());
     else if (mod && event.key.toLowerCase() === 'y') action = () => binding.editor.redo();
+    else if (mod && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'a')
+      action = () => state.selectAll();
+    else if (
+      !event.altKey &&
+      ((event.ctrlKey && !event.metaKey && (event.key === 'Home' || event.key === 'End')) ||
+        (event.metaKey && !event.ctrlKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')))
+    )
+      action = () =>
+        state.moveToDocumentBoundary(
+          event.key === 'Home' || event.key === 'ArrowUp' ? 'start' : 'end',
+          event.shiftKey,
+        );
     else if (
       !event.metaKey &&
       !(event.ctrlKey && event.altKey) &&
@@ -210,7 +222,7 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
     }
     if (action) {
       event.preventDefault();
-      run(action, event.key === 'ArrowUp' || event.key === 'ArrowDown');
+      run(action, !mod && !event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown'));
       const at = state.focus;
       if (at) view.scrollTo(at, { align: 'nearest' });
     }
