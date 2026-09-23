@@ -66,6 +66,14 @@ describe('模型选区纯文本', () => {
     expect(textOfRange(body, range)).toBe('甲\t\n-旧值');
   });
 
+  it('分页 / 分栏符在带格式片段里是 U+000C，纯文本里是换行', () => {
+    const { body, range } = setup(
+      '<w:p><w:r><w:t>甲</w:t><w:br w:type="page"/><w:t>乙</w:t><w:br w:type="column"/><w:br/></w:r></w:p>',
+    );
+    expect(fragmentOfRange(body, range).paragraphs[0]?.runs.map((r) => r.text)).toEqual(['甲\f乙\f\n']);
+    expect(textOfRange(body, range)).toBe('甲\n乙\n\n');
+  });
+
   it('域复制当前显示值，结果的其他 run 不重复输出', () => {
     const { body, paragraphs, range } = setup(
       '<w:p><w:r><w:t>第</w:t></w:r><w:r><w:t>99</w:t></w:r><w:r><w:t>9</w:t></w:r><w:r><w:t>页</w:t></w:r></w:p>',

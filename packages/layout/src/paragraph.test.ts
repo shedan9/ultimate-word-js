@@ -9,7 +9,7 @@ import type { DocGrid } from '@uw/model';
 import { DEFAULT_SETTINGS } from '@uw/model';
 import { describe, expect, it } from 'vitest';
 import type { LayoutParagraphOptions } from './paragraph.ts';
-import { layoutParagraph } from './paragraph.ts';
+import { indentCharUnit, layoutParagraph } from './paragraph.ts';
 import { fakeMeasurer, NO_GRID, para, paraProps, run, runOf, SIZE_5 } from './test-fixtures.ts';
 
 const WIDTH = SIZE_5 * 10;
@@ -43,6 +43,15 @@ describe('缩进', () => {
       indent: { ...paraProps().indent, firstLine: 999, firstLineChars: 200 },
     });
     expect(layoutParagraph(p, opts()).lines[0]?.x).toBe(SIZE_5 * 2);
+  });
+
+  it('indentCharUnit 与排版用的「一个字」一致：首个看得见的字的字号，空段取段落标记', () => {
+    const p = para([run('藏', { hidden: true }), run('', { size: 999 }), run('一二', { size: 320 })], {
+      indent: { ...paraProps().indent, firstLineChars: 100 },
+    });
+    expect(indentCharUnit(p)).toBe(320);
+    expect(layoutParagraph(p, opts()).lines[0]?.x).toBe(320);
+    expect(indentCharUnit(para([], {}))).toBe(paraProps().markRunProps.size);
   });
 
   it('悬挂缩进让首行往左伸出去，其余行按 left 排', () => {

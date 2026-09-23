@@ -94,7 +94,12 @@ Ctrl+1 / 2 / 5 设多倍行距。只认 Ctrl：Cmd+M / Cmd+数字到不了页面
 Shift+Tab 留给浏览器，Shift+Enter 软换行；粘贴的 `\t` / 段内 `<br>` 落成真的片段。
 **分页符已接入**（2026-09-23）：Ctrl+Enter（Mac 上 Cmd+Return）= `insertInline(pos, 'pageBreak')` **再拆段** ——
 Word 2013 起分页符后面跟一个段落标记，后文从新段落开始（**未对过真值**，本机没有 Word）。布局与回写本来就认
-`w:br w:type="page"`，没改；单元格里事务拒绝（Word 会拆表，表格结构编辑还没有）。编辑浏览器回归现有 156 项。
+`w:br w:type="page"`，没改；单元格里事务拒绝（Word 会拆表，表格结构编辑还没有）。
+复制粘贴带着它走：片段里记 U+000C（Word 的 `Range.Text` 也这么记），HTML 写 Word 那个 `page-break-before` 的 `<br>`，
+纯文本写换行；粘进单元格退成软换行（不然整次粘贴回滚）。
+**Ctrl+T 悬挂缩进 / Ctrl+0 段前 12pt 已接入**（2026-09-23）：Ctrl+T **首行不动**、左缩进推到下一个制表位整数倍；
+字符单位要换成 twips 才知道首行在哪，所以门面给 `ParagraphQuery` 带上 `charUnit`（`@uw/layout` 的 `indentCharUnit`，
+与排版的 `charUnit` 同一条规则），结果一律写 twips 并清零字符单位。编辑浏览器回归现有 164 项。
 **Phase 8 已开始：回写 docx**（2026-09-23，新包 `@uw/serialize`，门面 `doc.toDocx()`，调试台「导出 docx」按钮）。
 补丁式：只重写改过的部件，没编辑的文档逐字节照搬；正文**走原文 XML 树**打补丁（见下）。Word 打开无修复提示只能人工验。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、

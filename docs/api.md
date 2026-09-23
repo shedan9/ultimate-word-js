@@ -464,6 +464,8 @@ Ctrl/Cmd+L / E / R / J 设置左 / 居中 / 右 / 两端对齐，作用于选区
 逐段降 / 升一级（0–8）；其余位置 Tab 插入制表位（Word 的行为），Shift+Tab 不接管 —— 留给浏览器把焦点移出编辑区。
 Shift+Enter 插入软换行（换行不分段，段落格式与编号不变）。Ctrl+Enter（Mac 上 Cmd+Return）插入分页符并**紧接着拆段** ——
 Word 2013 起分页符后面跟一个段落标记，后文从新段落、新一页开始（照 Word 界面行为写的，没有真值样本）；
+复制时分页符在 `fragmentOfRange` 里是 U+000C、`text/html` 里按 Word 的写法是 `<br style="page-break-before:always">`、
+纯文本里是换行；粘贴认这个 `<br>`，单元格里退成软换行；
 控制器入口 `pageBreak()`，一个撤销单元；单元格里不插。Ctrl+Shift+Enter（分栏符）不接管。
 空列表项上 Enter 先升一级、到顶层即取消编号，不再拆出新空项；段首 Backspace 先取消编号，再按一次才合段。
 Ctrl/Cmd+Shift+L 套用 / 取消项目符号列表（Word 这个键套用「列表项目符号」样式；样式不一定存在，这里直接套定义）；
@@ -474,6 +476,12 @@ Ctrl+M / Ctrl+Shift+M 把左缩进推到下一个 / 退到上一个默认制表�
 Ctrl+1 / 2 / 5 设单倍 / 双倍 / 1.5 倍行距（多倍规则，固定值行距一并改掉）。这几个键只认 Ctrl ——
 Mac 的 Cmd+M 最小化窗口、Cmd+数字切标签页，Windows 的 Ctrl+数字也被浏览器截走，所以行距快捷键在
 Windows 上到不了页面，只能走控制器的 `lineSpacing(multiple)`（`indent(direction)` 同理）。
+Ctrl+T / Ctrl+Shift+T（控制器 `hangingIndent(direction)`）让**首行原地不动**、左缩进推到下一个 / 退到上一个默认制表位的
+整数倍，差出来的就是悬挂缩进；退只在已有悬挂时退、不退过首行。字符单位的缩进先按段落的 `charUnit`
+（`@uw/layout` 的 `indentCharUnit`，与排版同一条规则：首个看得见的字的字号）换成 twips，结果一律写 twips 并把字符单位清零。
+Ctrl+0（`toggleSpaceBefore()`）让段前间距在 0 与 12pt 之间切换，行单位与自动间距一并清掉。
+这两组同样只认 Ctrl，而且 Windows 上 Chrome 截走 Ctrl+T（新标签页）与 Ctrl+0（重置缩放），只在 Mac 上到得了页面。
+Word 的规则照界面行为写，**没有与 Word 逐格对过**。
 `NumberLabel.format` 给出本级的 `w:numFmt`，工具栏可据此显示当前是项目符号还是编号。
 段首 Backspace 去编号时与 Word 一样把级联后的左缩进写成直接格式（首行 / 悬挂写显式 0，免得退回样式的首行缩进），
 文字留在原处；空项 Enter 结束列表与 `toggleList` 取消时不写，文字回到页边。

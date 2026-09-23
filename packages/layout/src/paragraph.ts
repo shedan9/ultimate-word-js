@@ -18,7 +18,7 @@ import type {
 import type { KinsokuSets } from './break-class.ts';
 import { isNumberingItem, kinsokuFrom } from './break-class.ts';
 import type { WidthRules } from './items.ts';
-import { buildItems } from './items.ts';
+import { buildItems, effectiveSize } from './items.ts';
 import type { ObjectRules, ScriptRules } from './line-height.ts';
 import { lineHeight, OBJECT_RULES, objectBoxHeight } from './line-height.ts';
 import type { BrokenLine, LineBreakContext } from './linebreak.ts';
@@ -249,6 +249,19 @@ function indentGeometry(
  * 跳过编号文字：项目符号常常是 Symbol 字体的另一个字号，拿它当尺子会让整段的
  * 「首行缩进 2 字符」按错误的字号折算。段落里一个正文字符都没有时取段落标记的字号。
  */
+/**
+ * 字符单位缩进里「一个字」有多宽（twips），不必先切 item —— 给编辑命令把 `w:leftChars` 这类
+ * 字符单位换成 twips 用（Ctrl+T 要让首行原地不动，得先知道首行在哪）。与 `charUnit` 同一条规则：
+ * 第一个看得见的字的字号，没有就取段落标记的。差别只在「第一个字」按 run 找而不是按 item 找，
+ * 域指令 run 这类不出字的 run 会被算进来；公文段落的首字几乎都是正文，差不到哪一格。
+ */
+export function indentCharUnit(p: ResolvedParagraph): Twips {
+  for (const run of p.runs)
+    if (!run.props.hidden && run.content.some((c) => c.kind === 'text' && c.text !== ''))
+      return effectiveSize(run.props) * CHAR_UNIT_EM;
+  return p.props.markRunProps.size * CHAR_UNIT_EM;
+}
+
 function charUnit(p: ResolvedParagraph, items: readonly LayoutItem[]): Twips {
   for (const item of items) {
     if (item.kind === 'char' && !isNumberingItem(item)) return item.fontSize * CHAR_UNIT_EM;

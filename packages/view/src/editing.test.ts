@@ -622,11 +622,19 @@ function paragraphQuery(editor: TextEditor): ParagraphQuery {
         ...{ hangingChars: 0, ...(numId > 0 ? { left: 420 * (level + 1), hanging: 420 } : {}) },
         ...p.props.indent,
       };
+      const spacing = {
+        ...{ before: 0, after: 0, beforeLines: 0, afterLines: 0, line: 240, lineRule: 'auto' as const },
+        ...{ beforeAutospacing: false, afterAutospacing: false },
+        ...p.props.spacing,
+      };
       return {
         id: p.id,
+        // 测试树没有字号，一个字按三号字 16pt 算
+        charUnit: 320,
         props: {
           justification: p.props.justification ?? 'both',
           indent,
+          spacing,
           numbering: numId > 0 ? { numId, level, label: { format } as never } : { numId, level },
         },
       };
@@ -803,6 +811,55 @@ describe('列表层级', () => {
     expect(spacing(1)?.line).toBe(360);
   });
 
+  it('Ctrl+T 首行不动、左缩进推到下一个制表位；字符单位换成 twips；Ctrl+Shift+T 退到没有悬挂为止', () => {
+    const { editor, state } = list([-1, -1, -1]);
+    const indent = (i: number) => [...walkParagraphs(editor.body)][i]?.props.indent;
+    const zero = { leftChars: 0, hangingChars: 0, firstLineChars: 0 };
+    editor.tx((tx) => {
+      // 公文正文：首行缩进两字（640），左缩进 0
+      tx.setParagraphProps({ start: at('r1'), end: at('r1') }, { indent: { firstLineChars: 200 } });
+    });
+    state.select({ start: at('r0', 1), end: at('r1', 1) });
+    state.hangingIndent('in');
+    expect([indent(0), indent(1)]).toEqual([
+      { left: 420, hanging: 420, firstLine: 0, ...zero },
+      // 首行仍在 640：左缩进到 420，还差的 220 是首行缩进
+      { left: 420, hanging: 0, firstLine: 220, ...zero },
+    ]);
+    state.hangingIndent('in');
+    expect(indent(1)).toEqual({ left: 840, hanging: 200, firstLine: 0, ...zero });
+    state.hangingIndent('out');
+    state.hangingIndent('out');
+    expect([indent(0), indent(1)]).toEqual([
+      { left: 0, hanging: 0, firstLine: 0, ...zero },
+      // 退到首行就停，不会退回 420 变成首行缩进
+      { left: 640, hanging: 0, firstLine: 0, ...zero },
+    ]);
+    const before = editor.body;
+    state.hangingIndent('out');
+    expect(editor.body).toBe(before);
+    editor.undo();
+    expect(indent(0)).toEqual({ left: 420, hanging: 420, firstLine: 0, ...zero });
+  });
+
+  it('Ctrl+0 段前间距在 0 与 12pt 之间切换，行单位与自动间距一并清掉', () => {
+    const { editor, state } = list([-1, -1, -1]);
+    const spacing = (i: number) => [...walkParagraphs(editor.body)][i]?.props.spacing;
+    editor.tx((tx) => {
+      tx.setParagraphProps({ start: at('r0'), end: at('r0') }, { spacing: { beforeLines: 50 } });
+    });
+    state.select({ start: at('r0', 1), end: at('r1') });
+    state.toggleSpaceBefore();
+    expect([spacing(0), spacing(1)]).toEqual([
+      { before: 240, beforeLines: 0, beforeAutospacing: false },
+      { before: 240, beforeLines: 0, beforeAutospacing: false },
+    ]);
+    state.toggleSpaceBefore();
+    expect(spacing(1)).toEqual({ before: 0, beforeLines: 0, beforeAutospacing: false });
+    editor.undo();
+    expect(spacing(1)?.before).toBe(240);
+  });
+
   it('新建列表：普通段套用新定义，再按一次取消；一次撤销连定义回退', () => {
     const { editor, state, numbering } = list([-1, -1, -1]);
     state.select({ start: at('r0', 1), end: at('r1', 1) });
@@ -929,5 +986,53 @@ describe('列表层级', () => {
     editor.undo();
     editor.undo();
     expect(texts()).toEqual(['甲乙丙']);
+  });
+
+  it('粘贴里的 U+000C：正文里插成分页符，单元格里退成软换行而不是整次回滚', () => {
+    const breaks = (editor: TextEditor) =>
+      [...walkParagraphs(editor.body)]
+        .flatMap((p) => p.runs.flatMap((r) => r.content))
+        .flatMap((c) => (c.kind === 'break' ? [c.breakType] : []));
+    const { editor, state } = setup('甲乙');
+    state.select({ start: at('r', 1), end: at('r', 1) });
+    state.insertParagraphs([{ runs: [{ text: '前\f后', patch: {} }] }]);
+    expect(breaks(editor)).toEqual(['page']);
+    const cell = createTextEditor({
+      sections: [
+        {
+          id: 's',
+          props: DEFAULT_SECTION_PROPS,
+          blocks: [
+            {
+              kind: 'table',
+              id: 't',
+              props: {},
+              grid: [],
+              rows: [
+                {
+                  kind: 'row',
+                  id: 'tr',
+                  props: {},
+                  cells: [
+                    {
+                      kind: 'cell',
+                      id: 'tc',
+                      props: {},
+                      gridSpan: 1,
+                      vMerge: 'none',
+                      blocks: [{ kind: 'paragraph', id: 'p', props: {}, runs: [run('r', '格')] }],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const inCell = createEditingController(cell);
+    inCell.select({ start: at('r', 1), end: at('r', 1) });
+    inCell.insertParagraphs([{ runs: [{ text: '前\f后', patch: {} }] }]);
+    expect(breaks(cell)).toEqual(['line']);
   });
 });

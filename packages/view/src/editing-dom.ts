@@ -218,6 +218,12 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
     // Cmd+数字切标签页，都到不了页面。Windows 的 Ctrl+数字同样被浏览器截走，行距那三个键在那里不生效。
     else if (event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === 'm')
       action = () => state.indent(event.shiftKey ? 'out' : 'in');
+    // Ctrl+T / Ctrl+Shift+T 悬挂缩进、Ctrl+0 段前间距。同样只认 Ctrl；Windows 上 Chrome 把
+    // Ctrl+T（新标签页）与 Ctrl+0（重置缩放）截走，这两个键只在 Mac 上到得了页面。
+    else if (event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === 't')
+      action = () => state.hangingIndent(event.shiftKey ? 'out' : 'in');
+    else if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && event.key === '0')
+      action = () => state.toggleSpaceBefore();
     else if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && event.key in LINE_KEYS) {
       const multiple = LINE_KEYS[event.key] as 1 | 1.5 | 2;
       action = () => state.lineSpacing(multiple);

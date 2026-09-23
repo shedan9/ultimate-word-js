@@ -147,4 +147,16 @@ style='font:7.0pt "Times New Roman"'>&nbsp;&nbsp; </span></span><![endif]><b>要
     ]);
     expect(parse('<img src="a.png"><style>p{}</style>')).toEqual([]);
   });
+
+  it('分页符按 Word 的写法出入：自己复制的读回 U+000C，Word 写在段首的也留住，普通 <br> 仍是软换行', () => {
+    const html = fragmentToHtml({
+      paragraphs: [{ justification: 'left', runs: [{ text: '甲\f乙', props: base }] }],
+    });
+    expect(html).toContain('page-break-before:always');
+    expect(parse(html)[0]?.runs.map((r) => r.text)).toEqual(['甲\f乙']);
+    const word =
+      "<html xmlns:o='urn:schemas-microsoft-com:office:office'><body><p class=MsoNormal>前</p>" +
+      "<p class=MsoNormal><span><br clear=all style='mso-special-character:line-break;page-break-before:always'></span>后<br>尾</p></body></html>";
+    expect(parse(word).map((p) => p.runs.map((r) => r.text).join(''))).toEqual(['前', '\f后\n尾']);
+  });
 });

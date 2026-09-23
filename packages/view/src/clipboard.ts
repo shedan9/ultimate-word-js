@@ -67,6 +67,9 @@ function runStyle(props: FragmentRun['props']): string {
   return style.join(';');
 }
 
+/** Word 写分页符的原样：粘进 Word 仍是分页符，浏览器与我们自己都认 `page-break-before`。 */
+const PAGE_BREAK_HTML = '<br clear="all" style="mso-special-character:line-break;page-break-before:always">';
+
 /**
  * 片段写成剪贴板 HTML。一段一个 `<p>`（含空段 —— 选到下一段开头时末尾那个空 `<p>`
  * 正是纯文本里的那个换行），`pre-wrap` 保住公文里「版    本」那种连续空格。
@@ -77,7 +80,7 @@ export function fragmentToHtml(fragment: RichFragment): string {
       const runs = p.runs
         .map(
           (r) =>
-            `<span style="${escapeAttr(runStyle(r.props))}">${escapeText(r.text).replace(/\n/g, '<br>')}</span>`,
+            `<span style="${escapeAttr(runStyle(r.props))}">${escapeText(r.text).replace(/\n/g, '<br>').replace(/\f/g, PAGE_BREAK_HTML)}</span>`,
         )
         .join('');
       return `<p style="margin:0;white-space:pre-wrap;text-align:${CSS_ALIGN[p.justification]}">${runs}</p>`;
@@ -402,6 +405,15 @@ export function htmlToParagraphs(html: string, parser: DOMParser): PasteParagrap
         continue;
       // Word 用 <o:p>&nbsp;</o:p> 占住空段落的段落标记，那个空格不是正文。
       if (tag === 'O:P' && !el.textContent?.replace(/[\s\u00a0]/g, '')) continue;
+      // 带 page-break-before 的 <br> 是 Word 写的分页符（常在下一段的段首），段首也要留住，记成 U+000C。
+      if (
+        tag === 'BR' &&
+        /^(always|page)$/i.test(style.get('page-break-before') ?? style.get('break-before') ?? '')
+      ) {
+        append('\f', state);
+        space = true;
+        continue;
+      }
       // 有字的段里 <br> 是软换行；空段里的 <br> 是浏览器给空行占位的（<div><br></div>），就是一个空段。
       if (tag === 'BR') {
         if (current?.runs.length) {

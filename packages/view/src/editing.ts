@@ -30,10 +30,15 @@ import { paragraphNavigation } from './text-navigation.ts';
 export type ToggleFormat = 'bold' | 'italic' | 'underline';
 /** 选区当前的最终格式（级联后），切换按「全部都是才取消」判断。 */
 export type FormatQuery = (range: DocRange) => readonly Pick<ResolvedRunProps, ToggleFormat>[];
-/** 选区触及段落的级联对齐、编号与缩进。 */
-export type ParagraphQuery = (
-  range: DocRange,
-) => readonly { id: NodeId; props: Pick<ResolvedParaProps, 'justification' | 'numbering' | 'indent'> }[];
+/**
+ * 选区触及段落的级联对齐、编号、缩进与段距。`charUnit` 是字符单位缩进里一个字的宽度（twips，
+ * 见 `@uw/layout` 的 `indentCharUnit`）；没有它就换算不了 `w:leftChars`，Ctrl+T 遇到字符单位时不动。
+ */
+export type ParagraphQuery = (range: DocRange) => readonly {
+  id: NodeId;
+  props: Pick<ResolvedParaProps, 'justification' | 'numbering' | 'indent' | 'spacing'>;
+  charUnit?: number;
+}[];
 
 /** Word 的列表只有 0–8 九级（`w:ilvl`）。 */
 const MAX_LIST_LEVEL = 8;
@@ -43,6 +48,8 @@ const MAX_LIST_LEVEL = 8;
  * 「默认制表位 2 字符」取的，**没有与 Word 的增加缩进量逐格对过**。
  */
 const INDENT_CHARS_STEP = 200;
+/** Ctrl+0 加的段前间距：Word 的「一行」按 12pt 算，与段落字号无关。 */
+const SPACE_BEFORE = 240;
 
 export interface EditingOptions {
   /** Ctrl+M 的步长（`w:defaultTabStop`，twips）；缺省 420，中文版 Word 的默认值。 */
@@ -75,6 +82,14 @@ export interface EditingController {
    * 选区全是列表段落时改为逐段升降级 —— Word 的「增加缩进量」在列表上就是降一级。
    */
   indent(direction: 'in' | 'out'): void;
+  /**
+   * Word 的 Ctrl+T / Ctrl+Shift+T：首行原地不动，其余行（左缩进）推到下一个 / 退到上一个默认制表位的整数倍，
+   * 差出来的就是悬挂缩进。退只在已有悬挂时退，且不退过首行 —— 不会反过来变成首行缩进。
+   * 结果一律写 twips 并把字符单位清零（字符单位优先，留着会盖掉新值）。
+   */
+  hangingIndent(direction: 'in' | 'out'): void;
+  /** Word 的 Ctrl+0：段前间距在 0 与 12pt 之间切换，选区全都已有段前间距才取消。 */
+  toggleSpaceBefore(): void;
   /** Word 的 Ctrl+1 / 2 / 5：单倍 / 双倍 / 1.5 倍行距，改为多倍行距规则（固定值行距一并改掉）。 */
   lineSpacing(multiple: 1 | 1.5 | 2): void;
   insert(text: string, input?: boolean): void;
@@ -105,6 +120,13 @@ export interface EditingController {
 }
 
 const underlined = (value: string) => value !== 'none' && value !== '';
+
+/** 粘贴文字里代表非文字片段的控制字符。 */
+const INLINE_PIECES: ReadonlyMap<string, InlineKind> = new Map([
+  ['\t', 'tab'],
+  ['\n', 'lineBreak'],
+  ['\f', 'pageBreak'],
+]);
 
 export function createEditingController(
   editor: TextEditor,
@@ -221,6 +243,8 @@ export function createEditingController(
     const host = [...walkParagraphs(editor.body)].find(
       (p) => p.id === first.nodeId || p.runs.some((r) => r.id === first.nodeId),
     );
+    // 拆段不出容器：光标在正文顶层，粘进来的每一段就都在顶层。
+    const topLevel = editor.body.sections.some((s) => s.blocks.some((b) => b.id === host?.id));
     // 插入的文字继承左边的 run —— 前一块刚粘进来的那个。前一块改过、这一块没写的格式，
     // 要显式还原成光标处原来的直接格式，否则「粗体 + 普通」粘出来是两段粗体。
     const destination: RunProps =
@@ -246,17 +270,16 @@ export function createEditingController(
               if (!(key in run.patch)) reset[key] = destination[key as keyof RunProps] ?? null;
             const patch: RunPropsPatch = { ...(reset as RunPropsPatch), ...format, ...run.patch };
             for (const key of Object.keys(patch)) touched.add(key);
-            // 段内的 \t / \n 是制表位与软换行（Tab、Shift+Enter、HTML 的 <br>），不是分段。
-            for (const piece of run.text.replace(/\r/g, '').split(/([\t\n])/)) {
+            // 段内的 \t / \n / \f 是制表位、软换行与分页符（Tab、Shift+Enter、HTML 的 <br>），不是分段。
+            for (const piece of run.text.replace(/\r/g, '').split(/([\t\n\f])/)) {
               if (!piece) continue;
-              at =
-                piece === '\t'
-                  ? tx.insertInline(at, 'tab')
-                  : piece === '\n'
-                    ? tx.insertInline(at, 'lineBreak')
-                    : tx.insertText(at, piece);
-              // 空段落首次输入会先建 run，插入起点只能从返回的终点倒推；制表位 / 换行的长度是 1。
-              const length = piece === '\t' || piece === '\n' ? 1 : piece.length;
+              const inline = INLINE_PIECES.get(piece);
+              // 单元格里事务不收分页符（Word 会拆表），退成软换行，别让整次粘贴回滚。
+              at = inline
+                ? tx.insertInline(at, inline === 'pageBreak' && !topLevel ? 'lineBreak' : inline)
+                : tx.insertText(at, piece);
+              // 空段落首次输入会先建 run，插入起点只能从返回的终点倒推；这些片段的长度是 1。
+              const length = inline ? 1 : piece.length;
               if (Object.keys(patch).length)
                 at = tx.setRunProps({ start: { ...at, offset: at.offset - length }, end: at }, patch).end;
             }
@@ -369,6 +392,63 @@ export function createEditingController(
               : { left: step(left, tabStop) };
           if (at) tx.setParagraphProps({ start: at, end: at }, { indent: patch });
         }
+      });
+    },
+    hangingIndent(direction) {
+      if (!selection || composing || !paragraphsOf) return;
+      const items = paragraphsOf(selection);
+      const starts = items.map((p) => paragraphStart(p.id));
+      const patches = items.map((item) => {
+        const ind = item.props.indent;
+        const chars = ind.leftChars !== 0 || ind.firstLineChars !== 0 || ind.hangingChars !== 0;
+        if (chars && !(item.charUnit && item.charUnit > 0)) return undefined;
+        const unit = item.charUnit ?? 0;
+        // 与布局的 indentGeometry 同一套取舍：字符单位优先、hanging 压过 firstLine
+        const left = ind.leftChars !== 0 ? (ind.leftChars / 100) * unit : ind.left;
+        const hanging = ind.hangingChars !== 0 ? (ind.hangingChars / 100) * unit : ind.hanging;
+        const firstLine = ind.firstLineChars !== 0 ? (ind.firstLineChars / 100) * unit : ind.firstLine;
+        const first = hanging !== 0 ? left - hanging : left + firstLine;
+        if (direction === 'out' && first >= left) return undefined;
+        const next =
+          direction === 'in'
+            ? (Math.floor(left / tabStop) + 1) * tabStop
+            : Math.max(first, 0, (Math.ceil(left / tabStop) - 1) * tabStop);
+        const diff = Math.round(next - first);
+        return {
+          left: Math.round(first) + diff,
+          leftChars: 0,
+          hanging: Math.max(0, diff),
+          hangingChars: 0,
+          firstLine: Math.max(0, -diff),
+          firstLineChars: 0,
+        };
+      });
+      if (!patches.some(Boolean)) return;
+      editor.breakHistory();
+      pending = undefined;
+      editor.tx((tx) => {
+        for (const [i, patch] of patches.entries()) {
+          const at = starts[i];
+          if (at && patch) tx.setParagraphProps({ start: at, end: at }, { indent: patch });
+        }
+      });
+    },
+    toggleSpaceBefore() {
+      if (!selection || composing || !paragraphsOf) return;
+      const range = selection;
+      const items = paragraphsOf(range);
+      if (!items.length) return;
+      const spaced = items.every(
+        (p) =>
+          p.props.spacing.before > 0 || p.props.spacing.beforeLines > 0 || p.props.spacing.beforeAutospacing,
+      );
+      editor.breakHistory();
+      pending = undefined;
+      // 行单位与自动间距都压过 before，必须一起清掉，否则写进去的 12pt 不生效。
+      editor.tx((tx) => {
+        tx.setParagraphProps(range, {
+          spacing: { before: spaced ? 0 : SPACE_BEFORE, beforeLines: 0, beforeAutospacing: false },
+        });
       });
     },
     lineSpacing(multiple) {

@@ -1045,7 +1045,13 @@ await view.toPNG(3);     // 第 3 页
 - ✅ **缩进 / 行距快捷键**（2026-09-23）：Ctrl+M / Ctrl+Shift+M 推 / 退到默认制表位整数倍（门面传
   `settings.defaultTabStop`），字符单位缩进按两字挪，全列表选区改层级；Ctrl+1 / 2 / 5 设多倍行距。
   只认 Ctrl（Cmd+M / Cmd+数字归系统与浏览器），Windows 的 Ctrl+数字被浏览器截走、行距键不生效。
-  2 项控制器单测，编辑浏览器回归增至 132 项。未做：Ctrl+T 悬挂缩进、Ctrl+0 段前 12pt。
+  2 项控制器单测，编辑浏览器回归增至 132 项。
+- ✅ **Ctrl+T 悬挂缩进 / Ctrl+0 段前间距**（2026-09-23）：`hangingIndent('in' | 'out')` 首行原地不动、左缩进推 / 退到默认
+  制表位整数倍，差值写成悬挂（首行还在左缩进右边时写成首行缩进）；退只在已有悬挂时退、不退过首行。字符单位缩进先换成 twips ——
+  门面给 `ParagraphQuery` 带上 `charUnit`（`@uw/layout` 新导出的 `indentCharUnit`，与排版的 `charUnit` 同一条规则），
+  结果写 twips、字符单位清零（字符单位优先，留着会盖掉新值）。`toggleSpaceBefore()` 段前 0 ↔ 12pt，清掉 `beforeLines` 与自动间距。
+  Windows 上 Chrome 截走 Ctrl+T / Ctrl+0，只在 Mac 上到得了页面。规则照 Word 界面行为写，未逐格对过。
+  2 项控制器单测 + 1 项布局单测，编辑浏览器回归增至 164 项（含下一条的剪贴板 3 项）。
 - ✅ **富文本剪贴板**（2026-09-23）：`fragmentOfRange()` 给出级联后的带格式片段（`textOfRange` 由它拼出，两份剪贴板取舍一致），
   复制 / 剪切同时写 `text/html`，照 Word 的 `mso-ascii/hansi/fareast-font-family` 写法出字体分桶。
   粘贴优先 HTML：自己 / Word / WPS 保留源格式（字体、字号、颜色、对齐），网页只带开关且只加不减；
@@ -1064,7 +1070,9 @@ await view.toPNG(3);     // 第 3 页
   再在它后面拆段（Word 2013 起分页符后跟段落标记；照界面行为写，没有真值样本）。Ctrl+Enter / Cmd+Return 接管，
   Ctrl+Shift+Enter（分栏符）不接管。布局与回写原本就认分页符，没改。单元格里事务拒绝（Word 会拆表）。
   1 项事务单测 + 1 项控制器单测 + 1 项回写单测，编辑浏览器回归增至 156 项（页数 +1、新段落与光标落到下一页、一次撤销）。
-  未做：复制粘贴时分页符按软换行处理（`text/html` 没写 `page-break-before`）。
+  复制粘贴（同日补上）：分页 / 分栏符在 `fragmentOfRange` 里记 U+000C，`text/html` 写 Word 的
+  `<br clear=all style="mso-special-character:line-break;page-break-before:always">`，纯文本仍是换行；粘贴认
+  `page-break-before` / `break-before: page` 的 `<br>`（Word 常写在下一段段首，空段首也留住），单元格里退成软换行。
 - 事务系统 + undo/redo：文字模型层已完成，段落结构、字符 / 段落格式、列表层级与门面已接入
 - 基础命令集：输入/删除/粘贴（纯文本 ✅ + HTML ✅ + docx 片段）、加粗斜体 ✅、段落属性 ✅、列表（层级 ✅ / 新建 ✅）
 - 🟡 **增量排版第一步：段落缓存**（2026-09-22）：`ParagraphLayoutCache` 已接入门面加载 / 事务 /

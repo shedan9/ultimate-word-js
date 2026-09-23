@@ -477,7 +477,7 @@ function scaledWidth(advance: Twips, props: ResolvedRunProps): Twips {
 }
 
 /** 上下标与小型大写都是**换个字号去量**，两个系数都还没标定，见 uncalibrated.ts */
-function effectiveSize(props: ResolvedRunProps): Twips {
+export function effectiveSize(props: ResolvedRunProps): Twips {
   if (props.vertAlign !== 'baseline') return props.size * VERT_ALIGN_SCALE;
   return props.size;
 }

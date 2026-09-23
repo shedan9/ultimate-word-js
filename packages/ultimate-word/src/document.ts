@@ -13,6 +13,7 @@
  */
 import type { Diagnostic } from '@uw/core';
 import type { DocumentLayout } from '@uw/layout';
+import { indentCharUnit } from '@uw/layout';
 import type {
   DirectProps,
   DocPosition,
@@ -222,7 +223,8 @@ export class UwDocument {
         text: (range) => textOfRange(this.#loaded.resolved, range, this.#fieldValues),
         fragment: (range) => fragmentOfRange(this.#loaded.resolved, range, this.#fieldValues),
         format: (range) => runPropsOfRange(this.#loaded.resolved, range),
-        paragraphFormat: (range) => paragraphsOfRange(this.#loaded.resolved, range),
+        paragraphFormat: (range) =>
+          paragraphsOfRange(this.#loaded.resolved, range).map((p) => ({ ...p, charUnit: indentCharUnit(p) })),
         tabStop: this.#loaded.cascade.settings.defaultTabStop,
         subscribe: (listener) => {
           this.#listeners.add(listener);

@@ -19,7 +19,10 @@ export interface RichFragment {
   paragraphs: FragmentParagraph[];
 }
 
-/** 复制模型选区：自动折行不换行，段落（包括空段与单元格内段落）之间保留一个换行。 */
+/**
+ * 复制模型选区：自动折行不换行，段落（包括空段与单元格内段落）之间保留一个换行。
+ * 分页符在片段里是 U+000C，纯文本里写成换行 —— 别的程序收到换页符多半画成一个方框。
+ */
 export function textOfRange(
   body: ResolvedBody,
   range: DocRange,
@@ -27,7 +30,8 @@ export function textOfRange(
 ): string {
   return fragmentOfRange(body, range, fieldValues)
     .paragraphs.map((p) => p.runs.map((r) => r.text).join(''))
-    .join('\n');
+    .join('\n')
+    .replace(/\f/g, '\n');
 }
 
 /**
@@ -112,7 +116,9 @@ function contentText(content: RunContent): string {
     case 'tab':
       return '\t';
     case 'break':
-      return '\n';
+      // 分页 / 分栏符记成 U+000C（Word 的 Range.Text 也这么表示），富文本复制要靠它写出
+      // page-break-before，否则粘回来只剩软换行
+      return content.breakType === 'line' ? '\n' : '\f';
     case 'symbol':
       return String.fromCodePoint(content.char.codePointAt(0) ?? 0xfffd);
     case 'noBreakHyphen':
