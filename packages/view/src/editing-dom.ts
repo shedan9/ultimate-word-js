@@ -225,6 +225,9 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
     // Word 的 Ctrl+Shift+L 是「列表项目符号」样式；样式不一定存在，这里直接套项目符号列表。
     else if (mod && !event.altKey && event.shiftKey && event.key.toLowerCase() === 'l')
       action = () => state.toggleList('bullet');
+    // Word 的 Ctrl+Enter（Mac 上 Cmd+Return）插分页符；Ctrl+Shift+Enter 是分栏符，单栏文档里没有意义，不接管。
+    else if (mod && !event.altKey && !event.shiftKey && event.key === 'Enter')
+      action = () => state.pageBreak();
     else if (mod && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'a')
       action = () => state.selectAll();
     else if (mod && !event.altKey && !event.shiftKey && event.key.toLowerCase() in TOGGLE_KEYS) {

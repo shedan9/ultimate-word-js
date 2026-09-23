@@ -912,4 +912,22 @@ describe('列表层级', () => {
     editor.undo();
     expect(texts()).toEqual(['甲乙']);
   });
+
+  it('Ctrl+Enter 的控制器入口：替换选区，分页符留在前一段末尾、光标落到新段段首，一次撤销', () => {
+    const { editor, state, texts } = setup('甲乙丙');
+    state.select({ start: at('r', 1), end: at('r', 2) });
+    state.pageBreak();
+    expect(texts()).toEqual(['甲\n', '丙']);
+    const [first, second] = [...walkParagraphs(editor.body)];
+    // 删选区留下的空文字槽不算（与文字删空同一约定）
+    const content = first?.runs.flatMap((r) => r.content).filter((c) => c.kind !== 'text' || c.text);
+    expect(content?.at(-1)).toEqual({ kind: 'break', breakType: 'page' });
+    expect(state.selection?.start.nodeId).toBe(second?.runs[0]?.id);
+    expect(state.selection?.start.offset).toBe(0);
+    state.insert('丁');
+    expect(texts()).toEqual(['甲\n', '丁丙']);
+    editor.undo();
+    editor.undo();
+    expect(texts()).toEqual(['甲乙丙']);
+  });
 });

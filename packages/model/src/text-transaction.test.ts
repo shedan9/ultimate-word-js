@@ -312,6 +312,39 @@ describe('文字事务', () => {
     ).toThrow('未知');
   });
 
+  it('分页符插成 w:br type=page，能删；单元格里拒绝且不留半截修改', () => {
+    const editor = createTextEditor(
+      parse(
+        '<w:p><w:r><w:t>甲乙</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>丙</w:t></w:r></w:p></w:tc></w:tr></w:tbl>',
+      ),
+    );
+    const before = editor.body;
+    let at = pos(before);
+    editor.tx((t) => {
+      at = t.insertInline(pos(before, 1), 'pageBreak');
+    });
+    expect(para(editor.body).runs[0]?.content).toEqual([
+      { kind: 'text', text: '甲' },
+      { kind: 'break', breakType: 'page' },
+      { kind: 'text', text: '乙' },
+    ]);
+    editor.tx((t) => {
+      t.deleteRange({ start: { ...at, offset: 0 }, end: at });
+    });
+    expect(
+      para(editor.body)
+        .runs.flatMap((r) => r.content)
+        .filter((c) => c.kind === 'break'),
+    ).toEqual([]);
+    const current = editor.body;
+    expect(() =>
+      editor.tx((t) => {
+        t.insertInline(pos(current, 1, 0, 0, 1), 'pageBreak');
+      }),
+    ).toThrow('表格');
+    expect(editor.body).toBe(current);
+  });
+
   it.each([
     '<w:fldSimple w:instr="PAGE"><w:r><w:t>1</w:t></w:r></w:fldSimple>',
     '<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText>PAGE</w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>',

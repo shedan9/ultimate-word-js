@@ -65,8 +65,11 @@ export interface TextTransaction {
   addList(kind: ListKind): number;
 }
 
-/** `insertInline` 能插的两种非文字片段。 */
-export type InlineKind = 'tab' | 'lineBreak';
+/**
+ * `insertInline` 能插的非文字片段。`pageBreak` 只插 `w:br w:type="page"` 本身 ——
+ * Word 的 Ctrl+Enter 还要在它后面拆段，那是命令层（view 的 `pageBreak()`）的事。
+ */
+export type InlineKind = 'tab' | 'lineBreak' | 'pageBreak';
 
 /**
  * 删除选区时可以删掉的非文字片段。对象（图片）、域界桩不在其中 —— 删了回不来的东西
@@ -718,11 +721,19 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
                 ? { kind: 'tab' }
                 : kind === 'lineBreak'
                   ? { kind: 'break', breakType: 'line' }
-                  : (() => {
-                      throw new TypeError(`未知的行内片段：${String(kind)}`);
-                    })();
+                  : kind === 'pageBreak'
+                    ? { kind: 'break', breakType: 'page' }
+                    : (() => {
+                        throw new TypeError(`未知的行内片段：${String(kind)}`);
+                      })();
             position = materialize(position);
             flush();
+            // 单元格里的分页符 Word 会把整张表从这一行拆开，表格结构编辑还没有；
+            // 照插的话布局只在格内截断、表格不拆，屏幕上看不出分页。
+            if (kind === 'pageBreak') {
+              const host = paragraphAt(entryAt(position).paragraph.id).blocks;
+              if (!draft.sections.some((s) => s.blocks === host)) throw new Error('表格里不能插分页符');
+            }
             const index = insertContent(position, item);
             return { nodeId: position.nodeId, contentIndex: index, offset: 1 };
           });

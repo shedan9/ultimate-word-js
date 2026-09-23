@@ -86,6 +86,11 @@ export interface EditingController {
   insertParagraphs(paragraphs: readonly PasteParagraph[]): void;
   /** Word 的 Tab（非列表位置）与 Shift+Enter：替换选区，插入制表位 / 软换行，用上暂存格式。 */
   insertInline(kind: InlineKind): void;
+  /**
+   * Word 的 Ctrl+Enter：替换选区，插入分页符并紧接着拆段 —— Word 2013 起分页符后面跟一个段落标记，
+   * 后文从新的一段、新的一页开始，而不是同一段接着排。单元格里不插（事务拒绝，模型不变）。
+   */
+  pageBreak(): void;
   enter(): void;
   delete(direction: 'backward' | 'forward', granularity?: TextGranularity): void;
   move(direction: 'backward' | 'forward', extend?: boolean, granularity?: TextGranularity): void;
@@ -417,7 +422,23 @@ export function createEditingController(
       if (paragraphs.length) insertParagraphs(paragraphs, 'command');
     },
     insertInline(kind) {
+      if (kind === 'pageBreak') {
+        controller.pageBreak();
+        return;
+      }
       insertParagraphs([{ runs: [{ text: kind === 'tab' ? '\t' : '\n', patch: {} }] }], 'command');
+    },
+    pageBreak() {
+      if (!selection || composing) return;
+      const range = selection;
+      let at = range.start;
+      editor.breakHistory();
+      pending = undefined;
+      editor.tx((tx) => {
+        if (!equal(range.start, range.end)) at = tx.deleteRange(range);
+        at = tx.splitParagraph(tx.insertInline(at, 'pageBreak'));
+      });
+      collapse(at);
     },
     enter() {
       if (!selection || composing) return;

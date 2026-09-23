@@ -367,7 +367,8 @@ editor.breakHistory(); // 光标移动、焦点切换等输入边界中断合并
 
 - `t.insertText(position, text)` 返回插入后的光标位置；文字不能含换行、制表位或孤立代理项。
   位置落在制表位 / 换行上时写进紧挨着的文字片段，没有就补一个空文字片段。
-- `t.insertInline(position, 'tab' | 'lineBreak')`（2026-09-23）插入 `w:tab` / `w:br`（软换行，不结束段落），
+- `t.insertInline(position, 'tab' | 'lineBreak' | 'pageBreak')`（2026-09-23）插入 `w:tab` / `w:br`（软换行，不结束段落）/
+  `w:br w:type="page"`（只插分页符本身，不拆段；单元格里抛错 —— Word 会从那一行拆表，表格结构编辑还没有），
   返回它后面的位置；文字中间切成「前半 / 片段 / 后半」，片段边界上不造空文字，后面的片段下标随之后移（位置由变更集映射）。
 - `t.deleteRange(range)` 返回删除起点，支持跨 run / 文字片段，以及同一块容器内连续段落；合段保留前段格式和剩余 run 的样式 / 链接。
   只接受正向范围；位置按 UTF-16 计数，但不能切开合法代理对。
@@ -461,7 +462,9 @@ Ctrl/Cmd+L / E / R / J 设置左 / 居中 / 右 / 两端对齐，作用于选区
 选区与光标不变，一次一个撤销单元。`paragraphsOfRange(resolvedBody, range)` 返回选区触及的级联段落节点。
 列表段落（画出了编号的段落）按 Word 的习惯编辑：段首光标或整段都是列表的选区里，Tab / Shift+Tab
 逐段降 / 升一级（0–8）；其余位置 Tab 插入制表位（Word 的行为），Shift+Tab 不接管 —— 留给浏览器把焦点移出编辑区。
-Shift+Enter 插入软换行（换行不分段，段落格式与编号不变）。
+Shift+Enter 插入软换行（换行不分段，段落格式与编号不变）。Ctrl+Enter（Mac 上 Cmd+Return）插入分页符并**紧接着拆段** ——
+Word 2013 起分页符后面跟一个段落标记，后文从新段落、新一页开始（照 Word 界面行为写的，没有真值样本）；
+控制器入口 `pageBreak()`，一个撤销单元；单元格里不插。Ctrl+Shift+Enter（分栏符）不接管。
 空列表项上 Enter 先升一级、到顶层即取消编号，不再拆出新空项；段首 Backspace 先取消编号，再按一次才合段。
 Ctrl/Cmd+Shift+L 套用 / 取消项目符号列表（Word 这个键套用「列表项目符号」样式；样式不一定存在，这里直接套定义）；
 控制器的 `toggleList('bullet' | 'decimal')` 是同一条路，全是这一种列表时取消，否则紧邻上一段是同类列表就接着它数、

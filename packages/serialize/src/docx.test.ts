@@ -136,6 +136,20 @@ describe('编辑后重新加载，正文结构与编辑结果一致', () => {
     expect(paragraphs(again.body)[0]?.runs[1]?.hyperlink).toEqual({ relId: 'rId9' });
     expect(decoder.decode(unzip(out).get('word/document.xml'))).toContain('<w:hyperlink r:id="rId9">');
   });
+
+  it('分页符 + 拆段：写成 w:br w:type="page"，重新加载仍是分页符', () => {
+    const bytes = docx('<w:p><w:r><w:t>甲乙</w:t></w:r></w:p>');
+    const { edited, again, out } = roundTrip(bytes, (t, body) => {
+      const run = (paragraphs(body)[0] as Paragraph).runs[0];
+      if (run) t.splitParagraph(t.insertInline({ nodeId: run.id, contentIndex: 0, offset: 1 }, 'pageBreak'));
+    });
+    expect(shape(again.body)).toEqual(shape(edited));
+    expect(paragraphs(again.body)[0]?.runs.flatMap((r) => r.content)).toContainEqual({
+      kind: 'break',
+      breakType: 'page',
+    });
+    expect(decoder.decode(unzip(out).get('word/document.xml'))).toContain('<w:br w:type="page"/>');
+  });
 });
 
 describe('空段落', () => {
