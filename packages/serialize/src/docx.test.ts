@@ -399,3 +399,83 @@ describe('表格的行', () => {
     expect(decoder.decode(unzip(all.out).get('word/document.xml'))).not.toContain('<w:tbl>');
   });
 });
+
+describe('表格的列', () => {
+  const border = '<w:tcBorders><w:top w:val="single" w:sz="4"/></w:tcBorders>';
+  const cell = (text: string, w: number, pr = '') =>
+    `<w:tc><w:tcPr><w:tcW w:w="${w}" w:type="dxa"/>${pr}${border}</w:tcPr><w:p><w:pPr><w:jc w:val="center"/></w:pPr>${text ? `<w:r><w:t>${text}</w:t></w:r>` : ''}</w:p></w:tc>`;
+  const table =
+    '<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:w="5000" w:type="dxa"/><w:tblLook w:val="04A0"/></w:tblPr>' +
+    '<w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="3000"/></w:tblGrid>' +
+    `<w:tr w14:paraId="11111111">${cell('横', 5000, '<w:gridSpan w:val="2"/>')}</w:tr>` +
+    `<w:tr><w:trPr><w:trHeight w:val="400"/></w:trPr>${cell('甲', 2000, '<w:vMerge w:val="restart"/>')}${cell('乙', 3000)}</w:tr>` +
+    `<w:tr>${cell('', 2000, '<w:vMerge/>')}${cell('丁', 3000)}</w:tr>` +
+    '</w:tbl><w:p><w:r><w:t>表后</w:t></w:r></w:p>';
+  const find = (body: Body, text: string): DocPosition => {
+    const run = paragraphs(body)
+      .flatMap((p) => p.runs)
+      .find((r) => r.content.some((c) => c.kind === 'text' && c.text === text));
+    if (run === undefined) throw new Error(`没有「${text}」`);
+    return { nodeId: run.id, contentIndex: 0, offset: 0 };
+  };
+  const xmlOf = (out: Uint8Array) => decoder.decode(unzip(out).get('word/document.xml'));
+
+  it('插列：网格、表宽、跨列格与新格按字段改，新格抄邻格的 tcPr 与段落格式；再插行也对得上', () => {
+    const { edited, out, again } = roundTrip(docx(table), (t, body) => {
+      const caret = t.insertColumn(find(body, '甲'), 'right');
+      t.insertText(caret, '新');
+      t.insertRow(find(body, '丁'), 'below');
+    });
+    expect(shape(again.body)).toEqual(shape(edited));
+    const xml = xmlOf(out);
+    expect(xml).toContain(
+      '<w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/><w:gridCol w:w="3000"/></w:tblGrid>',
+    );
+    expect(xml).toContain('<w:tblStyle w:val="TableGrid"/><w:tblW w:w="7000" w:type="dxa"/><w:tblLook');
+    expect(xml).toContain('<w:tcW w:w="7000" w:type="dxa"/><w:gridSpan w:val="3"/>');
+    const rows = xml.split(/<w:tr[ >]/).slice(1);
+    expect(rows).toHaveLength(4);
+    // 右插抄左邻「甲」：跟着它在合并区里，边框与段落居中跟过去
+    expect(rows[1]).toMatch(
+      /<w:t>甲<\/w:t>.*<w:tcW w:w="2000" w:type="dxa"\/><w:vMerge w:val="restart"\/><w:tcBorders>.*<w:t>新<\/w:t>.*<w:t>乙<\/w:t>/,
+    );
+    expect(rows[2]?.match(/<w:vMerge\/>/g)).toHaveLength(2);
+    expect(rows[3]?.match(/<w:tc>/g)).toHaveLength(3);
+    expect(xml.match(/w14:paraId="11111111"/g)).toHaveLength(1);
+  });
+
+  it('删列：删掉的格不写，跨列格缩窄；删掉合并区首格那一列，续格没了也不留 vMerge', () => {
+    const { edited, out, again } = roundTrip(docx(table), (t, body) => {
+      t.deleteColumns({ start: find(body, '甲'), end: find(body, '甲') });
+    });
+    expect(shape(again.body)).toEqual(shape(edited));
+    const xml = xmlOf(out);
+    expect(xml).toContain('<w:tblGrid><w:gridCol w:w="3000"/></w:tblGrid>');
+    expect(xml).toContain('<w:tblW w:w="3000" w:type="dxa"/>');
+    expect(xml).not.toContain('w:gridSpan');
+    expect(xml).not.toContain('w:vMerge');
+    expect(xml).not.toContain('<w:t>甲</w:t>');
+    expect(xml).toContain('<w:trHeight w:val="400"/>');
+
+    const all = roundTrip(docx(table), (t, body) => {
+      t.deleteColumns({ start: find(body, '甲'), end: find(body, '丁') });
+    });
+    expect(shape(all.again.body)).toEqual(shape(all.edited));
+    expect(xmlOf(all.out)).not.toContain('<w:tbl>');
+  });
+
+  it('先插列再删掉全部原有列：原有格一个不剩的行照样写出新格', () => {
+    const { edited, out, again } = roundTrip(docx(table), (t, body) => {
+      const caret = t.insertColumn(find(body, '乙'), 'right');
+      t.insertText(caret, '留');
+      t.deleteColumns({ start: find(body, '甲'), end: find(body, '乙') });
+    });
+    expect(shape(again.body)).toEqual(shape(edited));
+    const rows = xmlOf(out)
+      .split(/<w:tr[ >]/)
+      .slice(1);
+    expect(rows.map((r) => r.match(/<w:tc>/g)?.length)).toEqual([1, 1, 1]);
+    expect(rows[1]).toContain('<w:t>留</w:t>');
+    expect(rows[1]).toContain('<w:trHeight w:val="400"/>');
+  });
+});

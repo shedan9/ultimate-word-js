@@ -215,3 +215,152 @@ describe('删行', () => {
     ).toThrow(/域/);
   });
 });
+
+describe('插列 / 删列', () => {
+  const grid2 = '<w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="3000"/></w:tblGrid>';
+  const tblW = (w: number) => `<w:tblPr><w:tblW w:w="${w}" w:type="dxa"/></w:tblPr>`;
+  const w = (n: number) => `<w:tcW w:w="${n}" w:type="dxa"/>`;
+  const table2 = (...rows: string[]) => `<w:tbl>${tblW(5000)}${grid2}${rows.join('')}</w:tbl>`;
+  const widths = (t: Table) => t.rows.map((r) => r.cells.map((c) => [c.gridSpan, c.props.width?.value]));
+
+  it('右插照左邻抄、网格与 dxa 表宽跟着长，光标进本行新格；撤销整表回去', () => {
+    const body = parse(
+      table2(
+        tr(tc(p('甲', '<w:jc w:val="center"/>'), w(2000)), tc(p('乙'), w(3000))),
+        tr(tc(p('丙'), w(2000)), tc(p('丁'), w(3000))),
+      ),
+    );
+    const editor = createTextEditor(body);
+    let caret: DocPosition | undefined;
+    editor.tx((t) => {
+      caret = t.insertColumn(at(body, '丙'), 'right');
+    });
+    const table = tables(editor.body)[0] as Table;
+    expect(grid(table)).toEqual([
+      ['甲', '·', '乙'],
+      ['丙', '·', '丁'],
+    ]);
+    expect(table.grid).toEqual([2000, 2000, 3000]);
+    expect(table.props.width).toEqual({ value: 7000, type: 'dxa' });
+    expect(widths(table)[0]).toEqual([
+      [1, 2000],
+      [1, 2000],
+      [1, 3000],
+    ]);
+    expect(table.rows[0]?.cells[1]?.blocks[0]).toMatchObject({ props: { justification: 'center' } });
+    expect(caret).toEqual({ nodeId: table.rows[1]?.cells[1]?.blocks[0]?.id, contentIndex: 0, offset: 0 });
+    const back = editor.undo();
+    expect(mapTextPosition(caret as DocPosition, back as never)).toEqual(at(body, '丙'));
+    expect(editor.body).toEqual(createTextEditor(body).body);
+  });
+
+  it('左插宽度取本列；跨过边界的格被撑宽，挨着纵向合并区的新格照样合并', () => {
+    const body = parse(
+      table2(
+        tr(tc(p('横'), `${w(5000)}<w:gridSpan w:val="2"/>`)),
+        tr(tc(p('纵'), `${w(2000)}<w:vMerge w:val="restart"/>`), tc(p('乙'), w(3000))),
+        tr(tc(p(''), `${w(2000)}<w:vMerge/>`), tc(p('丁'), w(3000))),
+      ),
+    );
+    const editor = createTextEditor(body);
+    editor.tx((t) => {
+      t.insertColumn(at(body, '乙'), 'left');
+    });
+    const table = tables(editor.body)[0] as Table;
+    expect(table.grid).toEqual([2000, 3000, 3000]);
+    expect(grid(table)).toEqual([['横'], ['纵', '·', '乙'], ['^', '·', '丁']]);
+    expect(widths(table)[0]).toEqual([[3, 8000]]);
+    // 左插抄的是右边那格（乙），它不在合并区里
+    expect(table.rows.slice(1).map((r) => r.cells[1]?.vMerge)).toEqual(['none', 'none']);
+    const right = createTextEditor(body);
+    right.tx((t) => {
+      t.insertColumn(at(body, '纵'), 'right');
+    });
+    expect(
+      tables(right.body)[0]
+        ?.rows.slice(1)
+        .map((r) => r.cells[1]?.vMerge),
+    ).toEqual(['restart', 'continue']);
+  });
+
+  it('删列：整格删、跨列格缩窄，被删格里的光标收拢到接替它的格', () => {
+    const body = parse(
+      `<w:tbl>${tblW(7000)}<w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/><w:gridCol w:w="3000"/></w:tblGrid>` +
+        tr(tc(p('横'), `${w(4000)}<w:gridSpan w:val="2"/>`), tc(p('尾'), w(3000))) +
+        tr(tc(p('甲'), w(2000)), tc(p('乙'), w(2000)), tc(p('丙'), w(3000))) +
+        '</w:tbl>',
+    );
+    const editor = createTextEditor(body);
+    let caret: DocPosition | undefined;
+    const changes = editor.tx((t) => {
+      caret = t.deleteColumns({ start: at(body, '乙'), end: at(body, '乙') });
+    });
+    const table = tables(editor.body)[0] as Table;
+    expect(table.grid).toEqual([2000, 3000]);
+    expect(table.props.width).toEqual({ value: 5000, type: 'dxa' });
+    expect(grid(table)).toEqual([
+      ['横', '尾'],
+      ['甲', '丙'],
+    ]);
+    expect(widths(table)[0]).toEqual([
+      [1, 2000],
+      [1, 3000],
+    ]);
+    expect(caret).toEqual(at(body, '丙'));
+    expect(mapTextPosition(at(body, '乙', 1), changes as never)).toEqual(at(body, '丙'));
+    editor.undo();
+    expect(editor.body).toEqual(createTextEditor(body).body);
+  });
+
+  it('删掉合并区首格那一列时下面的续格升成 restart；删空的行删掉，删光删表', () => {
+    const body = parse(
+      table2(
+        tr(tc(p('甲'), w(2000)), tc(p('乙'), w(3000))),
+        tr(tc(p('单'), `${w(5000)}<w:gridSpan w:val="2"/>`)),
+      ) + p('表后'),
+    );
+    const editor = createTextEditor(body);
+    editor.tx((t) => {
+      t.deleteColumns({ start: at(body, '甲'), end: at(body, '甲') });
+    });
+    expect(grid(tables(editor.body)[0] as Table)).toEqual([['乙'], ['单']]);
+    let caret: DocPosition | undefined;
+    editor.tx((t) => {
+      caret = t.deleteColumns({ start: at(body, '乙'), end: at(body, '乙') });
+    });
+    expect(tables(editor.body)).toHaveLength(0);
+    expect(caret).toEqual(at(body, '表后'));
+
+    // 首格只占第一列、续格跨两列：删第一列后首格没了，续格缩成一列，上面同列是个普通格
+    const merged = parse(
+      table2(
+        tr(tc(p('首'), `${w(2000)}<w:vMerge w:val="restart"/>`), tc(p('乙'), w(3000))),
+        tr(tc(p(''), `${w(5000)}<w:gridSpan w:val="2"/><w:vMerge/>`)),
+      ),
+    );
+    const m = createTextEditor(merged);
+    m.tx((t) => {
+      t.deleteColumns({ start: at(merged, '首'), end: at(merged, '首') });
+    });
+    const repaired = tables(m.body)[0] as Table;
+    expect(repaired.rows.map((r) => r.cells.map((c) => [c.vMerge, c.gridSpan]))).toEqual([
+      [['none', 1]],
+      [['restart', 1]],
+    ]);
+  });
+
+  it('没有网格的表拒绝插列；两端不在同一张表拒绝删列', () => {
+    const body = parse(tbl(tr(tc(p('甲')))) + tbl(tr(tc(p('乙')))));
+    const editor = createTextEditor(body);
+    expect(() =>
+      editor.tx((t) => {
+        t.insertColumn(at(body, '甲'), 'left');
+      }),
+    ).toThrow(/tblGrid/);
+    expect(() =>
+      editor.tx((t) => {
+        t.deleteColumns({ start: at(body, '甲'), end: at(body, '乙') });
+      }),
+    ).toThrow(/同一张表/);
+  });
+});

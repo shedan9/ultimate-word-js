@@ -32,11 +32,12 @@ import type {
   Table,
   TableCell,
   TableRow,
+  TableWidth,
 } from '@uw/model';
 import type { XmlDocument, XmlElement, XmlNode } from '@uw/ooxml';
 import { child } from '@uw/ooxml';
 import { PPR_ORDER, patchParaProps, patchRunProps } from './props-writer.ts';
-import { el, insertOrdered, same } from './xml-edit.ts';
+import { el, insertOrdered, patchAttrs, same, withoutChildren } from './xml-edit.ts';
 
 /** run 外面那几层会压平进 run 的容器（parse-body.ts 的 `collectRuns`） */
 const RUN_CONTAINERS = new Set([
@@ -463,17 +464,28 @@ class BodyWriter {
   }
 
   // ── 表格 ──────────────────────────────────────────────────────────────────
-  // 行可以插、可以删（`insertRow` / `deleteRows`），格的 `vMerge` 会跟着变；
-  // 列、`gridSpan` 与表格 / 行 / 格的其余属性还改不了，原样照抄
+  // 行与列都可以插、可以删（`insertRow` / `deleteRows` / `insertColumn` / `deleteColumns`），
+  // 跟着变的只有结构：`w:tblGrid`、`w:tblW`、行的 `w:gridBefore` / `w:gridAfter`、格的 `w:tcW` /
+  // `w:gridSpan` / `w:vMerge`。表格 / 行 / 格的其余属性还改不了，原样照抄
 
   #table(t: Table): XmlElement {
     const src = this.#in.sources.nodes.get(t.id);
     if (src === undefined) throw new Error(`回写时找不到表格 ${t.id} 的原文（编辑不会新建表格）`);
-    const orig = this.#orig.get(t.id);
+    const orig = this.#orig.get(t.id) as Table | undefined;
     if (same(orig, t)) return src;
     const templates = this.#rowTemplates(t.rows);
     const cur = cursor(t.rows);
-    const out = this.#tableChildren(src.children, cur, templates);
+    const out = this.#tableChildren(src.children, cur, templates).map((n) => {
+      if (n.kind !== 'element') return n;
+      if (n.name === 'w:tblPr' && !same(orig?.props.width, t.props.width))
+        return patchChild(n, 'w:tblW', t.props.width, TBLPR_ORDER);
+      if (n.name === 'w:tblGrid' && !same(orig?.grid, t.grid)) {
+        const cols = t.grid.map((w) => el('w:gridCol', { 'w:w': String(Math.round(w)) }));
+        // `w:tblGridChange`（修订）等排在 gridCol 后面的原样留着
+        return { ...n, children: [...cols, ...withoutChildren(n.children, new Set(['w:gridCol']))] };
+      }
+      return n;
+    });
     // 剩下的新行跟在最后一个 `w:tr` 后面（表格末尾一般就是它，扩展元素排在它后面的也不挪）
     const rest = t.rows.slice(cur.i).map((r) => this.#newRow(r, templates));
     const last = out.findLastIndex((n) => n.kind === 'element' && (n.name === 'w:tr' || n.name === 'w:sdt'));
@@ -498,19 +510,40 @@ class BodyWriter {
       let next: TableRow | undefined;
       for (let j = i + 1; j < rows.length && next === undefined; j++) if (isOrig(rows[j])) next = rows[j];
       const want = shape(row);
-      const pick =
-        [prev, next].find((r) => r !== undefined && same(shape(this.#origRow(r)), want)) ?? prev ?? next;
+      const pick = [prev, next].find((r) => r !== undefined && same(shape(r), want)) ?? prev ?? next;
       if (pick !== undefined) out.set(row.id, pick);
     });
     return out;
   }
 
-  /** 原有行在**原文**里的样子（模型里的它可能已经被改过 vMerge） */
-  #origRow(row: TableRow): TableRow {
+  /** 原有行在**原文**里的样子（模型里的它可能已经被改过 vMerge / 格数） */
+  #origRow(row: TableRow): TableRow | undefined {
     const table = [...this.#orig.values()].find(
       (b): b is Table => b.kind === 'table' && b.rows.some((r) => r.id === row.id),
     );
-    return table?.rows.find((r) => r.id === row.id) ?? row;
+    return table?.rows.find((r) => r.id === row.id);
+  }
+
+  /**
+   * 第 `index` 格照着哪个**原有**格抄 XML：它自己是原有的就是它；插列新造的格照同一行里与它属性
+   * 一致的邻居（table-edit.ts 的 `withInsertedColumn` 照目标那一侧的邻居抄，宽度另算，所以比的时候
+   * 不看 `width`），邻居都是新格时退到这一行原文里的格。新行里的格由调用方先换成模板行里同一下标的格再来问。
+   */
+  #cellTemplate(row: TableRow, index: number): TableCell | undefined {
+    const cell = row.cells[index];
+    if (cell === undefined) return undefined;
+    const own = this.#origCell(cell.id);
+    if (own !== undefined) return own;
+    const key = (c: TableCell) => [{ ...c.props, width: undefined }, c.vMerge];
+    const near: TableCell[] = [];
+    for (let d = 1; d < row.cells.length; d++)
+      for (const j of [index - d, index + d]) {
+        const o = row.cells[j] === undefined ? undefined : this.#origCell((row.cells[j] as TableCell).id);
+        if (o !== undefined) near.push(o);
+      }
+    // 同一行里原有的格全删光了（先插列再删掉原有列）：退到这一行在原文里的格，新格当初就是照其中一个抄的
+    near.push(...(this.#origRow(row)?.cells ?? []));
+    return near.find((o) => same(key(o), key(cell))) ?? near[0];
   }
 
   #tableChildren(
@@ -542,8 +575,7 @@ class BodyWriter {
         cur.i++;
       }
       const row = cur.items[cur.i++] as TableRow;
-      const cells = new Map<NodeId, TableCell>(row.cells.map((c) => [c.id, c]));
-      out.push({ ...node, children: this.#rowChildren(node.children, cells) });
+      out.push(this.#existingRow(node, row));
       for (let r = cur.items[cur.i]; isNew(r); r = cur.items[cur.i]) {
         out.push(this.#newRow(r as TableRow, templates));
         cur.i++;
@@ -552,61 +584,121 @@ class BodyWriter {
     return out;
   }
 
-  /**
-   * 新行的 XML：`w:tr` 的属性与 `w:tblPrEx` / `w:trPr` 抄模板行，每格的 `w:tcPr` 抄模板行同一下标的格
-   * （只重写 `w:vMerge`），格内段落以模板格的首段为模板 —— 模型不认识的行高规则、格底纹扩展跟着走。
-   * `w14:paraId` / `w14:textId` 不抄，它们要求全文唯一。
-   */
-  #newRow(row: TableRow, templates: ReadonlyMap<NodeId, TableRow>): XmlElement {
-    const tplRow = templates.get(row.id);
-    const tplSrc = tplRow === undefined ? undefined : this.#in.sources.nodes.get(tplRow.id);
-    const tplModel = tplRow === undefined ? undefined : this.#origRow(tplRow);
-    const tcs =
-      tplSrc?.children.filter((c): c is XmlElement => c.kind === 'element' && c.name === 'w:tc') ?? [];
-    const head =
-      tplSrc?.children.filter(
-        (c): c is XmlElement => c.kind === 'element' && (c.name === 'w:tblPrEx' || c.name === 'w:trPr'),
-      ) ?? [];
-    const cells = row.cells.map((cell, i): XmlElement => {
-      const tcPr = withVMerge(tcs[i] === undefined ? undefined : child(tcs[i], 'w:tcPr'), cell.vMerge);
-      const tplCell = tplModel?.cells[i];
-      let template: Block | undefined = tplCell?.blocks.find((b) => b.kind === 'paragraph');
-      const blocks = cell.blocks.map((b) => {
-        const e = this.#block(b, template);
-        template = b;
-        return e;
-      });
-      return el('w:tc', {}, [...(tcPr === undefined ? [] : [tcPr]), ...blocks]);
-    });
-    const attrs = Object.fromEntries(
-      Object.entries(tplSrc?.attrs ?? {}).filter(([k]) => k !== 'w14:paraId' && k !== 'w14:textId'),
-    );
-    return el('w:tr', attrs, [...head, ...cells]);
+  /** 原有的行：删掉的格不写、新格插在模型里的位置、`trPr` 的跳过列数跟着改 */
+  #existingRow(node: XmlElement, row: TableRow): XmlElement {
+    const before = this.#origRow(row);
+    const cells = cursor(row.cells);
+    let children = this.#rowChildren(node.children, row, cells);
+    if (cells.i < row.cells.length) {
+      // 原有的格一个不剩（删列后又插列）或新格在末尾：跟在最后一个格后面
+      const rest = row.cells.slice(cells.i).map((_, k) => this.#newCell(row, cells.i + k, row));
+      const last = children.findLastIndex(
+        (n) => n.kind === 'element' && (n.name === 'w:tc' || n.name === 'w:sdt'),
+      );
+      const at = last >= 0 ? last + 1 : children.length;
+      children = [...children.slice(0, at), ...rest, ...children.slice(at)];
+    }
+    if (
+      before !== undefined &&
+      (before.props.gridBefore !== row.props.gridBefore || before.props.gridAfter !== row.props.gridAfter)
+    ) {
+      const trPr = child(node, 'w:trPr');
+      let next = trPr ?? el('w:trPr');
+      for (const name of ['gridBefore', 'gridAfter'] as const) {
+        const v = row.props[name];
+        next = replaceChild(
+          next,
+          `w:${name}`,
+          v === undefined ? undefined : el(`w:${name}`, { 'w:val': String(v) }),
+          TRPR_ORDER,
+        );
+      }
+      const empty = next.children.length === 0 && Object.keys(next.attrs).length === 0;
+      if (trPr !== undefined) children = children.flatMap((c) => (c === trPr ? (empty ? [] : [next]) : [c]));
+      else if (!empty) {
+        const ex = children.findIndex((c) => c.kind === 'element' && c.name === 'w:tblPrEx');
+        children = [...children.slice(0, ex + 1), next, ...children.slice(ex + 1)];
+      }
+    }
+    return { ...node, children };
   }
 
-  #rowChildren(nodes: readonly XmlNode[], cells: ReadonlyMap<NodeId, TableCell>): XmlNode[] {
-    return nodes.map((node) => {
-      if (node.kind !== 'element') return node;
-      if (node.name === 'w:sdt') return this.#inSdt(node, (c) => this.#rowChildren(c, cells));
+  #rowChildren(nodes: readonly XmlNode[], row: TableRow, cur: Cursor<TableCell>): XmlNode[] {
+    const out: XmlNode[] = [];
+    const isNew = (c: TableCell | undefined) => c !== undefined && !this.#in.sources.nodes.has(c.id);
+    for (const node of nodes) {
+      if (node.kind !== 'element') {
+        out.push(node);
+        continue;
+      }
+      if (node.name === 'w:sdt') {
+        out.push(this.#inSdt(node, (c) => this.#rowChildren(c, row, cur)));
+        continue;
+      }
       const id = node.name === 'w:tc' ? this.#idOf.get(node) : undefined;
-      const cell = id === undefined ? undefined : cells.get(id);
-      if (cell === undefined) return node;
-      const cur = cursor(cell.blocks);
-      let children = [...this.#blocks(node.children, cur), ...this.#rest(cur)];
-      // 删了合并区首格所在的行，下面的续格升成 restart（table-edit.ts 的 `withoutRows`）
-      const before = this.#origCell(id as NodeId);
-      if (before !== undefined && before.vMerge !== cell.vMerge) {
-        const tcPr = child(node, 'w:tcPr');
-        const next = withVMerge(tcPr, cell.vMerge);
+      if (id === undefined) {
+        out.push(node);
+        continue;
+      }
+      if (!cur.ids.has(id)) continue; // 删掉的列
+      while (cur.items[cur.i]?.id !== id) {
+        if (!isNew(cur.items[cur.i]))
+          throw new Error(`回写时格顺序对不上：${cur.items[cur.i]?.id} 出现在 ${id} 之前`);
+        out.push(this.#newCell(row, cur.i++, row));
+      }
+      const cell = cur.items[cur.i++] as TableCell;
+      const blocks = cursor(cell.blocks);
+      let children = [...this.#blocks(node.children, blocks), ...this.#rest(blocks)];
+      const tcPr = child(node, 'w:tcPr');
+      const next = patchTcPr(tcPr, cell, this.#origCell(id));
+      if (next !== tcPr)
         children =
           tcPr === undefined
             ? next === undefined
               ? children
               : [next, ...children]
             : children.flatMap((c) => (c === tcPr ? (next === undefined ? [] : [next]) : [c]));
-      }
-      return { ...node, children };
+      out.push({ ...node, children });
+      while (isNew(cur.items[cur.i])) out.push(this.#newCell(row, cur.i++, row));
+    }
+    return out;
+  }
+
+  /**
+   * 新格的 XML：`w:tcPr` 抄模板格（`#cellTemplate`）再按字段改结构那几项，格内段落以模板格的首段为模板 ——
+   * 模型不认识的格底纹扩展、段落边框跟着走。`tplRow` 是新格抄的那一行：原有行里就是它自己，
+   * 新行里是它的模板行（新行照模板行逐格抄，同一下标就是同一格）。
+   */
+  #newCell(row: TableRow, index: number, tplRow: TableRow): XmlElement {
+    const cell = row.cells[index] as TableCell;
+    const tpl = this.#cellTemplate(tplRow, index);
+    const tplSrc = tpl === undefined ? undefined : this.#in.sources.nodes.get(tpl.id);
+    const tcPr = patchTcPr(tplSrc === undefined ? undefined : child(tplSrc, 'w:tcPr'), cell, tpl);
+    let template: Block | undefined = tpl?.blocks.find((b) => b.kind === 'paragraph');
+    const blocks = cell.blocks.map((b) => {
+      const e = this.#block(b, template);
+      template = b;
+      return e;
     });
+    return el('w:tc', {}, [...(tcPr === undefined ? [] : [tcPr]), ...blocks]);
+  }
+
+  /**
+   * 新行的 XML：`w:tr` 的属性与 `w:tblPrEx` / `w:trPr` 抄模板行，每格照模板行同一下标的格抄（`#newCell`）。
+   * `w14:paraId` / `w14:textId` 不抄，它们要求全文唯一。
+   */
+  #newRow(row: TableRow, templates: ReadonlyMap<NodeId, TableRow>): XmlElement {
+    const tplRow = templates.get(row.id);
+    const tplSrc = tplRow === undefined ? undefined : this.#in.sources.nodes.get(tplRow.id);
+    const head =
+      tplSrc?.children.filter(
+        (c): c is XmlElement => c.kind === 'element' && (c.name === 'w:tblPrEx' || c.name === 'w:trPr'),
+      ) ?? [];
+    const cells = row.cells.map((_, i) => this.#newCell(row, i, tplRow ?? row));
+    const attrs = Object.fromEntries(
+      Object.entries(tplSrc?.attrs ?? {}).filter(([k]) => k !== 'w14:paraId' && k !== 'w14:textId'),
+    );
+    return el('w:tr', attrs, [...head, ...cells]);
   }
 
   #origCells: Map<NodeId, TableCell> | undefined;
@@ -696,15 +788,103 @@ const TCPR_ORDER = [
   'w:tcPrChange',
 ];
 
-/** 只重写 `w:vMerge`，其余子元素原样；结果为空就不要这个容器 */
-function withVMerge(tcPr: XmlElement | undefined, vMerge: TableCell['vMerge']): XmlElement | undefined {
-  let children = (tcPr?.children ?? []).filter((c) => c.kind !== 'element' || c.name !== 'w:vMerge');
-  if (vMerge !== 'none')
-    children = insertOrdered(
-      children,
-      el('w:vMerge', vMerge === 'restart' ? { 'w:val': 'restart' } : {}),
+/** `w:tblPr` 的 schema 顺序（§17.4.60），改 `w:tblW` 用 */
+const TBLPR_ORDER = [
+  'w:tblStyle',
+  'w:tblpPr',
+  'w:tblOverlap',
+  'w:bidiVisual',
+  'w:tblStyleRowBandSize',
+  'w:tblStyleColBandSize',
+  'w:tblW',
+  'w:jc',
+  'w:tblCellSpacing',
+  'w:tblInd',
+  'w:tblBorders',
+  'w:shd',
+  'w:tblLayout',
+  'w:tblCellMar',
+  'w:tblLook',
+  'w:tblCaption',
+  'w:tblDescription',
+  'w:tblPrChange',
+];
+
+/** `w:trPr` 的子元素顺序。规范里它是 choice 不限次数，但 Word 自己按这个顺序写，照着插最稳 */
+const TRPR_ORDER = [
+  'w:cnfStyle',
+  'w:divId',
+  'w:gridBefore',
+  'w:gridAfter',
+  'w:wBefore',
+  'w:wAfter',
+  'w:cantSplit',
+  'w:trHeight',
+  'w:tblHeader',
+  'w:tblCellSpacing',
+  'w:jc',
+  'w:hidden',
+  'w:ins',
+  'w:del',
+  'w:trPrChange',
+];
+
+/** 换掉（`node` 为 undefined 就删掉）容器里名为 `name` 的子元素，新元素按 schema 顺序插 */
+function replaceChild(
+  parent: XmlElement,
+  name: string,
+  node: XmlElement | undefined,
+  order: readonly string[],
+): XmlElement {
+  const kept = withoutChildren(parent.children, new Set([name]));
+  return { ...parent, children: node === undefined ? kept : insertOrdered(kept, node, order) };
+}
+
+/** 宽度元素（`w:tblW` / `w:tcW`）按新值改 `w:w` / `w:type`，别的属性原样；没有宽度就删掉 */
+function patchChild(
+  parent: XmlElement,
+  name: string,
+  width: TableWidth | undefined,
+  order: readonly string[],
+): XmlElement {
+  if (width === undefined) return replaceChild(parent, name, undefined, order);
+  const old = child(parent, name);
+  const attrs = patchAttrs(old?.attrs ?? {}, ['w:w', 'w:type'], {
+    'w:w': String(Math.round(width.value)),
+    'w:type': width.type,
+  });
+  return replaceChild(parent, name, { ...(old ?? el(name)), attrs }, order);
+}
+
+/**
+ * 按字段改 `w:tcPr` 里结构的三项（`w:tcW` / `w:gridSpan` / `w:vMerge`），只动与 `base`（XML 来自的那一格）
+ * 不同的几项，其余子元素原样。没有改动就原样返回同一个对象；结果为空就不要这个容器。
+ */
+function patchTcPr(
+  tcPr: XmlElement | undefined,
+  cell: TableCell,
+  base: TableCell | undefined,
+): XmlElement | undefined {
+  let next = tcPr ?? el('w:tcPr');
+  if (base?.vMerge !== cell.vMerge)
+    next = replaceChild(
+      next,
+      'w:vMerge',
+      cell.vMerge === 'none'
+        ? undefined
+        : el('w:vMerge', cell.vMerge === 'restart' ? { 'w:val': 'restart' } : {}),
       TCPR_ORDER,
     );
-  if (children.length === 0 && Object.keys(tcPr?.attrs ?? {}).length === 0) return undefined;
-  return { ...(tcPr ?? el('w:tcPr')), children };
+  if ((base?.gridSpan ?? 1) !== cell.gridSpan)
+    next = replaceChild(
+      next,
+      'w:gridSpan',
+      cell.gridSpan > 1 ? el('w:gridSpan', { 'w:val': String(cell.gridSpan) }) : undefined,
+      TCPR_ORDER,
+    );
+  if (!same(base?.props.width, cell.props.width))
+    next = patchChild(next, 'w:tcW', cell.props.width, TCPR_ORDER);
+  if (next === tcPr) return tcPr;
+  if (next.children.length === 0 && Object.keys(next.attrs).length === 0) return undefined;
+  return next;
 }

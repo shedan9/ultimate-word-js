@@ -112,7 +112,11 @@ Word 2013 起分页符后面跟一个段落标记，后文从新段落开始（*
 **插行 / 删行已接入**（2026-09-23，`@uw/model` 的 `table-edit.ts`）：`tx.insertRow(pos, side)` 照所在行抄结构，
 `tx.deleteRows(range)` 删光就删表；末格 Tab 加一行。**纵向合并按网格列对齐**（不按格下标），删合并区首行时续格升 restart。
 回写的新行**按结构比出模板**（「A 下方插」与「B 上方插」模型顺序一样），只重写 `w:vMerge`、不抄 `w14:paraId`。
-被删行里的位置靠 `PositionMove.collapse` 收拢（平移会指到不存在的字）。编辑浏览器回归现有 177 项。
+被删行里的位置靠 `PositionMove.collapse` 收拢（平移会指到不存在的字）。
+**插列 / 删列已接入**（2026-09-23，同一个 `table-edit.ts`）：`tx.insertColumn(pos, side)` / `tx.deleteColumns(range)`。
+列是**网格列**不是格下标 —— 每行各自看那条网格边界：跨过的格撑宽、落在 gridBefore / gridAfter 里加跳过列数、否则插新格；
+新列宽照目标列、**整表变宽**（不匀别的列）；删空的行删掉。回写按字段改 `w:tblGrid` / `w:tblW` / `w:tcW` / `w:gridSpan`，
+新格照同行属性一致的原有邻格抄 XML。编辑浏览器回归现有 182 项。
 **Phase 8 已开始：回写 docx**（2026-09-23，新包 `@uw/serialize`，门面 `doc.toDocx()`，调试台「导出 docx」按钮）。
 补丁式：只重写改过的部件，没编辑的文档逐字节照搬；正文**走原文 XML 树**打补丁（见下）。Word 打开无修复提示只能人工验。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、

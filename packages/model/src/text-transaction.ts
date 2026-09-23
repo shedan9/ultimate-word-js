@@ -13,7 +13,14 @@ import { addListDefinition } from './numbering-edit.ts';
 import { buildRunOrder, compareDocPositions, contentLength, rangeOfNode, runEnd, runStart } from './order.ts';
 import type { DocPosition, DocRange } from './position.ts';
 import type { Indent, NumberingRef, ParagraphSpacing, ParaProps, RunProps } from './props.ts';
-import { findRow, withInsertedRow, withoutRows } from './table-edit.ts';
+import {
+  cellColumns,
+  findRow,
+  withInsertedColumn,
+  withInsertedRow,
+  withoutColumns,
+  withoutRows,
+} from './table-edit.ts';
 import type { PositionMove, TextChange, TextChangeSet } from './text-change.ts';
 import { invertTextChanges, mapTextRange } from './text-change.ts';
 
@@ -75,6 +82,17 @@ export interface TextTransaction {
    * 行里有域时拒绝（域可能跨出这一行，删一半配不上对）。
    */
   deleteRows(range: DocRange): DocPosition;
+  /**
+   * 在位置所在的格（最内层表格）左边 / 右边插一列，宽度照这一列、整表变宽（见 table-edit.ts）。
+   * 返回位置所在那一行的新格的空段落位置；这一行的新列被跨列格吃掉时返回原位置。
+   */
+  insertColumn(position: DocPosition, side: 'left' | 'right'): DocPosition;
+  /**
+   * 删掉范围两端所在的格覆盖的网格列（两端须在同一张最内层表里）；跨列格缩窄，删空的行删掉，
+   * 删光就删整张表。被删格里的位置收拢到返回值：原来那一行里接替它的格、否则左边的格，
+   * 整表删掉时同 `deleteRows`。格里有域时拒绝。
+   */
+  deleteColumns(range: DocRange): DocPosition;
 }
 
 /**
@@ -975,30 +993,89 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             else if (after !== undefined) target = rangeOfNode(after)?.start;
             else if (before !== undefined) target = rangeOfNode(before)?.end;
             if (target === undefined) throw new Error('删行后找不到光标位置');
-            const dest = target;
-            const moves: PositionMove[] = paragraphs.flatMap((p): PositionMove[] =>
-              p.runs.length === 0
-                ? [
-                    {
-                      from: { nodeId: p.id, contentIndex: 0, offset: 0 },
-                      to: dest,
-                      length: 0,
-                      collapse: true,
-                    },
-                  ]
-                : p.runs.flatMap((r) =>
-                    (r.content.length ? r.content : [undefined]).map((c, i) => ({
-                      from: { nodeId: r.id, contentIndex: i, offset: 0 },
-                      to: dest,
-                      length: c === undefined ? 0 : contentLength(c),
-                      collapse: true,
-                    })),
-                  ),
-            );
             // 撤销整棵树回到删之前，原位置本来就有效，不必反向映射
             structural(
               paragraphs.map((p) => p.id),
-              moves,
+              collapseInto(paragraphs, target),
+              [],
+            );
+            return { ...target };
+          });
+        },
+        insertColumn(position, side) {
+          return command(() => {
+            if (side !== 'left' && side !== 'right') throw new TypeError(`未知的插入方向：${String(side)}`);
+            flush();
+            const hit = findRow(draft, position.nodeId);
+            if (hit === undefined) throw new Error('位置不在表格里');
+            const own = hit.table.rows[hit.rowIndex]?.cells[hit.cellIndex];
+            const { table, cells } = withInsertedColumn(hit.table, hit.rowIndex, hit.cellIndex, side, newId);
+            draft = hit.replace(table, () => {
+              throw new Error('插列不会删表');
+            });
+            entries = indexRuns(draft);
+            const added = cells.flatMap((c) => c.blocks.map((b) => b.id));
+            const back = { ...position };
+            // 没有新格（整表的新列都被跨列格吃掉）时不算修改 —— 可网格变宽了，照样记一笔让撤销能退回去
+            structural(
+              added.length ? added : (own?.blocks.slice(0, 1).map((b) => b.id) ?? []),
+              [],
+              added.map((id) => ({
+                from: { nodeId: id, contentIndex: 0, offset: 0 },
+                to: back,
+                length: 0,
+                collapse: true,
+              })),
+            );
+            const row = table.rows[hit.rowIndex] as TableRow;
+            const mine = row.cells.find((c) => cells.includes(c));
+            const range = mine === undefined ? undefined : rangeOfNode(mine);
+            return range === undefined ? { ...position } : { ...range.start };
+          });
+        },
+        deleteColumns(range) {
+          return command(() => {
+            flush();
+            const a = findRow(draft, range.start.nodeId);
+            const b = findRow(draft, range.end.nodeId);
+            if (a === undefined || b === undefined || a.table.id !== b.table.id)
+              throw new Error('只能删除同一张表里的列');
+            const ca = cellColumns(a.table.rows[a.rowIndex] as TableRow, a.cellIndex);
+            const cb = cellColumns(b.table.rows[b.rowIndex] as TableRow, b.cellIndex);
+            const from = Math.min(ca.start, cb.start);
+            const to = Math.max(ca.end, cb.end);
+            const { table: next, removed } = withoutColumns(a.table, from, to);
+            const paragraphs = removed.flatMap((c) =>
+              [...walkBlocks(c.blocks)].filter((x): x is Paragraph => x.kind === 'paragraph'),
+            );
+            for (const p of paragraphs)
+              for (const r of p.runs)
+                if (entries.get(r.id)?.protected) throw new Error('暂不支持删除包含域的列');
+            const { after, before } = a.neighbour();
+            let filler: Paragraph | undefined;
+            draft = a.replace(next, () => {
+              filler = { kind: 'paragraph', id: newId(), props: {}, runs: [] };
+              return filler;
+            });
+            entries = indexRuns(draft);
+            let target: DocPosition | undefined;
+            if (next !== undefined) {
+              const own = a.table.rows[a.rowIndex]?.id;
+              const row =
+                next.rows.find((r) => r.id === own) ?? next.rows[Math.min(a.rowIndex, next.rows.length - 1)];
+              if (row !== undefined) {
+                // 接替被删列的是从 `from` 开始的那一格，删的是最右几列就退到左边最后一格
+                const i = row.cells.findIndex((_, k) => cellColumns(row, k).end > from);
+                const cell = row.cells[i >= 0 ? i : row.cells.length - 1];
+                target = cell === undefined ? undefined : rangeOfNode(cell)?.start;
+              }
+            } else if (filler !== undefined) target = { nodeId: filler.id, contentIndex: 0, offset: 0 };
+            else if (after !== undefined) target = rangeOfNode(after)?.start;
+            else if (before !== undefined) target = rangeOfNode(before)?.end;
+            if (target === undefined) throw new Error('删列后找不到光标位置');
+            structural(
+              paragraphs.map((p) => p.id),
+              collapseInto(paragraphs, target),
               [],
             );
             return { ...target };
@@ -1066,6 +1143,22 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
 }
 
 /** 一行的首格（纵向合并的续格不显示内容，跳过）第一个段落的开头 */
+/** 这些段落里每一个位置都收拢到 `dest`（被删掉的行 / 列：按偏移平移会指到不存在的字） */
+function collapseInto(paragraphs: readonly Paragraph[], dest: DocPosition): PositionMove[] {
+  return paragraphs.flatMap((p): PositionMove[] =>
+    p.runs.length === 0
+      ? [{ from: { nodeId: p.id, contentIndex: 0, offset: 0 }, to: dest, length: 0, collapse: true }]
+      : p.runs.flatMap((r) =>
+          (r.content.length ? r.content : [undefined]).map((c, i) => ({
+            from: { nodeId: r.id, contentIndex: i, offset: 0 },
+            to: dest,
+            length: c === undefined ? 0 : contentLength(c),
+            collapse: true,
+          })),
+        ),
+  );
+}
+
 function cellStart(row: TableRow): DocPosition {
   const cell: TableCell | undefined = row.cells.find((c) => c.vMerge !== 'continue') ?? row.cells[0];
   const range = cell === undefined ? undefined : rangeOfNode(cell);

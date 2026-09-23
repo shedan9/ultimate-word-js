@@ -542,6 +542,23 @@ try {
   tableDoc.undo();
   tableDoc.undo();
   assert(rows() === 2 && tableDoc.find('续').length === 0, '两次撤销：先去掉字、再去掉整行');
+  // 插列 / 删列走宿主事务：新列排在「格甲」右边、整表变宽，导出再加载仍是三列，撤销回两列
+  const columns = () => tableDoc.query('row')[0].cells.length;
+  const beforeYi = tableView.caretRect(cellRange('格乙').start);
+  let colCaret;
+  tableDoc.tx((t) => { colCaret = t.insertColumn(cellRange('格甲').start, 'right'); t.insertText(colCaret, '新列'); return undefined; });
+  await frame();
+  const newCol = tableView.caretRect(cellRange('新列').start);
+  const afterYi = tableView.caretRect(cellRange('格乙').start);
+  assert(columns() === 3 && newCol.x > tableView.caretRect(cellRange('格甲').start).x + 100 && Math.abs(newCol.x - beforeYi.x) < 2, '新列排在格甲右边，占了格乙原来的位置');
+  assert(afterYi.x > beforeYi.x + 100, '格乙被推到右边（整表变宽，不从别的列匀）');
+  const colExported = await UltimateWord.load(await tableDoc.toDocx());
+  assert(colExported.query('row').every((r) => r.cells.length === 3) && colExported.find('新列').length === 1, '导出再加载每行三格、新列里的字还在');
+  tableDoc.tx((t) => { t.deleteColumns({ start: cellRange('格乙').start, end: cellRange('格丁').start }); return undefined; });
+  assert(columns() === 2 && tableDoc.find('格乙').length === 0 && tableDoc.find('格丁').length === 0, '删掉格乙那一列');
+  tableDoc.undo();
+  tableDoc.undo();
+  assert(columns() === 2 && tableDoc.find('新列').length === 0 && tableDoc.find('格乙').length === 1, '两次撤销回到插列之前');
   tableView.select({ start: cellRange('表后正文').start, end: cellRange('表后正文').start });
   assert(tableKey('Tab') && cellTabs() === 1, '表外 Tab 照常插制表位');
   tableDoc.undo();
