@@ -34,6 +34,17 @@ export type ParagraphQuery = (
 
 /** Word 的列表只有 0–8 九级（`w:ilvl`）。 */
 const MAX_LIST_LEVEL = 8;
+/**
+ * 左缩进写的是字符单位（`w:leftChars`，中文版 Word 的默认写法）时每次挪两个字：
+ * 字符单位的缩进换算成 twips 要知道这一段的字号，控制器手上没有。两个字是照中文版
+ * 「默认制表位 2 字符」取的，**没有与 Word 的增加缩进量逐格对过**。
+ */
+const INDENT_CHARS_STEP = 200;
+
+export interface EditingOptions {
+  /** Ctrl+M 的步长（`w:defaultTabStop`，twips）；缺省 420，中文版 Word 的默认值。 */
+  tabStop?: number;
+}
 
 export interface EditingController {
   readonly selection: DocRange | undefined;
@@ -56,6 +67,13 @@ export interface EditingController {
    * 已是列表的段落保留层级；整次一个撤销单元（含新建的定义）。
    */
   toggleList(kind: ListKind): void;
+  /**
+   * Word 的 Ctrl+M / Ctrl+Shift+M：左缩进推到下一个 / 退到上一个默认制表位的整数倍（不低于 0）。
+   * 选区全是列表段落时改为逐段升降级 —— Word 的「增加缩进量」在列表上就是降一级。
+   */
+  indent(direction: 'in' | 'out'): void;
+  /** Word 的 Ctrl+1 / 2 / 5：单倍 / 双倍 / 1.5 倍行距，改为多倍行距规则（固定值行距一并改掉）。 */
+  lineSpacing(multiple: 1 | 1.5 | 2): void;
   insert(text: string, input?: boolean): void;
   enter(): void;
   delete(direction: 'backward' | 'forward', granularity?: TextGranularity): void;
@@ -76,7 +94,9 @@ export function createEditingController(
   editor: TextEditor,
   formatOf?: FormatQuery,
   paragraphsOf?: ParagraphQuery,
+  options: EditingOptions = {},
 ): EditingController {
+  const tabStop = options.tabStop !== undefined && options.tabStop > 0 ? options.tabStop : 420;
   let selection: DocRange | undefined;
   let pending: RunPropsPatch | undefined;
   let composing = false;
@@ -108,6 +128,21 @@ export function createEditingController(
     const item = listParagraphs(selection)?.[0];
     const start = item && paragraphStart(item.id);
     return start && equal(start, selection.start) ? item : undefined;
+  }
+  /** 每段各自升 / 降一级，夹在 0–8；整次一个撤销单元。 */
+  function shiftListLevels(items: readonly ListParagraph[], direction: 'in' | 'out'): void {
+    const starts = items.map((p) => paragraphStart(p.id));
+    editor.breakHistory();
+    pending = undefined;
+    editor.tx((tx) => {
+      for (const [i, item] of items.entries()) {
+        const current = item.props.numbering.level;
+        const level = Math.min(MAX_LIST_LEVEL, Math.max(0, current + (direction === 'in' ? 1 : -1)));
+        const at = starts[i];
+        // 只写 level：numId 可能来自样式（标题列表），写死会把样式的编号钉在直接格式上。
+        if (at && level !== current) tx.setParagraphProps({ start: at, end: at }, { numbering: { level } });
+      }
+    });
   }
   function patchParagraph(id: NodeId, patch: ParaPropsPatch): void {
     const at = paragraphStart(id);
@@ -225,18 +260,45 @@ export function createEditingController(
     },
     indentList(direction) {
       if (!selection || !controller.listIndentable()) return;
-      const items = listParagraphs(selection) ?? [];
+      shiftListLevels(listParagraphs(selection) ?? [], direction);
+    },
+    indent(direction) {
+      if (!selection || composing || !paragraphsOf) return;
+      const listItems = listParagraphs(selection);
+      if (listItems) {
+        shiftListLevels(listItems, direction);
+        return;
+      }
+      const items = paragraphsOf(selection);
       const starts = items.map((p) => paragraphStart(p.id));
+      // 推到「下一个」整数倍而不是加一个步长：已经在 1.3 格的段落按一次到 2 格，与 Word 一致。
+      const step = (value: number, unit: number) =>
+        direction === 'in'
+          ? (Math.floor(value / unit) + 1) * unit
+          : Math.max(0, (Math.ceil(value / unit) - 1) * unit);
       editor.breakHistory();
       pending = undefined;
       editor.tx((tx) => {
         for (const [i, item] of items.entries()) {
-          const current = item.props.numbering.level;
-          const level = Math.min(MAX_LIST_LEVEL, Math.max(0, current + (direction === 'in' ? 1 : -1)));
           const at = starts[i];
-          // 只写 level：numId 可能来自样式（标题列表），写死会把样式的编号钉在直接格式上。
-          if (at && level !== current) tx.setParagraphProps({ start: at, end: at }, { numbering: { level } });
+          const { left, leftChars } = item.props.indent;
+          // 字符单位优先（盖过 twips），所以有 leftChars 时只能改它
+          const patch =
+            leftChars !== 0
+              ? { leftChars: step(leftChars, INDENT_CHARS_STEP) }
+              : { left: step(left, tabStop) };
+          if (at) tx.setParagraphProps({ start: at, end: at }, { indent: patch });
         }
+      });
+    },
+    lineSpacing(multiple) {
+      if (!selection || composing) return;
+      const range = selection;
+      editor.breakHistory();
+      pending = undefined;
+      // 多倍行距的 line 以 1/240 行计；lineRule 必须一起写，否则固定值行距会把 240 读成 12pt。
+      editor.tx((tx) => {
+        tx.setParagraphProps(range, { spacing: { line: 240 * multiple, lineRule: 'auto' } });
       });
     },
     toggleList(kind) {

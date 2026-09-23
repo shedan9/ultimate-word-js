@@ -756,6 +756,46 @@ describe('列表层级', () => {
     expect(props(1)).toEqual({ numbering: { numId: 0, level: 0 } });
   });
 
+  it('Ctrl+M 推到下一个制表位整数倍、退到上一个且不低于 0；字符单位改 leftChars；全列表选区改层级', () => {
+    const { editor, state, numbering } = list([-1, -1, 0]);
+    const indent = (i: number) => [...walkParagraphs(editor.body)][i]?.props.indent;
+    editor.tx((tx) => {
+      tx.setParagraphProps({ start: at('r0'), end: at('r0') }, { indent: { left: 500 } });
+      tx.setParagraphProps({ start: at('r1'), end: at('r1') }, { indent: { leftChars: 300 } });
+    });
+    state.select({ start: at('r0', 1), end: at('r1', 1) });
+    state.indent('in');
+    expect([indent(0), indent(1)]).toEqual([{ left: 840 }, { leftChars: 400 }]);
+    state.indent('out');
+    state.indent('out');
+    expect([indent(0), indent(1)]).toEqual([{ left: 0 }, { leftChars: 0 }]);
+    editor.undo();
+    expect([indent(0), indent(1)]).toEqual([{ left: 420 }, { leftChars: 200 }]);
+    state.select({ start: at('r2', 1), end: at('r2', 1) });
+    state.indent('in');
+    expect(numbering()[2]).toEqual({ numId: 3, level: 1 });
+    expect(indent(2)).toBeUndefined();
+  });
+
+  it('Ctrl+1 / 2 / 5 把选区触及的段落改成多倍行距，固定值规则一并改掉', () => {
+    const { editor, state } = list([-1, -1, -1]);
+    const spacing = (i: number) => [...walkParagraphs(editor.body)][i]?.props.spacing;
+    editor.tx((tx) => {
+      tx.setParagraphProps({ start: at('r0'), end: at('r0') }, { spacing: { line: 400, lineRule: 'exact' } });
+    });
+    state.select({ start: at('r0', 1), end: at('r1') });
+    state.lineSpacing(1.5);
+    expect([spacing(0), spacing(1), spacing(2)]).toEqual([
+      { line: 360, lineRule: 'auto' },
+      { line: 360, lineRule: 'auto' },
+      undefined,
+    ]);
+    state.lineSpacing(2);
+    expect(spacing(1)).toEqual({ line: 480, lineRule: 'auto' });
+    editor.undo();
+    expect(spacing(1)?.line).toBe(360);
+  });
+
   it('新建列表：普通段套用新定义，再按一次取消；一次撤销连定义回退', () => {
     const { editor, state, numbering } = list([-1, -1, -1]);
     state.select({ start: at('r0', 1), end: at('r1', 1) });

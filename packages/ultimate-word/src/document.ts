@@ -199,6 +199,7 @@ export class UwDocument {
         text: (range) => textOfRange(this.#loaded.resolved, range, this.#fieldValues),
         format: (range) => runPropsOfRange(this.#loaded.resolved, range),
         paragraphFormat: (range) => paragraphsOfRange(this.#loaded.resolved, range),
+        tabStop: this.#loaded.cascade.settings.defaultTabStop,
         subscribe: (listener) => {
           this.#listeners.add(listener);
           return () => {

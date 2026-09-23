@@ -11,6 +11,8 @@ export interface EditingBinding {
   format?: FormatQuery;
   /** 缺省时对齐快捷键一律设置，不做「再按一次回到左对齐」。 */
   paragraphFormat?: ParagraphQuery;
+  /** 文档的默认制表位（twips），Ctrl+M 的步长；缺省 420。 */
+  tabStop?: number;
   subscribe(listener: (change: TextChangeSet) => void): () => void;
 }
 export interface DomEditing {
@@ -26,11 +28,19 @@ const TOGGLE_KEYS: Readonly<Record<string, ToggleFormat>> = { b: 'bold', i: 'ita
 /** Word 的段落对齐快捷键；J 是两端对齐（`both`），中文公文的默认对齐。 */
 const ALIGN_KEYS: Readonly<Record<string, Justification>> = { l: 'left', e: 'center', r: 'right', j: 'both' };
 
+/** Word 的行距快捷键：Ctrl+5 是 1.5 倍，不是 5 倍。 */
+const LINE_KEYS: Readonly<Record<string, 1 | 1.5 | 2>> = { '1': 1, '2': 2, '5': 1.5 };
+
 /** textarea 常驻容器，重排只替换页树，不能打断操作系统持有的 IME 节点。 */
 export function mountEditing(container: Element, view: DomView, binding: EditingBinding): DomEditing {
   const doc = container.ownerDocument;
   const win = doc.defaultView;
-  const state = createEditingController(binding.editor, binding.format, binding.paragraphFormat);
+  const state = createEditingController(
+    binding.editor,
+    binding.format,
+    binding.paragraphFormat,
+    binding.tabStop === undefined ? {} : { tabStop: binding.tabStop },
+  );
   const input = doc.createElement('textarea');
   input.dataset.uwInput = 'true';
   input.setAttribute('aria-label', '文档编辑输入');
@@ -192,6 +202,14 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
     if (mod && event.key.toLowerCase() === 'z')
       action = () => (event.shiftKey ? binding.editor.redo() : binding.editor.undo());
     else if (mod && event.key.toLowerCase() === 'y') action = () => binding.editor.redo();
+    // Word 的 Ctrl+M / Ctrl+Shift+M 与 Ctrl+1 / 2 / 5。只认 Ctrl：Mac 上 Cmd+M 最小化窗口、
+    // Cmd+数字切标签页，都到不了页面。Windows 的 Ctrl+数字同样被浏览器截走，行距那三个键在那里不生效。
+    else if (event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === 'm')
+      action = () => state.indent(event.shiftKey ? 'out' : 'in');
+    else if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && event.key in LINE_KEYS) {
+      const multiple = LINE_KEYS[event.key] as 1 | 1.5 | 2;
+      action = () => state.lineSpacing(multiple);
+    }
     // Word 的 Ctrl+Shift+L 是「列表项目符号」样式；样式不一定存在，这里直接套项目符号列表。
     else if (mod && !event.altKey && event.shiftKey && event.key.toLowerCase() === 'l')
       action = () => state.toggleList('bullet');
