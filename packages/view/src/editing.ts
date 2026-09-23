@@ -15,6 +15,7 @@ export interface EditingController {
   delete(direction: 'backward' | 'forward', granularity?: TextGranularity): void;
   move(direction: 'backward' | 'forward', extend?: boolean, granularity?: TextGranularity): void;
   selectWord(at: DocPosition, affinity?: 'before' | 'after'): void;
+  cut(write: () => void): void;
   compositionStart(): void;
   compositionEnd(text: string): void;
   compositionCancel(): void;
@@ -97,6 +98,17 @@ export function createEditingController(editor: TextEditor): EditingController {
       editor.tx((tx) => {
         if (!equal(range.start, range.end)) at = tx.deleteRange(range);
         at = tx.splitParagraph(at);
+      });
+      collapse(at);
+    },
+    cut(write) {
+      if (!selection || composing || equal(selection.start, selection.end)) return;
+      const range = selection;
+      let at = range.start;
+      editor.tx((tx) => {
+        at = tx.deleteRange(range);
+        // 先验证删除范围；剪贴板写入抛错时整笔事务回滚，不能丢失原文。
+        write();
       });
       collapse(at);
     },

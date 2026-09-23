@@ -286,3 +286,82 @@ describe('按词与跨样式导航', () => {
     expect(second.focus).toEqual(pos(0));
   });
 });
+
+describe('纯文本剪切事务', () => {
+  it('反向跨样式选区只剪选中内容，复制回调只执行一次且独立撤销', () => {
+    const { state, editor, texts } = setup([
+      run('a', '甲乙'),
+      { ...run('b', '丙丁'), props: { bold: true } },
+    ]);
+    state.select({ start: pos(1, 'b'), end: pos(1, 'a') });
+    const original = editor.body;
+    let writes = 0;
+    state.cut(() => {
+      writes++;
+    });
+    expect(writes).toBe(1);
+    expect(texts()).toEqual(['甲丁']);
+    expect(state.focus).toEqual(pos(1, 'a'));
+    editor.undo();
+    expect(editor.body).toEqual(original);
+    expect(editor.canUndo).toBe(false);
+    editor.redo();
+    expect(texts()).toEqual(['甲丁']);
+  });
+
+  it('剪贴板写入失败保留模型、反向选区与撤销历史', () => {
+    const { state, editor } = setup('hello');
+    state.select({ start: pos(4), end: pos(1) });
+    const original = editor.body;
+    const focus = state.focus;
+    const selection = state.selection;
+    expect(() =>
+      state.cut(() => {
+        throw new Error('写入失败');
+      }),
+    ).toThrow('写入失败');
+    expect(editor.body).toBe(original);
+    expect(state.selection).toEqual(selection);
+    expect(state.focus).toEqual(focus);
+    expect(editor.canUndo).toBe(false);
+  });
+
+  it('不可编辑范围在写剪贴板前拒绝，折叠选区与组合期不剪切', () => {
+    const { state, editor } = setup([
+      {
+        ...run('r', '甲'),
+        content: [{ kind: 'text', text: '甲' }, { kind: 'tab' }, { kind: 'text', text: '乙' }],
+      },
+    ]);
+    let writes = 0;
+    const write = () => {
+      writes++;
+    };
+    state.cut(write);
+    state.select({ start: pos(0), end: pos(1, 'r', 2) });
+    const selection = state.selection;
+    expect(() => state.cut(write)).toThrow();
+    state.compositionStart();
+    state.cut(write);
+    expect(writes).toBe(0);
+    expect(state.selection).toEqual(selection);
+    expect(editor.canUndo).toBe(false);
+  });
+
+  it('只选段落接缝时剪切合段，撤销恢复空段', () => {
+    const { state, editor, texts } = setup('甲');
+    state.move('forward');
+    state.enter();
+    const paragraphs = [...walkParagraphs(editor.body)];
+    const first = paragraphs[0] && rangeOfNode(paragraphs[0]);
+    const last = paragraphs[1] && rangeOfNode(paragraphs[1]);
+    if (!first || !last) throw new Error('缺少测试段落');
+    const start = first.end;
+    const end = last.start;
+    state.select({ start, end });
+    state.cut(() => {});
+    expect(texts()).toEqual(['甲']);
+    editor.undo();
+    expect(texts()).toEqual(['甲', '']);
+  });
+});

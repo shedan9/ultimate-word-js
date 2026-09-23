@@ -34,6 +34,7 @@ import {
   findText,
   queryNodes,
   rangeOfNode,
+  textOfRange,
   walkBlocks,
 } from '@uw/model';
 import { imageHrefResolver } from '@uw/render-dom';
@@ -193,6 +194,7 @@ export class UwDocument {
       this.#imageHref,
       {
         editor,
+        text: (range) => textOfRange(this.#loaded.resolved, range, this.#fieldValues),
         subscribe: (listener) => {
           this.#listeners.add(listener);
           return () => {

@@ -5,6 +5,7 @@ import { moveVertically } from './vertical-navigation.ts';
 
 export interface EditingBinding {
   editor: TextEditor;
+  text(range: DocRange): string;
   subscribe(listener: (change: TextChangeSet) => void): () => void;
 }
 export interface DomEditing {
@@ -237,6 +238,20 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
     event.preventDefault();
     if (!state.composing) run(() => state.insert(event.clipboardData?.getData('text/plain') ?? ''));
   }
+  function clipboard(event: ClipboardEvent): void {
+    if (event.defaultPrevented || state.composing) return;
+    event.preventDefault();
+    const range = state.selection;
+    const data = event.clipboardData;
+    if (!range || !data) return;
+    run(() => {
+      const text = binding.text(range);
+      if (text === '') return;
+      const write = () => data.setData('text/plain', text);
+      if (event.type === 'cut') state.cut(write);
+      else write();
+    });
+  }
   const unsubscribe = binding.subscribe((change) => {
     preferredX = undefined;
     state.apply(change);
@@ -250,6 +265,8 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
   input.addEventListener('compositionstart', compositionStart);
   input.addEventListener('compositionend', compositionEnd);
   input.addEventListener('paste', paste);
+  input.addEventListener('copy', clipboard);
+  input.addEventListener('cut', clipboard);
   input.addEventListener('focus', refresh);
   input.addEventListener('blur', blur);
   container.addEventListener('pointerdown', pointer as EventListener);
