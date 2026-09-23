@@ -222,3 +222,22 @@ describe('段落格式命令', () => {
     ).toThrow('setRunProps');
   });
 });
+
+describe('段落编号引用', () => {
+  it('numbering 按字段合并：只写 level 保留 numId，numId 0 取消编号', () => {
+    const editor = createTextEditor(
+      parse(
+        '<w:p><w:pPr><w:numPr><w:ilvl w:val="1"/><w:numId w:val="4"/></w:numPr></w:pPr><w:r><w:t>项</w:t></w:r></w:p>',
+      ),
+    );
+    const at = pos(editor.body);
+    editor.tx((t) => {
+      t.setParagraphProps({ start: at, end: at }, { numbering: { level: 2 } });
+    });
+    expect(para(editor.body).props.numbering).toEqual({ numId: 4, level: 2 });
+    editor.tx((t) => {
+      t.setParagraphProps({ start: at, end: at }, { numbering: { numId: 0 } });
+    });
+    expect(para(editor.body).props.numbering).toEqual({ numId: 0, level: 2 });
+  });
+});

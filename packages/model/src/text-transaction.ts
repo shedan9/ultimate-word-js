@@ -9,7 +9,7 @@ import type { Block, Body, NodeId, Paragraph, Run } from './nodes.ts';
 import { walkBlocks, walkParagraphs } from './nodes.ts';
 import { buildRunOrder, compareDocPositions, contentLength, rangeOfNode, runEnd, runStart } from './order.ts';
 import type { DocPosition, DocRange } from './position.ts';
-import type { Indent, ParagraphSpacing, ParaProps, RunProps } from './props.ts';
+import type { Indent, NumberingRef, ParagraphSpacing, ParaProps, RunProps } from './props.ts';
 import type { PositionMove, TextChange, TextChangeSet } from './text-change.ts';
 import { invertTextChanges, mapTextRange } from './text-change.ts';
 
@@ -17,13 +17,15 @@ import { invertTextChanges, mapTextRange } from './text-change.ts';
 export type RunPropsPatch = { [K in keyof RunProps]?: RunProps[K] | null };
 
 /**
- * 直接段落格式的修改。`indent` / `spacing` 按字段合并（只改首行缩进不该抹掉左缩进），
+ * 直接段落格式的修改。`indent` / `spacing` / `numbering` 按字段合并（只改首行缩进不该抹掉左缩进；
+ * 只写 `numbering.level` 时沿用样式给的 numId，标题列表降级靠它），`numbering.numId = 0` 取消编号，
  * 其中的 `null` 删除单个字段，整项 `null` 删除整组。段落标记格式走 `setRunProps`。
  * 注意字符单位优先（`firstLineChars` 盖过 `firstLine`）：改 twips 版本时要把对应的 `*Chars` 置 null。
  */
 export type ParaPropsPatch = {
-  [K in Exclude<keyof ParaProps, 'markRunProps' | 'indent' | 'spacing'>]?: ParaProps[K] | null;
+  [K in Exclude<keyof ParaProps, 'markRunProps' | 'indent' | 'spacing' | 'numbering'>]?: ParaProps[K] | null;
 } & {
+  numbering?: { [K in keyof NumberingRef]?: NumberingRef[K] | null } | null;
   indent?: { [K in keyof Indent]?: Indent[K] | null } | null;
   spacing?: { [K in keyof ParagraphSpacing]?: ParagraphSpacing[K] | null } | null;
 };
@@ -189,11 +191,12 @@ function patchRunProps(props: RunProps, patch: RunPropsPatch): RunProps | undefi
 /** 缩进与间距是一组独立字段，按字段合并；合并后为空的组整个删掉，不留 `<w:ind/>` 空壳。 */
 function patchParaProps(props: ParaProps, patch: ParaPropsPatch): ParaProps | undefined {
   if ('markRunProps' in patch) throw new TypeError('段落标记格式请用 setRunProps');
-  const { indent, spacing, ...rest } = patch;
+  const { indent, spacing, numbering, ...rest } = patch;
   let next = patchFields(props, rest) ?? props;
   for (const [key, group] of [
     ['indent', indent],
     ['spacing', spacing],
+    ['numbering', numbering],
   ] as const) {
     if (group === undefined || group === null) {
       if (group === null) next = patchFields(next, { [key]: null }) ?? next;

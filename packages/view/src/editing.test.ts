@@ -1,4 +1,4 @@
-import type { Paragraph, Run, Table } from '@uw/model';
+import type { Paragraph, Run, Table, TextEditor } from '@uw/model';
 import {
   createTextEditor,
   DEFAULT_SECTION_PROPS,
@@ -7,6 +7,7 @@ import {
   walkParagraphs,
 } from '@uw/model';
 import { describe, expect, it } from 'vitest';
+import type { ParagraphQuery } from './editing.ts';
 import { createEditingController } from './editing.ts';
 
 function setup(text: string | Run[] = '') {
@@ -594,14 +595,29 @@ describe('字符格式切换', () => {
   });
 });
 
+/** 测试树没有样式与编号定义：numId > 0 即视为画出了编号，层级取直接格式。 */
+function paragraphQuery(editor: TextEditor): ParagraphQuery {
+  return (range) => {
+    const paragraphs = [...walkParagraphs(editor.body)];
+    const at = (id: string) => paragraphs.findIndex((p) => p.id === id || p.runs.some((r) => r.id === id));
+    return paragraphs.slice(at(range.start.nodeId), at(range.end.nodeId) + 1).map((p) => {
+      const numId = p.props.numbering?.numId ?? 0;
+      const level = p.props.numbering?.level ?? 0;
+      return {
+        id: p.id,
+        props: {
+          justification: p.props.justification ?? 'both',
+          numbering: numId > 0 ? { numId, level, label: {} as never } : { numId, level },
+        },
+      };
+    });
+  };
+}
+
 describe('段落对齐切换', () => {
   it('折叠光标改所在段，再按一次回到左对齐，选区与方向不变', () => {
     const ctx = setup('甲乙丙');
-    const state = createEditingController(ctx.editor, undefined, (range) =>
-      [...walkParagraphs(ctx.editor.body)]
-        .filter((p) => p.id === range.start.nodeId || p.runs.some((r) => r.id === range.start.nodeId))
-        .map((p) => ({ justification: p.props.justification ?? 'both' })),
-    );
+    const state = createEditingController(ctx.editor, undefined, paragraphQuery(ctx.editor));
     const range = {
       start: { nodeId: 'r', contentIndex: 0, offset: 2 },
       end: { nodeId: 'r', contentIndex: 0, offset: 1 },
@@ -622,5 +638,87 @@ describe('段落对齐切换', () => {
     state.compositionStart();
     state.align('both');
     expect(justification()).toBe('center');
+  });
+});
+
+describe('列表层级', () => {
+  function list(levels: number[], texts: string[] = levels.map((_, i) => `项${i}`)) {
+    const editor = createTextEditor({
+      sections: [
+        {
+          id: 's',
+          props: DEFAULT_SECTION_PROPS,
+          blocks: levels.map((level, i) => ({
+            kind: 'paragraph' as const,
+            id: `p${i}`,
+            props: level < 0 ? {} : { numbering: { numId: 3, level } },
+            runs: texts[i]
+              ? [
+                  {
+                    kind: 'run' as const,
+                    id: `r${i}`,
+                    props: {},
+                    content: [{ kind: 'text' as const, text: texts[i] as string }],
+                  },
+                ]
+              : [],
+          })),
+        },
+      ],
+    });
+    const state = createEditingController(editor, undefined, paragraphQuery(editor));
+    const numbering = () => [...walkParagraphs(editor.body)].map((p) => p.props.numbering);
+    return { editor, state, numbering };
+  }
+  const at = (id: string, offset = 0) => ({ nodeId: id, contentIndex: 0, offset });
+
+  it('段首 Tab 降一级、Shift Tab 升一级，段中与非列表段不接管，层级夹在 0–8', () => {
+    const { editor, state, numbering } = list([0, 8, -1]);
+    state.select({ start: at('r0'), end: at('r0') });
+    expect(state.listIndentable()).toBe(true);
+    state.indentList('in');
+    expect(numbering()[0]).toEqual({ numId: 3, level: 1 });
+    state.indentList('out');
+    state.indentList('out');
+    expect(numbering()[0]).toEqual({ numId: 3, level: 0 });
+    state.select({ start: at('r1'), end: at('r1') });
+    state.indentList('in');
+    expect(numbering()[1]?.level).toBe(8);
+    state.select({ start: at('r0', 1), end: at('r0', 1) });
+    expect(state.listIndentable()).toBe(false);
+    state.select({ start: at('r2'), end: at('r2') });
+    expect(state.listIndentable()).toBe(false);
+    editor.undo();
+    expect(numbering()[0]).toEqual({ numId: 3, level: 1 });
+  });
+
+  it('跨段选区里每段各自升降一级，一次撤销；混入非列表段则不接管', () => {
+    const { editor, state, numbering } = list([0, 2, -1]);
+    state.select({ start: at('r0', 1), end: at('r1', 1) });
+    state.indentList('in');
+    expect(numbering().map((n) => n?.level)).toEqual([1, 3, undefined]);
+    expect(state.selection).toEqual({ start: at('r0', 1), end: at('r1', 1) });
+    editor.undo();
+    expect(numbering().map((n) => n?.level)).toEqual([0, 2, undefined]);
+    state.select({ start: at('r1', 1), end: at('r2', 1) });
+    expect(state.listIndentable()).toBe(false);
+  });
+
+  it('空列表项 Enter 先升级再结束列表，段首退格去编号而不合段', () => {
+    const { state, numbering, editor } = list([1, 0], ['', '正文']);
+    const empty = at('p0');
+    state.select({ start: empty, end: empty });
+    state.enter();
+    expect(numbering()[0]).toEqual({ numId: 3, level: 0 });
+    state.enter();
+    expect(numbering()[0]).toEqual({ numId: 0, level: 0 });
+    state.enter();
+    expect([...walkParagraphs(editor.body)]).toHaveLength(3);
+    state.select({ start: at('r1'), end: at('r1') });
+    state.delete('backward');
+    expect(numbering()[2]).toEqual({ numId: 0, level: 0 });
+    expect([...walkParagraphs(editor.body)].map(paragraphText)).toEqual(['', '', '正文']);
+    state.delete('backward');
+    expect([...walkParagraphs(editor.body)].map(paragraphText)).toEqual(['', '正文']);
   });
 });

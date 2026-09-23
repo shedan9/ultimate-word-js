@@ -12,6 +12,7 @@ body { margin: 0; font: 14px/1.5 system-ui; }
 import { buildLayoutIndex } from '@uw/layout';
 import { UltimateWord } from 'ultimate-word';
 import fixtureUrl from '../../fidelity/fixtures/gongwen-01.docx?url';
+import { listDocx } from './list-fixture.ts';
 
 const result = document.querySelector('#result');
 const host = document.querySelector('#host');
@@ -319,6 +320,53 @@ try {
   assert(aligned() === 'center', '撤销回到样式给的居中');
   view.dispose(); preview.dispose();
   assert(host.childElementCount === 0, '销毁清理输入与页树');
+  const listDoc = await UltimateWord.load(listDocx());
+  const listView = listDoc.mount(host, { mode: 'edit' });
+  const listInput = host.querySelector('textarea');
+  const listKey = (key, modifiers = {}) => {
+    const event = new KeyboardEvent('keydown', { key, ...modifiers, bubbles: true, cancelable: true });
+    listInput.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+  const item = (text) => listDoc.query('paragraph').find((p) => p.runs.some((r) => runText(r) === text));
+  const numberingOf = (text) => item(text).props.numbering;
+  const startOf = (text, offset = 0) => ({ ...listDoc.rangeOf(item(text)).start, offset });
+  const placeListCaret = (at) => { listView.select({ start: at, end: at }); listView.focus(); };
+  placeListCaret(startOf('第二项'));
+  await frame();
+  const itemX = listView.caretRect(startOf('第二项')).x;
+  assert(listKey('Tab') && numberingOf('第二项').level === 1, '列表段首 Tab 降一级');
+  await frame();
+  assert(listView.caretRect(startOf('第二项')).x > itemX + 20 && listView.root.textContent.includes('1.1.'), '降级后缩进与多级编号同步重排');
+  assert(listKey('Tab', { shiftKey: true }) && numberingOf('第二项').level === 0, 'Shift Tab 升回一级');
+  await frame();
+  assert(listView.root.textContent.includes('2.') && !listView.root.textContent.includes('1.1.'), '升级后编号恢复为同级序号');
+  placeListCaret(startOf('第二项', 1));
+  assert(!listKey('Tab') && numberingOf('第二项').level === 0, '列表段中不接管 Tab');
+  placeListCaret(startOf('普通正文'));
+  assert(!listKey('Tab'), '非列表段不接管 Tab');
+  listView.select({ start: startOf('第一项', 1), end: startOf('第三项', 1) }); listView.focus();
+  assert(listKey('Tab') && ['第一项', '第二项', '第三项'].every((t) => numberingOf(t).level === 1), '跨段选区每段各降一级');
+  listKey('z', { ctrlKey: true });
+  assert(['第一项', '第二项', '第三项'].every((t) => numberingOf(t).level === 0), '批量降级一次撤销');
+  const listCount = listDoc.query('paragraph').length;
+  placeListCaret(startOf('第三项'));
+  assert(listKey('Backspace') && numberingOf('第三项').numId === 0 && listDoc.query('paragraph').length === listCount, '列表段首退格先去编号不合段');
+  listKey('Backspace');
+  assert(listDoc.query('paragraph').length === listCount - 1 && listDoc.find('第二项第三项').length === 1, '去编号后再退格合段');
+  listKey('z', { ctrlKey: true }); listKey('z', { ctrlKey: true });
+  assert(numberingOf('第三项').numId === 1, '去编号可撤销');
+  placeListCaret({ ...startOf('第三项'), offset: 3 });
+  listKey('Enter');
+  const emptyItem = listDoc.query('paragraph')[3];
+  assert(listDoc.query('paragraph').length === listCount + 1 && emptyItem.props.numbering?.numId === 1, '列表项末尾 Enter 延续列表');
+  listKey('Enter');
+  assert(listDoc.query('paragraph').length === listCount + 1 && listDoc.query('paragraph')[3].props.numbering?.numId === 0, '空列表项 Enter 结束列表而不再拆段');
+  placeListCaret(startOf('第一项'));
+  listInput.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+  assert(!listKey('Tab') && numberingOf('第一项').level === 0, 'IME 组合期不接管 Tab');
+  listInput.blur();
+  listView.dispose();
   result.textContent = `PASS ${passed} 项`;
 } catch (error) { result.textContent = `FAIL ${passed} 项后\n${error.stack ?? error}`; }
 </script>

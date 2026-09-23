@@ -180,6 +180,13 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
   }
   function keydown(event: KeyboardEvent): void {
     if (event.isComposing || state.composing || event.keyCode === 229) return;
+    // 只在列表段首 / 列表选区接管 Tab；其余位置不能插入制表位，保留浏览器的焦点切换。
+    if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      if (!state.listIndentable()) return;
+      event.preventDefault();
+      run(() => state.indentList(event.shiftKey ? 'out' : 'in'));
+      return;
+    }
     let action: (() => void) | undefined;
     const mod = event.ctrlKey || event.metaKey;
     if (mod && event.key.toLowerCase() === 'z')

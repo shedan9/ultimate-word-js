@@ -3,13 +3,22 @@ import type {
   DocPosition,
   DocRange,
   Justification,
+  NodeId,
+  ParaPropsPatch,
   ResolvedParaProps,
   ResolvedRunProps,
   RunPropsPatch,
   TextChangeSet,
   TextEditor,
 } from '@uw/model';
-import { buildRunOrder, compareDocPositions, mapTextRange, rangeOfNode, walkParagraphs } from '@uw/model';
+import {
+  buildRunOrder,
+  compareDocPositions,
+  mapTextRange,
+  paragraphText,
+  rangeOfNode,
+  walkParagraphs,
+} from '@uw/model';
 import type { TextGranularity } from './text-navigation.ts';
 import { paragraphNavigation } from './text-navigation.ts';
 
@@ -18,7 +27,12 @@ export type ToggleFormat = 'bold' | 'italic' | 'underline';
 /** 选区当前的最终格式（级联后），切换按「全部都是才取消」判断。 */
 export type FormatQuery = (range: DocRange) => readonly Pick<ResolvedRunProps, ToggleFormat>[];
 /** 选区触及段落的级联对齐方式。 */
-export type ParagraphQuery = (range: DocRange) => readonly Pick<ResolvedParaProps, 'justification'>[];
+export type ParagraphQuery = (
+  range: DocRange,
+) => readonly { id: NodeId; props: Pick<ResolvedParaProps, 'justification' | 'numbering'> }[];
+
+/** Word 的列表只有 0–8 九级（`w:ilvl`）。 */
+const MAX_LIST_LEVEL = 8;
 
 export interface EditingController {
   readonly selection: DocRange | undefined;
@@ -31,6 +45,10 @@ export interface EditingController {
   toggleFormat(format: ToggleFormat): void;
   /** Word 的 Ctrl+L/E/R/J：全部已是该对齐时回到左对齐，否则设置；选区不变。 */
   align(justification: Justification): void;
+  /** 选区全是列表段落，且（折叠时）光标在段首：Tab 交给列表升降级而不是移走焦点。 */
+  listIndentable(): boolean;
+  /** 每段各自升 / 降一级，夹在 0–8；整次一个撤销单元。 */
+  indentList(direction: 'in' | 'out'): void;
   insert(text: string, input?: boolean): void;
   enter(): void;
   delete(direction: 'backward' | 'forward', granularity?: TextGranularity): void;
@@ -60,6 +78,35 @@ export function createEditingController(
   let focus: DocPosition | undefined;
   const equal = (a: DocPosition, b: DocPosition) =>
     a.nodeId === b.nodeId && a.contentIndex === b.contentIndex && a.offset === b.offset;
+  type ListParagraph = ReturnType<ParagraphQuery>[number];
+  /** 只有真的画出了编号（计数器给了 label）才算列表：numId 指向不存在的定义时不显示编号。 */
+  function listParagraphs(range: DocRange): readonly ListParagraph[] | undefined {
+    const paragraphs = paragraphsOf?.(range) ?? [];
+    return paragraphs.length && paragraphs.every((p) => p.props.numbering.label !== undefined)
+      ? paragraphs
+      : undefined;
+  }
+  function paragraphStart(id: NodeId): DocPosition | undefined {
+    const paragraph = [...walkParagraphs(editor.body)].find((p) => p.id === id);
+    return paragraph && rangeOfNode(paragraph)?.start;
+  }
+  /** 折叠光标所在的列表段落，且光标在段首时才返回 —— 列表的 Tab / Backspace 只在这里接管。 */
+  function listItemAtStart(): ListParagraph | undefined {
+    if (!selection || !equal(selection.start, selection.end)) return undefined;
+    const item = listParagraphs(selection)?.[0];
+    const start = item && paragraphStart(item.id);
+    return start && equal(start, selection.start) ? item : undefined;
+  }
+  function patchParagraph(id: NodeId, patch: ParaPropsPatch): void {
+    const at = paragraphStart(id);
+    if (!at) return;
+    editor.breakHistory();
+    pending = undefined;
+    // 段落格式不拆 run、不动位置，选区原样有效。
+    editor.tx((tx) => {
+      tx.setParagraphProps({ start: at, end: at }, patch);
+    });
+  }
   function select(range: DocRange): void {
     const order = compareDocPositions(buildRunOrder(editor.body), range.start, range.end);
     if (order === undefined) throw new RangeError('选区不在正文中');
@@ -153,11 +200,31 @@ export function createEditingController(
       if (!selection || composing) return;
       const range = selection;
       const current = paragraphsOf?.(range) ?? [];
-      const active = current.length > 0 && current.every((p) => p.justification === justification);
+      const active = current.length > 0 && current.every((p) => p.props.justification === justification);
       editor.breakHistory();
       // 段落格式不拆 run、不动位置，选区与方向原样保留，无需重新 select。
       editor.tx((tx) => {
         tx.setParagraphProps(range, { justification: active ? 'left' : justification });
+      });
+    },
+    listIndentable() {
+      if (!selection || composing) return false;
+      return equal(selection.start, selection.end) ? !!listItemAtStart() : !!listParagraphs(selection);
+    },
+    indentList(direction) {
+      if (!selection || !controller.listIndentable()) return;
+      const items = listParagraphs(selection) ?? [];
+      const starts = items.map((p) => paragraphStart(p.id));
+      editor.breakHistory();
+      pending = undefined;
+      editor.tx((tx) => {
+        for (const [i, item] of items.entries()) {
+          const current = item.props.numbering.level;
+          const level = Math.min(MAX_LIST_LEVEL, Math.max(0, current + (direction === 'in' ? 1 : -1)));
+          const at = starts[i];
+          // 只写 level：numId 可能来自样式（标题列表），写死会把样式的编号钉在直接格式上。
+          if (at && level !== current) tx.setParagraphProps({ start: at, end: at }, { numbering: { level } });
+        }
       });
     },
     insert(text, input = false) {
@@ -185,6 +252,14 @@ export function createEditingController(
     },
     enter() {
       if (!selection || composing) return;
+      const item = listItemAtStart();
+      const paragraph = item && [...walkParagraphs(editor.body)].find((p) => p.id === item.id);
+      // Word：空列表项上的 Enter 不再造一个空项，而是先降级、到顶层就结束列表。
+      if (item && paragraph && paragraphText(paragraph) === '') {
+        const level = item.props.numbering.level;
+        patchParagraph(item.id, { numbering: level > 0 ? { level: level - 1 } : { numId: 0 } });
+        return;
+      }
       pending = undefined;
       let at = selection.start;
       const range = selection;
@@ -207,6 +282,12 @@ export function createEditingController(
     },
     delete(direction, granularity = 'grapheme') {
       if (!selection || composing) return;
+      const item = direction === 'backward' ? listItemAtStart() : undefined;
+      // Word：列表项段首的退格先去掉编号，再按一次才合段。
+      if (item) {
+        patchParagraph(item.id, { numbering: { numId: 0 } });
+        return;
+      }
       pending = undefined;
       let range = selection;
       if (equal(range.start, range.end)) {

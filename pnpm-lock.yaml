@@ -87,6 +87,9 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ultimate-word
     devDependencies:
+      fflate:
+        specifier: ^0.8.3
+        version: 0.8.3
       vite:
         specifier: ^8.2.1
         version: 8.2.1(@types/node@24.13.3)(esbuild@0.28.2)
