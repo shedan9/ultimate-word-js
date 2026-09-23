@@ -1031,13 +1031,17 @@ await view.toPNG(3);     // 第 3 页
   列表段首或全列表选区 Tab / Shift+Tab 逐段升降级（0–8）；空列表项 Enter 先升级、顶层结束列表；
   段首 Backspace 先去编号再合段。其余位置不接管 Tab。回归新增带 `numbering.xml` 的合成 docx
   （`tests/list-fixture.ts`），1 项模型单测 + 3 项控制器单测，编辑浏览器回归增至 117 项。
-  未做：去编号后按 Word 把层级缩进写成直接格式。
+  去编号后按 Word 把层级缩进写成直接格式：已补上，见下方「去编号保留缩进」。
 - ✅ **新建列表**（2026-09-23）：编号定义纳入可编辑状态（`Body.numbering`，`resolveBody` 优先用它），
   随事务草稿与撤销快照同进同退；`tx.addList('bullet' | 'decimal')` 追加九级定义并返回 numId。
   `NumberLabel.format` 带出 `w:numFmt`；控制器 `toggleList` 学 Word 按钮（全是则取消、接着紧邻的同类列表数、
   并入选区里已有的同类列表、否则新建），Ctrl/Cmd+Shift+L 套项目符号。项目符号用 Unicode ● ○ ■ 而非
   Wingdings 私用区（无符号字体映射）。3 项模型单测 + 2 项控制器单测，编辑浏览器回归增至 124 项。
   未做：编号样式库 / 自定义格式、回写 `numbering.xml`（serialize 包尚未建）。
+- ✅ **去编号保留缩进**（2026-09-23）：段首 Backspace 去编号时把级联后的 `left` / `leftChars` 写成直接格式，
+  首行 / 悬挂写**显式 0**（删掉会退回样式值，公文正文的首行两字会把首行顶出去）；空项 Enter 与
+  `toggleList` 取消不写。1 项控制器单测，编辑浏览器回归增至 125 项。
+  未做：退格先减缩进再合段（Word「用 Tab 和 Backspace 设置左缩进」选项）。
 - 事务系统 + undo/redo：文字模型层已完成，段落结构、字符 / 段落格式、列表层级与门面已接入
 - 基础命令集：输入/删除/粘贴（纯文本 ✅ + HTML + docx 片段）、加粗斜体 ✅、段落属性 ✅、列表（层级 ✅ / 新建 ✅）
 - 🟡 **增量排版第一步：段落缓存**（2026-09-22）：`ParagraphLayoutCache` 已接入门面加载 / 事务 /

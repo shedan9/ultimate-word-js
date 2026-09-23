@@ -27,10 +27,10 @@ import { paragraphNavigation } from './text-navigation.ts';
 export type ToggleFormat = 'bold' | 'italic' | 'underline';
 /** 选区当前的最终格式（级联后），切换按「全部都是才取消」判断。 */
 export type FormatQuery = (range: DocRange) => readonly Pick<ResolvedRunProps, ToggleFormat>[];
-/** 选区触及段落的级联对齐方式。 */
+/** 选区触及段落的级联对齐、编号与缩进。 */
 export type ParagraphQuery = (
   range: DocRange,
-) => readonly { id: NodeId; props: Pick<ResolvedParaProps, 'justification' | 'numbering'> }[];
+) => readonly { id: NodeId; props: Pick<ResolvedParaProps, 'justification' | 'numbering' | 'indent'> }[];
 
 /** Word 的列表只有 0–8 九级（`w:ilvl`）。 */
 const MAX_LIST_LEVEL = 8;
@@ -326,7 +326,14 @@ export function createEditingController(
       const item = direction === 'backward' ? listItemAtStart() : undefined;
       // Word：列表项段首的退格先去掉编号，再按一次才合段。
       if (item) {
-        patchParagraph(item.id, { numbering: { numId: 0 } });
+        // 缩进原本由编号层级给，去编号后随之失效、文字跳回页边。Word 把文字所在的位置
+        // （级联后的左缩进）写成直接格式留住它；首行 / 悬挂写显式 0 而不是删掉 ——
+        // 删掉会退回样式的值，公文正文样式的首行缩进两字会把首行顶出去。
+        const { left, leftChars } = item.props.indent;
+        patchParagraph(item.id, {
+          numbering: { numId: 0 },
+          indent: { left, leftChars, firstLine: 0, firstLineChars: 0, hanging: 0, hangingChars: 0 },
+        });
         return;
       }
       pending = undefined;

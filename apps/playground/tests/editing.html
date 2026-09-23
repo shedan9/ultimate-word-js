@@ -351,7 +351,11 @@ try {
   assert(['第一项', '第二项', '第三项'].every((t) => numberingOf(t).level === 0), '批量降级一次撤销');
   const listCount = listDoc.query('paragraph').length;
   placeListCaret(startOf('第三项'));
+  await frame();
+  const thirdX = listView.caretRect(startOf('第三项')).x;
   assert(listKey('Backspace') && numberingOf('第三项').numId === 0 && listDoc.query('paragraph').length === listCount, '列表段首退格先去编号不合段');
+  await frame();
+  assert(Math.abs(listView.caretRect(startOf('第三项')).x - thirdX) < 0.5 && numberingOf('第三项') && item('第三项').props.indent?.left === 420, '去编号后文字留在原缩进处');
   listKey('Backspace');
   assert(listDoc.query('paragraph').length === listCount - 1 && listDoc.find('第二项第三项').length === 1, '去编号后再退格合段');
   listKey('z', { ctrlKey: true }); listKey('z', { ctrlKey: true });

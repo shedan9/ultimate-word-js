@@ -609,10 +609,17 @@ function paragraphQuery(editor: TextEditor): ParagraphQuery {
       const defs = editor.body.numbering;
       const abstract = defs?.abstract[defs.instances[numId]?.abstractNumId ?? -1];
       const format = abstract?.levels[level]?.numFmt ?? 'decimal';
+      // 编号层级的缩进按 Word 默认的每级 420 模拟，直接格式盖在上面
+      const indent = {
+        ...{ left: 0, right: 0, firstLine: 0, hanging: 0, leftChars: 0, rightChars: 0, firstLineChars: 0 },
+        ...{ hangingChars: 0, ...(numId > 0 ? { left: 420 * (level + 1), hanging: 420 } : {}) },
+        ...p.props.indent,
+      };
       return {
         id: p.id,
         props: {
           justification: p.props.justification ?? 'both',
+          indent,
           numbering: numId > 0 ? { numId, level, label: { format } as never } : { numId, level },
         },
       };
@@ -726,6 +733,27 @@ describe('列表层级', () => {
     expect([...walkParagraphs(editor.body)].map(paragraphText)).toEqual(['', '', '正文']);
     state.delete('backward');
     expect([...walkParagraphs(editor.body)].map(paragraphText)).toEqual(['', '正文']);
+  });
+
+  it('段首退格去编号时把层级缩进写成直接格式，文字留在原处；空项 Enter 结束列表不写', () => {
+    const { editor, state } = list([2, 0], ['项', '']);
+    const props = (i: number) => [...walkParagraphs(editor.body)][i]?.props;
+    state.select({ start: at('r0'), end: at('r0') });
+    state.delete('backward');
+    expect(props(0)?.indent).toEqual({
+      left: 1260,
+      leftChars: 0,
+      firstLine: 0,
+      firstLineChars: 0,
+      hanging: 0,
+      hangingChars: 0,
+    });
+    editor.undo();
+    expect(props(0)?.indent).toBeUndefined();
+    expect(props(0)?.numbering).toEqual({ numId: 3, level: 2 });
+    state.select({ start: at('p1'), end: at('p1') });
+    state.enter();
+    expect(props(1)).toEqual({ numbering: { numId: 0, level: 0 } });
   });
 
   it('新建列表：普通段套用新定义，再按一次取消；一次撤销连定义回退', () => {
