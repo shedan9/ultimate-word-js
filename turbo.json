@@ -7,9 +7,11 @@
       "outputs": ["dist/**"]
     },
     "typecheck": {
+      "dependsOn": ["^typecheck"],
       "outputs": []
     },
     "test": {
+      "dependsOn": ["^typecheck"],
       "outputs": []
     },
     "truth": {

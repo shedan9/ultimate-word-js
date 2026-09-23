@@ -42,6 +42,7 @@ function fakeDocument() {
         caretRect: () => null,
         scrollTo: () => false,
         print: () => undefined,
+        on: () => ({ dispose: () => undefined }),
         decorate: (range) => {
           const item = { range, dispose: vi.fn() };
           view.decorations.push(item);
