@@ -33,7 +33,7 @@ SECTIONPAGES 迭代到自洽）都做完了，TOC / SEQ 的求值还没写。
 `find` / `query` 在 `@uw/model`（`search.ts` / `query.ts`，模型侧的文档序在 `order.ts`），见下。
 **门面包 `ultimate-word` 也有了**（2026-09-13）：api.md §1 那两行（`UltimateWord.load()` →
 `doc.mount()`）从此是真的，调试台只走它；它**不实现任何东西**，只把六个包接成 api.md 的形状，
-判据是接线不是真值（Vitest 14 项 + `/tests/facade.html` 15 项）。随库度量包在浏览器里的路
+判据是接线不是真值（Vitest 21 项 + `/tests/facade.html` 29 项）。随库度量包在浏览器里的路
 是 `@uw/fonts/packs`（JSON import，无 fs）。**Phase 6 至此全部做完**（2026-09-13）：
 **打印**（`@uw/view` 的 `print.ts`）与 **`@uw/react`**（`packages/react`），见下。
 **Phase 7 已开始**（2026-09-13）：`@uw/model` 的 `createTextEditor()` 提供段内文字事务、
@@ -105,6 +105,10 @@ Word 2013 起分页符后面跟一个段落标记，后文从新段落开始（*
 单元格里 Tab / Shift+Tab 跳格**优先于**列表升降级，首末格接管但不动（Word 末格 Tab 加一行，结构编辑还没有）；
 表外 Tab 仍插制表位、Shift+Tab 仍留给浏览器。Word 在格里插制表位的 Ctrl+Tab 被浏览器截走，没接。
 编辑浏览器回归现有 172 项（表格部分用 `tests/list-fixture.ts` 的 `tableDocx()`）。
+**公开事件已接入**（2026-09-23，api.md §11）：`doc.on` 的 `document:change` / `layout:done` / `diagnostic`、
+`view.on` 的 `selection:change` / `viewport:change` / `click:element`，分发器在门面的 `events.ts`。
+视图先刷新再派发，加载那一趟不派发；监听者抛错走 `reportError`、不回滚事务；`diagnostic` 去重并追加进 `doc.diagnostics`。
+`click:element` 只认超链接（图片的绘制层不接指针），拖选结束的 click 不算。门面浏览器回归增至 29 项。
 **Phase 8 已开始：回写 docx**（2026-09-23，新包 `@uw/serialize`，门面 `doc.toDocx()`，调试台「导出 docx」按钮）。
 补丁式：只重写改过的部件，没编辑的文档逐字节照搬；正文**走原文 XML 树**打补丁（见下）。Word 打开无修复提示只能人工验。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、

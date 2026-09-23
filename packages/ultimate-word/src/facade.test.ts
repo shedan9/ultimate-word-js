@@ -175,3 +175,84 @@ describe('doc.toDocx', () => {
     expect(reloaded.layout).toEqual(editing.layout);
   });
 });
+
+describe('UwDocument 的事件', () => {
+  it('事务 / 撤销 / 重做各派发一次 document:change，之后紧跟 layout:done', async () => {
+    const editing = await UltimateWord.load(bytes);
+    const log: string[] = [];
+    let seen: { pageCount: number; duration: number; iterations: number } | undefined;
+    const a = editing.on('document:change', ({ changeSet, source }) => {
+      // 监听者里读到的已经是新布局
+      log.push(`${source}:${changeSet.changes.length > 0}:${editing.find('事件回归').length}`);
+    });
+    const b = editing.on('layout:done', (info) => {
+      log.push('layout');
+      seen = info;
+    });
+    const pos = editing.find('通知')[0]?.start;
+    if (!pos) throw new Error('样本缺少通知');
+    editing.tx((tx) => {
+      tx.insertText(pos, '事件回归');
+    });
+    editing.undo();
+    editing.redo();
+    expect(log).toEqual(['tx:true:1', 'layout', 'undo:true:0', 'layout', 'redo:true:1', 'layout']);
+    expect(seen?.pageCount).toBe(editing.pageCount);
+    expect(seen?.iterations).toBeGreaterThanOrEqual(1);
+    expect(seen?.duration).toBeGreaterThanOrEqual(0);
+    // 没有修改的事务不派发；dispose 之后不再收到
+    editing.tx(() => undefined);
+    a.dispose();
+    b.dispose();
+    editing.undo();
+    expect(log).toHaveLength(6);
+  });
+
+  it('一个监听者抛错不挡后面的监听者，也不让事务半途而废', async () => {
+    const editing = await UltimateWord.load(bytes);
+    const original = globalThis.reportError;
+    const reported: unknown[] = [];
+    globalThis.reportError = (e: unknown) => reported.push(e);
+    try {
+      let after = 0;
+      editing.on('document:change', () => {
+        throw new Error('宿主的 bug');
+      });
+      editing.on('document:change', () => {
+        after++;
+      });
+      const pos = editing.find('通知')[0]?.start;
+      if (!pos) throw new Error('样本缺少通知');
+      expect(() =>
+        editing.tx((tx) => {
+          tx.insertText(pos, '抛错');
+        }),
+      ).not.toThrow();
+      expect(after).toBe(1);
+      expect(reported).toHaveLength(1);
+      expect(editing.find('抛错通知')).toHaveLength(1);
+    } finally {
+      globalThis.reportError = original;
+    }
+  });
+
+  it('重排新发现的缺字体报一次 diagnostic 并追加进 diagnostics，同一条不重复报', async () => {
+    const editing = await UltimateWord.load(bytes);
+    const before = editing.diagnostics.length;
+    const got: string[] = [];
+    editing.on('diagnostic', (d) => got.push(`${d.code}:${d.message}`));
+    const hit = editing.find('通知')[0];
+    if (!hit) throw new Error('样本缺少通知');
+    const missing = { ascii: '事件回归缺字体', hAnsi: '事件回归缺字体', eastAsia: '事件回归缺字体' };
+    editing.tx((tx) => {
+      tx.setRunProps(hit, { fonts: missing });
+    });
+    expect(got).toHaveLength(1);
+    expect(got[0]).toMatch(/^font-missing:.*事件回归缺字体/);
+    expect(editing.diagnostics).toHaveLength(before + 1);
+    // 撤销再重做走的是同一款缺失字体：度量器不再报，门面也不会重复
+    editing.undo();
+    editing.redo();
+    expect(got).toHaveLength(1);
+  });
+});

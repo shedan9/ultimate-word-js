@@ -69,6 +69,12 @@ export interface DomView {
   /** 只改页面占位尺寸，保留文字层、选区与已绘制的内容。 */
   setZoom(zoom: number): void;
   update(layout: DocumentLayout, options?: ViewOptions): void;
+  /**
+   * 与视口相交的页（页序号，升序）变了就通知。数据来自虚拟化用的那个 IntersectionObserver，
+   * 所以是**真的看得见**的页，不含 overscan 预绘制的；没有 IntersectionObserver（或关了虚拟化）时
+   * 不知道哪页可见，永远不触发。重排后观察器重建、按新页壳重新观察，可见页没变就不重复报。
+   */
+  onViewport(listener: (visiblePages: readonly number[]) => void): () => void;
   destroy(): void;
 }
 
@@ -106,6 +112,9 @@ export function mountView(container: Element, layout: DocumentLayout, options: V
   let destroyed = false;
   let observer: IntersectionObserver | undefined;
   let visible = new Set<number>();
+  /** 上一次报出去的可见页，IntersectionObserver 一次回调常常只是同一批页的比例变了 */
+  let reported = '';
+  const viewportListeners = new Set<(visiblePages: readonly number[]) => void>();
   let printing = false;
   let sheet: PrintSheet | undefined;
   /** `print()` 期间标出「这一趟是我叫的」，同一页面上别的视图在 beforeprint 里要让开 */
@@ -199,11 +208,21 @@ export function mountView(container: Element, layout: DocumentLayout, options: V
           else visible.delete(index);
         }
         refreshPaint();
+        notifyViewport();
       });
       // root:null 让浏览器同时考虑窗口与所有祖先滚动容器的裁剪。
       for (const slot of slots) observer.observe(slot.shell);
     }
     refreshPaint();
+  }
+
+  function notifyViewport(): void {
+    if (viewportListeners.size === 0) return;
+    const pages = [...visible].sort((a, b) => a - b);
+    const key = pages.join(',');
+    if (key === reported) return;
+    reported = key;
+    for (const listener of [...viewportListeners]) listener(pages);
   }
 
   function measurePages(): PageViewport[] {
@@ -396,9 +415,16 @@ export function mountView(container: Element, layout: DocumentLayout, options: V
       annotations.rebind();
       if (restoreFocus && focused.isConnected) focused.focus({ preventScroll: true });
     },
+    onViewport(listener) {
+      viewportListeners.add(listener);
+      return () => {
+        viewportListeners.delete(listener);
+      };
+    },
     destroy() {
       if (destroyed) return;
       destroyed = true;
+      viewportListeners.clear();
       annotations.destroy();
       observer?.disconnect();
       observer = undefined;

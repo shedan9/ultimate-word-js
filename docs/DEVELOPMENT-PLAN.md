@@ -1078,6 +1078,14 @@ await view.toPNG(3);     // 第 3 页
   复制粘贴（同日补上）：分页 / 分栏符在 `fragmentOfRange` 里记 U+000C，`text/html` 写 Word 的
   `<br clear=all style="mso-special-character:line-break;page-break-before:always">`，纯文本仍是换行；粘贴认
   `page-break-before` / `break-before: page` 的 `<br>`（Word 常写在下一段段首，空段首也留住），单元格里退成软换行。
+- ✅ **公开事件**（2026-09-23，api.md §11）：`doc.on('document:change' | 'layout:done' | 'diagnostic')`，
+  `view.on('selection:change' | 'viewport:change' | 'click:element')`，全部返回 `Disposable`。
+  视图先刷新再派发（监听者读到的是新布局），顺序 change → layout:done → diagnostic；加载那一趟不派发。
+  监听者抛错交给 `reportError`，不回滚已提交的事务、不挡后面的监听者。`diagnostic` 按内容去重并追加进 `doc.diagnostics`
+  （字体注册后度量器会重报缺字体）。`selection:change` 只在编辑态、按值比较；`viewport:change` 的可见页来自虚拟化的
+  IntersectionObserver（不含 overscan）；`click:element` 只认超链接（外链查关系表、书签拼 `#名字`），拖选结束的 click 不算。
+  3 项门面单测 + 14 项浏览器断言（`/tests/facade.html` 增至 29 项，超链接用 `linkDocx()` 现场造）。
+  未做：图片 / 内容控件的 `click:element`（绘制层不接指针、索引里没有对象矩形）。
 - 事务系统 + undo/redo：文字模型层已完成，段落结构、字符 / 段落格式、列表层级与门面已接入
 - 基础命令集：输入/删除/粘贴（纯文本 ✅ + HTML ✅ + docx 片段）、加粗斜体 ✅、段落属性 ✅、列表（层级 ✅ / 新建 ✅）
 - 🟡 **增量排版第一步：段落缓存**（2026-09-22）：`ParagraphLayoutCache` 已接入门面加载 / 事务 /

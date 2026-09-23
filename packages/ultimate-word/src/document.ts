@@ -10,6 +10,9 @@
  * ① `rangeOf` 认 `NodeId`，所以要有一张 id → 节点的表（懒建，`query` 之外的入口才用得上）；
  * ② `compare` 遇到不在树上的 run **抛错**而不是答 undefined —— 门面的调用方拿到的位置
  *    都是这份文档自己吐出来的，比不了只能是拿错了文档。
+ *
+ * 事件（api.md §11）只在**加载之后**的变化上触发：`load()` 返回之前没人来得及挂监听者，
+ * 那一趟的排版结果就是 `layout` / `pageCount`，诊断就是 `diagnostics` 的初值。
  */
 import type { Diagnostic } from '@uw/core';
 import type { DocumentLayout } from '@uw/layout';
@@ -22,6 +25,7 @@ import type {
   LoadedDocument,
   NodeId,
   QueryNode,
+  ResolvedRun,
   RunOrder,
   TextChangeSet,
   TextEditor,
@@ -44,7 +48,8 @@ import {
 import type { OpcPackage } from '@uw/ooxml';
 import { imageHrefResolver } from '@uw/render-dom';
 import { serializeDocx } from '@uw/serialize';
-import type { UwView, ViewOptions } from './view.ts';
+import { Emitter } from './events.ts';
+import type { Disposable, ElementHit, UwView, ViewOptions } from './view.ts';
 import { createView } from './view.ts';
 
 /** `query()` 答的节点：段落 / run / 表格 / 行 / 格，直接格式那棵树上的 */
@@ -55,15 +60,36 @@ export type { FindOptions };
 /** docx 的 MIME，`toDocx()` 的 Blob 带着它，下载时浏览器才知道扩展名 */
 export const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
+export interface DocumentEvents {
+  /**
+   * 事务 / 撤销 / 重做之后的那一趟排版完成（含域求值的全部迭代）。`duration` 是级联 + 排版的
+   * 毫秒数，`iterations` 是域求值排了几趟（1 = 没有要迭代的域）。
+   */
+  'layout:done': { pageCount: number; duration: number; iterations: number };
+  /**
+   * 模型变了，在 `layout:done` 之前派发（两者同步相继，此时 `doc.layout` 已经是新的）。
+   * `source` 区分事务与撤销 / 重做 —— 「标记未保存」只看有没有这个事件，协同同步才要分清。
+   */
+  'document:change': { changeSet: TextChangeSet; source: 'tx' | 'undo' | 'redo' };
+  /** 重排时新发现的内容问题（比如插进来的文字用了缺失的字体）。同一条不重复报 */
+  diagnostic: Diagnostic;
+}
+
+interface Reflowed {
+  loaded: LoadedDocument;
+  layout: DocumentLayout;
+  values: ReadonlyMap<NodeId, string>;
+  /** 域求值排了几趟；缺省按 1 */
+  passes?: number;
+  /** 这一趟新记下的诊断（诊断表是追加式的，只要增量） */
+  diagnostics?: readonly Diagnostic[];
+}
+
 export interface UwDocumentInit {
   loaded: LoadedDocument;
   /** 原包。回写只重写改过的部件，其余条目从这里逐字节照搬；没有它就不能 `toDocx()` */
   pkg?: OpcPackage;
-  reflow?: (body: LoadedDocument['body']) => {
-    loaded: LoadedDocument;
-    layout: DocumentLayout;
-    values: ReadonlyMap<NodeId, string>;
-  };
+  reflow?: (body: LoadedDocument['body']) => Reflowed;
   layout: DocumentLayout;
   /** 与 `layout` 自洽的域求值结果（run id → 显示的文字），查找时用它跳过旧值 */
   fieldValues: ReadonlyMap<NodeId, string>;
@@ -79,18 +105,27 @@ export class UwDocument {
   get layout(): DocumentLayout {
     return this.#layout;
   }
-  /** 解析与排版期记下的内容问题（结构性错误早在 `load()` 就抛了） */
-  readonly diagnostics: readonly Diagnostic[];
+  /**
+   * 解析与排版期记下的内容问题（结构性错误早在 `load()` 就抛了）。编辑后重排新发现的
+   * 会追加在后面（去重），与 `diagnostic` 事件报的是同一批
+   */
+  get diagnostics(): readonly Diagnostic[] {
+    return this.#diagnostics;
+  }
+  readonly #diagnostics: Diagnostic[];
+  readonly #diagnosticKeys: Set<string>;
+  readonly #events = new Emitter<DocumentEvents>();
   #loaded: LoadedDocument;
   #fieldValues: ReadonlyMap<NodeId, string>;
   readonly #editor: TextEditor;
   readonly #reflow: UwDocumentInit['reflow'];
   readonly #pkg: OpcPackage | undefined;
-  #prepared: ReturnType<NonNullable<UwDocumentInit['reflow']>> | undefined;
+  #prepared: (Reflowed & { duration: number }) | undefined;
   readonly #listeners = new Set<(change: TextChangeSet) => void>();
   readonly #views = new Set<(layout: DocumentLayout) => void>();
   #order: RunOrder | undefined;
   #nodes: Map<NodeId, DocNode> | undefined;
+  #resolvedRuns: Map<NodeId, ResolvedRun> | undefined;
   #imageHref: ((id: string) => string | undefined) | undefined;
 
   constructor(init: UwDocumentInit) {
@@ -98,13 +133,22 @@ export class UwDocument {
     this.#layout = init.layout;
     this.#editor = createTextEditor(init.loaded.body, {
       validate: (body) => {
-        this.#prepared = this.#reflow?.(body);
+        if (!this.#reflow) return;
+        const t0 = performance.now();
+        const result = this.#reflow(body);
+        this.#prepared = { ...result, duration: performance.now() - t0 };
       },
     });
     this.#reflow = init.reflow;
     this.#pkg = init.pkg;
     this.#fieldValues = init.fieldValues;
-    this.diagnostics = init.diagnostics;
+    this.#diagnostics = [...init.diagnostics];
+    this.#diagnosticKeys = new Set(this.#diagnostics.map(diagnosticKey));
+  }
+
+  /** 挂一个事件监听者，见 `DocumentEvents`。视图上的事件在 `UwView.on` */
+  on<K extends keyof DocumentEvents>(type: K, listener: (payload: DocumentEvents[K]) => void): Disposable {
+    return this.#events.on(type, listener);
   }
 
   get canUndo(): boolean {
@@ -118,15 +162,18 @@ export class UwDocument {
     options?: TextTransactionOptions,
   ): TextChangeSet | undefined {
     if (!this.#reflow) throw new Error('文档未配置编辑重排');
-    return this.#changed(this.#editor.tx(callback, options));
+    return this.#changed(this.#editor.tx(callback, options), 'tx');
   }
   undo(): TextChangeSet | undefined {
-    return this.#changed(this.#editor.undo());
+    return this.#changed(this.#editor.undo(), 'undo');
   }
   redo(): TextChangeSet | undefined {
-    return this.#changed(this.#editor.redo());
+    return this.#changed(this.#editor.redo(), 'redo');
   }
-  #changed(change: TextChangeSet | undefined): TextChangeSet | undefined {
+  #changed(
+    change: TextChangeSet | undefined,
+    source: DocumentEvents['document:change']['source'],
+  ): TextChangeSet | undefined {
     if (!change || !this.#reflow) return change;
     const result = this.#prepared;
     if (!result) throw new Error('缺少预排版结果');
@@ -136,8 +183,25 @@ export class UwDocument {
     this.#fieldValues = result.values;
     this.#order = undefined;
     this.#nodes = undefined;
+    this.#resolvedRuns = undefined;
+    const fresh: Diagnostic[] = [];
+    for (const d of result.diagnostics ?? []) {
+      const key = diagnosticKey(d);
+      if (this.#diagnosticKeys.has(key)) continue;
+      this.#diagnosticKeys.add(key);
+      this.#diagnostics.push(d);
+      fresh.push(d);
+    }
+    // 视图先刷新、再告诉宿主：监听者里去读 `view.selection` / `view.rectsOf` 拿到的是新布局上的
     for (const update of this.#views) update(this.layout);
     for (const listener of this.#listeners) listener(change);
+    this.#events.emit('document:change', { changeSet: change, source });
+    this.#events.emit('layout:done', {
+      pageCount: this.pageCount,
+      duration: result.duration,
+      iterations: result.passes ?? 1,
+    });
+    for (const d of fresh) this.#events.emit('diagnostic', d);
     return change;
   }
 
@@ -241,7 +305,35 @@ export class UwDocument {
           };
         },
       },
+      (position) => this.#elementAt(position),
     );
+  }
+
+  /**
+   * 点到的位置落在什么「元素」上（`click:element` 的数据）。现在只认超链接：
+   * 图片的绘制层不接指针事件、布局索引里也没有对象的矩形，内容控件解析时已经剥掉了。
+   */
+  #elementAt(position: DocPosition): ElementHit | undefined {
+    if (this.#resolvedRuns === undefined) {
+      const map = new Map<NodeId, ResolvedRun>();
+      for (const section of this.#loaded.resolved.sections)
+        for (const block of walkBlocks(section.blocks))
+          if (block.kind === 'paragraph') for (const run of block.runs) map.set(run.id, run);
+      this.#resolvedRuns = map;
+    }
+    const link = this.#resolvedRuns.get(position.nodeId)?.hyperlink;
+    const node = this.#nodeById(position.nodeId);
+    if (link === undefined || node === undefined) return undefined;
+    // 容器那条路给的是关系 id，外部关系的 Target 原文就是 URL；书签锚点拼成 `#名字`
+    let href = link.url;
+    if (href === undefined && link.relId !== undefined && this.#pkg !== undefined) {
+      const rel = this.#pkg.rels(this.#pkg.mainDocumentPartName()).byId(link.relId);
+      if (rel?.targetMode === 'External') href = rel.rawTarget;
+    }
+    if (link.anchor !== undefined) href = `${href ?? ''}#${link.anchor}`;
+    const hit: ElementHit = { kind: 'hyperlink', node };
+    if (href !== undefined) hit.href = href;
+    return hit;
   }
 
   #nodeById(id: NodeId): DocNode | undefined {
@@ -263,4 +355,8 @@ export class UwDocument {
     }
     return this.#nodes.get(id);
   }
+}
+
+function diagnosticKey(d: Diagnostic): string {
+  return [d.severity, d.code, d.message, d.part ?? '', d.path ?? ''].join('\u0000');
 }

@@ -76,6 +76,8 @@ export async function load(
     headerFooters: loaded.headerFooters,
     diagnostics: sink,
   });
+  // 诊断表是追加式的，每趟重排只把这之后新记的交出去（`diagnostic` 事件报的就是它们）
+  let reported = sink.list().length;
   return new UwDocument({
     loaded,
     pkg,
@@ -106,10 +108,15 @@ export async function load(
       });
       // 编号定义随树走（新建列表会加定义），`loaded.numbering` 跟着换成同一份
       const numbering = body.numbering ?? loaded.numbering;
+      const all = sink.list();
+      const diagnostics = all.slice(reported);
+      reported = all.length;
       return {
         loaded: { ...loaded, body, resolved, fields, numbering },
         layout: result.layout,
         values: result.values,
+        passes: result.passes,
+        diagnostics,
       };
     },
     layout: result.layout,

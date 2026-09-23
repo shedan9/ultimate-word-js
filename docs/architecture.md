@@ -144,7 +144,7 @@ flowchart TB
 
 ```mermaid
 flowchart BT
-  core["@uw/core<br/>单位 · 几何 · 事件 · 错误"]
+  core["@uw/core<br/>单位 · 几何 · 错误"]
   ooxml["@uw/ooxml<br/>OPC + XML"]
   model["@uw/model<br/>模型 + 级联 + 事务"]
   fonts["@uw/fonts<br/>度量 + 分桶"]
@@ -222,7 +222,7 @@ flowchart BT
 | `@uw/render-dom` | 🟢 v1：一页一个 `<svg>`（viewBox 单位 **pt**）· 逐字 x 走 `<text x="…">` · 下划线 / 删除线 / 上下标 / 横向缩放 · 制表位前导符 · 表格底纹 + 格线（共享的线只画一次）· 页眉页脚（与版心平级的两个框）· 缩放只改 `<svg>` 尺寸不重排 · **图片**（`<image>` + 裁剪 `clipPath` + 旋转翻转；画不出来的画尺寸正确的占位框）· ⏸ 增量更新（可选文本层归 view） |
 | `@uw/view` | 🟢 屏幕坐标转换（页面仿射矩阵）· `locate` / `rectsOf` / `caretRect` · DOM 挂载 / 更新 / 销毁 · 缩放保留选区与布局索引 · 视口 ±2 页绘制 · 全文原生文字层 / 查找 / 纯文本复制 · **编辑态复制 / 剪切 / 粘贴**（模型选区、段落换行、当前域显示值、原子删除与写入失败保护；text/html 按 Word 写法带字体分桶与格式，粘贴分保留源格式 / 合并格式）· **制表位、软换行与分页符**（Tab / Shift+Enter / Ctrl+Enter，可删、可导航）· **表格里 Tab 跳格**（选中整格，最内层表格、跳过续格）· **编辑导航与删除**（按字素 / 词移动和删除、跨页上下导航与横向位置记忆、全文选区与文档首尾导航、Ctrl/Cmd+B/I/U 格式切换与折叠光标暂存格式、Ctrl/Cmd+L/E/R/J 段落对齐、列表 Tab 升降级与空项 Enter / 段首退格去编号、新建 / 取消列表（Ctrl/Cmd+Shift+L）、Ctrl+M 缩进、Ctrl+T 悬挂缩进、Ctrl+0 段前间距与 Ctrl+1/2/5 行距、Shift 扩选、双击选词，跨 run 分词与反向选区 focus，见 §8）· **装饰与 overlay**（住在页壳上，滚动与 CSS 变换由浏览器继承，缩放 / 重排 / 壳尺寸变化才重算）· **`scrollTo`**（位置 / range 首行 / 页，走 `scrollIntoView`）· **打印**（2026-09-13，`print.ts`：`<body>` 直下另造一份 pt 尺寸的打印页，`@page { size }` 取纸张、边距 0，Ctrl+P 与 `print()` 都走它，见 §8.5）；⏸ `below-text` 装饰 |
 | `@uw/fonts/packs` | 🟢 随库 17 款度量包的**无 fs** 入口（JSON import attributes），浏览器与 Node 同一条路；`@uw/fonts/node` 的 `loadBundledPacks()` 只剩离线工具在用 |
-| `ultimate-word` | 🟢 门面（2026-09-13）：`UltimateWord.load()`（ArrayBuffer / Uint8Array / Blob / Response / URL）→ `UwDocument`（`pageCount` · `diagnostics` · `find` · `query` · `compare` · `rangeOf` · `mount`）→ `UwView`（`locate` / `rectsOf` / `caretRect` / `decorate` / `overlay` / `scrollTo` / `setZoom` 认 `fit-width` / `fit-page` 并跟随容器 / `dispose`）· `UltimateWord.fonts` 全局注册表（随库度量包模块加载时就注册；`register()` **异步**，fontkit 走动态 import 不进主 chunk）。**它不实现任何东西**，只把六个包接成 api.md 的形状；`layout` 暴露但不在稳定性承诺内 |
+| `ultimate-word` | 🟢 门面（2026-09-13）：`UltimateWord.load()`（ArrayBuffer / Uint8Array / Blob / Response / URL）→ `UwDocument`（`pageCount` · `diagnostics` · `find` · `query` · `compare` · `rangeOf` · `mount`）→ `UwView`（`locate` / `rectsOf` / `caretRect` / `decorate` / `overlay` / `scrollTo` / `setZoom` 认 `fit-width` / `fit-page` 并跟随容器 / `dispose`）· **事件**（2026-09-23，api.md §11：`doc.on` 的 `document:change` / `layout:done` / `diagnostic`，`view.on` 的 `selection:change` / `viewport:change` / `click:element`（只认超链接）；分发器在门面的 `events.ts` —— 原图把「事件」画在 `@uw/core` 里，但派发时机全在门面与视图，core 没有什么可派发的）· `UltimateWord.fonts` 全局注册表（随库度量包模块加载时就注册；`register()` **异步**，fontkit 走动态 import 不进主 chunk）。**它不实现任何东西**，只把六个包接成 api.md 的形状；`layout` 暴露但不在稳定性承诺内 |
 | `@uw/react` | 🟢（2026-09-13）`<UltimateWordView>`（`doc.mount()` 的声明式形态：构造选项变了重挂、`zoom` 只 `setZoom`、`overlays` 按 key 调和成 `view.overlay()`，气泡是 portal 进宿主元素的正常 React 子树）· `useDocument` · `useDecoration`。**不另起 API**，`ref` 拿到的就是 `UwView` |
 | `@uw/serialize` | 🟡（2026-09-23）补丁式回写：`serializeDocx(pkg, body)` 只重写改过的部件；正文以原文为底，没变的节点逐字节吐回，改过的段落 / run 按字段组补丁属性（`w:pPr` / `w:rPr` 按 schema 顺序插新元素）、图片 / 符号 / 域界桩找回原元素，拆出来的新段 / 新 run 以来源为模板（带走模型不认识的格式）；分节符跟着「本节末段」走；新建列表追加进 `numbering.xml`（没有就新建并登记内容类型与关系）。门面 `doc.toDocx()`。⏸ 页眉页脚 / 表格结构 / 样式表的编辑与回写（编辑本身也还不支持） |
 | `@uw/render-canvas` `@uw/editor` | ⚪ 未创建 |
@@ -765,7 +765,7 @@ flowchart TB
 输入层恢复选区需要另存快照。范围支持同一块容器内的跨段文字，拆段 / 合段已接入；域编辑仍拒绝。
 
 目前每次事务会扫描正文建立 run 索引，提交遍历祖先并复制修改路径；还没有行级增量优化。
-门面 `doc.tx()`、视图更新和下面的 IME 流程已接入，公开事件仍待实现。`TextChangeSet.paragraphIds` 是
+门面 `doc.tx()`、视图更新、下面的 IME 流程与公开事件（api.md §11）都已接入。`TextChangeSet.paragraphIds` 是
 受影响段落的入口，但不能仅凭行数没变就认定后续页面不变——字号、对象等也可能改变段落高度。
 
 **正文不是 contenteditable。** 正文是绝对定位的只读 DOM；
@@ -874,7 +874,7 @@ Worker 传输需要一个可结构化克隆的度量快照，跨平台分发也�
 
 `UwDocument` 在模型提交前完成候选树级联与排版检查，成功后更新查询缓存与全部挂载视图。
 `@uw/view` 的纯输入状态存模型选区；`@uw/view/dom` 的输入适配器持有常驻 textarea，
-组合串只在 compositionend 提交一次。当前复用段落布局缓存，分页与视图仍完整更新，公开事件尚未接入；
+组合串只在 compositionend 提交一次。当前复用段落布局缓存，分页与视图仍完整更新；公开事件（2026-09-23）在视图刷新之后同步派发；
 系统输入法候选窗仍需人工验证，合成浏览器事件只验证输入链路与重复提交防护。
 
 **导航与选词（2026-09-22）**：`text-navigation.ts` 将同段 text 片段拼接后统一分词 / 字素，

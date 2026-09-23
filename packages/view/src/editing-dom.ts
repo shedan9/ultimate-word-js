@@ -30,7 +30,20 @@ export interface DomEditing {
   select(range: DocRange): void;
   focus(): void;
   refresh(): void;
+  /**
+   * 选区（含折叠的光标）按值变了就通知：点击、方向键、输入后光标后移、事务映射都算，
+   * 滚动与缩放只重画不通知。`undefined` 是还没放过光标。
+   */
+  onSelectionChange(listener: (selection: DocRange | undefined) => void): () => void;
   dispose(): void;
+}
+
+function samePosition(a: DocPosition, b: DocPosition): boolean {
+  return a.nodeId === b.nodeId && a.contentIndex === b.contentIndex && a.offset === b.offset;
+}
+function sameRange(a: DocRange | undefined, b: DocRange | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  return samePosition(a.start, b.start) && samePosition(a.end, b.end);
 }
 
 /** Word 与浏览器富文本共用的 B / I / U；Ctrl 与 Cmd 都认，Alt / Shift 组合留给系统与宿主。 */
@@ -71,9 +84,16 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
   let suppressCommit: string | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let preferredX: number | undefined;
+  const selectionListeners = new Set<(selection: DocRange | undefined) => void>();
+  let lastSelection: DocRange | undefined;
   function refresh(): void {
     if (dead) return;
     const range = state.selection;
+    // 所有改选区的路径最后都走到这里，在这一处比较就不必在每个命令后面各补一句通知
+    if (!sameRange(range, lastSelection)) {
+      lastSelection = range;
+      for (const listener of [...selectionListeners]) listener(range);
+    }
     decoration?.dispose();
     decoration = undefined;
     if (!range) {
@@ -401,8 +421,15 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
     },
     focus,
     refresh,
+    onSelectionChange(listener) {
+      selectionListeners.add(listener);
+      return () => {
+        selectionListeners.delete(listener);
+      };
+    },
     dispose() {
       dead = true;
+      selectionListeners.clear();
       clearTimeout(timer);
       unsubscribe();
       decoration?.dispose();

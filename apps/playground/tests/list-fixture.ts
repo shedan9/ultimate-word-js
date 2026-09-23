@@ -34,8 +34,8 @@ const SECT_PR = `<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>
       <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>
     </w:sectPr>`;
 
-/** 最小的 docx：一个正文部件 + 编号部件。 */
-function docxOf(blocks: string): Uint8Array {
+/** 最小的 docx：一个正文部件 + 编号部件；`extraRels` 追加进正文的关系表（超链接用）。 */
+function docxOf(blocks: string, extraRels = ''): Uint8Array {
   const body = `<w:document xmlns:w="${W_NS}" xmlns:r="${OFFICE_REL}"><w:body>${blocks}${SECT_PR}</w:body></w:document>`;
   return zipSync({
     '[Content_Types].xml': encoder.encode(
@@ -51,7 +51,7 @@ function docxOf(blocks: string): Uint8Array {
     ),
     'word/document.xml': encoder.encode(body),
     'word/_rels/document.xml.rels': encoder.encode(
-      rels(`<Relationship Id="rId1" Type="${OFFICE_REL}/numbering" Target="numbering.xml"/>`),
+      rels(`<Relationship Id="rId1" Type="${OFFICE_REL}/numbering" Target="numbering.xml"/>${extraRels}`),
     ),
     'word/numbering.xml': encoder.encode(numbering()),
   });
@@ -81,5 +81,17 @@ export function tableDocx(): Uint8Array {
       .join('')}</w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid>
       <w:tr>${cell(paragraph('格甲'))}${cell(paragraph('格乙'))}</w:tr>
       <w:tr>${cell(paragraph('格丙', 0))}${cell(paragraph('格丁'))}</w:tr></w:tbl>${paragraph('表后正文')}`,
+  );
+}
+
+/**
+ * 事件回归用：外链（地址在关系表里、`TargetMode="External"`）+ 书签跳转（只有 `w:anchor`）+ 普通文字。
+ * 两种超链接走的是 `w:hyperlink` 容器那条路，HYPERLINK 域那条由 model 的单测兜着。
+ */
+export function linkDocx(): Uint8Array {
+  return docxOf(
+    `<w:p><w:r><w:t>请访问</w:t></w:r><w:hyperlink r:id="rId9"><w:r><w:t>官方网站</w:t></w:r></w:hyperlink></w:p>
+      <w:p><w:hyperlink w:anchor="附件"><w:r><w:t>跳到附件</w:t></w:r></w:hyperlink></w:p>${paragraph('普通正文')}`,
+    `<Relationship Id="rId9" Type="${OFFICE_REL}/hyperlink" Target="https://example.com/" TargetMode="External"/>`,
   );
 }

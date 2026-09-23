@@ -310,7 +310,7 @@ doc.bindings.apply();                            // 一次性提交 → 触发�
 ## 10. 编辑与事务 🟡
 
 > 门面 `doc.tx()` / `undo()` / `redo()` 已接入文字、段落与字符格式命令，并自动级联 / 排版（复用段落缓存，见 §10.3）。
-> 下方 `insertParagraph` 与公开事件仍是设计目标；`setParagraphProps` 的参数形状以 §10.1 为准
+> 下方 `insertParagraph` 仍是设计目标（公开事件 2026-09-23 已接入，见 §11）；`setParagraphProps` 的参数形状以 §10.1 为准
 > （原设想把 `firstLineChars` 平铺在顶层，实现按 `ParaProps` 分组：`{ indent: { firstLineChars: 200 } }`）。
 
 **唯一的模型修改入口是 `doc.tx()`。** 没有零散的 setter。
@@ -493,7 +493,7 @@ textarea 常驻挂载容器，提交后更新页树与全部挂载视图，重�
 取消 / 失焦丢弃未提交组合串。缩放与滚动会刷新输入位置。
 
 当前复用段落布局缓存，级联、分页和视图更新仍完整执行；行内局部重排、编号样式选择、图片 / docx 片段粘贴、屏幕阅读器编辑、
-完整选区历史和公开 `document:change` 事件仍待实现。
+完整选区历史仍待实现；公开事件（`document:change` / `selection:change` 等）见 §11。
 浏览器回归 `/tests/editing.html` 使用组合事件验证接线；系统拼音候选窗的实际行为仍需人工验证。
 
 ### 10.3 段落布局缓存 🟢
@@ -516,15 +516,15 @@ textarea 常驻挂载容器，提交后更新页树与全部挂载视图，重�
 
 ---
 
-## 11. 事件 🟡
+## 11. 事件 🟢（2026-09-23）
 
 ```ts
 doc.on('layout:done', ({ pageCount, duration, iterations }) => {});
-doc.on('document:change', ({ changeSet }) => {});
+doc.on('document:change', ({ changeSet, source }) => {});   // source: 'tx' | 'undo' | 'redo'
 doc.on('diagnostic', (d: Diagnostic) => {});
 
 view.on('selection:change', (sel: DocRange | null) => {});
-view.on('click:element', ({ node, position, originalEvent }) => {});
+view.on('click:element', ({ kind, node, href, position, originalEvent }) => {});
 view.on('viewport:change', ({ visiblePages, zoom }) => {});
 ```
 
@@ -533,12 +533,29 @@ view.on('viewport:change', ({ visiblePages, zoom }) => {});
 
 | 事件 | 时机 | 典型用途 |
 |---|---|---|
-| `layout:done` | 排版完成（含域求值的全部迭代，见架构 §6） | 隐藏 loading、上报耗时 |
-| `document:change` | 事务提交后 | 标记「未保存」、协同同步 |
-| `diagnostic` | 解析/布局期发现内容问题 | 收集上报 |
-| `selection:change` | 选区变化 | 联动工具栏 |
-| `click:element` | 点到图片 / 内容控件 / 超链接 | 弹出编辑面板 |
-| `viewport:change` | 滚动 / 缩放 | 同步缩略图高亮 |
+| `layout:done` | 事务 / 撤销 / 重做后的排版完成（含域求值的全部迭代，见架构 §6） | 隐藏 loading、上报耗时 |
+| `document:change` | 事务提交后，紧挨在 `layout:done` 之前 | 标记「未保存」、协同同步 |
+| `diagnostic` | 编辑后重排新发现的内容问题（去重） | 收集上报 |
+| `selection:change` | 编辑态选区按值变化 | 联动工具栏 |
+| `click:element` | 点到超链接 | 弹出编辑面板、跳转 |
+| `viewport:change` | 看得见的页或倍率变化 | 同步缩略图高亮 |
+
+实现时定下 / 与原设想不同的几处：
+
+- **加载那一趟不派发。** `load()` 返回之前没人来得及挂监听者，那一趟的结果就是 `doc.layout` /
+  `doc.pageCount`，诊断就是 `doc.diagnostics` 的初值。原表写的 `diagnostic`「解析 / 布局期」因此只剩
+  编辑后重排这一半；新发现的同时追加进 `doc.diagnostics`（按内容去重 —— 字体注册后度量器会重新报一遍缺字体）。
+- **顺序**：视图先刷新 → `document:change` → `layout:done` → `diagnostic`，全部同步。监听者里读
+  `doc.layout`、`view.rectsOf()` 拿到的已经是新布局。没有修改的事务什么都不派发。
+- **监听者抛错不传回触发方**，交给 `reportError`：事务已经提交，一个宿主 bug 不该让视图停在旧布局上，
+  也不该挡住后面的监听者。
+- `selection:change` **只在编辑态**有：预览态原生文字层的划词对不上 `DocRange`。滚动与缩放不算变化，
+  事务映射后的光标位移算。
+- `click:element` 现在**只认超链接**（`kind: 'hyperlink'`，`href` 是外部地址或 `#书签名`）：图片的绘制层不接指针事件、
+  布局索引里没有对象的矩形，内容控件解析时已经剥掉了 —— 所以 payload 先按 `kind` 分支，将来加种类不破坏调用方。
+  视图**不替宿主跳转**；拖选结束的那一下 click（选区没折叠）不算。
+- `viewport:change` 的 `visiblePages` 来自虚拟化的 IntersectionObserver，是**真的看得见**的页（不含 overscan），
+  异步到达；没有它（或 `virtualize: false`）时只在倍率变化时派发、`visiblePages` 为空。
 
 ---
 

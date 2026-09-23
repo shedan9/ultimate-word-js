@@ -14,6 +14,7 @@ body { margin: 0; font: 14px/1.5 system-ui; }
 // find → decorate → rectsOf 通到屏幕），字摆在哪由 Vitest 里的真值断言负责
 import { UltimateWord } from 'ultimate-word';
 import fixtureUrl from '../../fidelity/fixtures/gongwen-01.docx?url';
+import { linkDocx } from './list-fixture.ts';
 
 const host = document.querySelector('#host');
 const second = document.querySelector('#second');
@@ -82,6 +83,58 @@ try {
   let code = '';
   try { await UltimateWord.load(new Uint8Array([1, 2, 3])); } catch (e) { code = e.code ?? ''; }
   assert(code === 'NOT_A_ZIP', '不是 zip 抛 NOT_A_ZIP');
+  // ⑩ viewport:change —— 倍率变了同步报，可见页由 IntersectionObserver 异步报
+  const viewed = await UltimateWord.load(fixtureUrl);
+  const pv = viewed.mount('#host');
+  const vp = [];
+  const vpSub = pv.on('viewport:change', (e) => vp.push(e));
+  pv.setZoom(0.5);
+  assert(vp.at(-1)?.zoom === 0.5, 'setZoom 派发 viewport:change，带新倍率');
+  const n = vp.length;
+  pv.setZoom(0.5);
+  assert(vp.length === n, '倍率没变不重复派发');
+  if (!document.hidden) assert(await until(() => vp.some((e) => e.visiblePages.includes(0))), `可见页里有第 1 页（${JSON.stringify(vp.at(-1)?.visiblePages)}）`);
+  vpSub.dispose();
+  const m = vp.length;
+  pv.setZoom(1);
+  assert(vp.length === m, 'dispose 之后不再收到');
+  pv.dispose();
+  // ⑪ selection:change 与 click:element（编辑态、超链接）
+  const linked = await UltimateWord.load(linkDocx());
+  const ev = linked.mount('#host', { mode: 'edit' });
+  await frame();
+  const sels = [];
+  ev.on('selection:change', (r) => sels.push(r));
+  const site = linked.find('官方网站')[0];
+  ev.select({ start: site.start, end: site.start });
+  assert(sels.length === 1 && linked.compare(sels[0].start, site.start) === 0, 'select 派发 selection:change');
+  ev.select({ start: site.start, end: site.start });
+  assert(sels.length === 1, '选区按值没变不派发');
+  linked.tx((t) => { t.insertText(site.start, '中'); });
+  assert(sels.length === 2 && sels[1].start.offset === site.start.offset + 1, '事务映射后的光标位移也派发');
+  linked.undo();
+  const clicks = [];
+  ev.on('click:element', (e) => clicks.push(e));
+  const clickAt = (range) => {
+    const r = ev.rectsOf(range)[0];
+    const x = r.x + r.width / 2;
+    const y = r.y + r.height / 2;
+    document.elementFromPoint(x, y).dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: x, clientY: y, button: 0 }));
+  };
+  clickAt(linked.find('官方网站')[0]);
+  assert(clicks.length === 1 && clicks[0].kind === 'hyperlink' && clicks[0].href === 'https://example.com/', `点外链：href = ${clicks[0]?.href}`);
+  assert(clicks[0].node.id === clicks[0].position.nodeId && clicks[0].originalEvent instanceof MouseEvent, '事件带着 run 节点、位置与原生事件');
+  clickAt(linked.find('跳到附件')[0]);
+  assert(clicks.length === 2 && clicks[1].href === '#附件', `点书签链接：href = ${clicks[1]?.href}`);
+  clickAt(linked.find('普通正文')[0]);
+  assert(clicks.length === 2, '点普通文字不派发');
+  const word = linked.find('官方网站')[0];
+  ev.select(word);
+  clickAt(word);
+  assert(clicks.length === 2, '选区没折叠（拖选结束）时不算点击');
+  ev.dispose();
+  let late = false; try { ev.on('selection:change', () => {}); } catch { late = true; }
+  assert(late, '销毁后 on 抛错');
   result.textContent = `PASS: ${passed} browser assertions`;
 } catch (error) {
   result.textContent = `FAIL after ${passed}: ${error.message}`;
