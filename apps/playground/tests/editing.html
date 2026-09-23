@@ -522,11 +522,26 @@ try {
   const cellHighlight = tableView.rectsOf(tableView.selection);
   assert(cellHighlight.length === 1 && cellHighlight[0].x > tableView.caretRect(cellRange('格甲').start).x + 100, '选区矩形落在右边那一格');
   tableKey('Tab'); tableKey('Tab');
-  const lastCell = JSON.stringify(tableView.selection);
-  assert(tableKey('Tab') && JSON.stringify(tableView.selection) === lastCell && cellTabs() === 0, '末格 Tab 接管但不动');
+  assert(sameRange(tableView.selection, cellRange('格丁')), '走到末格');
   tableInput.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: '新', bubbles: true, cancelable: true }));
   assert(tableDoc.find('格丁').length === 0 && tableDoc.find('新').length === 1, '选中整格后打字替换格内容');
   tableDoc.undo();
+  // 末格 Tab：下方加一行，光标进新行首格（在「格丙」正下方），打字写进去；两次撤销回到两行
+  const rows = () => tableDoc.query('row').length;
+  const beforeRow = tableView.caretRect(cellRange('格丙').start);
+  tableView.select({ start: cellRange('格丁').end, end: cellRange('格丁').end });
+  assert(tableKey('Tab') && rows() === 3 && cellTabs() === 0, `末格 Tab 加一行（${rows()} 行）`);
+  await frame();
+  const newCaret = tableView.caretRect(tableView.selection.start);
+  assert(newCaret && Math.abs(newCaret.x - beforeRow.x) < 2 && newCaret.y > beforeRow.y + 5, '光标落在新行首格，正对着上一行首格下方');
+  tableInput.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: '续', bubbles: true, cancelable: true }));
+  const added = tableDoc.query('row')[2];
+  assert(added.cells[0].blocks[0].runs.some((r) => runText(r) === '续'), '接着打字写进新行首格');
+  const exported = await UltimateWord.load(await tableDoc.toDocx());
+  assert(exported.query('row').length === 3 && exported.find('续').length === 1, '导出再加载仍是三行、新格里的字还在');
+  tableDoc.undo();
+  tableDoc.undo();
+  assert(rows() === 2 && tableDoc.find('续').length === 0, '两次撤销：先去掉字、再去掉整行');
   tableView.select({ start: cellRange('表后正文').start, end: cellRange('表后正文').start });
   assert(tableKey('Tab') && cellTabs() === 1, '表外 Tab 照常插制表位');
   tableDoc.undo();

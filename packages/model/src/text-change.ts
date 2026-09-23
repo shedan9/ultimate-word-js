@@ -11,6 +11,11 @@ export interface PositionMove {
   length: number;
   /** 拆分边界的 before 位置留在前段。 */
   afterOnly?: boolean;
+  /**
+   * 源区间整个消失（删行）：区间内的位置一律落到 `to`，不按偏移平移 ——
+   * 平移会把第 5 个字的位置映射成目标段落里并不存在的第 5 个字。
+   */
+  collapse?: boolean;
 }
 
 export interface TextChange {
@@ -51,7 +56,10 @@ export function mapTextPosition(
           out.offset <= m.from.offset + m.length &&
           (affinity === 'after' || out.offset > m.from.offset || !m.afterOnly),
       );
-      if (move !== undefined) out = { ...move.to, offset: move.to.offset + out.offset - move.from.offset };
+      if (move !== undefined)
+        out = move.collapse
+          ? { ...move.to }
+          : { ...move.to, offset: move.to.offset + out.offset - move.from.offset };
       continue;
     }
     if (out.nodeId !== c.nodeId || out.contentIndex !== c.contentIndex || out.offset < c.offset) continue;

@@ -19,7 +19,7 @@ interface CellHit<S extends PropSet> {
 /**
  * `nodeId`（段落或 run）所在单元格的上 / 下一格的内容范围。
  * `undefined`：不在单元格里（Tab 照常插制表位）；`null`：已经在首 / 末格 ——
- * Word 在末格按 Tab 会加一行，表格结构编辑还没有，调用方应当什么都不做而不是插制表位。
+ * 末格的 Tab 由调用方加一行（事务的 `insertRow`，与 Word 一致），首格的 Shift+Tab 什么都不做，都不插制表位。
  */
 export function adjacentCellRange<S extends PropSet>(
   body: DocumentBody<S>,

@@ -74,8 +74,8 @@ export interface EditingController {
   indentList(direction: 'in' | 'out'): void;
   /**
    * Word 表格里的 Tab / Shift+Tab：选中下一个 / 上一个单元格的全部内容（按 focus 所在的最内层表格走）。
-   * 返回 false 表示不在单元格里，调用方照常处理 Tab；在首 / 末格返回 true 但不动 ——
-   * Word 末格 Tab 会加一行，表格结构编辑还没有，也不该退回去插制表位。
+   * 返回 false 表示不在单元格里，调用方照常处理 Tab。末格 Tab 学 Word 在下方加一行（照末行抄结构），
+   * 光标进新行首格，一个撤销单元；首格 Shift+Tab 返回 true 但不动 —— 不该退回去插制表位。
    */
   moveCell(direction: 'backward' | 'forward'): boolean;
   /**
@@ -374,6 +374,15 @@ export function createEditingController(
       if (target === undefined) return false;
       if (target) {
         controller.select(target);
+      } else if (direction === 'forward') {
+        const from = focus ?? selection.end;
+        let at = from;
+        editor.breakHistory();
+        pending = undefined;
+        editor.tx((tx) => {
+          at = tx.insertRow(from, 'below');
+        });
+        collapse(at);
       }
       return true;
     },
@@ -647,7 +656,16 @@ export function createEditingController(
       if (selection) {
         const backward = focus && equal(focus, selection.start);
         const range = mapTextRange(selection, change);
-        select(backward ? { start: range.end, end: range.start } : range);
+        try {
+          select(backward ? { start: range.end, end: range.start } : range);
+        } catch {
+          // 映射不到的选区（宿主的事务删掉了光标所在的整块、却没给位置迁移）退到正文开头，
+          // 而不是让刷新视图的整条链抛错 —— 模型已经提交了，视图必须跟上
+          const first = [...walkParagraphs(editor.body)][0];
+          const start = first && rangeOfNode(first)?.start;
+          if (start) collapse(start);
+          else selection = anchor = focus = undefined;
+        }
       }
       if (compositionRange) compositionRange = mapTextRange(compositionRange, change);
     },

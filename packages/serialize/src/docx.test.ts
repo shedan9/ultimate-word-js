@@ -336,3 +336,66 @@ describe('图片', () => {
     expect(Object.keys(again.images).length).toBeGreaterThan(0);
   });
 });
+
+describe('表格的行', () => {
+  const border = '<w:tcBorders><w:top w:val="single" w:sz="4"/></w:tcBorders>';
+  const cell = (text: string, pr = '') =>
+    `<w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/>${pr}${border}</w:tcPr><w:p><w:pPr><w:jc w:val="center"/></w:pPr>${text ? `<w:r><w:rPr><w:b/></w:rPr><w:t>${text}</w:t></w:r>` : ''}</w:p></w:tc>`;
+  const table =
+    '<w:p><w:r><w:t>表前</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w="6000" w:type="dxa"/></w:tblPr>' +
+    '<w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid>' +
+    `<w:tr w14:paraId="11111111"><w:trPr><w:tblHeader/><w:trHeight w:val="600"/></w:trPr>${cell('表头甲')}${cell('表头乙')}</w:tr>` +
+    `<w:tr w14:paraId="22222222"><w:trPr><w:trHeight w:val="400"/></w:trPr>${cell('首', '<w:vMerge w:val="restart"/>')}${cell('乙')}</w:tr>` +
+    `<w:tr><w:trPr><w:trHeight w:val="400"/></w:trPr>${cell('', '<w:vMerge/>')}${cell('丁')}</w:tr>` +
+    '</w:tbl><w:p><w:r><w:t>表后</w:t></w:r></w:p>';
+  const find = (body: Body, text: string): DocPosition => {
+    const run = paragraphs(body)
+      .flatMap((p) => p.runs)
+      .find((r) => r.content.some((c) => c.kind === 'text' && c.text === text));
+    if (run === undefined) throw new Error(`没有「${text}」`);
+    return { nodeId: run.id, contentIndex: 0, offset: 0 };
+  };
+
+  it('插行再输入：重新加载结构相等，trPr / tcPr / 段落与字符格式抄模板，paraId 不抄', () => {
+    const { edited, out, again } = roundTrip(docx(table), (t, body) => {
+      // 表头下方插的那一行照表头抄（带 tblHeader）；在「乙」上方插的照「乙」那行抄 —— 模型顺序一样，模板不同
+      t.insertRow(find(body, '表头甲'), 'below');
+      const caret = t.insertRow(find(body, '乙'), 'above');
+      t.insertText(caret, '新格');
+      t.insertRow(find(body, '丁'), 'below');
+    });
+    expect(shape(again.body)).toEqual(shape(edited));
+    const xml = decoder.decode(unzip(out).get('word/document.xml'));
+    const rows = xml.split(/<w:tr[ >]/).slice(1);
+    expect(rows).toHaveLength(6);
+    expect(rows.filter((r) => r.includes('<w:tblHeader/>'))).toHaveLength(2);
+    expect(xml.match(/w14:paraId="11111111"/g)).toHaveLength(1);
+    expect(rows[2]).toContain('<w:trHeight w:val="400"/>');
+    expect(rows[2]).toContain('<w:jc w:val="center"/>');
+    // 新格里的字跟着模板段落的**段落标记**格式（这里没写，所以不加粗）—— 与 Word 在新行里打字一致
+    expect(rows[2]).toContain('<w:t>新格</w:t>');
+    expect(rows[2]).not.toContain('<w:b/>');
+    // 首格下面那行（插在合并区外、上方）是 none，「丁」下面的新行在合并区之外
+    expect(rows[2]).not.toContain('w:vMerge');
+    expect(rows[5]).not.toContain('w:vMerge');
+    // vMerge 插在 tcW 之后、tcBorders 之前
+    expect(rows[3]).toMatch(/<w:tcW[^>]*\/><w:vMerge w:val="restart"\/><w:tcBorders>/);
+  });
+
+  it('删掉合并区首格那一行：续格写成 restart；删光整张表连 w:tbl 一起去掉', () => {
+    const head = roundTrip(docx(table), (t, body) => {
+      t.deleteRows({ start: find(body, '乙'), end: find(body, '乙') });
+    });
+    expect(shape(head.again.body)).toEqual(shape(head.edited));
+    const xml = decoder.decode(unzip(head.out).get('word/document.xml'));
+    expect(xml.split(/<w:tr[ >]/).slice(1)).toHaveLength(2);
+    expect(xml).toMatch(/<w:tcW[^>]*\/><w:vMerge w:val="restart"\/>/);
+    expect(xml).not.toContain('<w:t>乙</w:t>');
+
+    const all = roundTrip(docx(table), (t, body) => {
+      t.deleteRows({ start: find(body, '表头甲'), end: find(body, '丁') });
+    });
+    expect(shape(all.again.body)).toEqual(shape(all.edited));
+    expect(decoder.decode(unzip(all.out).get('word/document.xml'))).not.toContain('<w:tbl>');
+  });
+});

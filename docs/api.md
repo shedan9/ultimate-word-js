@@ -368,7 +368,7 @@ editor.breakHistory(); // 光标移动、焦点切换等输入边界中断合并
 - `t.insertText(position, text)` 返回插入后的光标位置；文字不能含换行、制表位或孤立代理项。
   位置落在制表位 / 换行上时写进紧挨着的文字片段，没有就补一个空文字片段。
 - `t.insertInline(position, 'tab' | 'lineBreak' | 'pageBreak')`（2026-09-23）插入 `w:tab` / `w:br`（软换行，不结束段落）/
-  `w:br w:type="page"`（只插分页符本身，不拆段；单元格里抛错 —— Word 会从那一行拆表，表格结构编辑还没有），
+  `w:br w:type="page"`（只插分页符本身，不拆段；单元格里抛错 —— Word 会从那一行拆表，拆表还没有），
   返回它后面的位置；文字中间切成「前半 / 片段 / 后半」，片段边界上不造空文字，后面的片段下标随之后移（位置由变更集映射）。
 - `t.deleteRange(range)` 返回删除起点，支持跨 run / 文字片段，以及同一块容器内连续段落；合段保留前段格式和剩余 run 的样式 / 链接。
   只接受正向范围；位置按 UTF-16 计数，但不能切开合法代理对。
@@ -393,6 +393,12 @@ editor.breakHistory(); // 光标移动、焦点切换等输入边界中断合并
   每级左缩进 420 twips × 级数、悬挂 420），返回 numId，再用 `setParagraphProps(range, { numbering: { numId, level: 0 } })`
   引用。定义存在 `editor.body.numbering` 上，随事务提交与撤销；本次没有段落改动时整次无修改、定义不留下。
   接着已有列表数请直接引用它的 numId，每次 `addList` 都是一个新的计数。
+- `t.insertRow(position, 'above' | 'below')`（2026-09-23）在位置所在的行（最内层表格）上 / 下方插一行：照这一行抄格数、
+  `gridSpan`、格属性、行属性（含表头标记）与模板格首段的段落格式，每格一个空段落，返回新行首格（跳过纵向合并的续格）。
+  纵向合并按网格列对齐：插在合并区中间的新格是 `continue`，区外是 `none`。不在表格里抛错。
+- `t.deleteRows(range)` 删掉两端所在行及其间的行（两端须在同一张最内层表里），删掉合并区首格那一行时下面的续格升成 `restart`；
+  删光就删整张表，容器空了补空段落。返回下一行首格（没有就上一行、整表删掉就表后 / 表前的块）；被删行里的位置经变更集
+  **收拢**到这里（`PositionMove.collapse`）。行里有域抛错。插列 / 合并单元格 / 拆表还没有。
 - 默认最多 100 个撤销单元。只有显式 `origin: 'input'` 的单次纯插入、位置紧接上次末端、
   间隔不超过 1000ms 才合并；默认命令、超时、`breakHistory()`、undo/redo 都打断合并。
   `historyLimit: 0` 关闭历史，`mergeDelay: 0` 关闭合并。每次提交的变更集仍只含本次修改。
@@ -477,7 +483,7 @@ Ctrl+1 / 2 / 5 设单倍 / 双倍 / 1.5 倍行距（多倍规则，固定值行�
 Mac 的 Cmd+M 最小化窗口、Cmd+数字切标签页，Windows 的 Ctrl+数字也被浏览器截走，所以行距快捷键在
 Windows 上到不了页面，只能走控制器的 `lineSpacing(multiple)`（`indent(direction)` 同理）。
 单元格里的 Tab / Shift+Tab 选中下一格 / 上一格的全部内容（控制器 `moveCell(direction)`，模型侧 `adjacentCellRange()`），
-优先于列表升降级；按最内层表格走、跳过纵向合并的续格，首末格什么都不做（Word 末格 Tab 加一行，表格结构编辑还没有）。
+优先于列表升降级；按最内层表格走、跳过纵向合并的续格，末格 Tab 学 Word 在下方加一行、光标进新行首格（事务 `insertRow`，一个撤销单元），首格 Shift+Tab 什么都不做。
 Ctrl+T / Ctrl+Shift+T（控制器 `hangingIndent(direction)`）让**首行原地不动**、左缩进推到下一个 / 退到上一个默认制表位的
 整数倍，差出来的就是悬挂缩进；退只在已有悬挂时退、不退过首行。字符单位的缩进先按段落的 `charUnit`
 （`@uw/layout` 的 `indentCharUnit`，与排版同一条规则：首个看得见的字的字号）换成 twips，结果一律写 twips 并把字符单位清零。

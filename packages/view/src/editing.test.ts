@@ -988,7 +988,7 @@ describe('列表层级', () => {
     expect(texts()).toEqual(['甲乙丙']);
   });
 
-  it('表格里 Tab 选中下一格全部内容、Shift+Tab 回上一格；末格不动但仍算接管，表外不接管', () => {
+  it('表格里 Tab 选中下一格全部内容、Shift+Tab 回上一格；末格 Tab 加一行，表外不接管', () => {
     const cell = (id: string, text: string) => ({
       kind: 'cell' as const,
       id,
@@ -1021,12 +1021,25 @@ describe('列表层级', () => {
     state.select({ start: at('a-r', 1), end: at('a-r', 1) });
     expect(state.moveCell('forward')).toBe(true);
     expect(state.selection).toEqual({ start: at('b-r'), end: at('b-r', 2) });
-    expect(state.moveCell('forward')).toBe(true);
-    expect(state.selection).toEqual({ start: at('b-r'), end: at('b-r', 2) });
     state.moveCell('backward');
+    expect(state.selection).toEqual({ start: at('a-r'), end: at('a-r', 1) });
+    expect(state.moveCell('backward')).toBe(true);
     expect(state.selection).toEqual({ start: at('a-r'), end: at('a-r', 1) });
     // 选中整格后直接打字替换格内容，与 Word 一致
     state.insert('丙');
+    expect([...walkParagraphs(editor.body)].map(paragraphText)).toEqual(['正文', '丙', '乙乙']);
+    // 末格 Tab：下方加一行，光标进新行首格的空段落，接着打字写进去；一次撤销去掉整行
+    state.select({ start: at('b-r', 2), end: at('b-r', 2) });
+    expect(state.moveCell('forward')).toBe(true);
+    const table = editor.body.sections[0]?.blocks[1];
+    const added = table?.kind === 'table' ? table.rows[1] : undefined;
+    expect(added?.cells).toHaveLength(2);
+    const first = added?.cells[0]?.blocks[0]?.id as string;
+    expect(state.selection).toEqual({ start: at(first), end: at(first) });
+    state.insert('丁');
+    expect([...walkParagraphs(editor.body)].map(paragraphText)).toEqual(['正文', '丙', '乙乙', '丁', '']);
+    editor.undo();
+    editor.undo();
     expect([...walkParagraphs(editor.body)].map(paragraphText)).toEqual(['正文', '丙', '乙乙']);
   });
 

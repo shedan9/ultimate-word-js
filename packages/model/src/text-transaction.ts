@@ -5,7 +5,7 @@
  * 格式命令只在范围端点拆 run，不合并相邻同格式 run：合并会改掉后方 run 的 id 与片段下标，
  * 已存的批注 / 选区就得跟着映射，而多几个 run 对排版和回写都没有影响。
  */
-import type { Block, Body, NodeId, Paragraph, Run, RunContent } from './nodes.ts';
+import type { Block, Body, NodeId, Paragraph, Run, RunContent, TableCell, TableRow } from './nodes.ts';
 import { walkBlocks, walkParagraphs } from './nodes.ts';
 import { EMPTY_NUMBERING } from './numbering.ts';
 import type { ListKind } from './numbering-edit.ts';
@@ -13,6 +13,7 @@ import { addListDefinition } from './numbering-edit.ts';
 import { buildRunOrder, compareDocPositions, contentLength, rangeOfNode, runEnd, runStart } from './order.ts';
 import type { DocPosition, DocRange } from './position.ts';
 import type { Indent, NumberingRef, ParagraphSpacing, ParaProps, RunProps } from './props.ts';
+import { findRow, withInsertedRow, withoutRows } from './table-edit.ts';
 import type { PositionMove, TextChange, TextChangeSet } from './text-change.ts';
 import { invertTextChanges, mapTextRange } from './text-change.ts';
 
@@ -63,6 +64,17 @@ export interface TextTransaction {
    * 定义随本次事务提交与撤销；本次没有段落改动时整次无修改，定义也不留下。
    */
   addList(kind: ListKind): number;
+  /**
+   * 在位置所在的行（最内层表格）上方 / 下方插一行，照这一行抄结构与格式，每格一个空段落
+   * （见 table-edit.ts）。返回新行首格（跳过纵向合并的续格）的空段落位置。
+   */
+  insertRow(position: DocPosition, side: 'above' | 'below'): DocPosition;
+  /**
+   * 删掉范围两端所在的行及其间的行，两端须在同一张（最内层）表里；删光就删整张表。
+   * 被删行里的位置收拢到返回值：下一行首格、没有下一行就上一行、整表删掉就表后（或表前）的块。
+   * 行里有域时拒绝（域可能跨出这一行，删一半配不上对）。
+   */
+  deleteRows(range: DocRange): DocPosition;
 }
 
 /**
@@ -728,7 +740,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
                       })();
             position = materialize(position);
             flush();
-            // 单元格里的分页符 Word 会把整张表从这一行拆开，表格结构编辑还没有；
+            // 单元格里的分页符 Word 会把整张表从这一行拆开，拆表还没有（插行 / 删行有了，见 table-edit.ts）；
             // 照插的话布局只在格内截断、表格不拆，屏幕上看不出分页。
             if (kind === 'pageBreak') {
               const host = paragraphAt(entryAt(position).paragraph.id).blocks;
@@ -902,6 +914,96 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             return structuredClone(range);
           });
         },
+        insertRow(position, side) {
+          return command(() => {
+            if (side !== 'above' && side !== 'below') throw new TypeError(`未知的插入方向：${String(side)}`);
+            flush();
+            const hit = findRow(draft, position.nodeId);
+            if (hit === undefined) throw new Error('位置不在表格里');
+            const { table, row } = withInsertedRow(hit.table, hit.rowIndex, side, newId);
+            draft = hit.replace(table, () => {
+              throw new Error('插行不会删表');
+            });
+            entries = indexRuns(draft);
+            const added = row.cells.flatMap((c) => c.blocks.map((b) => b.id));
+            // 正向不挪任何位置；撤销时新行整个消失，落在新行里的光标收拢回插行的地方（Word 也是这样）
+            const back = { ...position };
+            structural(
+              added,
+              [],
+              added.map((id) => ({
+                from: { nodeId: id, contentIndex: 0, offset: 0 },
+                to: back,
+                length: 0,
+                collapse: true,
+              })),
+            );
+            return cellStart(row);
+          });
+        },
+        deleteRows(range) {
+          return command(() => {
+            flush();
+            const a = findRow(draft, range.start.nodeId);
+            const b = findRow(draft, range.end.nodeId);
+            if (a === undefined || b === undefined || a.table.id !== b.table.id)
+              throw new Error('只能删除同一张表里的行');
+            const from = Math.min(a.rowIndex, b.rowIndex);
+            const to = Math.max(a.rowIndex, b.rowIndex);
+            const removed = a.table.rows.slice(from, to + 1);
+            const paragraphs = removed.flatMap((r) =>
+              r.cells.flatMap((c) =>
+                [...walkBlocks(c.blocks)].filter((x): x is Paragraph => x.kind === 'paragraph'),
+              ),
+            );
+            for (const p of paragraphs)
+              for (const r of p.runs)
+                if (entries.get(r.id)?.protected) throw new Error('暂不支持删除包含域的行');
+            const next = withoutRows(a.table, from, to);
+            const { after, before } = a.neighbour();
+            let filler: Paragraph | undefined;
+            draft = a.replace(next, () => {
+              filler = { kind: 'paragraph', id: newId(), props: {}, runs: [] };
+              return filler;
+            });
+            entries = indexRuns(draft);
+            let target: DocPosition | undefined;
+            if (next !== undefined) {
+              const row = next.rows[from] ?? next.rows[from - 1];
+              if (row !== undefined) target = cellStart(row);
+            } else if (filler !== undefined) target = { nodeId: filler.id, contentIndex: 0, offset: 0 };
+            else if (after !== undefined) target = rangeOfNode(after)?.start;
+            else if (before !== undefined) target = rangeOfNode(before)?.end;
+            if (target === undefined) throw new Error('删行后找不到光标位置');
+            const dest = target;
+            const moves: PositionMove[] = paragraphs.flatMap((p): PositionMove[] =>
+              p.runs.length === 0
+                ? [
+                    {
+                      from: { nodeId: p.id, contentIndex: 0, offset: 0 },
+                      to: dest,
+                      length: 0,
+                      collapse: true,
+                    },
+                  ]
+                : p.runs.flatMap((r) =>
+                    (r.content.length ? r.content : [undefined]).map((c, i) => ({
+                      from: { nodeId: r.id, contentIndex: i, offset: 0 },
+                      to: dest,
+                      length: c === undefined ? 0 : contentLength(c),
+                      collapse: true,
+                    })),
+                  ),
+            );
+            // 撤销整棵树回到删之前，原位置本来就有效，不必反向映射
+            structural(
+              paragraphs.map((p) => p.id),
+              moves,
+              [],
+            );
+            return { ...target };
+          });
+        },
         addList(kind) {
           return command(() => {
             if (kind !== 'bullet' && kind !== 'decimal')
@@ -961,4 +1063,12 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
       }
     },
   };
+}
+
+/** 一行的首格（纵向合并的续格不显示内容，跳过）第一个段落的开头 */
+function cellStart(row: TableRow): DocPosition {
+  const cell: TableCell | undefined = row.cells.find((c) => c.vMerge !== 'continue') ?? row.cells[0];
+  const range = cell === undefined ? undefined : rangeOfNode(cell);
+  if (range === undefined) throw new Error('行里没有可放光标的段落');
+  return { ...range.start };
 }

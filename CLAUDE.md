@@ -94,7 +94,7 @@ Ctrl+1 / 2 / 5 设多倍行距。只认 Ctrl：Cmd+M / Cmd+数字到不了页面
 Shift+Tab 留给浏览器，Shift+Enter 软换行；粘贴的 `\t` / 段内 `<br>` 落成真的片段。
 **分页符已接入**（2026-09-23）：Ctrl+Enter（Mac 上 Cmd+Return）= `insertInline(pos, 'pageBreak')` **再拆段** ——
 Word 2013 起分页符后面跟一个段落标记，后文从新段落开始（**未对过真值**，本机没有 Word）。布局与回写本来就认
-`w:br w:type="page"`，没改；单元格里事务拒绝（Word 会拆表，表格结构编辑还没有）。
+`w:br w:type="page"`，没改；单元格里事务拒绝（Word 会拆表，拆表还没有）。
 复制粘贴带着它走：片段里记 U+000C（Word 的 `Range.Text` 也这么记），HTML 写 Word 那个 `page-break-before` 的 `<br>`，
 纯文本写换行；粘进单元格退成软换行（不然整次粘贴回滚）。
 **Ctrl+T 悬挂缩进 / Ctrl+0 段前 12pt 已接入**（2026-09-23）：Ctrl+T **首行不动**、左缩进推到下一个制表位整数倍；
@@ -109,6 +109,10 @@ Word 2013 起分页符后面跟一个段落标记，后文从新段落开始（*
 `view.on` 的 `selection:change` / `viewport:change` / `click:element`，分发器在门面的 `events.ts`。
 视图先刷新再派发，加载那一趟不派发；监听者抛错走 `reportError`、不回滚事务；`diagnostic` 去重并追加进 `doc.diagnostics`。
 `click:element` 只认超链接（图片的绘制层不接指针），拖选结束的 click 不算。门面浏览器回归增至 29 项。
+**插行 / 删行已接入**（2026-09-23，`@uw/model` 的 `table-edit.ts`）：`tx.insertRow(pos, side)` 照所在行抄结构，
+`tx.deleteRows(range)` 删光就删表；末格 Tab 加一行。**纵向合并按网格列对齐**（不按格下标），删合并区首行时续格升 restart。
+回写的新行**按结构比出模板**（「A 下方插」与「B 上方插」模型顺序一样），只重写 `w:vMerge`、不抄 `w14:paraId`。
+被删行里的位置靠 `PositionMove.collapse` 收拢（平移会指到不存在的字）。编辑浏览器回归现有 177 项。
 **Phase 8 已开始：回写 docx**（2026-09-23，新包 `@uw/serialize`，门面 `doc.toDocx()`，调试台「导出 docx」按钮）。
 补丁式：只重写改过的部件，没编辑的文档逐字节照搬；正文**走原文 XML 树**打补丁（见下）。Word 打开无修复提示只能人工验。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、
