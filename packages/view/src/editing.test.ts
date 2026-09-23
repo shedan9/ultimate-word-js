@@ -988,6 +988,48 @@ describe('列表层级', () => {
     expect(texts()).toEqual(['甲乙丙']);
   });
 
+  it('表格里 Tab 选中下一格全部内容、Shift+Tab 回上一格；末格不动但仍算接管，表外不接管', () => {
+    const cell = (id: string, text: string) => ({
+      kind: 'cell' as const,
+      id,
+      props: {},
+      gridSpan: 1,
+      vMerge: 'none' as const,
+      blocks: [{ kind: 'paragraph' as const, id: `${id}-p`, props: {}, runs: [run(`${id}-r`, text)] }],
+    });
+    const editor = createTextEditor({
+      sections: [
+        {
+          id: 's',
+          props: DEFAULT_SECTION_PROPS,
+          blocks: [
+            { kind: 'paragraph', id: 'p', props: {}, runs: [run('r', '正文')] },
+            {
+              kind: 'table',
+              id: 't',
+              props: {},
+              grid: [],
+              rows: [{ kind: 'row', id: 'tr', props: {}, cells: [cell('a', '甲'), cell('b', '乙乙')] }],
+            },
+          ],
+        },
+      ],
+    });
+    const state = createEditingController(editor);
+    state.select({ start: at('r', 1), end: at('r', 1) });
+    expect(state.moveCell('forward')).toBe(false);
+    state.select({ start: at('a-r', 1), end: at('a-r', 1) });
+    expect(state.moveCell('forward')).toBe(true);
+    expect(state.selection).toEqual({ start: at('b-r'), end: at('b-r', 2) });
+    expect(state.moveCell('forward')).toBe(true);
+    expect(state.selection).toEqual({ start: at('b-r'), end: at('b-r', 2) });
+    state.moveCell('backward');
+    expect(state.selection).toEqual({ start: at('a-r'), end: at('a-r', 1) });
+    // 选中整格后直接打字替换格内容，与 Word 一致
+    state.insert('丙');
+    expect([...walkParagraphs(editor.body)].map(paragraphText)).toEqual(['正文', '丙', '乙乙']);
+  });
+
   it('粘贴里的 U+000C：正文里插成分页符，单元格里退成软换行而不是整次回滚', () => {
     const breaks = (editor: TextEditor) =>
       [...walkParagraphs(editor.body)]

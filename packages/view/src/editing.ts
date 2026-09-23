@@ -15,6 +15,7 @@ import type {
   TextEditor,
 } from '@uw/model';
 import {
+  adjacentCellRange,
   buildRunOrder,
   compareDocPositions,
   mapTextRange,
@@ -71,6 +72,12 @@ export interface EditingController {
   listIndentable(): boolean;
   /** 每段各自升 / 降一级，夹在 0–8；整次一个撤销单元。 */
   indentList(direction: 'in' | 'out'): void;
+  /**
+   * Word 表格里的 Tab / Shift+Tab：选中下一个 / 上一个单元格的全部内容（按 focus 所在的最内层表格走）。
+   * 返回 false 表示不在单元格里，调用方照常处理 Tab；在首 / 末格返回 true 但不动 ——
+   * Word 末格 Tab 会加一行，表格结构编辑还没有，也不该退回去插制表位。
+   */
+  moveCell(direction: 'backward' | 'forward'): boolean;
   /**
    * Word 的「项目符号 / 编号」按钮：选区触及的段落全是这一种列表时取消编号，否则套用 ——
    * 紧邻的上一段是同类列表就接着它数，选区里已有同类列表就并进去，都没有才新建定义。
@@ -360,6 +367,15 @@ export function createEditingController(
     listIndentable() {
       if (!selection || composing) return false;
       return equal(selection.start, selection.end) ? !!listItemAtStart() : !!listParagraphs(selection);
+    },
+    moveCell(direction) {
+      if (!selection || composing) return false;
+      const target = adjacentCellRange(editor.body, (focus ?? selection.end).nodeId, direction);
+      if (target === undefined) return false;
+      if (target) {
+        controller.select(target);
+      }
+      return true;
     },
     indentList(direction) {
       if (!selection || !controller.listIndentable()) return;

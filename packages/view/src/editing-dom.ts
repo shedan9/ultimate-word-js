@@ -203,6 +203,18 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
     // 列表段首 / 列表选区的 Tab 升降级；其余位置 Tab 插制表位（Word 的行为），
     // Shift+Tab 不接管，留给浏览器把焦点移出编辑区 —— 否则键盘用户出不去。
     if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      // 单元格里 Tab / Shift+Tab 跳格（Word 的行为），优先于列表升降级；Shift+Tab 在格里因此也接管，
+      // 焦点仍能从表格外面的段落移出去。Word 在格里插制表位用 Ctrl+Tab，浏览器截走它（切标签页），没有接。
+      let moved = false;
+      run(() => {
+        moved = state.moveCell(event.shiftKey ? 'backward' : 'forward');
+      });
+      if (moved) {
+        event.preventDefault();
+        const at = state.focus;
+        if (at) view.scrollTo(at, { align: 'nearest' });
+        return;
+      }
       const list = state.listIndentable();
       if (!list && event.shiftKey) return;
       event.preventDefault();

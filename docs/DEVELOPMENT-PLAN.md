@@ -1065,7 +1065,12 @@ await view.toPNG(3);     // 第 3 页
   Shift+Enter 插软换行；粘贴里的制表符与段内 `<br>` 落成真的 `w:tab` / `w:br`，复制把软换行写成 `<br>`。
   推翻两条旧约定：「删除不能越过制表位 / 换行」「非列表位置不接管 Tab」。
   4 项事务单测 + 1 项布局索引单测 + 1 项控制器单测，编辑浏览器回归增至 152 项。
-  未做：退格先减缩进（Word 选项）、Ctrl+Tab 在表格里插制表位。
+  未做：退格先减缩进（Word 选项）。
+- ✅ **表格里的 Tab 跳格**（2026-09-23）：`adjacentCellRange(body, nodeId, direction)`（`@uw/model` 的 `table-nav.ts`）
+  答上 / 下一格的内容范围：按最内层表格走、行末接下一行、跳过 `vMerge=continue`；不在格里答 `undefined`，首末格答 `null`。
+  控制器 `moveCell()` 选中整格，单元格里 Tab / Shift+Tab 优先于列表升降级；首末格接管但不动 —— Word 末格 Tab 加一行，
+  表格结构编辑还没有，也不该退回去插制表位。Word 在格里插制表位用 Ctrl+Tab，浏览器截走（切标签页），没接。
+  3 项模型单测 + 1 项控制器单测，编辑浏览器回归增至 172 项（`tableDocx()` 现场造 2×2 表）。
 - ✅ **分页符 Ctrl+Enter**（2026-09-23）：`insertInline(position, 'pageBreak')` 插 `w:br w:type="page"`，控制器 `pageBreak()`
   再在它后面拆段（Word 2013 起分页符后跟段落标记；照界面行为写，没有真值样本）。Ctrl+Enter / Cmd+Return 接管，
   Ctrl+Shift+Enter（分栏符）不接管。布局与回写原本就认分页符，没改。单元格里事务拒绝（Word 会拆表）。

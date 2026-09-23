@@ -99,7 +99,12 @@ Word 2013 起分页符后面跟一个段落标记，后文从新段落开始（*
 纯文本写换行；粘进单元格退成软换行（不然整次粘贴回滚）。
 **Ctrl+T 悬挂缩进 / Ctrl+0 段前 12pt 已接入**（2026-09-23）：Ctrl+T **首行不动**、左缩进推到下一个制表位整数倍；
 字符单位要换成 twips 才知道首行在哪，所以门面给 `ParagraphQuery` 带上 `charUnit`（`@uw/layout` 的 `indentCharUnit`，
-与排版的 `charUnit` 同一条规则），结果一律写 twips 并清零字符单位。编辑浏览器回归现有 164 项。
+与排版的 `charUnit` 同一条规则），结果一律写 twips 并清零字符单位。
+**表格里的 Tab 跳格已接入**（2026-09-23）：`@uw/model` 的 `adjacentCellRange()` 答上 / 下一格的内容范围，
+按**最内层**那张表走、跳过 `vMerge=continue`；控制器 `moveCell()` 选中整格（接着打字即替换格内容）。
+单元格里 Tab / Shift+Tab 跳格**优先于**列表升降级，首末格接管但不动（Word 末格 Tab 加一行，结构编辑还没有）；
+表外 Tab 仍插制表位、Shift+Tab 仍留给浏览器。Word 在格里插制表位的 Ctrl+Tab 被浏览器截走，没接。
+编辑浏览器回归现有 172 项（表格部分用 `tests/list-fixture.ts` 的 `tableDocx()`）。
 **Phase 8 已开始：回写 docx**（2026-09-23，新包 `@uw/serialize`，门面 `doc.toDocx()`，调试台「导出 docx」按钮）。
 补丁式：只重写改过的部件，没编辑的文档逐字节照搬；正文**走原文 XML 树**打补丁（见下）。Word 打开无修复提示只能人工验。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、

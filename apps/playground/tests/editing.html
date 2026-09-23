@@ -12,7 +12,7 @@ body { margin: 0; font: 14px/1.5 system-ui; }
 import { buildLayoutIndex } from '@uw/layout';
 import { UltimateWord } from 'ultimate-word';
 import fixtureUrl from '../../fidelity/fixtures/gongwen-01.docx?url';
-import { listDocx } from './list-fixture.ts';
+import { listDocx, tableDocx } from './list-fixture.ts';
 
 const result = document.querySelector('#result');
 const host = document.querySelector('#host');
@@ -501,6 +501,38 @@ try {
   assert(!listKey('Tab') && numberingOf('第一项').level === 0, 'IME 组合期不接管 Tab');
   listInput.blur();
   listView.dispose();
+  const tableDoc = await UltimateWord.load(tableDocx());
+  const tableView = tableDoc.mount(host, { mode: 'edit' });
+  const tableInput = host.querySelector('textarea');
+  const tableKey = (key, modifiers = {}) => {
+    const event = new KeyboardEvent('keydown', { key, ...modifiers, bubbles: true, cancelable: true });
+    tableInput.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+  const cellRange = (text) => tableDoc.find(text)[0];
+  const cellTabs = () => tableDoc.query('run').flatMap((r) => r.content).filter((c) => c.kind === 'tab').length;
+  const sameRange = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  tableView.select({ start: { ...cellRange('格甲').start, offset: 1 }, end: { ...cellRange('格甲').start, offset: 1 } });
+  tableView.focus();
+  await frame();
+  assert(tableKey('Tab') && sameRange(tableView.selection, cellRange('格乙')) && cellTabs() === 0, '格里 Tab 选中下一格全部内容而不插制表位');
+  assert(tableKey('Tab') && sameRange(tableView.selection, cellRange('格丙')) && tableDoc.query('paragraph').find((p) => p.runs.some((r) => runText(r) === '格丙')).props.numbering.level === 0, '行末 Tab 接下一行首格，列表段落不降级');
+  assert(tableKey('Tab', { shiftKey: true }) && sameRange(tableView.selection, cellRange('格乙')), 'Shift Tab 回上一格');
+  await frame();
+  const cellHighlight = tableView.rectsOf(tableView.selection);
+  assert(cellHighlight.length === 1 && cellHighlight[0].x > tableView.caretRect(cellRange('格甲').start).x + 100, '选区矩形落在右边那一格');
+  tableKey('Tab'); tableKey('Tab');
+  const lastCell = JSON.stringify(tableView.selection);
+  assert(tableKey('Tab') && JSON.stringify(tableView.selection) === lastCell && cellTabs() === 0, '末格 Tab 接管但不动');
+  tableInput.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: '新', bubbles: true, cancelable: true }));
+  assert(tableDoc.find('格丁').length === 0 && tableDoc.find('新').length === 1, '选中整格后打字替换格内容');
+  tableDoc.undo();
+  tableView.select({ start: cellRange('表后正文').start, end: cellRange('表后正文').start });
+  assert(tableKey('Tab') && cellTabs() === 1, '表外 Tab 照常插制表位');
+  tableDoc.undo();
+  assert(!tableKey('Tab', { shiftKey: true }), '表外 Shift Tab 仍留给浏览器');
+  tableInput.blur();
+  tableView.dispose();
   result.textContent = `PASS ${passed} 项`;
 } catch (error) { result.textContent = `FAIL ${passed} 项后\n${error.stack ?? error}`; }
 </script>

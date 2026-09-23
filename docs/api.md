@@ -476,6 +476,8 @@ Ctrl+M / Ctrl+Shift+M 把左缩进推到下一个 / 退到上一个默认制表�
 Ctrl+1 / 2 / 5 设单倍 / 双倍 / 1.5 倍行距（多倍规则，固定值行距一并改掉）。这几个键只认 Ctrl ——
 Mac 的 Cmd+M 最小化窗口、Cmd+数字切标签页，Windows 的 Ctrl+数字也被浏览器截走，所以行距快捷键在
 Windows 上到不了页面，只能走控制器的 `lineSpacing(multiple)`（`indent(direction)` 同理）。
+单元格里的 Tab / Shift+Tab 选中下一格 / 上一格的全部内容（控制器 `moveCell(direction)`，模型侧 `adjacentCellRange()`），
+优先于列表升降级；按最内层表格走、跳过纵向合并的续格，首末格什么都不做（Word 末格 Tab 加一行，表格结构编辑还没有）。
 Ctrl+T / Ctrl+Shift+T（控制器 `hangingIndent(direction)`）让**首行原地不动**、左缩进推到下一个 / 退到上一个默认制表位的
 整数倍，差出来的就是悬挂缩进；退只在已有悬挂时退、不退过首行。字符单位的缩进先按段落的 `charUnit`
 （`@uw/layout` 的 `indentCharUnit`，与排版同一条规则：首个看得见的字的字号）换成 twips，结果一律写 twips 并把字符单位清零。
