@@ -92,6 +92,8 @@ Ctrl+1 / 2 / 5 设多倍行距。只认 Ctrl：Cmd+M / Cmd+数字到不了页面
 符号（换成空 text 保留槽位；对象与域仍拒绝）。三层各补一处：落在这类片段上的位置先换成文字位置；布局给它们补光标锚点
 （**它们不出文字片段**，换行之后的锚点在下一行行首）；按字导航把可删片段算一个字。非列表位置 Tab 插制表位、
 Shift+Tab 留给浏览器，Shift+Enter 软换行；粘贴的 `\t` / 段内 `<br>` 落成真的片段。编辑浏览器回归现有 152 项。
+**Phase 8 已开始：回写 docx**（2026-09-23，新包 `@uw/serialize`，门面 `doc.toDocx()`，调试台「导出 docx」按钮）。
+补丁式：只重写改过的部件，没编辑的文档逐字节照搬；正文**走原文 XML 树**打补丁（见下）。Word 打开无修复提示只能人工验。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、
 `@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 制表位 + **模型位置（`DocPosition`）** + **编号（解析 + 计数器 + 编号文字 + 接进级联）** + **表格（属性 + 级联 + 条件格式）** + **域（界桩配对 + 指令解析 + HYPERLINK）** + **页眉页脚部件** + **图片（外框 + blip 引用 + 裁剪 / 旋转 + 浮动锚点 + 字节表）** + **查找 / 选择器 / 模型侧文档序**）、
 `@uw/fonts`（行高规则 + 脚本分桶（**歧义字符 / 中性字符两条都实测**）+ 度量包 + 注册表 + `TextMeasurer`）、
@@ -99,6 +101,7 @@ Shift+Tab 留给浏览器，Shift+Enter 软换行；粘贴的 `\t` / 段内 `<br
 **表格列宽与格内几何 + 边框冲突解析** + **分页（含表格拆行）** + **域求值** + **页眉页脚** + **对象占位与浮动定位** + **布局索引（命中测试 / range → 矩形 / 光标）**）、
 `@uw/render-dom`（**元素树 → SVG / DOM**，见下）、`@uw/view`（屏幕坐标转换与只读视图 + 装饰 / overlay / `scrollTo` + **打印**）、
 `ultimate-word`（门面：`load` / `fonts` / `UwDocument` / `UwView`，见下）、
+`@uw/serialize`（**补丁式回写 docx**，见下）、
 `@uw/react`（`<UltimateWordView>` + `useDocument` + `useDecoration`，见下）。
 
 **只读视图**（`packages/view`）：主入口只处理纯数据，DOM 挂载从 `@uw/view/dom` 导入。
@@ -121,6 +124,16 @@ Shift+Tab 留给浏览器，Shift+Enter 软换行；粘贴的 `\t` / 段内 `<br
 `doc.layout` 暴露但**不在稳定性承诺内**（api.md §16），给调试台与保真度工具用。
 `ViewOptions.mode` 支持 preview / edit，仍没有 `renderer`、`LoadOptions` 没有 `worker` / `layoutOnLoad` ——
 对应的能力还没有，不摆不生效的选项。
+
+**回写**（`packages/serialize`）四处容易搞反：① **没有 `raw`**（架构 §1.4 原话作废）—— `serializeDocx(pkg, body)`
+现解析一遍原文，`parseBody(…, sources)` 记下「节点 id → 原元素」（id 按解析顺序生成，两次一字不差），
+然后**走原文的树**：没变的节点吐回原元素，变了的才动；所以 `body` 必须出自同一个包的 `loadDocument`；
+② 属性按**字段组**补丁（`props-writer.ts`）：只有值变了的那组才碰它的子元素、只改认识的属性，
+`w:jc="start"` 没改就不会被写成 `left`；新元素**按 schema 顺序插**（`PPR_ORDER` / `RPR_ORDER`），
+追加到末尾 Word 报损坏；③ 新段 / 新 run（拆出来的，id 形如 `edit3`）以**来源**为模板 —— 段落跟着原文里它前面那个锚、
+新段落的首 run 跟着模板段的末 run —— 这样边框 / 高亮这些模型不认识的格式跟着走，但 `w14:paraId` 不抄（要求全文唯一）；
+④ 分节符跟着「本节最后一段」走（拆了末段要搬），`numbering.xml` 里 abstractNum 必须排在全部 num 之前。
+判据：24 份 fixture 不编辑逐字节相同 + 编辑后重新加载结构相等（`docx.test.ts`，59 项）。
 
 **打印**（`packages/view/src/print.ts`）三处容易搞反：① **不印屏幕上那一份** —— 它住在宿主的
 滚动容器里（`overflow:auto` 打印时只印第一屏）、带着缩放与页间距；`beforeprint` 那一刻往 `<body>`

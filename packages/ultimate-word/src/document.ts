@@ -40,7 +40,9 @@ import {
   textOfRange,
   walkBlocks,
 } from '@uw/model';
+import type { OpcPackage } from '@uw/ooxml';
 import { imageHrefResolver } from '@uw/render-dom';
+import { serializeDocx } from '@uw/serialize';
 import type { UwView, ViewOptions } from './view.ts';
 import { createView } from './view.ts';
 
@@ -49,8 +51,13 @@ export type DocNode = QueryNode<DirectProps>;
 
 export type { FindOptions };
 
+/** docx 的 MIME，`toDocx()` 的 Blob 带着它，下载时浏览器才知道扩展名 */
+export const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
 export interface UwDocumentInit {
   loaded: LoadedDocument;
+  /** 原包。回写只重写改过的部件，其余条目从这里逐字节照搬；没有它就不能 `toDocx()` */
+  pkg?: OpcPackage;
   reflow?: (body: LoadedDocument['body']) => {
     loaded: LoadedDocument;
     layout: DocumentLayout;
@@ -77,6 +84,7 @@ export class UwDocument {
   #fieldValues: ReadonlyMap<NodeId, string>;
   readonly #editor: TextEditor;
   readonly #reflow: UwDocumentInit['reflow'];
+  readonly #pkg: OpcPackage | undefined;
   #prepared: ReturnType<NonNullable<UwDocumentInit['reflow']>> | undefined;
   readonly #listeners = new Set<(change: TextChangeSet) => void>();
   readonly #views = new Set<(layout: DocumentLayout) => void>();
@@ -93,6 +101,7 @@ export class UwDocument {
       },
     });
     this.#reflow = init.reflow;
+    this.#pkg = init.pkg;
     this.#fieldValues = init.fieldValues;
     this.diagnostics = init.diagnostics;
   }
@@ -129,6 +138,19 @@ export class UwDocument {
     for (const update of this.#views) update(this.layout);
     for (const listener of this.#listeners) listener(change);
     return change;
+  }
+
+  /**
+   * 导出 docx（api.md §13）。**round-trip 安全**：没编辑过的文档每个部件与原文件逐字节相同；
+   * 编辑过的只重写正文（与新建列表时的编号定义），模型不认识的 XML（书签、修订、边框…）原样留着。
+   *
+   * 返回 Promise 是 api.md 定的形状 —— 现在的实现是同步的（几 MB 的 zip 压缩是毫秒级），
+   * 留着异步是为了将来挪进 Worker 不改签名。
+   */
+  async toDocx(): Promise<Blob> {
+    if (this.#pkg === undefined) throw new Error('文档没有原包，无法导出 docx');
+    const bytes = serializeDocx(this.#pkg, this.#editor.body);
+    return new Blob([bytes as Uint8Array<ArrayBuffer>], { type: DOCX_MIME });
   }
 
   get pageCount(): number {

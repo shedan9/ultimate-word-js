@@ -6,9 +6,10 @@
  */
 import { readFileSync } from 'node:fs';
 import { FALLBACK_METRICS, FontRegistry } from '@uw/fonts';
+import { unzip } from '@uw/ooxml';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { UwDocument } from './index.ts';
-import { UltimateWord, UwError, UwErrorCode } from './index.ts';
+import { DOCX_MIME, UltimateWord, UwError, UwErrorCode } from './index.ts';
 
 const FIXTURE = new URL('../../../apps/fidelity/fixtures/gongwen-01.docx', import.meta.url);
 const TRUTH = new URL('../../../apps/fidelity/fixtures/gongwen-01.truth.json', import.meta.url);
@@ -149,5 +150,28 @@ describe('门面编辑复用段落缓存', () => {
     const fresh = await UltimateWord.load(bytes, { fonts });
     expect(editing.layout).toEqual(fresh.layout);
     expect(editing.layout).not.toEqual(initial);
+  });
+});
+
+describe('doc.toDocx', () => {
+  it('没编辑：导出的就是原文件的每个部件，MIME 是 docx', async () => {
+    const fresh = await UltimateWord.load(bytes);
+    const blob = await fresh.toDocx();
+    expect(blob.type).toBe(DOCX_MIME);
+    const before = unzip(bytes);
+    const after = unzip(new Uint8Array(await blob.arrayBuffer()));
+    for (const [k, v] of before) expect(after.get(k), k).toEqual(v);
+  });
+
+  it('编辑后导出再加载：改动在，页数与编辑后的布局一致', async () => {
+    const editing = await UltimateWord.load(bytes);
+    const pos = editing.find('通知')[0]?.start;
+    if (!pos) throw new Error('样本缺少通知');
+    editing.tx((tx) => {
+      tx.insertText(pos, '导出回归');
+    });
+    const reloaded = await UltimateWord.load(await editing.toDocx());
+    expect(reloaded.find('导出回归通知')).toHaveLength(1);
+    expect(reloaded.layout).toEqual(editing.layout);
   });
 });

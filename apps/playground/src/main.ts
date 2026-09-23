@@ -28,6 +28,7 @@ app.innerHTML = `
     <label><input type="checkbox" class="text-layer" checked> 原生选区</label>
     <label><input type="checkbox" class="edit-mode"> 编辑</label>
     <label><input type="checkbox" class="virtualize" checked> 按需绘制</label>
+    <button type="button" class="export" disabled>导出 docx</button>
     <label class="find">查找 <input type="search" placeholder="回车到下一处" disabled><span class="hits"></span></label>
     <span class="status">把一份 .docx 拖进来</span>
   </header>
@@ -45,9 +46,11 @@ const virtualizeInput = app.querySelector<HTMLInputElement>('.virtualize') as HT
 const fileInput = app.querySelector<HTMLInputElement>('input[type=file]') as HTMLInputElement;
 const findInput = app.querySelector<HTMLInputElement>('input[type=search]') as HTMLInputElement;
 const hitsLabel = app.querySelector<HTMLElement>('.hits') as HTMLElement;
+const exportButton = app.querySelector<HTMLButtonElement>('.export') as HTMLButtonElement;
 
 let doc: UwDocument | undefined;
 let view: UwView | undefined;
+let fileName = 'document.docx';
 
 /**
  * 三个开关（调试框 / 文字层 / 虚拟化）改的是视图的**构造**选项，门面没有 `update()`
@@ -111,7 +114,9 @@ async function openFile(file: File): Promise<void> {
     const t0 = performance.now();
     doc = await UltimateWord.load(file);
     const ms = performance.now() - t0;
+    fileName = file.name;
     findInput.disabled = false;
+    exportButton.disabled = false;
 
     const first = doc.layout.pages[0]?.geometry;
     const size =
@@ -138,6 +143,19 @@ fitButton.addEventListener('click', () => {
   if (view === undefined) return;
   view.setZoom('fit-width');
   zoomInput.value = String(Math.round(view.zoom * 100));
+});
+/**
+ * 导出 = `doc.toDocx()` 下载到本地，拿 Word 打开验「无修复提示」（Phase 8 的 DoD 只有 Word 能判）。
+ * 文件名加 `-uw` 后缀，免得覆盖原件 —— 对比两份是这个按钮的主要用法
+ */
+exportButton.addEventListener('click', async () => {
+  if (doc === undefined) return;
+  const url = URL.createObjectURL(await doc.toDocx());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${fileName.replace(/\.docx$/i, '')}-uw.docx`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 });
 debugInput.addEventListener('change', remount);
 textLayerInput.addEventListener('change', remount);

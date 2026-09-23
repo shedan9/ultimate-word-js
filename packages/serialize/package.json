@@ -1,9 +1,9 @@
 {
-  "name": "ultimate-word",
+  "name": "@uw/serialize",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "门面包：load / mount / find / query / 字体注册表，把 @uw/* 收成 api.md 的形状",
+  "description": "模型 → docx：补丁式回写，没改的部件与节点原样吐回",
   "exports": {
     ".": "./src/index.ts"
   },
@@ -14,15 +14,11 @@
   },
   "dependencies": {
     "@uw/core": "workspace:*",
-    "@uw/fonts": "workspace:*",
-    "@uw/layout": "workspace:*",
     "@uw/model": "workspace:*",
-    "@uw/ooxml": "workspace:*",
-    "@uw/render-dom": "workspace:*",
-    "@uw/serialize": "workspace:*",
-    "@uw/view": "workspace:*"
+    "@uw/ooxml": "workspace:*"
   },
   "devDependencies": {
+    "fflate": "^0.8.3",
     "tsdown": "^0.22.14"
   }
 }

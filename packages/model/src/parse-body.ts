@@ -90,6 +90,33 @@ interface Ctx {
    * 画到正文里去。
    */
   idPrefix: string;
+  /** 回写用的源元素表，只有 `@uw/serialize` 重新解析时才给 —— 平时加载不付这份内存 */
+  sources: BodySources | undefined;
+}
+
+/**
+ * 节点 id → 解析它的那个原始 XML 元素，给回写（`@uw/serialize`）用。
+ *
+ * 为什么是「重新解析时顺手记」而不是挂在节点上：节点树要过 Worker 边界、要进撤销快照，
+ * 每个节点背一棵 XML 子树会让每次事务的结构化克隆都搬一遍原文（原则 1.1 的精神）。
+ * id 是按解析顺序生成的，同一份部件再解析一遍 id 完全一致（nodes.ts 的 `NodeId`），
+ * 所以回写时现解析一遍就能把可编辑树上的每个原有节点对回它的元素。
+ */
+export interface BodySources {
+  /**
+   * 段落 / run / 表格 / 行 / 格 → `w:p` / `w:r` / `w:tbl` / `w:tr` / `w:tc`；节 → 它的 `w:sectPr`；
+   * 简单域（`RunNode.fieldSimple.id`）→ 它的 `w:fldSimple`
+   */
+  nodes: Map<NodeId, XmlElement>;
+  /**
+   * run id → 与 `content` 逐项对应的源元素（`w:t` / `w:tab` / `w:drawing` …）。
+   * `mc:AlternateContent` 整个算作它产出的那一项的源 —— 回写要吐回整个选择块，不是只吐 Choice
+   */
+  content: Map<NodeId, XmlElement[]>;
+}
+
+function record(ctx: Ctx, id: NodeId, el: XmlElement): void {
+  ctx.sources?.nodes.set(id, el);
 }
 
 function nextId(ctx: Ctx, prefix: string): NodeId {
@@ -110,8 +137,13 @@ function unknown(ctx: Ctx, el: XmlElement, where: string): void {
 
 // ── 入口 ──────────────────────────────────────────────────────────────────────
 
-export function parseBody(doc: XmlDocument, diagnostics: DiagnosticSink, part = 'document.xml'): Body {
-  const ctx: Ctx = { diagnostics, part, reported: new Set(), counters: new Map(), idPrefix: '' };
+export function parseBody(
+  doc: XmlDocument,
+  diagnostics: DiagnosticSink,
+  part = 'document.xml',
+  sources?: BodySources,
+): Body {
+  const ctx: Ctx = { diagnostics, part, reported: new Set(), counters: new Map(), idPrefix: '', sources };
   const body = child(doc.root, 'w:body');
   if (body === undefined) {
     // 结构性问题，但不抛 —— `OpcPackage.requirePart` 已经保证部件在，
@@ -131,7 +163,9 @@ export function parseBody(doc: XmlDocument, diagnostics: DiagnosticSink, part = 
         // 段落属性里的 sectPr 表示「这一节到此为止」，**这个段落属于本节**
         const sectPr = sectPrOf(el);
         if (sectPr !== undefined) {
-          sections.push({ id: nextId(ctx, 'sec'), props: parseSectionProps(sectPr), blocks: pending });
+          const id = nextId(ctx, 'sec');
+          record(ctx, id, sectPr);
+          sections.push({ id, props: parseSectionProps(sectPr), blocks: pending });
           pending = [];
         }
         break;
@@ -142,11 +176,14 @@ export function parseBody(doc: XmlDocument, diagnostics: DiagnosticSink, part = 
       case 'w:sdt':
         pending.push(...sdtBlocks(ctx, el));
         break;
-      case 'w:sectPr':
+      case 'w:sectPr': {
         // body 末尾这个是**最后一节**的属性
-        sections.push({ id: nextId(ctx, 'sec'), props: parseSectionProps(el), blocks: pending });
+        const id = nextId(ctx, 'sec');
+        record(ctx, id, el);
+        sections.push({ id, props: parseSectionProps(el), blocks: pending });
         pending = [];
         break;
+      }
       default:
         if (!IGNORED.has(el.name)) unknown(ctx, el, 'w:body');
     }
@@ -176,7 +213,14 @@ export function parseHeaderFooter(
   part: string,
   idPrefix: string,
 ): Block[] {
-  const ctx: Ctx = { diagnostics, part, reported: new Set(), counters: new Map(), idPrefix };
+  const ctx: Ctx = {
+    diagnostics,
+    part,
+    reported: new Set(),
+    counters: new Map(),
+    idPrefix,
+    sources: undefined,
+  };
   const out: Block[] = [];
   for (const el of children(doc.root)) {
     switch (el.name) {
@@ -220,7 +264,9 @@ function sdtBlocks(ctx: Ctx, sdt: XmlElement): Block[] {
 function parseParagraph(ctx: Ctx, p: XmlElement, props: ParaProps): Paragraph {
   const runs: Run[] = [];
   collectRuns(ctx, p, runs, {});
-  return { kind: 'paragraph', id: nextId(ctx, 'p'), props, runs };
+  const id = nextId(ctx, 'p');
+  record(ctx, id, p);
+  return { kind: 'paragraph', id, props, runs };
 }
 
 /**
@@ -257,6 +303,7 @@ function collectRuns(ctx: Ctx, parent: XmlElement, out: Run[], marks: RunMarks):
       // 内容照旧压平（结果文字与普通文字排版上毫无区别），域代码挂在 run 上给 fields.ts 收。
       // **必须给个 id**：相邻两个 `w:fldSimple w:instr="PAGE"` 是两个域，只比指令文字会并成一个
       const field = { id: nextId(ctx, 'fld'), instr: attr(el, 'w:instr') ?? '' };
+      record(ctx, field.id, el);
       collectRuns(ctx, el, out, { ...marks, field });
     } else if (TRANSPARENT.has(el.name)) {
       collectRuns(ctx, el, out, marks);
@@ -278,8 +325,11 @@ function collectRuns(ctx: Ctx, parent: XmlElement, out: Run[], marks: RunMarks):
 function parseRun(ctx: Ctx, r: XmlElement, marks: RunMarks): Run {
   const props: Run['props'] = parseRunProps(child(r, 'w:rPr'));
   const content: RunContent[] = [];
-  collectRunContent(ctx, r, content);
+  const origins: XmlElement[] | undefined = ctx.sources === undefined ? undefined : [];
+  collectRunContent(ctx, r, content, origins);
   const run: Run = { kind: 'run', id: nextId(ctx, 'r'), props, content };
+  record(ctx, run.id, r);
+  if (origins !== undefined) ctx.sources?.content.set(run.id, origins);
   if (marks.link !== undefined) run.hyperlink = marks.link;
   if (marks.field !== undefined) run.fieldSimple = marks.field;
   return run;
@@ -287,66 +337,73 @@ function parseRun(ctx: Ctx, r: XmlElement, marks: RunMarks): Run {
 
 const BREAK_TYPES = ['page', 'column'] as const;
 
-function collectRunContent(ctx: Ctx, parent: XmlElement, out: RunContent[]): void {
+/** `origins` 与 `out` 逐项对齐，记每一项出自哪个元素（只在记源元素表时给） */
+function collectRunContent(ctx: Ctx, parent: XmlElement, out: RunContent[], origins?: XmlElement[]): void {
   for (const el of children(parent)) {
-    switch (el.name) {
-      case 'w:t':
-        out.push({ kind: 'text', text: xmlText(el) });
-        break;
-      case 'w:delText':
-        break; // 同 DELETED：已删除的字不占位，外层已经记过诊断
-      case 'w:instrText':
-        // 域代码**不去首尾空白**（与 `w:t` 相反）：这段文字不显示，空白是词与词的分隔符。
-        // 一条指令常被切成好几段，去掉空白再拼就成了 ` IF ` + ` = 1 ` → `IF= 1`，
-        // 域名当场变成 `IF=`。Word 自己总写 xml:space="preserve"，
-        // 这一条挡的是第三方生成器（见 fields.ts 的「切碎的 instrText」用例）
-        out.push({ kind: 'fieldInstruction', text: textContent(el) });
-        break;
-      case 'w:tab':
-        out.push({ kind: 'tab' });
-        break;
-      case 'w:br':
-        // w:type 缺省是 textWrapping，也就是普通换行
-        out.push({ kind: 'break', breakType: enumVal(attr(el, 'w:type'), BREAK_TYPES) ?? 'line' });
-        break;
-      case 'w:cr':
-        out.push({ kind: 'break', breakType: 'line' });
-        break;
-      case 'w:noBreakHyphen':
-        out.push({ kind: 'noBreakHyphen' });
-        break;
-      case 'w:softHyphen':
-        out.push({ kind: 'softHyphen' });
-        break;
-      case 'w:sym':
-        out.push(parseSymbol(el));
-        break;
-      case 'w:fldChar': {
-        const t = enumVal(attr(el, 'w:fldCharType'), ['begin', 'separate', 'end'] as const);
-        if (t !== undefined) out.push({ kind: 'fieldChar', charType: t });
-        break;
-      }
-      case 'w:drawing':
-        out.push(parseDrawing(el, ctx.idPrefix));
-        break;
-      case 'w:pict':
-        out.push(parsePict(el, ctx.idPrefix));
-        break;
-      case 'w:object':
-        // OLE 对象（嵌入的 Excel 表、公式编辑器）在文件里也是一个 VML 形状加一张预览图，
-        // 走同一条路 —— 我们画的就是那张预览图，与 Word 不激活时显示的东西一致
-        out.push({ ...parsePict(el, ctx.idPrefix), objectKind: 'object' });
-        break;
-      case 'mc:AlternateContent': {
-        // Word 2010 之后把图形包在这里：Choice 是新格式，Fallback 是给老版本的 VML。
-        // 优先 Choice，两个都收会画出两份
-        const pick = child(el, 'mc:Choice') ?? child(el, 'mc:Fallback');
-        if (pick !== undefined) collectRunContent(ctx, pick, out);
-        break;
-      }
-      default:
-        if (!IGNORED_IN_RUN.has(el.name) && !IGNORED.has(el.name)) unknown(ctx, el, 'w:r');
+    const before = out.length;
+    collectContentItem(ctx, el, out);
+    if (origins !== undefined) for (let i = before; i < out.length; i++) origins.push(el);
+  }
+}
+
+function collectContentItem(ctx: Ctx, el: XmlElement, out: RunContent[]): void {
+  switch (el.name) {
+    case 'w:t':
+      out.push({ kind: 'text', text: xmlText(el) });
+      break;
+    case 'w:delText':
+      break; // 同 DELETED：已删除的字不占位，外层已经记过诊断
+    case 'w:instrText':
+      // 域代码**不去首尾空白**（与 `w:t` 相反）：这段文字不显示，空白是词与词的分隔符。
+      // 一条指令常被切成好几段，去掉空白再拼就成了 ` IF ` + ` = 1 ` → `IF= 1`，
+      // 域名当场变成 `IF=`。Word 自己总写 xml:space="preserve"，
+      // 这一条挡的是第三方生成器（见 fields.ts 的「切碎的 instrText」用例）
+      out.push({ kind: 'fieldInstruction', text: textContent(el) });
+      break;
+    case 'w:tab':
+      out.push({ kind: 'tab' });
+      break;
+    case 'w:br':
+      // w:type 缺省是 textWrapping，也就是普通换行
+      out.push({ kind: 'break', breakType: enumVal(attr(el, 'w:type'), BREAK_TYPES) ?? 'line' });
+      break;
+    case 'w:cr':
+      out.push({ kind: 'break', breakType: 'line' });
+      break;
+    case 'w:noBreakHyphen':
+      out.push({ kind: 'noBreakHyphen' });
+      break;
+    case 'w:softHyphen':
+      out.push({ kind: 'softHyphen' });
+      break;
+    case 'w:sym':
+      out.push(parseSymbol(el));
+      break;
+    case 'w:fldChar': {
+      const t = enumVal(attr(el, 'w:fldCharType'), ['begin', 'separate', 'end'] as const);
+      if (t !== undefined) out.push({ kind: 'fieldChar', charType: t });
+      break;
     }
+    case 'w:drawing':
+      out.push(parseDrawing(el, ctx.idPrefix));
+      break;
+    case 'w:pict':
+      out.push(parsePict(el, ctx.idPrefix));
+      break;
+    case 'w:object':
+      // OLE 对象（嵌入的 Excel 表、公式编辑器）在文件里也是一个 VML 形状加一张预览图，
+      // 走同一条路 —— 我们画的就是那张预览图，与 Word 不激活时显示的东西一致
+      out.push({ ...parsePict(el, ctx.idPrefix), objectKind: 'object' });
+      break;
+    case 'mc:AlternateContent': {
+      // Word 2010 之后把图形包在这里：Choice 是新格式，Fallback 是给老版本的 VML。
+      // 优先 Choice，两个都收会画出两份
+      const pick = child(el, 'mc:Choice') ?? child(el, 'mc:Fallback');
+      if (pick !== undefined) collectRunContent(ctx, pick, out);
+      break;
+    }
+    default:
+      if (!IGNORED_IN_RUN.has(el.name) && !IGNORED.has(el.name)) unknown(ctx, el, 'w:r');
   }
 }
 
@@ -386,9 +443,11 @@ function parseTable(ctx: Ctx, tbl: XmlElement): Table {
       unknown(ctx, el, 'w:tbl');
     }
   }
+  const id = nextId(ctx, 'tbl');
+  record(ctx, id, tbl);
   return {
     kind: 'table',
-    id: nextId(ctx, 'tbl'),
+    id,
     props: parseTableProps(child(tbl, 'w:tblPr')),
     grid: parseTableGrid(child(tbl, 'w:tblGrid')),
     rows,
@@ -412,6 +471,7 @@ function parseRow(ctx: Ctx, tr: XmlElement): TableRow {
     props: parseRowProps(child(tr, 'w:trPr')),
     cells,
   };
+  record(ctx, row.id, tr);
   // `w:tblPrEx` 是 `w:tblPr` 的子集（边框 / 边距 / 底纹 / look / 宽度），同一个解析器就够；
   // 里面的 `w:tblPrExChange`（修订痕迹）不在解析表里，自动被忽略
   const ex = child(tr, 'w:tblPrEx');
@@ -436,9 +496,11 @@ function parseCell(ctx: Ctx, tc: XmlElement): TableCell {
   const vMerge = vMergeEl === undefined ? 'none' : (enumVal(attr(vMergeEl, 'w:val'), V_MERGE) ?? 'continue');
 
   const gridSpan = Number.parseInt(attrOf(tcPr && child(tcPr, 'w:gridSpan'), 'w:val') ?? '', 10);
+  const id = nextId(ctx, 'tc');
+  record(ctx, id, tc);
   return {
     kind: 'cell',
-    id: nextId(ctx, 'tc'),
+    id,
     props: parseCellProps(tcPr),
     blocks,
     gridSpan: Number.isNaN(gridSpan) || gridSpan < 1 ? 1 : gridSpan,

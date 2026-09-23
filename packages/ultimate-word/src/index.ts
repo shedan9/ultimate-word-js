@@ -41,7 +41,7 @@ export type {
   ScrollTarget,
 } from '@uw/view/dom';
 export type { DocNode, FindOptions } from './document.ts';
-export { UwDocument } from './document.ts';
+export { DOCX_MIME, UwDocument } from './document.ts';
 export type { FontsApi } from './fonts.ts';
 export type { LoadOptions, LoadSource } from './load.ts';
 export type { Disposable, UwView, ViewOptions, ZoomSpec } from './view.ts';

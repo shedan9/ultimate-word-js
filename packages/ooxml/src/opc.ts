@@ -19,7 +19,7 @@ import { createRelationships, parseRelationships, RelType } from './rels.ts';
 import type { XmlDocument } from './xml.ts';
 import { parseXml } from './xml.ts';
 import type { ZipEntries } from './zip.ts';
-import { unzip } from './zip.ts';
+import { unzip, zip } from './zip.ts';
 
 /** 内容类型表自己不是部件，规范里就这么写死的一个名字 */
 const CONTENT_TYPES_PART = '/[Content_Types].xml';
@@ -68,6 +68,28 @@ export class OpcPackage {
     }
     const contentTypes = parseContentTypes(parseXml(decoder.decode(ctBytes), CONTENT_TYPES_PART));
     return new OpcPackage(entries, contentTypes);
+  }
+
+  /**
+   * 回写：原包的全部条目，按 `changes` 替换 / 增加 / 删除（`null`）之后重新打包。
+   *
+   * 没提到的部件**逐字节**照搬 —— 回写只动改过的部件，这是 round-trip 安全最便宜的一半
+   * （原则 1.4）：样式表、主题、页眉、图片、自定义 XML 我们一个字节都不碰，就不可能改坏。
+   * `[Content_Types].xml` 也可以出现在 `changes` 里（新增部件要给它登记类型）。
+   * 包本身不变：`OpcPackage` 是只读的，回写得到的是一份新字节。
+   */
+  save(changes: ReadonlyMap<string, Uint8Array | null> = new Map()): Uint8Array {
+    const out: ZipEntries = new Map();
+    for (const [name, bytes] of this.#entries) {
+      const change = changes.get(toPartName(name));
+      if (change === null) continue;
+      out.set(name, change ?? bytes);
+    }
+    for (const [partName, bytes] of changes) {
+      const name = toZipEntryName(partName);
+      if (bytes !== null && !out.has(name)) out.set(name, bytes);
+    }
+    return zip(out);
   }
 
   /** 全部部件名，不含 `[Content_Types].xml`（它不是部件）。已排序，便于做快照测试 */

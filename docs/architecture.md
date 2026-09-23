@@ -61,7 +61,18 @@ Worker 化那天要重写整个布局层的数据结构，而那时它已经有�
 
 ### 1.4 未识别的 XML 必须原样保留
 
-解析时遇到不认识的元素/属性，挂到节点的 `raw` 上；回写时原样吐回去。
+~~解析时遇到不认识的元素/属性，挂到节点的 `raw` 上；回写时原样吐回去。~~
+
+> **实现与这句原话不同（2026-09-23，`@uw/serialize`）**：没有 `raw`。回写是**以原文为底打补丁** ——
+> 同一个部件重新解析一遍（id 按解析顺序生成，与加载时一字不差），`parseBody(…, sources)` 顺手记下
+> 「节点 id → 原元素」；回写时**走原文的 XML 树**，模型节点没变的整个吐回原元素，变了的只重写
+> 变了的那组属性 / 那几个 run，其余子节点（书签、`w:del`、`w:pBdr`、`w:highlight`、`w14:paraId`…）照抄。
+> 没编辑过的部件（以及没编辑过的整份文档）逐字节照搬。
+>
+> 为什么不挂 `raw`：① 不认识的东西不只是「元素」，还有**认识的元素里不认识的属性**（`w:lang` 的 `w:val`、
+> `w:u` 的 `w:color`）与**位置**（书签夹在哪两个 run 之间）—— `raw` 要么存一堆碎片再费劲拼回原位，
+> 要么就得存整棵原元素；② 节点树要进撤销快照、要过 Worker 边界，每个节点背一棵 XML 子树，
+> 每次事务的结构化克隆都要搬一遍原文。「现解析一遍取源元素」只在导出那一刻付一次代价。
 
 **为什么**：round-trip 安全是这类库的信誉底线。用户加载→不编辑→导出，
 拿到的文件在 Word 里必须不弹「文件已损坏，是否修复」。
@@ -120,7 +131,7 @@ flowchart TB
 | `fonts` | 字体字节 / 度量包 | `FontMetrics` · `TextMeasurer` | 字体缺失 → **三级降级**（见 §5.3） | 硬编码实测值的单测（跨平台可跑） |
 | `layout` | `ResolvedBody`（或单个 `ResolvedParagraph` / `ResolvedTable`）+ `TextMeasurer` + 域（`FieldRegion[]`） | `DocumentLayout`（pages → blocks → lines → fragments，**有 y**）；单块入口仍产出不带 y 的 `ParagraphLayout` / `TableLayout` | 域不收敛 → 撞上迭代上限后**取页数最多的那一趟冻结** + 诊断 | 与 `*.truth.json` 逐行 diff（L0–L4 分级） |
 | `render-dom` | `DocumentLayout` | 元素树（纯数据）→ 标记文本 / 真 DOM | —— | **属性里的坐标与 `*.truth.json` 逐行 diff**（比 `LayoutResult` 又晚一步，能照出「翻译」阶段丢的偏移）+ 截图回归 |
-| `serialize` | `Document` | `.docx` | —— | round-trip：加载→导出→Word 打开无修复提示 |
+| `serialize` | `OpcPackage`（原包）+ 编辑后的 `Body` | `.docx` 字节 | 模型节点对不回原文（编辑造了不该有的结构）→ **抛**；找不到图形原文 → 诊断 | 不编辑：每个部件逐字节相同；编辑后重新加载，正文结构与编辑结果相等（24 份 fixture）；Word 打开无修复提示（人工） |
 
 **关键的一条**：`model` 阶段对内容问题采取「**诊断而非异常**」。
 一份公文里有一个我们不认识的 `w:sdt` 变体，正确的行为是渲染出其余部分并记一条诊断，
@@ -213,7 +224,8 @@ flowchart BT
 | `@uw/fonts/packs` | 🟢 随库 17 款度量包的**无 fs** 入口（JSON import attributes），浏览器与 Node 同一条路；`@uw/fonts/node` 的 `loadBundledPacks()` 只剩离线工具在用 |
 | `ultimate-word` | 🟢 门面（2026-09-13）：`UltimateWord.load()`（ArrayBuffer / Uint8Array / Blob / Response / URL）→ `UwDocument`（`pageCount` · `diagnostics` · `find` · `query` · `compare` · `rangeOf` · `mount`）→ `UwView`（`locate` / `rectsOf` / `caretRect` / `decorate` / `overlay` / `scrollTo` / `setZoom` 认 `fit-width` / `fit-page` 并跟随容器 / `dispose`）· `UltimateWord.fonts` 全局注册表（随库度量包模块加载时就注册；`register()` **异步**，fontkit 走动态 import 不进主 chunk）。**它不实现任何东西**，只把六个包接成 api.md 的形状；`layout` 暴露但不在稳定性承诺内 |
 | `@uw/react` | 🟢（2026-09-13）`<UltimateWordView>`（`doc.mount()` 的声明式形态：构造选项变了重挂、`zoom` 只 `setZoom`、`overlays` 按 key 调和成 `view.overlay()`，气泡是 portal 进宿主元素的正常 React 子树）· `useDocument` · `useDecoration`。**不另起 API**，`ref` 拿到的就是 `UwView` |
-| `@uw/render-canvas` `@uw/editor` `@uw/serialize` | ⚪ 未创建 |
+| `@uw/serialize` | 🟡（2026-09-23）补丁式回写：`serializeDocx(pkg, body)` 只重写改过的部件；正文以原文为底，没变的节点逐字节吐回，改过的段落 / run 按字段组补丁属性（`w:pPr` / `w:rPr` 按 schema 顺序插新元素）、图片 / 符号 / 域界桩找回原元素，拆出来的新段 / 新 run 以来源为模板（带走模型不认识的格式）；分节符跟着「本节末段」走；新建列表追加进 `numbering.xml`（没有就新建并登记内容类型与关系）。门面 `doc.toDocx()`。⏸ 页眉页脚 / 表格结构 / 样式表的编辑与回写（编辑本身也还不支持） |
+| `@uw/render-canvas` `@uw/editor` | ⚪ 未创建 |
 
 ---
 

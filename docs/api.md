@@ -585,13 +585,22 @@ interface Diagnostic {
 
 ---
 
-## 13. 导出与打印 🟡（打印 🟢 2026-09-13）
+## 13. 导出与打印 🟡（打印 🟢 2026-09-13 · `toDocx` 🟢 2026-09-23）
 
 ```ts
-await doc.toDocx(): Promise<Blob>;     // round-trip 安全：未识别的 XML 原样保留（Phase 8）
+await doc.toDocx(): Promise<Blob>;     // round-trip 安全：未识别的 XML 原样保留
 await view.toPNG(page: number, options?: { scale?: number }): Promise<Blob>;   // 未做
 view.print(): void;                    // 走文档自带页面设置，不重排，与屏幕缩放无关
 ```
+
+> **`toDocx()`（2026-09-23）**：Blob 的 `type` 是 `DOCX_MIME`（门面导出）。没编辑过的文档，导出的每个部件与原文件
+> **逐字节相同**；编辑过的只重写 `document.xml`（新建过列表再加 `numbering.xml`，原包没有时连带
+> `[Content_Types].xml` 与主文档关系表各登记一条），页眉页脚、样式、设置、图片一个字节不动。
+> 正文是以原文为底打补丁：没改的段落原样、改过的段落只重写变了的属性组与 run，书签 / 修订 / 边框 / 高亮 /
+> 脚注引用 / `w14:paraId` 等模型不认识的内容保留；拆段出来的新段落沿用原段落的 `w:pPr`（不抄 paraId）。
+> `docProps/app.xml` 的字数 / 页数统计不更新（Word 打开时自己重算）。低层入口 `@uw/serialize` 的
+> `serializeDocx(pkg, body)`，`body` 必须来自同一个包的 `loadDocument(pkg)`（对应关系靠节点 id）。
+> 「Word 打开无修复提示」只能在 Windows / Mac 的 Word 里人工验，调试台有「导出 docx」按钮。
 
 > **已实现的与原方案的差别**：`print()` 走 `window.print()`，印的**不是屏幕上那一份** ——
 > 它住在宿主的滚动容器里（`overflow:auto` 打印时只印第一屏）、带着缩放与页间距。

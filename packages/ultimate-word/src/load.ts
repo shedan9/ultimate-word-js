@@ -61,7 +61,8 @@ export async function load(
   options.signal?.throwIfAborted();
 
   const sink = createDiagnosticSink();
-  const loaded = loadDocument(OpcPackage.open(bytes), sink);
+  const pkg = OpcPackage.open(bytes);
+  const loaded = loadDocument(pkg, sink);
   const measurer = createTextMeasurer(options.fonts ?? registry, {
     // 「黑体」→「SimHei」的桥在文档自己的 fontTable 里，fonts 不认识 model，所以在这儿接
     candidates: (family) => fontNameCandidates(loaded.fonts, family),
@@ -77,6 +78,7 @@ export async function load(
   });
   return new UwDocument({
     loaded,
+    pkg,
     reflow(body) {
       const fields = scanFields(body, sink);
       for (const hf of Object.values(loaded.headerFooters))
