@@ -39,4 +39,6 @@ Colocate Vitest tests as `src/*.test.ts`. Add focused regressions for behavior c
 
 ## Commit & Pull Request Guidelines
 
+每轮开发完成并通过检查后，主动创建 Git 提交并推送当前分支到 `origin`，无需再次确认。
+
 Follow history’s `type(scope): explanation` pattern, e.g. `fix(layout,model): ...`; explain why. PRs should describe behavior changes, link relevant issues, and report validation. Include truth comparisons for layout changes and screenshots for visible changes. Update affected architecture/API documentation and development progress.

@@ -143,6 +143,12 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
         case 'deleteContentForward':
           state.delete('forward');
           break;
+        case 'deleteWordBackward':
+          state.delete('backward', 'word');
+          break;
+        case 'deleteWordForward':
+          state.delete('forward', 'word');
+          break;
         case 'historyUndo':
           binding.editor.undo();
           break;
@@ -159,6 +165,16 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
     if (mod && event.key.toLowerCase() === 'z')
       action = () => (event.shiftKey ? binding.editor.redo() : binding.editor.undo());
     else if (mod && event.key.toLowerCase() === 'y') action = () => binding.editor.redo();
+    else if (
+      !event.metaKey &&
+      !(event.ctrlKey && event.altKey) &&
+      (event.key === 'Backspace' || event.key === 'Delete')
+    )
+      action = () =>
+        state.delete(
+          event.key === 'Backspace' ? 'backward' : 'forward',
+          event.ctrlKey || event.altKey ? 'word' : 'grapheme',
+        );
     else if (
       !event.metaKey &&
       !(event.ctrlKey && event.altKey) &&
@@ -190,8 +206,6 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
           }
         };
       else if (event.key === 'Enter') action = () => state.enter();
-      else if (event.key === 'Backspace' || event.key === 'Delete')
-        action = () => state.delete(event.key === 'Backspace' ? 'backward' : 'forward');
     }
     if (action) {
       event.preventDefault();

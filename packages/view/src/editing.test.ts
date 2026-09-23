@@ -94,6 +94,104 @@ const run = (id: string, text: string): Run => ({
   content: [{ kind: 'text', text }],
 });
 
+describe('按词删除', () => {
+  it('双向删除沿用导航边界，包含经过的空白，标点单独删除', () => {
+    const { state, texts, editor } = setup('hello  world!  ');
+    state.select({ start: pos(3), end: pos(3) });
+    state.delete('forward', 'word');
+    expect(texts()).toEqual(['hel  world!  ']);
+    expect(state.focus).toEqual(pos(3));
+    state.delete('forward', 'word');
+    expect(texts()).toEqual(['hel!  ']);
+    state.delete('forward', 'word');
+    expect(texts()).toEqual(['hel  ']);
+    state.delete('forward', 'word');
+    expect(texts()).toEqual(['hel']);
+    state.delete('backward', 'word');
+    expect(texts()).toEqual(['']);
+    editor.undo();
+    expect(texts()).toEqual(['hel']);
+    const backward = setup('hello  world  ');
+    backward.state.select({ start: pos(14), end: pos(14) });
+    backward.state.delete('backward', 'word');
+    expect(backward.texts()).toEqual(['hello  ']);
+    backward.state.delete('backward', 'word');
+    expect(backward.texts()).toEqual(['']);
+  });
+
+  it('中文词语跨样式与片段删除，一次撤销恢复格式和链接', () => {
+    const left = run('a', '你好世');
+    const right = run('b', '界');
+    right.props = { bold: true };
+    right.hyperlink = { url: 'https://example.test' };
+    right.content.push({ kind: 'text', text: '欢迎' });
+    const { state, editor, texts } = setup([left, right]);
+    state.select({ start: pos(1, 'b'), end: pos(1, 'b') });
+    state.delete('backward', 'word');
+    expect(texts()).toEqual(['你好欢迎']);
+    expect(state.focus).toEqual(pos(2, 'a'));
+    editor.undo();
+    expect([...walkParagraphs(editor.body)][0]?.runs).toEqual([left, right]);
+    expect(editor.canUndo).toBe(false);
+    editor.redo();
+    expect(texts()).toEqual(['你好欢迎']);
+  });
+
+  it('跨样式 emoji 与组合音标保持完整，已有反向选区只删选中部分', () => {
+    const { state, texts } = setup([run('a', 'e'), run('b', '\u0301👩'), run('c', '\u200d💻!')]);
+    state.delete('forward', 'word');
+    expect(texts()).toEqual(['👩\u200d💻!']);
+    state.delete('forward', 'word');
+    expect(texts()).toEqual(['!']);
+    const selected = setup('hello world');
+    selected.state.select({ start: pos(4), end: pos(1) });
+    selected.state.delete('backward', 'word');
+    expect(selected.texts()).toEqual(['ho world']);
+    expect(selected.state.focus).toEqual(pos(1));
+  });
+
+  it('段落边界只合段，文档边界与组合期间不创建删除事务', () => {
+    for (const direction of ['backward', 'forward'] as const) {
+      const { state, editor, texts } = setup('one');
+      state.move('forward', false, 'word');
+      state.enter();
+      state.insert('two');
+      state.move('backward', false, 'word');
+      if (direction === 'forward') state.move('backward');
+      state.delete(direction, 'word');
+      expect(texts()).toEqual(['onetwo']);
+      editor.undo();
+      expect(texts()).toEqual(['one', 'two']);
+    }
+    const { state, editor, texts } = setup('hello');
+    state.delete('backward', 'word');
+    state.move('forward', false, 'word');
+    state.delete('forward', 'word');
+    state.compositionStart();
+    state.delete('backward', 'word');
+    expect(texts()).toEqual(['hello']);
+    expect(editor.canUndo).toBe(false);
+    const empty = setup();
+    empty.state.delete('backward', 'word');
+    empty.state.delete('forward', 'word');
+    expect(empty.texts()).toEqual(['']);
+    expect(empty.editor.canUndo).toBe(false);
+  });
+
+  it('跨不可编辑片段的删除原子回滚并保留选区与历史', () => {
+    const r = run('r', 'one');
+    r.content.push({ kind: 'tab' }, { kind: 'text', text: 'two' });
+    const { state, editor } = setup([r]);
+    state.select({ start: pos(3), end: pos(3) });
+    const body = editor.body;
+    const selection = state.selection;
+    expect(() => state.delete('forward', 'word')).toThrow();
+    expect(editor.body).toBe(body);
+    expect(editor.canUndo).toBe(false);
+    expect(state.selection).toEqual(selection);
+  });
+});
+
 describe('按词与跨样式导航', () => {
   it('按词跳过空白，Shift 反向扩选跨过锚点后仍保留方向', () => {
     const { state, editor } = setup('hello  world');

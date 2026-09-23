@@ -12,7 +12,7 @@ export interface EditingController {
   select(range: DocRange): void;
   insert(text: string, input?: boolean): void;
   enter(): void;
-  delete(direction: 'backward' | 'forward'): void;
+  delete(direction: 'backward' | 'forward', granularity?: TextGranularity): void;
   move(direction: 'backward' | 'forward', extend?: boolean, granularity?: TextGranularity): void;
   selectWord(at: DocPosition, affinity?: 'before' | 'after'): void;
   compositionStart(): void;
@@ -100,11 +100,11 @@ export function createEditingController(editor: TextEditor): EditingController {
       });
       collapse(at);
     },
-    delete(direction) {
+    delete(direction, granularity = 'grapheme') {
       if (!selection || composing) return;
       let range = selection;
       if (equal(range.start, range.end)) {
-        const next = neighbor(range.start, direction);
+        const next = neighbor(range.start, direction, granularity);
         if (!next) return;
         range =
           direction === 'backward' ? { start: next, end: range.end } : { start: range.start, end: next };
