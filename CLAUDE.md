@@ -104,7 +104,7 @@ Word 2013 起分页符后面跟一个段落标记，后文从新段落开始（*
 按**最内层**那张表走、跳过 `vMerge=continue`；控制器 `moveCell()` 选中整格（接着打字即替换格内容）。
 单元格里 Tab / Shift+Tab 跳格**优先于**列表升降级，首末格接管但不动（Word 末格 Tab 加一行，结构编辑还没有）；
 表外 Tab 仍插制表位、Shift+Tab 仍留给浏览器。Word 在格里插制表位的 Ctrl+Tab 被浏览器截走，没接。
-编辑浏览器回归现有 172 项（表格部分用 `tests/list-fixture.ts` 的 `tableDocx()`）。
+编辑浏览器回归当时 172 项（表格部分用 `tests/list-fixture.ts` 的 `tableDocx()`）。
 **公开事件已接入**（2026-09-23，api.md §11）：`doc.on` 的 `document:change` / `layout:done` / `diagnostic`、
 `view.on` 的 `selection:change` / `viewport:change` / `click:element`，分发器在门面的 `events.ts`。
 视图先刷新再派发，加载那一趟不派发；监听者抛错走 `reportError`、不回滚事务；`diagnostic` 去重并追加进 `doc.diagnostics`。
@@ -119,7 +119,12 @@ Word 2013 起分页符后面跟一个段落标记，后文从新段落开始（*
 新格照同行属性一致的原有邻格抄 XML。
 **合并 / 拆分单元格已接入**（2026-09-23）：`tx.mergeCells(range)` 先把区域**撑成矩形**（被跨列格与纵向合并区撑大，
 同 Word 选区），内容按行接进首格、空格不贡献段落；段落是**搬**的（id 不变，位置不用映射，回写吐回原元素）。
-多行合并留 `continue` 续格、不删行。`tx.splitCell(pos)` 只做合并的逆操作（拆成任意行列数没做）。编辑浏览器回归现有 187 项。
+多行合并留 `continue` 续格、不删行。`tx.splitCell(pos)` 只做合并的逆操作（拆成任意行列数没做）。编辑浏览器回归当时 187 项。
+**段落样式已接入**（2026-09-23）：Ctrl+Alt+1/2/3 套标题、Ctrl+Shift+N 回正文，按 **`w:name`** 找（中文版 Word 的
+标题 id 是 `1`），文档里没有就补一份定义 —— 定义挂在 `Body.styles`（与 `Body.numbering` 同理随撤销走），
+`resolveBody` 用 `extendStyleSheet()` 补一层；事务**看不到样式表**，撞不撞 id 由控制器判断。段尾回车按 `w:next`
+换样式时新段落一点直接格式都不带，靠 `splitParagraph(pos, { inherit: false })`（原来拆段总留一个抄了格式的空 run，
+控制器清不掉它）。回写追加进 `styles.xml`。编辑浏览器回归现有 196 项。
 **Phase 8 已开始：回写 docx**（2026-09-23，新包 `@uw/serialize`，门面 `doc.toDocx()`，调试台「导出 docx」按钮）。
 补丁式：只重写改过的部件，没编辑的文档逐字节照搬；正文**走原文 XML 树**打补丁（见下）。Word 打开无修复提示只能人工验。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、

@@ -1101,6 +1101,14 @@ await view.toPNG(3);     // 第 3 页
   回写**没加新代码路径**：搬进首格的原有段落走 `#rest` 吐回自己的原元素（书签等不认识的内容跟着走），
   被并掉的格按删列的路径不写，`gridSpan` / `vMerge` / `tcW` 按字段改，拆出来的新格按插列的路径抄邻格。
   5 项模型单测 + 2 项回写单测，编辑浏览器回归增至 187 项（合并 → 格乙排到下一行 → 导出再加载 → 拆回 → 撤销）。
+- ✅ **段落样式**（2026-09-23）：Ctrl+Alt+1 / 2 / 3（Mac 上 Cmd+Option，按 `code` 认）套标题 1–3、Ctrl+Shift+N 回正文；
+  控制器 `applyBuiltinStyle(name)` / `applyStyle(styleId)`，按 `w:name` 找文档里的样式（中文版 Word 的 id 是 `1`），没有就用
+  `builtinStyleDefinition()` 照中文版 Word 默认模板补一份（`tx.addStyle`，定义挂在 `Body.styles` 上随撤销走，`resolveBody` 经
+  `extendStyleSheet()` 用上它）。套用清掉全部段落直接格式、字符直接格式按「过半」清；段尾回车按 `w:next` 换样式，
+  新段落不带任何直接格式（`splitParagraph(pos, { inherit: false })`，拆出没有 run 的空段落）。回写追加进 `styles.xml`，
+  没有就新建并登记 —— 与新建 numbering.xml 同时发生时两次登记改同一份清单（原来各自从原包读，后者会覆盖前者）。
+  4 项模型单测 + 2 项拆段单测 + 3 项控制器单测 + 4 项回写单测，编辑浏览器回归增至 196 项。
+  未做：样式库 UI / 自定义样式、修改已有样式定义、标题 4–9，字符直接格式「过半」的边界与 Word 未对过。
 - ✅ **分页符 Ctrl+Enter**（2026-09-23）：`insertInline(position, 'pageBreak')` 插 `w:br w:type="page"`，控制器 `pageBreak()`
   再在它后面拆段（Word 2013 起分页符后跟段落标记；照界面行为写，没有真值样本）。Ctrl+Enter / Cmd+Return 接管，
   Ctrl+Shift+Enter（分栏符）不接管。布局与回写原本就认分页符，没改。单元格里事务拒绝（Word 会拆表）。
@@ -1117,7 +1125,7 @@ await view.toPNG(3);     // 第 3 页
   3 项门面单测 + 14 项浏览器断言（`/tests/facade.html` 增至 29 项，超链接用 `linkDocx()` 现场造）。
   未做：图片 / 内容控件的 `click:element`（绘制层不接指针、索引里没有对象矩形）。
 - 事务系统 + undo/redo：文字模型层已完成，段落结构、字符 / 段落格式、列表层级与门面已接入
-- 基础命令集：输入/删除/粘贴（纯文本 ✅ + HTML ✅ + docx 片段）、加粗斜体 ✅、段落属性 ✅、列表（层级 ✅ / 新建 ✅）
+- 基础命令集：输入/删除/粘贴（纯文本 ✅ + HTML ✅ + docx 片段）、加粗斜体 ✅、段落属性 ✅、列表（层级 ✅ / 新建 ✅）、段落样式 ✅
 - 🟡 **增量排版第一步：段落缓存**（2026-09-22）：`ParagraphLayoutCache` 已接入门面加载 / 事务 /
   undo/redo，也覆盖表格单元格和页眉页脚。按段落内容与级联属性、宽度、网格、设置、规则和本段域值复用；
   字体注册 / 替换版本变化同步刷新字体度量和段落缓存。默认 LRU 2048 项，缓存与输出不共享可变片段。

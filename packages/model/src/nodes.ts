@@ -19,6 +19,7 @@
 import type { Twips } from '@uw/core';
 import type { Numbering } from './numbering.ts';
 import type { ParaProps, ResolvedParaProps, ResolvedRunProps, RunProps } from './props.ts';
+import type { StyleDefinition } from './styles.ts';
 import type {
   CellProps,
   ResolvedCellProps,
@@ -368,7 +369,14 @@ export type Section = SectionNode<DirectProps>;
  * 放在树上，事务的草稿与撤销快照自然把它一起带着。缺席时级联用 `CascadeContext.numbering`；
  * 级联完的树不带它（编号文字已经算进段落属性，布局用不着定义）。
  */
-export type Body = DocumentBody<DirectProps> & { numbering?: Numbering };
+export type Body = DocumentBody<DirectProps> & {
+  numbering?: Numbering;
+  /**
+   * 编辑期**新增**的样式定义（套用文档里没有的「标题 1」时补的，见 styles-edit.ts）。
+   * 与 `numbering` 同理挂在树上随撤销走；只放新增的，已有的样式仍在 `CascadeContext.styles`。
+   */
+  styles?: readonly StyleDefinition[];
+};
 
 export type ResolvedRun = RunNode<ResolvedProps>;
 export type ResolvedParagraph = ParagraphNode<ResolvedProps>;

@@ -1,7 +1,13 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { createDiagnosticSink } from '@uw/core';
 import type { Body, DocPosition, Paragraph, TextTransaction } from '@uw/model';
-import { createTextEditor, loadDocument, paragraphText, walkParagraphs } from '@uw/model';
+import {
+  builtinStyleDefinition,
+  createTextEditor,
+  loadDocument,
+  paragraphText,
+  walkParagraphs,
+} from '@uw/model';
 import { OpcPackage, unzip } from '@uw/ooxml';
 import { zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
@@ -305,6 +311,79 @@ describe('编号定义', () => {
     });
     editor.undo();
     expect(unzip(serializeDocx(pkg, editor.body)).has('word/numbering.xml')).toBe(false);
+  });
+});
+
+describe('样式定义', () => {
+  it('补的内建标题追加到已有 styles.xml 末尾，原有样式一个不少；重新加载后级联用上它', () => {
+    const bytes = fixture('gongwen-01.docx');
+    const before = decoder.decode(unzip(bytes).get('word/styles.xml'));
+    const { out, again } = roundTrip(bytes, (t, body) => {
+      const id = t.addStyle(builtinStyleDefinition('heading 1', () => false, ''));
+      const at = textPosition(body, 0, 0) as DocPosition;
+      t.setParagraphProps({ start: at, end: at }, { styleId: id });
+    });
+    const xml = decoder.decode(unzip(out).get('word/styles.xml'));
+    // 部件整个重新序列化（XML 声明的换行会变），原有的 w:style 一个不少、新的排在最后
+    const count = (text: string) => text.match(/<w:style /g)?.length ?? 0;
+    expect(count(xml)).toBe(count(before) + 1);
+    expect(xml.slice(xml.lastIndexOf('<w:style '))).toMatch(
+      /^<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"\/>/,
+    );
+    expect(again.cascade.styles.byId('Heading1')).toMatchObject({
+      name: 'heading 1',
+      paraProps: { keepNext: true, outlineLevel: 0, spacing: { before: 340, line: 578, lineRule: 'auto' } },
+      runProps: { bold: true, size: 440, kerning: 440 },
+    });
+    expect(again.resolved.sections[0]?.blocks[0]).toMatchObject({ props: { styleId: 'Heading1' } });
+  });
+
+  it('原包没有 styles.xml 也没有 numbering.xml：两个部件都新建，清单与关系表各登记两条不互相覆盖', () => {
+    const { out, again } = roundTrip(docx('<w:p><w:r><w:t>一项</w:t></w:r></w:p>'), (t, body) => {
+      const at = textPosition(body, 0, 0) as DocPosition;
+      const styleId = t.addStyle(builtinStyleDefinition('heading 2', () => false, ''));
+      const numId = t.addList('decimal');
+      t.setParagraphProps({ start: at, end: at }, { styleId, numbering: { numId, level: 0 } });
+    });
+    const entries = unzip(out);
+    const types = decoder.decode(entries.get('[Content_Types].xml'));
+    expect(types).toContain('PartName="/word/numbering.xml"');
+    expect(types).toContain('PartName="/word/styles.xml"');
+    const rels = decoder.decode(entries.get('word/_rels/document.xml.rels'));
+    expect(rels).toMatch(/Id="rId1" Type="[^"]+\/numbering"/);
+    expect(rels).toMatch(/Id="rId2" Type="[^"]+\/styles"/);
+    expect(again.resolved.sections[0]?.blocks[0]).toMatchObject({
+      props: { styleId: 'Heading2', keepNext: true, numbering: { label: { text: '1.' } } },
+    });
+  });
+
+  it('段尾不继承格式拆出的空段落：写成没有 pPr 与 run 的 w:p，重新加载结构相等', () => {
+    const { edited, again } = roundTrip(fixture('gongwen-01.docx'), (t, body) => {
+      const first = paragraphs(body)[0] as Paragraph;
+      const last = first.runs.at(-1);
+      const content = last?.content.at(-1);
+      if (last === undefined || content?.kind !== 'text') throw new Error('样本首段不以文字结尾');
+      const end = { nodeId: last.id, contentIndex: last.content.length - 1, offset: content.text.length };
+      t.splitParagraph(end, { inherit: false });
+    });
+    expect(paragraphs(again.body)[1]).toMatchObject({ props: {}, runs: [] });
+    expect(shape(again.body)).toEqual(shape(edited));
+  });
+
+  it('撤销掉的样式不留定义，styles.xml 逐字节不变', () => {
+    const bytes = fixture('gongwen-01.docx');
+    const { pkg, loaded } = load(bytes);
+    const editor = createTextEditor(loaded.body);
+    editor.tx((t) => {
+      const id = t.addStyle(builtinStyleDefinition('heading 3', () => false, ''));
+      const at = textPosition(editor.body, 0, 0) as DocPosition;
+      t.setParagraphProps({ start: at, end: at }, { styleId: id });
+      return undefined;
+    });
+    editor.undo();
+    expect(unzip(serializeDocx(pkg, editor.body)).get('word/styles.xml')).toEqual(
+      unzip(bytes).get('word/styles.xml'),
+    );
   });
 });
 

@@ -1,4 +1,5 @@
 import type {
+  BuiltinStyleName,
   DocPosition,
   DocRange,
   Justification,
@@ -8,7 +9,7 @@ import type {
 } from '@uw/model';
 import { fragmentToHtml, htmlToParagraphs } from './clipboard.ts';
 import type { DomView } from './dom.ts';
-import type { FormatQuery, ParagraphQuery, ToggleFormat } from './editing.ts';
+import type { FormatQuery, ParagraphQuery, ParagraphStyleInfo, ToggleFormat } from './editing.ts';
 import { createEditingController } from './editing.ts';
 import { moveVertically } from './vertical-navigation.ts';
 
@@ -23,6 +24,8 @@ export interface EditingBinding {
   paragraphFormat?: ParagraphQuery;
   /** 文档的默认制表位（twips），Ctrl+M 的步长；缺省 420。 */
   tabStop?: number;
+  /** 文档的段落样式；缺省时 Ctrl+Alt+1/2/3 总是补一份内建标题定义，回车不按 `w:next` 换样式。 */
+  styles?: readonly ParagraphStyleInfo[];
   subscribe(listener: (change: TextChangeSet) => void): () => void;
 }
 export interface DomEditing {
@@ -53,17 +56,24 @@ const ALIGN_KEYS: Readonly<Record<string, Justification>> = { l: 'left', e: 'cen
 
 /** Word 的行距快捷键：Ctrl+5 是 1.5 倍，不是 5 倍。 */
 const LINE_KEYS: Readonly<Record<string, 1 | 1.5 | 2>> = { '1': 1, '2': 2, '5': 1.5 };
+/**
+ * Word 的 Ctrl+Alt+1 / 2 / 3（Mac 上 Cmd+Option+1 / 2 / 3）套标题 1–3。按 `code` 认：
+ * Mac 上 Option 会把 `key` 变成「¡ ™ £」。
+ */
+const HEADING_CODES: Readonly<Record<string, BuiltinStyleName>> = {
+  Digit1: 'heading 1',
+  Digit2: 'heading 2',
+  Digit3: 'heading 3',
+};
 
 /** textarea 常驻容器，重排只替换页树，不能打断操作系统持有的 IME 节点。 */
 export function mountEditing(container: Element, view: DomView, binding: EditingBinding): DomEditing {
   const doc = container.ownerDocument;
   const win = doc.defaultView;
-  const state = createEditingController(
-    binding.editor,
-    binding.format,
-    binding.paragraphFormat,
-    binding.tabStop === undefined ? {} : { tabStop: binding.tabStop },
-  );
+  const state = createEditingController(binding.editor, binding.format, binding.paragraphFormat, {
+    ...(binding.tabStop === undefined ? {} : { tabStop: binding.tabStop }),
+    ...(binding.styles === undefined ? {} : { styles: binding.styles }),
+  });
   const input = doc.createElement('textarea');
   input.dataset.uwInput = 'true';
   input.setAttribute('aria-label', '文档编辑输入');
@@ -259,7 +269,24 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
     else if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && event.key in LINE_KEYS) {
       const multiple = LINE_KEYS[event.key] as 1 | 1.5 | 2;
       action = () => state.lineSpacing(multiple);
+    } else if (
+      (event.ctrlKey || event.metaKey) &&
+      event.altKey &&
+      !event.shiftKey &&
+      event.code in HEADING_CODES
+    ) {
+      const name = HEADING_CODES[event.code] as BuiltinStyleName;
+      action = () => state.applyBuiltinStyle(name);
     }
+    // Word 的 Ctrl+Shift+N 回到正文样式。Windows / Linux 的 Chrome 截走它（隐身窗口），只在 Mac 上到得了页面。
+    else if (
+      event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey &&
+      event.shiftKey &&
+      event.key.toLowerCase() === 'n'
+    )
+      action = () => state.applyBuiltinStyle('normal');
     // Word 的 Ctrl+Shift+L 是「列表项目符号」样式；样式不一定存在，这里直接套项目符号列表。
     else if (mod && !event.altKey && event.shiftKey && event.key.toLowerCase() === 'l')
       action = () => state.toggleList('bullet');

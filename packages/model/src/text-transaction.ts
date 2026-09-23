@@ -13,6 +13,7 @@ import { addListDefinition } from './numbering-edit.ts';
 import { buildRunOrder, compareDocPositions, contentLength, rangeOfNode, runEnd, runStart } from './order.ts';
 import type { DocPosition, DocRange } from './position.ts';
 import type { Indent, NumberingRef, ParagraphSpacing, ParaProps, RunProps } from './props.ts';
+import type { StyleDefinition } from './styles.ts';
 import {
   cellColumns,
   cellRect,
@@ -45,8 +46,13 @@ export type ParaPropsPatch = {
 };
 
 export interface TextTransaction {
-  /** 在位置处拆段，返回新段开头；继承段落与字符直接格式。 */
-  splitParagraph(position: DocPosition): DocPosition;
+  /**
+   * 在位置处拆段，返回新段开头；继承段落与字符直接格式。
+   * `{ inherit: false }` 时新段落不带任何直接格式（段落格式、段落标记都清空），后段没有内容时
+   * 是一个真正的空段落（没有 run，而不是一个继承了格式的空 run）—— Word 标题段尾回车按
+   * `w:next` 换成正文就是这样，接着打的字不该带着标题的加粗。
+   */
+  splitParagraph(position: DocPosition, options?: { inherit?: boolean }): DocPosition;
   /** 与同一容器内紧随其后的段落合并，保留前段格式。 */
   joinParagraph(paragraphId: NodeId): DocPosition;
   /** 返回插入后的光标位置，可继续传给本事务的下一条命令。 */
@@ -74,6 +80,13 @@ export interface TextTransaction {
    * 定义随本次事务提交与撤销；本次没有段落改动时整次无修改，定义也不留下。
    */
   addList(kind: ListKind): number;
+  /**
+   * 新增一份段落样式定义（通常出自 `builtinStyleDefinition`），返回它的 id，交给
+   * `setParagraphProps(range, { styleId })` 引用。与 `addList` 一样随本次事务提交与撤销，
+   * 没有段落改动时整次无修改、定义不留下。id 已在本树新增的定义里时抛错；
+   * 与文档原有样式撞 id 由调用方避开（事务看不到样式表）。
+   */
+  addStyle(definition: StyleDefinition): string;
   /**
    * 在位置所在的行（最内层表格）上方 / 下方插一行，照这一行抄结构与格式，每格一个空段落
    * （见 table-edit.ts）。返回新行首格（跳过纵向合并的续格）的空段落位置。
@@ -670,7 +683,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
       }
 
       const transaction: TextTransaction = {
-        splitParagraph(position) {
+        splitParagraph(position, options = {}) {
           return command(() => {
             position = textPosition(position);
             const entry = entryAt(position);
@@ -689,12 +702,19 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
               id: newId(),
               content: [{ kind: 'text', text: text.slice(position.offset) }, ...run.content.slice(ci + 1)],
             };
+            const inherit = options.inherit !== false;
+            const tail = [right, ...paragraph.runs.slice(runIndex + 1)];
+            // 后段一个字都没有（只剩拆出来的空 text）时，不继承就是没有 run 的空段落
+            const empty = tail.every((r) => r.content.every((c) => c.kind === 'text' && c.text === ''));
             const next: Paragraph = {
               ...paragraph,
               id: newId(),
-              runs: [right, ...paragraph.runs.slice(runIndex + 1)],
+              ...(inherit ? {} : { props: {} }),
+              runs: inherit || !empty ? tail : [],
             };
-            const to = { nodeId: right.id, contentIndex: 0, offset: 0 };
+            const to = next.runs.length
+              ? { nodeId: right.id, contentIndex: 0, offset: 0 }
+              : { nodeId: next.id, contentIndex: 0, offset: 0 };
             const moves: PositionMove[] = [
               { from: position, to, length: text.length - position.offset, afterOnly: true },
             ];
@@ -1151,6 +1171,18 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
               })),
             );
             return { ...position };
+          });
+        },
+        addStyle(definition) {
+          return command(() => {
+            if (typeof definition?.id !== 'string' || definition.id === '')
+              throw new TypeError('样式定义缺少 id');
+            flush();
+            const styles = draft.styles ?? [];
+            if (styles.some((s) => s.id === definition.id)) throw new Error(`样式 ${definition.id} 已存在`);
+            // 不记变更：理由同 addList
+            draft = { ...draft, styles: [...styles, structuredClone(definition)] };
+            return definition.id;
           });
         },
         addList(kind) {

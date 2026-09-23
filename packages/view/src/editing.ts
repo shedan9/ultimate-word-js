@@ -1,5 +1,6 @@
 /** 输入状态只存模型位置；组合文字暂存，compositionend 才提交一个撤销单元。 */
 import type {
+  BuiltinStyleName,
   DocPosition,
   DocRange,
   InlineKind,
@@ -17,6 +18,7 @@ import type {
 import {
   adjacentCellRange,
   buildRunOrder,
+  builtinStyleDefinition,
   compareDocPositions,
   mapTextRange,
   paragraphText,
@@ -52,10 +54,31 @@ const INDENT_CHARS_STEP = 200;
 /** Ctrl+0 加的段前间距：Word 的「一行」按 12pt 算，与段落字号无关。 */
 const SPACE_BEFORE = 240;
 
+/** 文档里已有的一份段落样式（`StyleSheet` 的纯数据摘要）。 */
+export interface ParagraphStyleInfo {
+  id: string;
+  /** `w:name`：内建样式是英文小写名（`heading 1`），套用内建样式按它找，不按 id —— 中文版 Word 的 id 是 `1`。 */
+  name: string;
+  /** `w:next`：段尾回车后新段落用哪个样式。 */
+  next?: string | undefined;
+  isDefault: boolean;
+}
+
 export interface EditingOptions {
   /** Ctrl+M 的步长（`w:defaultTabStop`，twips）；缺省 420，中文版 Word 的默认值。 */
   tabStop?: number;
+  /** 文档的段落样式；缺省时套用样式只能套内建样式，回车也不按 `w:next` 换样式。 */
+  styles?: readonly ParagraphStyleInfo[];
 }
+
+/**
+ * 套用段落样式时，字符直接格式的某一项覆盖了段落**过半**的字才清掉（Word 的行为：
+ * 整段手工设成四号的正文套「标题 1」变成标题的字号，只有几个字加粗的仍保留加粗）。
+ * 逐项判断、按字数算。**没有与 Word 逐格对过**：「正好一半」归哪边、段落标记算不算一个字都是猜的。
+ */
+const STYLE_CLEAR_RATIO = 0.5;
+/** 这几项不是「格式」：语言标记与字符样式跟着内容走，套段落样式不该动它们。 */
+const STYLE_KEEP_RUN_KEYS: ReadonlySet<string> = new Set(['styleId', 'langEastAsia']);
 
 export interface EditingController {
   readonly selection: DocRange | undefined;
@@ -113,6 +136,22 @@ export interface EditingController {
    * 后文从新的一段、新的一页开始，而不是同一段接着排。单元格里不插（事务拒绝，模型不变）。
    */
   pageBreak(): void;
+  /**
+   * Word 的样式库：给选区触及的每一段套用段落样式（整次一个撤销单元）。段落直接格式全部清掉、
+   * 回到样式（编号也一样 —— 列表项套「标题 1」就不再是列表项）；字符直接格式按「过半」规则清
+   * （见 `STYLE_CLEAR_RATIO`）。id 不在文档样式里时不动。
+   */
+  applyStyle(styleId: string): void;
+  /**
+   * 按名字套内建样式（Word 的 Ctrl+Alt+1 / 2 / 3 与 Ctrl+Shift+N）：文档里有这份样式就用它，
+   * 没有就照中文版 Word 的默认模板补一份定义（`builtinStyleDefinition`），随本次事务提交与撤销。
+   * `'normal'` 是默认段落样式。
+   */
+  applyBuiltinStyle(name: BuiltinStyleName | 'normal'): void;
+  /**
+   * 回车拆段。光标（或选区末端）在段尾、且本段样式的 `w:next` 是别的样式时，新段落换成那个样式、
+   * 不带本段的直接格式 —— 标题后面回车接着写的是正文，而不是又一个居中加粗的标题。
+   */
   enter(): void;
   delete(direction: 'backward' | 'forward', granularity?: TextGranularity): void;
   move(direction: 'backward' | 'forward', extend?: boolean, granularity?: TextGranularity): void;
@@ -197,6 +236,76 @@ export function createEditingController(
     // 段落格式不拆 run、不动位置，选区原样有效。
     editor.tx((tx) => {
       tx.setParagraphProps({ start: at, end: at }, patch);
+    });
+  }
+  const styles = options.styles ?? [];
+  const defaultStyle = styles.find((st) => st.isDefault)?.id ?? '';
+  /** 已有样式 + 本树新增的定义（后者随撤销进出，每次现查） */
+  function styleInfo(id: string): ParagraphStyleInfo | undefined {
+    const added = editor.body.styles?.find((st) => st.id === id);
+    return added
+      ? { id, name: added.name, next: added.next, isDefault: false }
+      : styles.find((st) => st.id === id);
+  }
+  function paragraphAt(at: DocPosition) {
+    return [...walkParagraphs(editor.body)].find(
+      (p) => p.id === at.nodeId || p.runs.some((r) => r.id === at.nodeId),
+    );
+  }
+  /** 把一段的段落直接格式换成「只有样式」：每一项置 null，样式是默认样式时连 pStyle 也不写。 */
+  function styleOnlyPatch(props: object, styleId: string): ParaPropsPatch {
+    const patch: Record<string, unknown> = {};
+    for (const key of Object.keys(props)) if (key !== 'markRunProps') patch[key] = null;
+    patch.styleId = styleId === defaultStyle ? null : styleId;
+    return patch as ParaPropsPatch;
+  }
+  function nullPatch(keys: Iterable<string>): RunPropsPatch {
+    const patch: Record<string, null> = {};
+    for (const key of keys) if (!STYLE_KEEP_RUN_KEYS.has(key)) patch[key] = null;
+    return patch as RunPropsPatch;
+  }
+  /** 本树里的段落（含单元格）按选区触及的顺序；折叠选区即光标所在段。 */
+  function paragraphsInSelection(range: DocRange) {
+    const order = buildRunOrder(editor.body);
+    const all = [...walkParagraphs(editor.body)];
+    const first = paragraphAt(range.start);
+    const last = paragraphAt(range.end);
+    const from = all.findIndex((p) => p.id === first?.id);
+    const to = all.findIndex((p) => p.id === last?.id);
+    if (from < 0 || to < 0) return [];
+    // 选区可能跨表格：嵌套结构的深度优先序就是文档序，首尾之间的都算
+    return compareDocPositions(order, range.start, range.end) === undefined ? [] : all.slice(from, to + 1);
+  }
+  function applyStyleId(styleId: string, define?: BuiltinStyleName): void {
+    if (!selection || composing) return;
+    const paragraphs = paragraphsInSelection(selection);
+    if (!paragraphs.length) return;
+    editor.breakHistory();
+    pending = undefined;
+    editor.tx((tx) => {
+      const id = define
+        ? tx.addStyle(builtinStyleDefinition(define, (x) => styleInfo(x) !== undefined, defaultStyle))
+        : styleId;
+      for (const p of paragraphs) {
+        const range = rangeOfNode(p);
+        if (!range) continue;
+        tx.setParagraphProps({ start: range.start, end: range.start }, styleOnlyPatch(p.props, id));
+        // 字符直接格式按「过半」清：逐项数有多少字带着它
+        let total = 0;
+        const counts = new Map<string, number>();
+        for (const run of p.runs) {
+          const length = run.content.reduce((n, c) => n + (c.kind === 'text' ? c.text.length : 0), 0);
+          total += length;
+          for (const key of Object.keys(run.props)) counts.set(key, (counts.get(key) ?? 0) + length);
+        }
+        const clear =
+          total === 0
+            ? Object.keys(p.props.markRunProps ?? {})
+            : [...counts].filter(([, n]) => n > total * STYLE_CLEAR_RATIO).map(([key]) => key);
+        const patch = nullPatch(clear);
+        // 整段范围的端点落在段首段尾，不拆 run，选区原样有效；空段落改的是段落标记
+        if (Object.keys(patch).length) tx.setRunProps(range, patch);
+      }
     });
   }
   function select(range: DocRange): void {
@@ -558,11 +667,36 @@ export function createEditingController(
       pending = undefined;
       let at = selection.start;
       const range = selection;
+      // 段尾回车按 w:next 换样式：选区末端在段尾，删掉选区后光标同样落在（前一段的）段尾
+      const host = paragraphAt(range.start);
+      const tail = paragraphAt(range.end);
+      const tailEnd = tail && rangeOfNode(tail)?.end;
+      const current = host && (host.props.styleId ?? defaultStyle);
+      const next =
+        current !== undefined && tailEnd && equal(range.end, tailEnd) ? styleInfo(current)?.next : undefined;
+      const restyle = next !== undefined && next !== current && styleInfo(next) ? next : undefined;
       editor.tx((tx) => {
         if (!equal(range.start, range.end)) at = tx.deleteRange(range);
-        at = tx.splitParagraph(at);
+        // 换样式时新段落一点直接格式都不带：标题的居中、加粗、字号不该带进正文
+        at = tx.splitParagraph(at, restyle === undefined ? {} : { inherit: false });
+        if (restyle !== undefined && restyle !== defaultStyle)
+          tx.setParagraphProps({ start: at, end: at }, { styleId: restyle });
       });
       collapse(at);
+    },
+    applyStyle(styleId) {
+      if (styleInfo(styleId)) applyStyleId(styleId);
+    },
+    applyBuiltinStyle(name) {
+      if (name === 'normal') {
+        if (defaultStyle) applyStyleId(defaultStyle);
+        return;
+      }
+      const existing = [...styles, ...(editor.body.styles ?? [])].find(
+        (st) => st.name.toLowerCase() === name,
+      );
+      if (existing) applyStyleId(existing.id);
+      else applyStyleId('', name);
     },
     cut(write) {
       if (!selection || composing || equal(selection.start, selection.end)) return;

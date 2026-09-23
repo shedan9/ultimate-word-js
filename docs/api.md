@@ -310,7 +310,8 @@ doc.bindings.apply();                            // 一次性提交 → 触发�
 ## 10. 编辑与事务 🟡
 
 > 门面 `doc.tx()` / `undo()` / `redo()` 已接入文字、段落与字符格式命令，并自动级联 / 排版（复用段落缓存，见 §10.3）。
-> 下方 `insertParagraph` 仍是设计目标（公开事件 2026-09-23 已接入，见 §11）；`setParagraphProps` 的参数形状以 §10.1 为准
+> 下方 `insertParagraph(pos, { styleId })` 没有做成单独的命令：拆段用 `splitParagraph`（段尾拆出不带直接格式的空段落用
+> `{ inherit: false }`），套样式用 `setParagraphProps(range, { styleId })`，文档里没有的内建样式先 `addStyle` 补定义（见 §10.1，2026-09-23）；`setParagraphProps` 的参数形状以 §10.1 为准
 > （原设想把 `firstLineChars` 平铺在顶层，实现按 `ParaProps` 分组：`{ indent: { firstLineChars: 200 } }`）。
 
 **唯一的模型修改入口是 `doc.tx()`。** 没有零散的 setter。
@@ -393,6 +394,12 @@ editor.breakHistory(); // 光标移动、焦点切换等输入边界中断合并
   每级左缩进 420 twips × 级数、悬挂 420），返回 numId，再用 `setParagraphProps(range, { numbering: { numId, level: 0 } })`
   引用。定义存在 `editor.body.numbering` 上，随事务提交与撤销；本次没有段落改动时整次无修改、定义不留下。
   接着已有列表数请直接引用它的 numId，每次 `addList` 都是一个新的计数。
+- `t.splitParagraph(position, { inherit: false })`（2026-09-23）拆出的新段落不带任何直接格式（段落格式、段落标记都清空）；
+  后段没有内容时是没有 run 的空段落，返回它的段落锚点。Word 标题段尾回车按 `w:next` 换成正文靠它。
+- `t.addStyle(definition)`（2026-09-23）新增一份段落样式定义（`StyleDefinition`，通常出自
+  `builtinStyleDefinition('heading 1' | 'heading 2' | 'heading 3', taken, normalId)`，照中文版 Word 默认模板，未与真值对过），
+  返回 id，再用 `setParagraphProps(range, { styleId })` 引用。定义存在 `editor.body.styles` 上，与 `addList` 一样随事务提交与撤销、
+  不被引用就不留下；与文档原有样式撞 id 由调用方避开（事务看不到样式表，`taken` 回调就是为此）。回写追加进 `styles.xml`。
 - `t.insertRow(position, 'above' | 'below')`（2026-09-23）在位置所在的行（最内层表格）上 / 下方插一行：照这一行抄格数、
   `gridSpan`、格属性、行属性（含表头标记）与模板格首段的段落格式，每格一个空段落，返回新行首格（跳过纵向合并的续格）。
   纵向合并按网格列对齐：插在合并区中间的新格是 `continue`，区外是 `none`。不在表格里抛错。
@@ -504,6 +511,12 @@ Ctrl+T / Ctrl+Shift+T（控制器 `hangingIndent(direction)`）让**首行原地
 Ctrl+0（`toggleSpaceBefore()`）让段前间距在 0 与 12pt 之间切换，行单位与自动间距一并清掉。
 这两组同样只认 Ctrl，而且 Windows 上 Chrome 截走 Ctrl+T（新标签页）与 Ctrl+0（重置缩放），只在 Mac 上到得了页面。
 Word 的规则照界面行为写，**没有与 Word 逐格对过**。
+Ctrl+Alt+1 / 2 / 3（Mac 上 Cmd+Option+1 / 2 / 3，按 `event.code` 认）套用标题 1–3，Ctrl+Shift+N 回到正文
+（控制器 `applyBuiltinStyle(name)`；任意已有样式走 `applyStyle(styleId)`）。按 `w:name` 找文档里的样式（中文版 Word
+的标题 id 是 `1` / `2` / `3`），没有就补一份定义。套用时清掉选区触及段落的**全部**段落直接格式（编号也清），
+字符直接格式只清覆盖了段落过半字数的那几项（语言与字符样式不动），一次一个撤销单元。
+段尾回车时本段样式的 `w:next` 若是别的样式，新段落换成它且不带任何直接格式（标题后回车接着写正文）；段中回车照旧继承。
+这几条照 Word 界面行为写，**没有与 Word 逐格对过**；Windows / Linux 的 Chrome 截走 Ctrl+Shift+N（隐身窗口）。
 `NumberLabel.format` 给出本级的 `w:numFmt`，工具栏可据此显示当前是项目符号还是编号。
 段首 Backspace 去编号时与 Word 一样把级联后的左缩进写成直接格式（首行 / 悬挂写显式 0，免得退回样式的首行缩进），
 文字留在原处；空项 Enter 结束列表与 `toggleList` 取消时不写，文字回到页边。

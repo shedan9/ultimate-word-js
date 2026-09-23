@@ -33,6 +33,7 @@ export * from './search.ts';
 export * from './section.ts';
 export * from './settings.ts';
 export * from './styles.ts';
+export * from './styles-edit.ts';
 export * from './table-nav.ts';
 export * from './table-props.ts';
 export * from './text-change.ts';

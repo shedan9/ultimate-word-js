@@ -581,6 +581,48 @@ try {
   assert(!tableKey('Tab', { shiftKey: true }), '表外 Shift Tab 仍留给浏览器');
   tableInput.blur();
   tableView.dispose();
+  // 段落样式：gongwen-01 自带 heading 1（中文版 Word 的 id 是 1），Ctrl+Alt+1 按名字找到它；
+  // 段尾回车按 w:next 回到正文，接着打的字不带标题格式；没有标题样式的文档补一份定义，导出再加载仍在
+  const styleHost = document.createElement('div');
+  styleHost.style.cssText = 'height:400px;overflow:auto';
+  document.body.append(styleHost);
+  const styleDoc = await UltimateWord.load(fixtureUrl);
+  const styleView = styleDoc.mount(styleHost, { mode: 'edit' });
+  const styleInput = styleHost.querySelector('textarea');
+  const styleKey = (key, modifiers = {}) => {
+    const event = new KeyboardEvent('keydown', { key, ...modifiers, bubbles: true, cancelable: true });
+    styleInput.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+  const styleTarget = styleDoc.query('paragraph')[3];
+  const targetRange = styleDoc.rangeOf(styleTarget);
+  styleView.select({ start: targetRange.end, end: targetRange.end }); styleView.focus(); await frame();
+  const plainHeight = styleView.caretRect(targetRange.end).height;
+  const styleCount = styleDoc.query('paragraph').length;
+  assert(styleKey('¡', { ctrlKey: true, altKey: true, code: 'Digit1' }), 'Ctrl+Alt+1 被接管（按 code 认，不看 key）');
+  await frame();
+  assert(styleDoc.query('paragraph')[3].props.styleId === '1', '套上文档自带的 heading 1（id 为 1）');
+  assert(styleView.caretRect(styleView.selection.end).height > plainHeight, '标题行比正文行高');
+  styleKey('Enter');
+  const after = styleDoc.query('paragraph')[4];
+  assert(styleDoc.query('paragraph').length === styleCount + 1 && after.runs.length === 0 && after.props.styleId === undefined, '段尾回车拆出没有直接格式的正文空段');
+  styleInput.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: '接着写', bubbles: true, cancelable: true }));
+  assert(styleDoc.query('paragraph')[4].runs[0].props.bold === undefined && styleDoc.find('接着写').length === 1, '接着打的字不带标题格式');
+  styleDoc.undo(); styleDoc.undo();
+  assert(styleDoc.query('paragraph').length === styleCount && styleDoc.query('paragraph')[3].props.styleId === '1', '撤销回车与输入，标题还在');
+  styleKey('N', { ctrlKey: true, shiftKey: true });
+  assert(styleDoc.query('paragraph')[3].props.styleId === undefined, 'Ctrl+Shift+N 回到正文');
+  styleView.dispose();
+  const plainDoc = await UltimateWord.load(listDocx());
+  const plainView = plainDoc.mount(styleHost, { mode: 'edit' });
+  const plainRange = plainDoc.rangeOf(plainDoc.query('paragraph')[0]);
+  plainView.select({ start: plainRange.start, end: plainRange.start });
+  styleHost.querySelector('textarea').dispatchEvent(new KeyboardEvent('keydown', { key: '™', code: 'Digit2', metaKey: true, altKey: true, bubbles: true, cancelable: true }));
+  assert(plainDoc.query('paragraph')[0].props.styleId === 'Heading2', '没有标题样式的文档补一份 Heading2（Cmd+Option+2）');
+  const plainExport = await UltimateWord.load(await plainDoc.toDocx());
+  assert(plainExport.query('paragraph')[0].props.styleId === 'Heading2' && plainExport.layout.pages[0].blocks[0].lines[0].line.height > plainDoc.layout.pages[0].blocks[1].lines[0].line.height, '导出再加载：定义进了 styles.xml，标题照样排得更高');
+  plainView.dispose();
+  styleHost.remove();
   result.textContent = `PASS ${passed} 项`;
 } catch (error) { result.textContent = `FAIL ${passed} 项后\n${error.stack ?? error}`; }
 </script>

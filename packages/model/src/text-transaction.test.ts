@@ -623,3 +623,46 @@ it('预提交检查失败保留模型及 undo/redo 历史', () => {
   editor.undo();
   expect(editor.canRedo).toBe(true);
 });
+
+describe('不继承格式的拆段', () => {
+  it('段尾拆出没有 run 的空段落，段落格式与标记都不带；撤销还原、光标映射到新段落', () => {
+    const editor = createTextEditor(
+      parse(
+        '<w:p><w:pPr><w:pStyle w:val="1"/><w:jc w:val="center"/><w:rPr><w:b/></w:rPr></w:pPr>' +
+          '<w:r><w:rPr><w:b/></w:rPr><w:t>标题</w:t></w:r></w:p>',
+      ),
+    );
+    const end = pos(editor.body, 2);
+    let caret = end;
+    const changes = must(
+      editor.tx((t) => {
+        caret = t.splitParagraph(end, { inherit: false });
+      }),
+    );
+    const next = para(editor.body, 1);
+    expect(next.props).toEqual({});
+    expect(next.runs).toEqual([]);
+    expect(caret).toEqual({ nodeId: next.id, contentIndex: 0, offset: 0 });
+    expect(mapTextPosition(end, changes)).toEqual(caret);
+    expect(para(editor.body).props.justification).toBe('center');
+    // 接着打字：从空段落的标记建 run，标记是空的，所以不加粗
+    editor.tx((t) => void t.insertText(caret, '正文'));
+    expect(para(editor.body, 1).runs[0]?.props.bold).toBeUndefined();
+    editor.undo();
+    editor.undo();
+    expect([...walkParagraphs(editor.body)]).toHaveLength(1);
+  });
+
+  it('段中拆：后段的文字与字符格式照留，只清段落格式', () => {
+    const editor = createTextEditor(
+      parse(
+        '<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:i/></w:rPr><w:t>甲乙</w:t></w:r></w:p>',
+      ),
+    );
+    editor.tx((t) => void t.splitParagraph(pos(editor.body, 1), { inherit: false }));
+    const next = para(editor.body, 1);
+    expect(next.props).toEqual({});
+    expect(paragraphText(next)).toBe('乙');
+    expect(next.runs[0]?.props.italic).toBe(true);
+  });
+});

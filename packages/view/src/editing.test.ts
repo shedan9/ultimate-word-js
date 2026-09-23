@@ -1091,3 +1091,110 @@ describe('列表层级', () => {
     expect(breaks(cell)).toEqual(['line']);
   });
 });
+
+describe('段落样式', () => {
+  const STYLES = [
+    { id: 'a', name: 'Normal', next: undefined, isDefault: true },
+    { id: '1', name: 'heading 1', next: 'a', isDefault: false },
+    { id: 'Title', name: 'Title', next: undefined, isDefault: false },
+  ];
+  function styled(blocks: Paragraph[], styles = STYLES) {
+    const editor = createTextEditor({ sections: [{ id: 's', props: DEFAULT_SECTION_PROPS, blocks }] });
+    const state = createEditingController(editor, undefined, undefined, { styles });
+    const paragraphs = () => [...walkParagraphs(editor.body)];
+    return { editor, state, paragraphs };
+  }
+
+  it('套用已有样式：段落直接格式全清，过半的字符直接格式清掉、零星的留着，一次撤销', () => {
+    const { editor, state, paragraphs } = styled([
+      {
+        kind: 'paragraph',
+        id: 'p',
+        props: {
+          justification: 'center',
+          indent: { firstLineChars: 200 },
+          numbering: { numId: 3, level: 0 },
+        },
+        runs: [
+          {
+            kind: 'run',
+            id: 'r',
+            props: { size: 320, langEastAsia: 'zh-CN' },
+            content: [{ kind: 'text', text: '第一章' }],
+          },
+          {
+            kind: 'run',
+            id: 'r2',
+            props: { size: 320, bold: true },
+            content: [{ kind: 'text', text: '总' }],
+          },
+        ],
+      },
+    ]);
+    state.select({ start: pos(1, 'r'), end: pos(1, 'r') });
+    state.applyBuiltinStyle('heading 1');
+    const p = paragraphs()[0] as Paragraph;
+    // 文档里已有 heading 1（id 是 1，中文版 Word 的写法），按名字找到它，不补定义
+    expect(p.props).toEqual({ styleId: '1' });
+    expect(editor.body.styles).toBeUndefined();
+    expect(p.runs.map((r) => r.props)).toEqual([{ langEastAsia: 'zh-CN' }, { bold: true }]);
+    expect(state.selection?.start).toEqual(pos(1, 'r'));
+    editor.undo();
+    expect(paragraphs()[0]?.props.justification).toBe('center');
+    // 回到正文 = 不写 pStyle
+    state.applyBuiltinStyle('normal');
+    expect(paragraphs()[0]?.props).toEqual({});
+    state.applyStyle('不存在');
+    expect(editor.canRedo).toBe(false);
+  });
+
+  it('文档里没有的内建标题补一份定义，id 避开已有样式；撤销连定义一起回退', () => {
+    const { editor, state, paragraphs } = styled([
+      { kind: 'paragraph', id: 'p', props: {}, runs: [run('r', '标题')] },
+      { kind: 'paragraph', id: 'q', props: {}, runs: [run('r2', '正文')] },
+    ]);
+    state.select({ start: pos(0, 'r'), end: pos(1, 'r2') });
+    state.applyBuiltinStyle('heading 2');
+    expect(editor.body.styles?.map((s) => [s.id, s.name, s.basedOn, s.next])).toEqual([
+      ['Heading2', 'heading 2', 'a', 'a'],
+    ]);
+    expect(paragraphs().map((p) => p.props.styleId)).toEqual(['Heading2', 'Heading2']);
+    // 再套一次同名样式：用补过的那份，不再加
+    state.applyBuiltinStyle('heading 2');
+    expect(editor.body.styles).toHaveLength(1);
+    editor.undo();
+    expect(editor.body.styles).toBeUndefined();
+    expect(paragraphs().map((p) => p.props.styleId)).toEqual([undefined, undefined]);
+  });
+
+  it('段尾回车按 w:next 换样式并丢掉本段直接格式；段中回车、没有 next 的样式照旧继承', () => {
+    const heading = (): Paragraph => ({
+      kind: 'paragraph',
+      id: 'p',
+      props: { styleId: '1', justification: 'center', markRunProps: { bold: true } },
+      runs: [run('r', '标题')],
+    });
+    const end = styled([heading()]);
+    end.state.select({ start: pos(2, 'r'), end: pos(2, 'r') });
+    end.state.enter();
+    const [first, second] = end.paragraphs();
+    expect(first?.props.styleId).toBe('1');
+    // 真正的空段落：没有 run、没有直接格式（next 是默认样式，不写 pStyle）
+    expect(second?.props).toEqual({});
+    expect(second?.runs).toEqual([]);
+    end.state.insert('正文');
+    expect(end.paragraphs()[1]?.runs[0]?.props.bold).toBeUndefined();
+
+    const middle = styled([heading()]);
+    middle.state.select({ start: pos(1, 'r'), end: pos(1, 'r') });
+    middle.state.enter();
+    expect(middle.paragraphs().map((p) => p.props.styleId)).toEqual(['1', '1']);
+
+    const title = styled([
+      { kind: 'paragraph', id: 'p', props: { styleId: 'Title' }, runs: [run('r', '题')] },
+    ]);
+    title.state.select({ start: pos(1, 'r'), end: pos(1, 'r') });
+    title.state.enter();
+    expect(title.paragraphs().map((p) => p.props.styleId)).toEqual(['Title', 'Title']);
+  });
+});

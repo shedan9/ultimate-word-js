@@ -10,6 +10,7 @@
  * 把环截断继续跑。用户要的是看到文档。
  */
 import type { DiagnosticSink } from '@uw/core';
+import { createDiagnosticSink } from '@uw/core';
 import type { XmlDocument, XmlElement } from '@uw/ooxml';
 import { attr, child, children } from '@uw/ooxml';
 import { parseParaProps, parseRunProps } from './parse-props.ts';
@@ -95,7 +96,74 @@ export function parseStyles(doc: XmlDocument | undefined, diagnostics: Diagnosti
       if (style !== undefined) styles.set(style.id, style);
     }
   }
+  return buildStyleSheet(defaults, styles, diagnostics);
+}
 
+/**
+ * 在已有样式表上补几份编辑期新增的样式（见 styles-edit.ts），得到一张新表；原表不动。
+ *
+ * 按 `added` 的引用缓存：级联每次事务都跑一遍，同一份快照上的定义不必每次重建样式链缓存。
+ * 链上的诊断（成环、缺样式）加载时已经报过，这里丢掉 —— 新增的样式只 basedOn 已有的那份。
+ */
+export function extendStyleSheet(base: StyleSheet, added: readonly StyleDefinition[]): StyleSheet {
+  if (added.length === 0) return base;
+  let perBase = extended.get(base);
+  if (perBase === undefined) {
+    perBase = new WeakMap();
+    extended.set(base, perBase);
+  }
+  const cached = perBase.get(added);
+  if (cached !== undefined) return cached;
+  const styles = new Map(base.all().map((s) => [s.id, s]));
+  for (const d of added) styles.set(d.id, styleOfDefinition(d));
+  const sheet = buildStyleSheet(base.defaults, styles, createDiagnosticSink());
+  perBase.set(added, sheet);
+  return sheet;
+}
+
+const extended = new WeakMap<StyleSheet, WeakMap<readonly StyleDefinition[], StyleSheet>>();
+
+/**
+ * 编辑期新增的样式（只有段落样式）。挂在可编辑的树上（`Body.styles`）而不是样式表上：
+ * 它得与引用它的 `w:pStyle` 同进同退，撤销只回退段落、不回退定义的话，回写出来的
+ * styles.xml 里就多一份没人用的样式（反过来则是悬空的 pStyle）。
+ * 纯数据、没有 Map，才能跟着撤销快照冻结与克隆。
+ */
+export interface StyleDefinition {
+  id: string;
+  /** `w:name`。内建样式写英文小写名（`heading 1`），Word 按它认出内建样式再显示本地化名字 */
+  name: string;
+  basedOn?: string;
+  next?: string;
+  paraProps: ParaProps;
+  runProps: RunProps;
+  /** `w:uiPriority` / `w:qFormat`：只影响 Word 样式库里怎么列，排版不认，回写原样写出 */
+  uiPriority?: number;
+  quickFormat?: boolean;
+}
+
+function styleOfDefinition(d: StyleDefinition): Style {
+  return {
+    id: d.id,
+    type: 'paragraph',
+    name: d.name,
+    basedOn: d.basedOn,
+    next: d.next,
+    isDefault: false,
+    paraProps: d.paraProps,
+    runProps: d.runProps,
+    tableProps: {},
+    rowProps: {},
+    cellProps: {},
+    conditional: new Map(),
+  };
+}
+
+function buildStyleSheet(
+  defaults: { paraProps: ParaProps; runProps: RunProps },
+  styles: ReadonlyMap<string, Style>,
+  diagnostics: DiagnosticSink,
+): StyleSheet {
   const defaultIdOf = (type: StyleType): string => {
     for (const s of styles.values()) {
       if (s.type === type && s.isDefault) return s.id;

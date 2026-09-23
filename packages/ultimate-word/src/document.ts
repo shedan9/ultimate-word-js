@@ -290,6 +290,10 @@ export class UwDocument {
         paragraphFormat: (range) =>
           paragraphsOfRange(this.#loaded.resolved, range).map((p) => ({ ...p, charUnit: indentCharUnit(p) })),
         tabStop: this.#loaded.cascade.settings.defaultTabStop,
+        styles: this.#loaded.cascade.styles
+          .all()
+          .filter((s) => s.type === 'paragraph')
+          .map((s) => ({ id: s.id, name: s.name, next: s.next, isDefault: s.isDefault })),
         subscribe: (listener) => {
           this.#listeners.add(listener);
           return () => {

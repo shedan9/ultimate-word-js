@@ -37,6 +37,7 @@ import type {
 import type { NumberingCounters } from './numbering-counter.ts';
 import { createNumberingCounters } from './numbering-counter.ts';
 import type { ResolvedParaProps, ResolvedRunProps } from './props.ts';
+import { extendStyleSheet } from './styles.ts';
 
 /**
  * 一趟级联的全部状态。
@@ -67,8 +68,13 @@ export function resolveBody(
   body: Body,
   opts: ResolveBodyOptions = {},
 ): ResolvedBody {
-  // 树上带着定义时以它为准：编辑期新建的列表只在这份里，级联上下文还是加载时那份
-  const ctx = body.numbering === undefined ? context : { ...context, numbering: body.numbering };
+  // 树上带着定义时以它为准：编辑期新建的列表只在这份里，级联上下文还是加载时那份；
+  // 新增的样式同理（样式表本身不可变，补一张扩展表）
+  const ctx = {
+    ...context,
+    ...(body.numbering === undefined ? {} : { numbering: body.numbering }),
+    ...(body.styles?.length ? { styles: extendStyleSheet(context.styles, body.styles) } : {}),
+  };
   const pass: Pass = {
     ctx,
     counters: createNumberingCounters(ctx.numbering, ctx.styles),
