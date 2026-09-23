@@ -3,6 +3,7 @@ import type {
   DocPosition,
   DocRange,
   Justification,
+  ListKind,
   NodeId,
   ParaPropsPatch,
   ResolvedParaProps,
@@ -49,6 +50,12 @@ export interface EditingController {
   listIndentable(): boolean;
   /** 每段各自升 / 降一级，夹在 0–8；整次一个撤销单元。 */
   indentList(direction: 'in' | 'out'): void;
+  /**
+   * Word 的「项目符号 / 编号」按钮：选区触及的段落全是这一种列表时取消编号，否则套用 ——
+   * 紧邻的上一段是同类列表就接着它数，选区里已有同类列表就并进去，都没有才新建定义。
+   * 已是列表的段落保留层级；整次一个撤销单元（含新建的定义）。
+   */
+  toggleList(kind: ListKind): void;
   insert(text: string, input?: boolean): void;
   enter(): void;
   delete(direction: 'backward' | 'forward', granularity?: TextGranularity): void;
@@ -85,6 +92,11 @@ export function createEditingController(
     return paragraphs.length && paragraphs.every((p) => p.props.numbering.label !== undefined)
       ? paragraphs
       : undefined;
+  }
+  /** 项目符号看 numFmt，其余格式（1. / 一、/ a)）都算编号。 */
+  function listKind(p: ListParagraph): ListKind | undefined {
+    const label = p.props.numbering.label;
+    return label && (label.format === 'bullet' ? 'bullet' : 'decimal');
   }
   function paragraphStart(id: NodeId): DocPosition | undefined {
     const paragraph = [...walkParagraphs(editor.body)].find((p) => p.id === id);
@@ -224,6 +236,35 @@ export function createEditingController(
           const at = starts[i];
           // 只写 level：numId 可能来自样式（标题列表），写死会把样式的编号钉在直接格式上。
           if (at && level !== current) tx.setParagraphProps({ start: at, end: at }, { numbering: { level } });
+        }
+      });
+    },
+    toggleList(kind) {
+      if (!selection || composing || !paragraphsOf) return;
+      const items = paragraphsOf(selection);
+      const first = items[0];
+      if (!first) return;
+      const active = items.every((p) => listKind(p) === kind);
+      const all = [...walkParagraphs(editor.body)];
+      const previous = all[all.findIndex((p) => p.id === first.id) - 1];
+      const at = previous && rangeOfNode(previous)?.start;
+      const before = at && paragraphsOf({ start: at, end: at })[0];
+      // 接着上一段数是 Word 的习惯：列表中间插了一段正文、再点编号，编号不从 1 重来。
+      const reuse = [...(before ? [before] : []), ...items].find((p) => listKind(p) === kind)?.props.numbering
+        .numId;
+      const starts = items.map((p) => paragraphStart(p.id));
+      editor.breakHistory();
+      pending = undefined;
+      editor.tx((tx) => {
+        const numId = active ? 0 : (reuse ?? tx.addList(kind));
+        for (const [i, item] of items.entries()) {
+          const start = starts[i];
+          const level = listKind(item) ? item.props.numbering.level : 0;
+          if (start)
+            tx.setParagraphProps(
+              { start, end: start },
+              { numbering: active ? { numId: 0 } : { numId, level } },
+            );
         }
       });
     },

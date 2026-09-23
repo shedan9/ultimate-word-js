@@ -192,6 +192,9 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
     if (mod && event.key.toLowerCase() === 'z')
       action = () => (event.shiftKey ? binding.editor.redo() : binding.editor.undo());
     else if (mod && event.key.toLowerCase() === 'y') action = () => binding.editor.redo();
+    // Word 的 Ctrl+Shift+L 是「列表项目符号」样式；样式不一定存在，这里直接套项目符号列表。
+    else if (mod && !event.altKey && event.shiftKey && event.key.toLowerCase() === 'l')
+      action = () => state.toggleList('bullet');
     else if (mod && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'a')
       action = () => state.selectAll();
     else if (mod && !event.altKey && !event.shiftKey && event.key.toLowerCase() in TOGGLE_KEYS) {

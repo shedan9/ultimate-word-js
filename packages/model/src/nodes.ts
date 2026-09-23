@@ -17,6 +17,7 @@
  * （图片、脚注…），每加一种就改遍所有签名的设计撑不住。
  */
 import type { Twips } from '@uw/core';
+import type { Numbering } from './numbering.ts';
 import type { ParaProps, ResolvedParaProps, ResolvedRunProps, RunProps } from './props.ts';
 import type {
   CellProps,
@@ -361,7 +362,13 @@ export type TableRow = TableRowNode<DirectProps>;
 export type TableCell = TableCellNode<DirectProps>;
 export type Block = BlockNode<DirectProps>;
 export type Section = SectionNode<DirectProps>;
-export type Body = DocumentBody<DirectProps>;
+/**
+ * 可编辑的那棵树多带一份**编号定义**：新建列表要新增 `w:abstractNum` / `w:num`，
+ * 它们得与段落上的 numId 同进同退 —— 撤销只回退段落、不回退定义，numId 就悬空了。
+ * 放在树上，事务的草稿与撤销快照自然把它一起带着。缺席时级联用 `CascadeContext.numbering`；
+ * 级联完的树不带它（编号文字已经算进段落属性，布局用不着定义）。
+ */
+export type Body = DocumentBody<DirectProps> & { numbering?: Numbering };
 
 export type ResolvedRun = RunNode<ResolvedProps>;
 export type ResolvedParagraph = ParagraphNode<ResolvedProps>;

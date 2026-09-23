@@ -595,7 +595,10 @@ describe('字符格式切换', () => {
   });
 });
 
-/** 测试树没有样式与编号定义：numId > 0 即视为画出了编号，层级取直接格式。 */
+/**
+ * 测试树没有样式：numId > 0 即视为画出了编号，层级取直接格式；
+ * 编号格式取树上的定义（新建列表加进去的），查不到按十进制。
+ */
 function paragraphQuery(editor: TextEditor): ParagraphQuery {
   return (range) => {
     const paragraphs = [...walkParagraphs(editor.body)];
@@ -603,11 +606,14 @@ function paragraphQuery(editor: TextEditor): ParagraphQuery {
     return paragraphs.slice(at(range.start.nodeId), at(range.end.nodeId) + 1).map((p) => {
       const numId = p.props.numbering?.numId ?? 0;
       const level = p.props.numbering?.level ?? 0;
+      const defs = editor.body.numbering;
+      const abstract = defs?.abstract[defs.instances[numId]?.abstractNumId ?? -1];
+      const format = abstract?.levels[level]?.numFmt ?? 'decimal';
       return {
         id: p.id,
         props: {
           justification: p.props.justification ?? 'both',
-          numbering: numId > 0 ? { numId, level, label: {} as never } : { numId, level },
+          numbering: numId > 0 ? { numId, level, label: { format } as never } : { numId, level },
         },
       };
     });
@@ -720,5 +726,40 @@ describe('列表层级', () => {
     expect([...walkParagraphs(editor.body)].map(paragraphText)).toEqual(['', '', '正文']);
     state.delete('backward');
     expect([...walkParagraphs(editor.body)].map(paragraphText)).toEqual(['', '正文']);
+  });
+
+  it('新建列表：普通段套用新定义，再按一次取消；一次撤销连定义回退', () => {
+    const { editor, state, numbering } = list([-1, -1, -1]);
+    state.select({ start: at('r0', 1), end: at('r1', 1) });
+    state.toggleList('decimal');
+    expect(numbering()).toEqual([{ numId: 1, level: 0 }, { numId: 1, level: 0 }, undefined]);
+    expect(editor.body.numbering?.instances[1]).toBeDefined();
+    expect(state.selection).toEqual({ start: at('r0', 1), end: at('r1', 1) });
+    state.toggleList('decimal');
+    expect(numbering().map((n) => n?.numId)).toEqual([0, 0, undefined]);
+    editor.undo();
+    editor.undo();
+    expect(numbering()).toEqual([undefined, undefined, undefined]);
+    expect(editor.body.numbering).toBeUndefined();
+  });
+
+  it('紧邻上一段是同类列表时接着数，不同类时新建；已是列表的段落保留层级', () => {
+    const { editor, state, numbering } = list([2, -1, -1]);
+    state.select({ start: at('r1'), end: at('r1') });
+    state.toggleList('decimal');
+    expect(numbering()[1]).toEqual({ numId: 3, level: 0 });
+    state.select({ start: at('r0'), end: at('r2') });
+    state.toggleList('bullet');
+    expect(numbering()).toEqual([
+      { numId: 1, level: 2 },
+      { numId: 1, level: 0 },
+      { numId: 1, level: 0 },
+    ]);
+    expect(editor.body.numbering?.abstract[0]?.levels[0]?.numFmt).toBe('bullet');
+    // 选区里已有项目符号列表：并进去，不再新建
+    state.select({ start: at('r2'), end: at('r2') });
+    state.toggleList('bullet');
+    state.toggleList('bullet');
+    expect(Object.keys(editor.body.numbering?.instances ?? {})).toEqual(['1']);
   });
 });

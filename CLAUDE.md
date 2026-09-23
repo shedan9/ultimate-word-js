@@ -74,8 +74,12 @@ Shift 扩选保留锚点，滚动跟随 focus；其他编辑或选区操作重�
 Ctrl/Cmd+L / E / R / J 按级联对齐「已是则回左对齐」。编辑浏览器回归当时 103 项。
 **列表层级编辑已接入**（2026-09-23）：`numbering` 也按字段合并 —— 降级**只写 level**（numId 可能来自样式），
 取消编号写 `numId: 0`；列表段首 Tab / Shift+Tab 升降级、空项 Enter 先升级后结束列表、段首退格先去编号。
-「是不是列表」看级联后有没有 `numbering.label`。新建列表未做：编号定义还不在可编辑状态里。
-编辑浏览器回归现有 117 项（列表部分用 `tests/list-fixture.ts` 现场造的 docx）。
+「是不是列表」看级联后有没有 `numbering.label`。
+**新建列表已接入**（2026-09-23）：编号定义挂在**可编辑的树上**（`Body.numbering`，`resolveBody` 优先用它），
+于是跟着事务草稿与撤销快照走，撤销不会留下悬空的 numId；`tx.addList(kind)` 只加定义不记变更，
+没段落引用就整次无修改。`toggleList` / Ctrl+Shift+L：全是则取消、接着紧邻的同类列表数、否则新建；
+种类看 `NumberLabel.format`（`w:numFmt`）。项目符号用 Unicode ● ○ ■ —— Word 的 Wingdings 私用区我们画不出来。
+编辑浏览器回归现有 124 项（列表部分用 `tests/list-fixture.ts` 现场造的 docx）。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、
 `@uw/model`（样式级联 + 主题字体 + 正文节点树 + 分节 + 设置 + 字体表 + 制表位 + **模型位置（`DocPosition`）** + **编号（解析 + 计数器 + 编号文字 + 接进级联）** + **表格（属性 + 级联 + 条件格式）** + **域（界桩配对 + 指令解析 + HYPERLINK）** + **页眉页脚部件** + **图片（外框 + blip 引用 + 裁剪 / 旋转 + 浮动锚点 + 字节表）** + **查找 / 选择器 / 模型侧文档序**）、
 `@uw/fonts`（行高规则 + 脚本分桶（**歧义字符 / 中性字符两条都实测**）+ 度量包 + 注册表 + `TextMeasurer`）、

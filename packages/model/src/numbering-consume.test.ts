@@ -17,11 +17,13 @@ import type { Body, ResolvedParagraph } from './nodes.ts';
 import { walkParagraphs } from './nodes.ts';
 import { parseNumbering } from './numbering.ts';
 import { createNumberingCounters } from './numbering-counter.ts';
+import { addListDefinition } from './numbering-edit.ts';
 import { parseBody } from './parse-body.ts';
 import { parseParaProps } from './parse-props.ts';
 import { resolveBody } from './resolve-body.ts';
 import { DEFAULT_SETTINGS } from './settings.ts';
 import { parseStyles } from './styles.ts';
+import { createTextEditor } from './text-transaction.ts';
 import { EMPTY_THEME } from './theme.ts';
 
 const W_NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
@@ -282,5 +284,80 @@ describe('resolveBody 按文档顺序推进', () => {
     const ctx = ctxFrom(THREE_LEVELS);
     const body = bodyOf(p(1, 0, 'a') + p(1, 0, 'b'));
     expect(labels(body, ctx)).toEqual(labels(body, ctx));
+  });
+});
+
+describe('新建列表', () => {
+  function editable() {
+    const ctx = ctxFrom(THREE_LEVELS);
+    const body: Body = {
+      ...parseBody(
+        parseXml(
+          `<w:document ${W_NS}><w:body>
+            <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>旧</w:t></w:r></w:p>
+            <w:p><w:r><w:t>甲</w:t></w:r></w:p><w:p><w:r><w:t>乙</w:t></w:r></w:p>
+          </w:body></w:document>`,
+        ),
+        createDiagnosticSink(),
+      ),
+      numbering: ctx.numbering,
+    };
+    const editor = createTextEditor(body);
+    const paragraphs = () => [...walkParagraphs(resolveBody(ctx, editor.body))];
+    const start = (i: number) => {
+      const r = [...walkParagraphs(editor.body)][i]?.runs[0]?.id as string;
+      return { nodeId: r, contentIndex: 0, offset: 0 };
+    };
+    return { ctx, editor, paragraphs, start };
+  }
+
+  it('定义追加在已有 id 之后，九级缩进逐级 420；项目符号与编号三级一轮', () => {
+    const { numbering, numId } = addListDefinition(numberingFrom(THREE_LEVELS), 'decimal');
+    expect(numId).toBe(3);
+    const abstract = numbering.abstract[numbering.instances[3]?.abstractNumId as number];
+    expect(abstract?.id).toBe(1);
+    expect(Object.keys(abstract?.levels ?? {})).toHaveLength(9);
+    expect(abstract?.levels[3]).toMatchObject({ numFmt: 'decimal', lvlText: '%4.' });
+    expect(abstract?.levels[4]?.paraProps.indent).toEqual({ left: 2100, hanging: 420 });
+    expect(addListDefinition({ abstract: {}, instances: {} }, 'bullet').numId).toBe(1);
+    expect(
+      addListDefinition({ abstract: {}, instances: {} }, 'bullet').numbering.abstract[0]?.levels[1],
+    ).toMatchObject({ numFmt: 'bullet', lvlText: '○' });
+  });
+
+  it('事务里新增定义并引用，级联画出编号与缩进；撤销连定义一起回退，重做恢复同一份', () => {
+    const { ctx, editor, paragraphs, start } = editable();
+    let numId = 0;
+    editor.tx((t) => {
+      numId = t.addList('decimal');
+      t.setParagraphProps({ start: start(1), end: start(2) }, { numbering: { numId, level: 0 } });
+    });
+    expect(numId).toBe(3);
+    expect(paragraphs().map((p) => p.props.numbering.label?.text)).toEqual(['一、', '1.', '2.']);
+    expect(paragraphs()[1]?.props.numbering.label?.format).toBe('decimal');
+    expect(paragraphs()[1]?.props.indent).toMatchObject({ left: 420, hanging: 420 });
+    // 加载时那份定义没被改动：撤销快照与级联上下文共享它
+    expect(ctx.numbering.instances[3]).toBeUndefined();
+    editor.undo();
+    expect(editor.body.numbering?.instances[3]).toBeUndefined();
+    expect(paragraphs()[1]?.props.numbering.label).toBeUndefined();
+    editor.redo();
+    expect(paragraphs()[2]?.props.numbering.label?.text).toBe('2.');
+  });
+
+  it('只加定义不引用时整次无修改，定义不留下；未知类型回滚', () => {
+    const { editor } = editable();
+    expect(
+      editor.tx((t) => {
+        t.addList('bullet');
+      }),
+    ).toBeUndefined();
+    expect(editor.body.numbering?.instances[3]).toBeUndefined();
+    expect(editor.canUndo).toBe(false);
+    expect(() =>
+      editor.tx((t) => {
+        t.addList('roman' as never);
+      }),
+    ).toThrow('未知的列表类型');
   });
 });

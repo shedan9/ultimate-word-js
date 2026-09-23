@@ -399,6 +399,7 @@ function labelOf(
   return {
     text: numbered.text,
     value: numbered.value,
+    format: level.numFmt,
     suffix: level.suffix,
     justification: level.justification,
     runProps: resolveRunProps(ctx, direct, direct?.markRunProps, level.runProps),

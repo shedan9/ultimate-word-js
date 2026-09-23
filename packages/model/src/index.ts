@@ -17,6 +17,7 @@ export * from './nodes.ts';
 export * from './number-format.ts';
 export * from './numbering.ts';
 export * from './numbering-counter.ts';
+export * from './numbering-edit.ts';
 export * from './order.ts';
 export * from './parse-body.ts';
 export * from './parse-drawing.ts';

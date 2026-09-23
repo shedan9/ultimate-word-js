@@ -194,6 +194,8 @@ export interface NumberLabel {
   text: string;
   /** 本段在本级的计数值。交叉引用要的是这个数 */
   value: number;
+  /** 本级的 `w:numFmt`。编辑期靠它分「项目符号」与「编号」：切换列表要知道现在是哪一种 */
+  format: string;
   /** 编号与正文之间的分隔。缺省是制表位，不是空格 */
   suffix: 'tab' | 'space' | 'nothing';
   /** 编号自己在编号区里的对齐（`w:lvlJc`），右对齐用于「 9.」「10.」对齐个位 */

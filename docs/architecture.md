@@ -206,10 +206,10 @@ flowchart BT
 | `@uw/core` | 🟢 `units.ts` · `errors.ts`（`UwError`）· `diagnostics.ts`（`Diagnostic` / `DiagnosticSink`） |
 | `@uw/fonts` | 🟢 行高规则 + 基线位置（两次穿刺实测标定）· **东亚 / 拉丁规则按字体选**（`eastAsianFont()`，`spike-script-01` 标定）· 混排行的行盒合成（`composeLineBox()`，同一份样本）· 脚本分桶（**四条规则全部实测标定**：歧义字符跟 `w:hint`、中性字符只有空格随邻居且与 hint 无关，`spike-width-01`，见 §5.2）· 度量包（**17 款已抽取入库**）· 注册表（三级降级）· `TextMeasurer` + 两级缓存（字体注册 / 替换版本变化自动失效） |
 | `@uw/ooxml` | 🟢 OPC 解包 · 内容类型 · 关系 · 保序 XML 纯数据树 + 反向序列化 |
-| `@uw/model` | 🟢 样式级联（含编号层与表格样式层）· 主题字体 · 正文节点树 · 分节 · 设置 · 字体表 · 编号（解析 + 计数器 + 编号文字）· 表格（属性 + 级联 + `w:tblStylePr` 条件格式**（层序实测标定）** + `w:tblPrEx` 行级例外）· 域的结构还原（界桩配对 + 指令解析 + HYPERLINK；**求值在 layout 那一侧**，见 §6）· **页眉页脚部件**（按引用解析 + 各带 id 前缀 + 单独级联）· **图片**（`w:drawing` / VML `w:pict` 的外框 + blip 引用 + 裁剪 / 旋转 + 浮动锚点；字节按引用收进 `LoadedDocument.images`）· **查找与查询**（`search.ts` 的 `findText()`：跨 run 不跨段落、与排版看见的一致；`query.ts` 的 `queryNodes()`：类 CSS 选择器；`order.ts`：模型侧的文档序 + `rangeOfNode()`） · **文字事务**（`text-transaction.ts`：文字修改 / 空段落锚点 / 拆段合段 / 跨段删除 / **字符与段落格式**（`setRunProps`：端点拆 run、跨块、段落标记同步；`setParagraphProps`：缩进 / 间距 / 编号引用按字段合并）/ 原子回滚 / undo-redo / 连续输入合并；`text-change.ts`：可克隆变更集与片段迁移；门面自动排版并复用段落缓存，编辑视图接入常驻 textarea 和 IME 单次提交） |
+| `@uw/model` | 🟢 样式级联（含编号层与表格样式层）· 主题字体 · 正文节点树 · 分节 · 设置 · 字体表 · 编号（解析 + 计数器 + 编号文字）· 表格（属性 + 级联 + `w:tblStylePr` 条件格式**（层序实测标定）** + `w:tblPrEx` 行级例外）· 域的结构还原（界桩配对 + 指令解析 + HYPERLINK；**求值在 layout 那一侧**，见 §6）· **页眉页脚部件**（按引用解析 + 各带 id 前缀 + 单独级联）· **图片**（`w:drawing` / VML `w:pict` 的外框 + blip 引用 + 裁剪 / 旋转 + 浮动锚点；字节按引用收进 `LoadedDocument.images`）· **查找与查询**（`search.ts` 的 `findText()`：跨 run 不跨段落、与排版看见的一致；`query.ts` 的 `queryNodes()`：类 CSS 选择器；`order.ts`：模型侧的文档序 + `rangeOfNode()`） · **文字事务**（`text-transaction.ts`：文字修改 / 空段落锚点 / 拆段合段 / 跨段删除 / **字符与段落格式**（`setRunProps`：端点拆 run、跨块、段落标记同步；`setParagraphProps`：缩进 / 间距 / 编号引用按字段合并；`addList`：编号定义随 `Body.numbering` 进事务与撤销）/ 原子回滚 / undo-redo / 连续输入合并；`text-change.ts`：可克隆变更集与片段迁移；门面自动排版并复用段落缓存，编辑视图接入常驻 textarea 和 IME 单次提交） |
 | `@uw/layout` | 🟢 断行（禁则 / 挤压 / 悬挂，四条补救顺序与三个常数全部实测标定）· 缩进（含字符单位）· 对齐 · 制表位 · 列表编号 · 行高 + 网格吸附 + **行内基线** · 表格列宽与格内几何 + 边框冲突解析（**格线几何与相邻竞争都已实测标定**：横向不吃宽、纵向吃高；竞争先分类再比厚度，见 §5.6）· **分页**（`layoutDocument()`：页面几何 · 分节 · 孤行寡行 · keepNext / keepLines · 硬分页符 · 表格按行拆页 · 页码，见 §5.4）· **域求值**（`layoutDocumentWithFields()`：PAGE / NUMPAGES / SECTIONPAGES 迭代到自洽，见 §6）· **页眉页脚**（选哪一份 · 框的定位 · 反过来挤版心，三条几何规则实测标定，见 §5.4）· **对象**（内嵌图占宽占高，行盒四条规则与浮动图的参照框全部实测标定，见 §5.5；**带 `wp:anchor` 的图**一律不占文字流、按锚点算成纸坐标）· **表格拆行**（`table-split.ts`：一行放不下时从行间切开，`w:cantSplit` 与表头行除外；**四条规则全部实测标定**，见 §5.4）· **中西文自动间距**（**1/4 em，实测**，按接缝前面那个字符的字号算，见 §5.2）· **布局索引**（`layout-index.ts`：命中测试 · range → 矩形 · 光标 · 文档序比较，架构 §4 的 ①↔②）· **段落布局缓存**（有界 LRU，正文 / 表格 / 页眉页脚复用，字体版本失效；分页仍完整重算，见 §7）· ⏸ 方形 / 上下型环绕的**文字让开**未做（位置与大小是对的，文字不绕着它走）|
 | `@uw/render-dom` | 🟢 v1：一页一个 `<svg>`（viewBox 单位 **pt**）· 逐字 x 走 `<text x="…">` · 下划线 / 删除线 / 上下标 / 横向缩放 · 制表位前导符 · 表格底纹 + 格线（共享的线只画一次）· 页眉页脚（与版心平级的两个框）· 缩放只改 `<svg>` 尺寸不重排 · **图片**（`<image>` + 裁剪 `clipPath` + 旋转翻转；画不出来的画尺寸正确的占位框）· ⏸ 增量更新（可选文本层归 view） |
-| `@uw/view` | 🟢 屏幕坐标转换（页面仿射矩阵）· `locate` / `rectsOf` / `caretRect` · DOM 挂载 / 更新 / 销毁 · 缩放保留选区与布局索引 · 视口 ±2 页绘制 · 全文原生文字层 / 查找 / 纯文本复制 · **编辑态纯文本复制 / 剪切**（模型选区、段落换行、当前域显示值、原子删除与写入失败保护）· **编辑导航与删除**（按字素 / 词移动和删除、跨页上下导航与横向位置记忆、全文选区与文档首尾导航、Ctrl/Cmd+B/I/U 格式切换与折叠光标暂存格式、Ctrl/Cmd+L/E/R/J 段落对齐、列表 Tab 升降级与空项 Enter / 段首退格去编号、Shift 扩选、双击选词，跨 run 分词与反向选区 focus，见 §8）· **装饰与 overlay**（住在页壳上，滚动与 CSS 变换由浏览器继承，缩放 / 重排 / 壳尺寸变化才重算）· **`scrollTo`**（位置 / range 首行 / 页，走 `scrollIntoView`）· **打印**（2026-09-13，`print.ts`：`<body>` 直下另造一份 pt 尺寸的打印页，`@page { size }` 取纸张、边距 0，Ctrl+P 与 `print()` 都走它，见 §8.5）；⏸ `below-text` 装饰 |
+| `@uw/view` | 🟢 屏幕坐标转换（页面仿射矩阵）· `locate` / `rectsOf` / `caretRect` · DOM 挂载 / 更新 / 销毁 · 缩放保留选区与布局索引 · 视口 ±2 页绘制 · 全文原生文字层 / 查找 / 纯文本复制 · **编辑态纯文本复制 / 剪切**（模型选区、段落换行、当前域显示值、原子删除与写入失败保护）· **编辑导航与删除**（按字素 / 词移动和删除、跨页上下导航与横向位置记忆、全文选区与文档首尾导航、Ctrl/Cmd+B/I/U 格式切换与折叠光标暂存格式、Ctrl/Cmd+L/E/R/J 段落对齐、列表 Tab 升降级与空项 Enter / 段首退格去编号、新建 / 取消列表（Ctrl/Cmd+Shift+L）、Shift 扩选、双击选词，跨 run 分词与反向选区 focus，见 §8）· **装饰与 overlay**（住在页壳上，滚动与 CSS 变换由浏览器继承，缩放 / 重排 / 壳尺寸变化才重算）· **`scrollTo`**（位置 / range 首行 / 页，走 `scrollIntoView`）· **打印**（2026-09-13，`print.ts`：`<body>` 直下另造一份 pt 尺寸的打印页，`@page { size }` 取纸张、边距 0，Ctrl+P 与 `print()` 都走它，见 §8.5）；⏸ `below-text` 装饰 |
 | `@uw/fonts/packs` | 🟢 随库 17 款度量包的**无 fs** 入口（JSON import attributes），浏览器与 Node 同一条路；`@uw/fonts/node` 的 `loadBundledPacks()` 只剩离线工具在用 |
 | `ultimate-word` | 🟢 门面（2026-09-13）：`UltimateWord.load()`（ArrayBuffer / Uint8Array / Blob / Response / URL）→ `UwDocument`（`pageCount` · `diagnostics` · `find` · `query` · `compare` · `rangeOf` · `mount`）→ `UwView`（`locate` / `rectsOf` / `caretRect` / `decorate` / `overlay` / `scrollTo` / `setZoom` 认 `fit-width` / `fit-page` 并跟随容器 / `dispose`）· `UltimateWord.fonts` 全局注册表（随库度量包模块加载时就注册；`register()` **异步**，fontkit 走动态 import 不进主 chunk）。**它不实现任何东西**，只把六个包接成 api.md 的形状；`layout` 暴露但不在稳定性承诺内 |
 | `@uw/react` | 🟢（2026-09-13）`<UltimateWordView>`（`doc.mount()` 的声明式形态：构造选项变了重挂、`zoom` 只 `setZoom`、`overlays` 按 key 调和成 `view.overlay()`，气泡是 portal 进宿主元素的正常 React 子树）· `useDocument` · `useDecoration`。**不另起 API**，`ref` 拿到的就是 `UwView` |
@@ -891,8 +891,18 @@ Shift 扩选保留 anchor，滚动跟随 focus；这些导航清除上下移动�
 结果判断，已是该对齐时回到左对齐（样式居中的标题按 Ctrl+E 也变左对齐，与 Word 一致）。
 列表编辑只改段落的编号引用，不碰 `numbering.xml`：降级只写 `level`（numId 可能来自样式，写死就把
 样式的编号钉成直接格式），取消编号写 `numId = 0`。「是不是列表」看级联后有没有画出编号
-（`numbering.label`），numId 指向不存在的定义时不算。新建列表要新增编号定义，而定义目前在级联上下文里、
-不在可编辑状态中 —— 那一步要先把编号定义纳入事务与撤销。
+（`numbering.label`），numId 指向不存在的定义时不算。
+
+**新建列表（2026-09-23）**：编号定义原先只在级联上下文里（`CascadeContext.numbering`），事务改不到、
+撤销也回退不了 —— 新建一个列表若只改段落的 numId，撤销后定义还在、重做前定义却可能不在，numId 就悬空。
+改法是让**可编辑的树带一份定义**（`Body.numbering`，加载时与级联上下文共享同一份解析结果），
+`resolveBody` 优先用树上那份；事务的草稿与撤销快照本来就是整棵 `Body`，定义于是与段落同进同退，
+不必为它另写一套历史。`tx.addList(kind)` 追加一对 `w:abstractNum` + `w:num`（id 取现有最大值 + 1），
+**不记变更**：没有段落引用它时整次事务无修改，定义也不留下。级联完的树不带定义 —— 编号文字已算进
+段落属性，布局用不着。输入控制器的 `toggleList` 学 Word 的按钮：全是这一种列表就取消；紧邻上一段是
+同类列表就接着它数（中间插了一段正文再点编号，不从 1 重来）；选区里已有同类列表就并进去；都没有才新建。
+「哪一种」看 `NumberLabel.format`（本级的 `w:numFmt`，为此新加的字段）：`bullet` 是项目符号，其余都算编号。
+项目符号**没照抄** Word 的 Wingdings 私用区码点 —— 我们没有符号字体到 Unicode 的映射，会画成豆腐块。
 
 **按词删除（2026-09-23）**：输入控制器的 `delete` 接受字素 / 词粒度，折叠选区时复用
 导航得到的目标边界，再交给一次模型 `deleteRange` 事务；已有选区不扩展到词边界。

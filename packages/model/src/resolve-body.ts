@@ -62,7 +62,13 @@ export interface ResolveBodyOptions {
   hyperlinks?: ReadonlyMap<NodeId, FieldHyperlink>;
 }
 
-export function resolveBody(ctx: CascadeContext, body: Body, opts: ResolveBodyOptions = {}): ResolvedBody {
+export function resolveBody(
+  context: CascadeContext,
+  body: Body,
+  opts: ResolveBodyOptions = {},
+): ResolvedBody {
+  // 树上带着定义时以它为准：编辑期新建的列表只在这份里，级联上下文还是加载时那份
+  const ctx = body.numbering === undefined ? context : { ...context, numbering: body.numbering };
   const pass: Pass = {
     ctx,
     counters: createNumberingCounters(ctx.numbering, ctx.styles),

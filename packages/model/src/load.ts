@@ -114,7 +114,8 @@ export interface HeaderFooterContent {
 export function loadDocument(pkg: OpcPackage, diagnostics: DiagnosticSink): LoadedDocument {
   const cascade = loadCascadeContext(pkg, diagnostics);
   const partName = pkg.mainDocumentPartName();
-  const body = parseBody(pkg.xml(partName), diagnostics, partName);
+  // 编号定义跟着可编辑的树走（见 `Body.numbering`），与级联上下文共享同一份解析结果
+  const body: Body = { ...parseBody(pkg.xml(partName), diagnostics, partName), numbering: cascade.numbering };
   // 域要在级联**之前**扫：级联是按段落递归的，跨段落的配对在那儿看不见
   const fields = scanFields(body, diagnostics);
 

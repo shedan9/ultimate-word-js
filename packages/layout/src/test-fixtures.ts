@@ -135,7 +135,15 @@ export function paraProps(over: Partial<ResolvedParaProps> = {}): ResolvedParaPr
  * 布局层只吃结果 —— 这里直接造结果，免得布局测试被样式表与 numbering.xml 绑住。
  */
 export function numberLabel(text: string, over: Partial<NumberLabel> = {}): NumberLabel {
-  return { text, value: 1, suffix: 'tab', justification: 'left', runProps: runProps(), ...over };
+  return {
+    text,
+    value: 1,
+    format: 'decimal',
+    suffix: 'tab',
+    justification: 'left',
+    runProps: runProps(),
+    ...over,
+  };
 }
 
 let seq = 0;

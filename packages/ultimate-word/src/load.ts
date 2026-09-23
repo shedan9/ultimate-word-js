@@ -102,7 +102,13 @@ export async function load(
         headerFooters: loaded.headerFooters,
         diagnostics: sink,
       });
-      return { loaded: { ...loaded, body, resolved, fields }, layout: result.layout, values: result.values };
+      // 编号定义随树走（新建列表会加定义），`loaded.numbering` 跟着换成同一份
+      const numbering = body.numbering ?? loaded.numbering;
+      return {
+        loaded: { ...loaded, body, resolved, fields, numbering },
+        layout: result.layout,
+        values: result.values,
+      };
     },
     layout: result.layout,
     fieldValues: result.values,

@@ -7,6 +7,9 @@
  */
 import type { Block, Body, NodeId, Paragraph, Run } from './nodes.ts';
 import { walkBlocks, walkParagraphs } from './nodes.ts';
+import { EMPTY_NUMBERING } from './numbering.ts';
+import type { ListKind } from './numbering-edit.ts';
+import { addListDefinition } from './numbering-edit.ts';
 import { buildRunOrder, compareDocPositions, contentLength, rangeOfNode, runEnd, runStart } from './order.ts';
 import type { DocPosition, DocRange } from './position.ts';
 import type { Indent, NumberingRef, ParagraphSpacing, ParaProps, RunProps } from './props.ts';
@@ -50,6 +53,11 @@ export interface TextTransaction {
    * 不拆 run、不移动位置，返回原范围。
    */
   setParagraphProps(range: DocRange, patch: ParaPropsPatch): DocRange;
+  /**
+   * 新增一份列表定义（九级，见 numbering-edit.ts），返回它的 numId，交给 `setParagraphProps` 引用。
+   * 定义随本次事务提交与撤销；本次没有段落改动时整次无修改，定义也不留下。
+   */
+  addList(kind: ListKind): number;
 }
 
 export interface TextHistoryOptions {
@@ -741,6 +749,17 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
               structural([...updates.keys()], []);
             }
             return structuredClone(range);
+          });
+        },
+        addList(kind) {
+          return command(() => {
+            if (kind !== 'bullet' && kind !== 'decimal')
+              throw new TypeError(`未知的列表类型：${String(kind)}`);
+            flush();
+            const { numbering, numId } = addListDefinition(draft.numbering ?? EMPTY_NUMBERING, kind);
+            // 不记变更：定义本身不动任何位置，没有段落引用它时不该产生撤销单元
+            draft = { ...draft, numbering };
+            return numId;
           });
         },
       };
