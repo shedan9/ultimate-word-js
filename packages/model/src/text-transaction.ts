@@ -5,7 +5,7 @@
  * 格式命令只在范围端点拆 run，不合并相邻同格式 run：合并会改掉后方 run 的 id 与片段下标，
  * 已存的批注 / 选区就得跟着映射，而多几个 run 对排版和回写都没有影响。
  */
-import type { Block, Body, NodeId, Paragraph, Run } from './nodes.ts';
+import type { Block, Body, NodeId, Paragraph, Run, RunContent } from './nodes.ts';
 import { walkBlocks, walkParagraphs } from './nodes.ts';
 import { EMPTY_NUMBERING } from './numbering.ts';
 import type { ListKind } from './numbering-edit.ts';
@@ -40,6 +40,11 @@ export interface TextTransaction {
   joinParagraph(paragraphId: NodeId): DocPosition;
   /** 返回插入后的光标位置，可继续传给本事务的下一条命令。 */
   insertText(position: DocPosition, text: string): DocPosition;
+  /**
+   * 在位置处插入制表位（`w:tab`）或软换行（`w:br`，不结束段落），返回它后面的位置。
+   * 文字片段从插入点切开，格式与所在 run 相同；Word 的 Tab / Shift+Enter 就是这两个。
+   */
+  insertInline(position: DocPosition, kind: InlineKind): DocPosition;
   /** 同一块容器内的文字范围，可跨 run / 段落。返回删除起点。 */
   deleteRange(range: DocRange): DocPosition;
   /**
@@ -59,6 +64,15 @@ export interface TextTransaction {
    */
   addList(kind: ListKind): number;
 }
+
+/** `insertInline` 能插的两种非文字片段。 */
+export type InlineKind = 'tab' | 'lineBreak';
+
+/**
+ * 删除选区时可以删掉的非文字片段。对象（图片）、域界桩不在其中 —— 删了回不来的东西
+ * 仍按原先的约定整次拒绝。删掉的片段换成空 text 占住槽位，与文字删空一样不挪后面的 contentIndex。
+ */
+const DELETABLE = new Set<RunContent['kind']>(['tab', 'break', 'symbol', 'noBreakHyphen', 'softHyphen']);
 
 export interface TextHistoryOptions {
   /** 默认保留 100 个撤销单元。 */
@@ -389,7 +403,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
       }
       function validatePosition(position: DocPosition): void {
         if (entries.has(position.nodeId)) {
-          textAt(entryAt(position), position);
+          editableAt(entryAt(position), position);
           return;
         }
         const { paragraph } = paragraphAt(position.nodeId);
@@ -417,6 +431,99 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
         const entry = entries.get(position.nodeId);
         if (entry === undefined) throw new RangeError(`文档中没有 run：${position.nodeId}`);
         return { ...entry, run: replacements.get(position.nodeId) ?? entry.run };
+      }
+
+      /** 可删除的非文字片段上的位置（前 0 / 后 1）；文字位置照旧交给 textAt 检查。 */
+      function editableAt(entry: RunEntry, position: DocPosition): void {
+        const c = entry.run.content[position.contentIndex];
+        if (c === undefined || c.kind === 'text') {
+          textAt(entry, position);
+          return;
+        }
+        if (entry.protected) throw new Error('文字事务暂不支持修改域');
+        if (!DELETABLE.has(c.kind)) throw new Error('文字事务只能修改 text 片段');
+        const { offset } = position;
+        if (!Number.isInteger(offset) || offset < 0 || offset > contentLength(c))
+          throw new RangeError('文字位置超出片段长度');
+      }
+      /**
+       * 在 run 里插入一个片段，返回它的下标。文字中间就切成「前半 / 片段 / 后半」，
+       * 片段边界上就直接插在那里，不造空文字。后面的片段整体后移，位置跟着挪。
+       */
+      function insertContent(position: DocPosition, item: RunContent): number {
+        const entry = entryAt(position);
+        editableAt(entry, position);
+        const { run } = entry;
+        const ci = position.contentIndex;
+        const c = run.content[ci];
+        const content = [...run.content];
+        const moves: PositionMove[] = [];
+        let index: number;
+        let shift = 1;
+        if (c === undefined) {
+          index = 0;
+          content.push(item);
+        } else if (c.kind === 'text' && position.offset > 0 && position.offset < c.text.length) {
+          index = ci + 1;
+          shift = 2;
+          content.splice(ci, 1, { kind: 'text', text: c.text.slice(0, position.offset) }, item, {
+            kind: 'text',
+            text: c.text.slice(position.offset),
+          });
+          moves.push({
+            from: position,
+            to: { nodeId: run.id, contentIndex: ci + 2, offset: 0 },
+            length: c.text.length - position.offset,
+            afterOnly: true,
+          });
+        } else {
+          index = position.offset === 0 ? ci : ci + 1;
+          content.splice(index, 0, item);
+        }
+        for (let i = shift === 2 ? ci + 1 : index; i < run.content.length; i++)
+          moves.push({
+            from: { nodeId: run.id, contentIndex: i, offset: 0 },
+            to: { nodeId: run.id, contentIndex: i + shift, offset: 0 },
+            length: contentLength(run.content[i] as RunContent),
+            afterOnly: i === index,
+          });
+        replacements.set(run.id, { ...run, content });
+        flush();
+        // 撤销时新片段上的位置回到插入点，不能留在已经不存在的下标上。
+        const back = [0, contentLength(item)].map((offset) => ({
+          from: { nodeId: run.id, contentIndex: index, offset },
+          to: { ...position },
+          length: 0,
+        }));
+        structural([entry.paragraph.id], moves, [
+          ...back,
+          ...moves.map((m) => ({ from: m.to, to: m.from, length: m.length })),
+        ]);
+        return index;
+      }
+      /**
+       * 落在制表位 / 换行这类片段上的位置换成能写字的文字位置：紧挨着的文字片段优先，
+       * 没有就插一个空文字片段 —— 否则 Tab 之后接着打字会抛「只能修改 text 片段」。
+       */
+      function textPosition(position: DocPosition): DocPosition {
+        position = materialize(position);
+        flush();
+        const entry = entryAt(position);
+        const content = entry.run.content;
+        const c = content[position.contentIndex];
+        if (c === undefined || c.kind === 'text') return position;
+        editableAt(entry, position);
+        const ci = position.contentIndex;
+        const neighbor = position.offset === 0 ? content[ci - 1] : content[ci + 1];
+        if (neighbor?.kind === 'text')
+          return position.offset === 0
+            ? { nodeId: entry.run.id, contentIndex: ci - 1, offset: neighbor.text.length }
+            : { nodeId: entry.run.id, contentIndex: ci + 1, offset: 0 };
+        return {
+          nodeId: entry.run.id,
+          contentIndex: insertContent(position, { kind: 'text', text: '' }),
+          offset: 0,
+        };
       }
 
       /** 格式命令也接受域结果与对象旁的位置，只检查坐标本身是否存在。 */
@@ -518,8 +625,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
       const transaction: TextTransaction = {
         splitParagraph(position) {
           return command(() => {
-            position = materialize(position);
-            flush();
+            position = textPosition(position);
             const entry = entryAt(position);
             const text = textAt(entry, position);
             // 域可能跨 run / 段；拆段不能切断其结构。
@@ -600,9 +706,25 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
               validatePosition(position);
               return { ...position };
             }
-            position = materialize(position);
+            position = textPosition(position);
             splice(position, 0, text);
             return { ...position, offset: position.offset + text.length };
+          });
+        },
+        insertInline(position, kind) {
+          return command(() => {
+            const item: RunContent =
+              kind === 'tab'
+                ? { kind: 'tab' }
+                : kind === 'lineBreak'
+                  ? { kind: 'break', breakType: 'line' }
+                  : (() => {
+                      throw new TypeError(`未知的行内片段：${String(kind)}`);
+                    })();
+            position = materialize(position);
+            flush();
+            const index = insertContent(position, item);
+            return { nodeId: position.nodeId, contentIndex: index, offset: 1 };
           });
         },
         deleteRange(range) {
@@ -616,8 +738,8 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             flush();
             const first = entryAt(start);
             const last = entryAt(end);
-            textAt(first, start);
-            textAt(last, end);
+            editableAt(first, start);
+            editableAt(last, end);
             if (first.paragraph !== last.paragraph) {
               const a = paragraphAt(first.paragraph.id);
               const b = paragraphAt(last.paragraph.id);
@@ -655,7 +777,25 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
               for (let ci = from; ci <= to; ci++) {
                 const offset = ri === first.runIndex && ci === from ? start.offset : 0;
                 const pos = { nodeId: run.id, contentIndex: ci, offset };
-                const text = textAt(entryAt(pos), pos);
+                const entry = entryAt(pos);
+                const c = entry.run.content[ci];
+                if (c !== undefined && c.kind !== 'text') {
+                  editableAt(entry, pos);
+                  const stop = ri === last.runIndex && ci === to ? end.offset : contentLength(c);
+                  if (stop > offset) {
+                    const content = [...entry.run.content];
+                    content[ci] = { kind: 'text', text: '' };
+                    replacements.set(run.id, { ...entry.run, content });
+                    // 片段后面的位置（偏移 1）落回空文字的 0；撤销走快照，位置原样有效。
+                    structural(
+                      [entry.paragraph.id],
+                      [{ from: { ...pos, offset: 1 }, to: { ...pos, offset: 0 }, length: 0 }],
+                      [],
+                    );
+                  }
+                  continue;
+                }
+                const text = textAt(entry, pos);
                 const stop = ri === last.runIndex && ci === to ? end.offset : text.length;
                 splice(pos, stop - offset, '');
               }

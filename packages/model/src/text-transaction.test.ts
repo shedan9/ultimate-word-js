@@ -215,8 +215,8 @@ describe('文字事务', () => {
     expect(editor.canUndo).toBe(false);
   });
 
-  it.each(['<w:tab/>', '<w:br/>', '<w:drawing/>'])('删除不能越过结构片段 %s', (element) => {
-    const editor = createTextEditor(parse(`<w:p><w:r><w:t>甲</w:t>${element}<w:t>乙</w:t></w:r></w:p>`));
+  it('删除不能越过对象：图片删了回不来，整次拒绝', () => {
+    const editor = createTextEditor(parse('<w:p><w:r><w:t>甲</w:t><w:drawing/><w:t>乙</w:t></w:r></w:p>'));
     const before = editor.body;
     expect(() =>
       editor.tx((t) => {
@@ -224,6 +224,92 @@ describe('文字事务', () => {
       }),
     ).toThrow();
     expect(editor.body).toBe(before);
+  });
+
+  it.each(['<w:tab/>', '<w:br/>'])(
+    '删除越过 %s 时换成空文字占住槽位，后面的下标不变，撤销还原',
+    (element) => {
+      const editor = createTextEditor(parse(`<w:p><w:r><w:t>甲</w:t>${element}<w:t>乙丙</w:t></w:r></w:p>`));
+      const before = editor.body;
+      const change = must(
+        editor.tx((t) => {
+          t.deleteRange({ start: pos(before, 1), end: pos(before, 1, 0, 2) });
+        }),
+      );
+      expect(para(editor.body).runs[0]?.content).toEqual([
+        { kind: 'text', text: '甲' },
+        { kind: 'text', text: '' },
+        { kind: 'text', text: '丙' },
+      ]);
+      // 片段后面那个位置落回空文字的开头，第三片的下标不动
+      expect(mapTextPosition(pos(before, 1, 0, 1), change)).toEqual(pos(before, 0, 0, 1));
+      expect(mapTextPosition(pos(before, 2, 0, 2), change)).toEqual(pos(before, 1, 0, 2));
+      editor.undo();
+      expect(editor.body).toBe(before);
+      // 只选中片段本身之外（片段后到文字）不动它
+      editor.tx((t) => {
+        t.deleteRange({ start: pos(before, 1, 0, 1), end: pos(before, 1, 0, 2) });
+      });
+      expect(para(editor.body).runs[0]?.content[1]).toEqual(para(before).runs[0]?.content[1]);
+    },
+  );
+
+  it('插入制表位 / 软换行：文字中间切开、边界上不造空文字，后续片段下标与位置随之后移', () => {
+    const editor = createTextEditor(parse('<w:p><w:r><w:t>甲乙</w:t><w:tab/><w:t>丙</w:t></w:r></w:p>'));
+    const before = editor.body;
+    let after: DocPosition | undefined;
+    const change = must(
+      editor.tx((t) => {
+        after = t.insertInline(pos(before, 1), 'tab');
+      }),
+    );
+    expect(para(editor.body).runs[0]?.content.map((c) => c.kind)).toEqual([
+      'text',
+      'tab',
+      'text',
+      'tab',
+      'text',
+    ]);
+    expect(after).toEqual(pos(before, 1, 0, 1));
+    expect(mapTextPosition(pos(before, 2), change)).toEqual(pos(before, 1, 0, 2));
+    expect(mapTextPosition(pos(before, 1, 0, 2), change)).toEqual(pos(before, 1, 0, 4));
+    expect(mapTextPosition(pos(before, 0, 0, 1), change)).toEqual(pos(before, 0, 0, 3));
+    // 撤销：新片段上的位置回到插入点
+    const undo = must(editor.undo());
+    expect(mapTextPosition(must(after), undo)).toEqual(pos(before, 1));
+    expect(editor.body).toBe(before);
+    // 文字末尾插软换行，紧接着打字：落进后面已有的文字，不另造片段
+    editor.tx((t) => {
+      const at = t.insertInline(pos(before, 2), 'lineBreak');
+      t.insertText(at, '丁');
+    });
+    expect(para(editor.body).runs[0]?.content).toEqual([
+      { kind: 'text', text: '甲乙' },
+      { kind: 'break', breakType: 'line' },
+      { kind: 'text', text: '丁' },
+      { kind: 'tab' },
+      { kind: 'text', text: '丙' },
+    ]);
+  });
+
+  it('空段落插制表位后接着打字、拆段；制表位后的位置能拆段', () => {
+    const editor = createTextEditor(parse('<w:p/>'));
+    const paragraph = para(editor.body);
+    editor.tx((t) => {
+      let at = t.insertInline({ nodeId: paragraph.id, contentIndex: 0, offset: 0 }, 'tab');
+      at = t.insertText(at, '甲');
+      at = t.insertInline(at, 'tab');
+      t.splitParagraph(at);
+    });
+    expect([...walkParagraphs(editor.body)].map((p) => p.runs.flatMap((r) => r.content))).toEqual([
+      [{ kind: 'tab' }, { kind: 'text', text: '甲' }, { kind: 'tab' }, { kind: 'text', text: '' }],
+      [{ kind: 'text', text: '' }],
+    ]);
+    expect(() =>
+      editor.tx((t) => {
+        t.insertInline(pos(editor.body), 'page' as never);
+      }),
+    ).toThrow('未知');
   });
 
   it.each([

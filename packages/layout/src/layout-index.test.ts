@@ -228,6 +228,25 @@ describe('caretRect · 位置 → 光标', () => {
     const idx = index([para([r])]);
     expect(idx.caretRect({ nodeId: r.id, contentIndex: 0, offset: 2 })?.x).toBe(CX + 2 * SIZE_5);
   });
+
+  it('制表位前后各有光标，其后的空文字槽在制表位之后；软换行之后在下一行行首', () => {
+    const r = runOf([
+      { kind: 'text', text: '甲' },
+      { kind: 'tab' },
+      { kind: 'text', text: '' },
+      { kind: 'break', breakType: 'line' },
+      { kind: 'text', text: '乙' },
+    ]);
+    const idx = index([para([r])]);
+    const at = (contentIndex: number, offset: number) => idx.caretRect({ nodeId: r.id, contentIndex, offset });
+    expect(at(1, 0)?.x).toBe(CX + SIZE_5);
+    // DEFAULT_SETTINGS 的默认制表位 720：「甲」之后推进到 720
+    expect(at(1, 1)?.x).toBe(CX + 720);
+    expect(at(2, 0)?.x).toBe(CX + 720);
+    expect(at(3, 0)).toMatchObject({ x: CX + 720, y: CY });
+    expect(at(3, 1)).toMatchObject({ x: CX, y: CY + EA_LINE });
+    expect(at(4, 0)).toMatchObject({ x: CX, y: CY + EA_LINE });
+  });
 });
 
 describe('compare · 文档序', () => {

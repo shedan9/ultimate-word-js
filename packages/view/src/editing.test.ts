@@ -312,7 +312,10 @@ describe('按词删除', () => {
 
   it('跨不可编辑片段的删除原子回滚并保留选区与历史', () => {
     const r = run('r', 'one');
-    r.content.push({ kind: 'tab' }, { kind: 'text', text: 'two' });
+    r.content.push(
+      { kind: 'object', objectKind: 'drawing', width: 100, height: 100 },
+      { kind: 'text', text: 'two' },
+    );
     const { state, editor } = setup([r]);
     state.select({ start: pos(3), end: pos(3) });
     const body = editor.body;
@@ -462,7 +465,11 @@ describe('纯文本剪切事务', () => {
     const { state, editor } = setup([
       {
         ...run('r', '甲'),
-        content: [{ kind: 'text', text: '甲' }, { kind: 'tab' }, { kind: 'text', text: '乙' }],
+        content: [
+          { kind: 'text', text: '甲' },
+          { kind: 'object', objectKind: 'drawing', width: 100, height: 100 },
+          { kind: 'text', text: '乙' },
+        ],
       },
     ]);
     let writes = 0;
@@ -843,13 +850,20 @@ describe('列表层级', () => {
       { justification: 'both', runs: [] },
       { justification: 'left', runs: [{ text: '乙', patch: {} }] },
     ]);
-    expect(texts()).toEqual(['前甲 ', '', '乙后']);
+    expect(texts()).toEqual(['前甲\t', '', '乙后']);
     const paragraphs = [...walkParagraphs(editor.body)];
     expect(paragraphs.map((p) => p.props.justification)).toEqual(['center', 'both', 'right']);
+    // 制表符插成真的 w:tab，与前面的字同一套格式
     const pasted = paragraphs[0]?.runs.find((r) =>
-      r.content.some((c) => c.kind === 'text' && c.text === '甲 '),
+      r.content.some((c) => c.kind === 'text' && c.text === '甲'),
     );
     expect(pasted?.props).toEqual({ bold: true, italic: true });
+    // 制表位后拆段要一个文字位置，末尾补的是空文字槽（与删空的文字同一种）
+    expect(pasted?.content).toEqual([
+      { kind: 'text', text: '甲' },
+      { kind: 'tab' },
+      { kind: 'text', text: '' },
+    ]);
     expect(state.pendingFormat).toBeUndefined();
     editor.undo();
     expect(texts()).toEqual(['前后']);
@@ -881,5 +895,21 @@ describe('列表层级', () => {
     expect(props('粗')).toEqual({ italic: true, bold: true, color: 'FF0000' });
     expect(props('常')).toEqual({ italic: true, color: '00FF00' });
     expect(props('二')).toEqual({ italic: true, color: '00FF00' });
+  });
+
+  it('Tab / Shift+Enter 的控制器入口：替换选区、用暂存格式、一次撤销；接着打字落进同一 run', () => {
+    const { editor, state, texts } = setup('甲乙');
+    state.select({ start: at('r', 1), end: at('r', 2) });
+    state.insertInline('tab');
+    state.insert('丙');
+    state.toggleFormat('bold');
+    state.insertInline('lineBreak');
+    expect(texts()).toEqual(['甲\t丙\n']);
+    const paragraph = [...walkParagraphs(editor.body)][0];
+    expect(paragraph?.runs.at(-1)?.props).toEqual({ bold: true });
+    editor.undo();
+    editor.undo();
+    editor.undo();
+    expect(texts()).toEqual(['甲乙']);
   });
 });

@@ -2,6 +2,7 @@
 import type {
   DocPosition,
   DocRange,
+  InlineKind,
   Justification,
   ListKind,
   NodeId,
@@ -83,6 +84,8 @@ export interface EditingController {
    * —— Word 的段落格式跟着段落标记走。
    */
   insertParagraphs(paragraphs: readonly PasteParagraph[]): void;
+  /** Word 的 Tab（非列表位置）与 Shift+Enter：替换选区，插入制表位 / 软换行，用上暂存格式。 */
+  insertInline(kind: InlineKind): void;
   enter(): void;
   delete(direction: 'backward' | 'forward', granularity?: TextGranularity): void;
   move(direction: 'backward' | 'forward', extend?: boolean, granularity?: TextGranularity): void;
@@ -232,18 +235,26 @@ export function createEditingController(
             changed = false;
           }
           for (const run of paragraph.runs) {
-            // 模型还没有插入制表位的命令，粘贴进来的制表符先当空格，不让整次粘贴失败。
-            const text = run.text.replace(/[\t\r\n]/g, ' ');
-            if (!text) continue;
-            at = tx.insertText(at, text);
+            if (!run.text) continue;
             const reset: Record<string, unknown> = {};
             for (const key of touched)
               if (!(key in run.patch)) reset[key] = destination[key as keyof RunProps] ?? null;
             const patch: RunPropsPatch = { ...(reset as RunPropsPatch), ...format, ...run.patch };
             for (const key of Object.keys(patch)) touched.add(key);
-            // 空段落首次输入会先建 run，插入起点只能从返回的终点倒推。
-            if (Object.keys(patch).length)
-              at = tx.setRunProps({ start: { ...at, offset: at.offset - text.length }, end: at }, patch).end;
+            // 段内的 \t / \n 是制表位与软换行（Tab、Shift+Enter、HTML 的 <br>），不是分段。
+            for (const piece of run.text.replace(/\r/g, '').split(/([\t\n])/)) {
+              if (!piece) continue;
+              at =
+                piece === '\t'
+                  ? tx.insertInline(at, 'tab')
+                  : piece === '\n'
+                    ? tx.insertInline(at, 'lineBreak')
+                    : tx.insertText(at, piece);
+              // 空段落首次输入会先建 run，插入起点只能从返回的终点倒推；制表位 / 换行的长度是 1。
+              const length = piece === '\t' || piece === '\n' ? 1 : piece.length;
+              if (Object.keys(patch).length)
+                at = tx.setRunProps({ start: { ...at, offset: at.offset - length }, end: at }, patch).end;
+            }
           }
           if (paragraph.justification && i < paragraphs.length - 1) {
             tx.setParagraphProps({ start: at, end: at }, { justification: paragraph.justification });
@@ -404,6 +415,9 @@ export function createEditingController(
     },
     insertParagraphs(paragraphs) {
       if (paragraphs.length) insertParagraphs(paragraphs, 'command');
+    },
+    insertInline(kind) {
+      insertParagraphs([{ runs: [{ text: kind === 'tab' ? '\t' : '\n', patch: {} }] }], 'command');
     },
     enter() {
       if (!selection || composing) return;

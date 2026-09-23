@@ -200,11 +200,13 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
   }
   function keydown(event: KeyboardEvent): void {
     if (event.isComposing || state.composing || event.keyCode === 229) return;
-    // 只在列表段首 / 列表选区接管 Tab；其余位置不能插入制表位，保留浏览器的焦点切换。
+    // 列表段首 / 列表选区的 Tab 升降级；其余位置 Tab 插制表位（Word 的行为），
+    // Shift+Tab 不接管，留给浏览器把焦点移出编辑区 —— 否则键盘用户出不去。
     if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey) {
-      if (!state.listIndentable()) return;
+      const list = state.listIndentable();
+      if (!list && event.shiftKey) return;
       event.preventDefault();
-      run(() => state.indentList(event.shiftKey ? 'out' : 'in'));
+      run(() => (list ? state.indentList(event.shiftKey ? 'out' : 'in') : state.insertInline('tab')));
       return;
     }
     let action: (() => void) | undefined;
@@ -281,7 +283,9 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
             });
           }
         };
-      else if (event.key === 'Enter') action = () => state.enter();
+      // Shift+Enter 是 Word 的软换行：换行不分段，段落格式与编号都不变。
+      else if (event.key === 'Enter')
+        action = event.shiftKey ? () => state.insertInline('lineBreak') : () => state.enter();
     }
     if (action) {
       event.preventDefault();

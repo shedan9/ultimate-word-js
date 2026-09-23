@@ -114,7 +114,7 @@ style='font:7.0pt "Times New Roman"'>&nbsp;&nbsp; </span></span><![endif]><b>要
     ]);
   });
 
-  it('网页 HTML 只带开关且只加不减，字体字号颜色对齐一律不带；块与 <br> 拆段、空白折叠', () => {
+  it('网页 HTML 只带开关且只加不减，字体字号颜色对齐一律不带；块拆段、段内 <br> 是软换行、空白折叠', () => {
     const html = `<div style="text-align:center"><b>粗</b>  普通
       <span style="font-family:Arial;font-size:14px;color:#00f">字</span> </div><div><br></div>
       <ul><li><i>一</i></li><li><s>二</s><sub>2</sub></li></ul><p>甲<br>乙</p><img src="x.png"><table><tr><td>格</td><td></td></tr></table>`;
@@ -134,8 +134,7 @@ style='font:7.0pt "Times New Roman"'>&nbsp;&nbsp; </span></span><![endif]><b>要
           { text: '2', patch: { vertAlign: 'subscript' } },
         ],
       },
-      { runs: [{ text: '甲', patch: {} }] },
-      { runs: [{ text: '乙', patch: {} }] },
+      { runs: [{ text: '甲\n乙', patch: {} }] },
       { runs: [{ text: '格', patch: {} }] },
     ]);
   });

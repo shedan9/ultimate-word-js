@@ -75,7 +75,10 @@ export function fragmentToHtml(fragment: RichFragment): string {
   const body = fragment.paragraphs
     .map((p) => {
       const runs = p.runs
-        .map((r) => `<span style="${escapeAttr(runStyle(r.props))}">${escapeText(r.text)}</span>`)
+        .map(
+          (r) =>
+            `<span style="${escapeAttr(runStyle(r.props))}">${escapeText(r.text).replace(/\n/g, '<br>')}</span>`,
+        )
         .join('');
       return `<p style="margin:0;white-space:pre-wrap;text-align:${CSS_ALIGN[p.justification]}">${runs}</p>`;
     })
@@ -324,8 +327,8 @@ const samePatch = (a: RunPropsPatch, b: RunPropsPatch) => JSON.stringify(a) === 
 /**
  * 剪贴板 HTML 读成段落。空白按 CSS 的 `white-space: normal` 折叠（段首尾的去掉），
  * `pre` / `pre-wrap` 里原样保留、其中的换行拆段；`&nbsp;` 当普通空格 —— 浏览器与 Word
- * 都拿它表示「连续的第二个空格」，不是真的不断行空格。`<br>` 拆段（与纯文本粘贴一致，
- * 模型还没有插入软换行的命令）。图片、脚本、样式表跳过。
+ * 都拿它表示「连续的第二个空格」，不是真的不断行空格。段里的 `<br>` 是软换行（run 文字里的
+ * `\n`，控制器插成 `w:br`），`pre` 里的制表符原样是 `\t`（插成 `w:tab`）。图片、脚本、样式表跳过。
  */
 export function htmlToParagraphs(html: string, parser: DOMParser): PasteParagraph[] {
   const trusted = isTrustedHtml(html);
@@ -344,6 +347,8 @@ export function htmlToParagraphs(html: string, parser: DOMParser): PasteParagrap
   const close = (keepEmpty: boolean) => {
     if (!current) return;
     const last = current.runs.at(-1);
+    // 块末尾的 <br> 只是结束这一行（浏览器不为它多画一行），不是软换行。
+    if (last) last.text = last.text.replace(/\n$/, '');
     if (last && !preserved) last.text = last.text.replace(/ +$/, '');
     if (last && !last.text) current.runs.pop();
     if (current.runs.length || keepEmpty) paragraphs.push(current);
@@ -397,10 +402,15 @@ export function htmlToParagraphs(html: string, parser: DOMParser): PasteParagrap
         continue;
       // Word 用 <o:p>&nbsp;</o:p> 占住空段落的段落标记，那个空格不是正文。
       if (tag === 'O:P' && !el.textContent?.replace(/[\s\u00a0]/g, '')) continue;
+      // 有字的段里 <br> 是软换行；空段里的 <br> 是浏览器给空行占位的（<div><br></div>），就是一个空段。
       if (tag === 'BR') {
-        const p = current ?? open(state);
-        current = p;
-        close(true);
+        if (current?.runs.length) {
+          append('\n', state);
+          space = true;
+        } else {
+          current ??= open(state);
+          close(true);
+        }
         continue;
       }
       const next = inherit(el, state);

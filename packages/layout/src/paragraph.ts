@@ -7,7 +7,14 @@
  */
 import type { Twips } from '@uw/core';
 import type { TextMeasurer } from '@uw/fonts';
-import type { DocGrid, DocumentSettings, NodeId, ResolvedParagraph, ResolvedParaProps } from '@uw/model';
+import type {
+  DocGrid,
+  DocPosition,
+  DocumentSettings,
+  NodeId,
+  ResolvedParagraph,
+  ResolvedParaProps,
+} from '@uw/model';
 import type { KinsokuSets } from './break-class.ts';
 import { isNumberingItem, kinsokuFrom } from './break-class.ts';
 import type { WidthRules } from './items.ts';
@@ -106,10 +113,44 @@ function computeParagraph(p: ResolvedParagraph, opts: LayoutParagraphOptions): P
   ) {
     lines[0].emptyPosition = { nodeId: p.runs[0]?.id ?? p.id, contentIndex: 0, offset: 0 };
   }
-  // 空片段没有字形，但仍是事务返回的合法位置；借相邻片段的字缝定位，不改行盒。
+  // 软换行后面的位置在下一行行首（光标跟着换行走）；段末的软换行后面 Word 也留一个空行。
+  for (const [n, line] of lines.entries())
+    for (let i = line.start; i < line.end; i++) {
+      const item = items[i];
+      if (item?.kind !== 'break' || item.contentIndex < 0) continue;
+      const next = lines[n + 1];
+      const host = next ?? line;
+      host.caretAnchors ??= [];
+      host.caretAnchors.push({
+        position: { nodeId: item.runId, contentIndex: item.contentIndex, offset: 1 },
+        x: next ? next.x : line.x + line.width,
+      });
+    }
+  // 空片段没有字形，但仍是事务返回的合法位置；借相邻片段（或制表位 / 换行的锚点）的字缝定位，不改行盒。
   const runOrder = new Map(p.runs.map((r, i) => [r.id, i]));
-  const fragments = lines.flatMap((line) =>
-    line.fragments.filter((f) => f.offset >= 0).map((frag) => ({ line, frag })),
+  const fragments = [
+    ...lines.flatMap((line) =>
+      line.fragments
+        .filter((f) => f.offset >= 0)
+        .map((frag) => ({ line, frag: { ...frag, key: frag.offset } })),
+    ),
+    ...lines.flatMap((line) =>
+      (line.caretAnchors ?? []).map((a) => ({
+        line,
+        frag: {
+          runId: a.position.nodeId,
+          contentIndex: a.position.contentIndex,
+          x: a.x,
+          width: 0,
+          key: a.position.offset,
+        },
+      })),
+    ),
+  ].sort(
+    (a, b) =>
+      (runOrder.get(a.frag.runId) ?? -1) - (runOrder.get(b.frag.runId) ?? -1) ||
+      a.frag.contentIndex - b.frag.contentIndex ||
+      a.frag.key - b.frag.key,
   );
   for (const [ri, run] of p.runs.entries()) {
     if (run.props.hidden || run.fieldSimple !== undefined) continue;
@@ -256,6 +297,8 @@ function assemble(
     leaders: leadersOf(line, xs, ctx.left + offset),
     isLast: ctx.isLast,
   };
+  const inline = inlineAnchorsOf(line, items, xs, ctx.left + offset);
+  if (inline.length > 0) out.caretAnchors = inline;
   const { objects, floats } = objectsOf(line, items, xs, ctx.left + offset, ctx.objectRules);
   if (objects.length > 0) out.objects = objects;
   if (floats.length > 0) out.floats = floats;
@@ -386,6 +429,29 @@ function fragmentsOf(
     }
     currentEnd = x + (line.ws[k] as Twips);
     current.width = currentEnd - current.x;
+  }
+  return out;
+}
+
+/**
+ * 制表位与换行的光标锚点：它们不出文字片段，没有锚点的话 Tab / Shift+Enter 之后光标无处可放。
+ * 制表位前后各一个（前 = 起点、后 = 推进到的停靠点）；换行只给「前」，「后」在下一行行首，
+ * 由段落那一层补（这一行不知道下一行从哪儿开始）。
+ */
+function inlineAnchorsOf(
+  line: BrokenLine,
+  items: readonly LayoutItem[],
+  xs: readonly Twips[],
+  lineX: Twips,
+): { position: DocPosition; x: Twips }[] {
+  const out: { position: DocPosition; x: Twips }[] = [];
+  for (let k = 0; k < xs.length; k++) {
+    const item = items[line.start + k];
+    if ((item?.kind !== 'tab' && item?.kind !== 'break') || item.contentIndex < 0) continue;
+    const x = lineX + (xs[k] as Twips);
+    const at = { nodeId: item.runId, contentIndex: item.contentIndex };
+    out.push({ position: { ...at, offset: 0 }, x });
+    if (item.kind === 'tab') out.push({ position: { ...at, offset: 1 }, x: x + (line.ws[k] as Twips) });
   }
   return out;
 }
