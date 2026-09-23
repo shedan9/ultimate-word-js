@@ -238,7 +238,8 @@ describe('caretRect · 位置 → 光标', () => {
       { kind: 'text', text: '乙' },
     ]);
     const idx = index([para([r])]);
-    const at = (contentIndex: number, offset: number) => idx.caretRect({ nodeId: r.id, contentIndex, offset });
+    const at = (contentIndex: number, offset: number) =>
+      idx.caretRect({ nodeId: r.id, contentIndex, offset });
     expect(at(1, 0)?.x).toBe(CX + SIZE_5);
     // DEFAULT_SETTINGS 的默认制表位 720：「甲」之后推进到 720
     expect(at(1, 1)?.x).toBe(CX + 720);
