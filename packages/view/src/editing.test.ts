@@ -496,3 +496,100 @@ describe('纯文本剪切事务', () => {
     expect(texts()).toEqual(['甲', '']);
   });
 });
+
+describe('字符格式切换', () => {
+  function formatted(text: string | Run[] = '') {
+    const ctx = setup(text);
+    // 测试树没有样式，直接格式即最终格式；门面传入级联后的格式。
+    const state = createEditingController(ctx.editor, (range) => {
+      const props: { bold: boolean; italic: boolean; underline: string }[] = [];
+      for (const p of walkParagraphs(ctx.editor.body)) {
+        const ids = p.runs.map((r) => r.id);
+        const from = range.start.nodeId === p.id ? 0 : ids.indexOf(range.start.nodeId);
+        const to = range.end.nodeId === p.id ? 0 : ids.indexOf(range.end.nodeId);
+        if (!p.runs.length && from === 0)
+          props.push({ bold: !!p.props.markRunProps?.bold, italic: false, underline: 'none' });
+        for (const r of p.runs.slice(Math.max(0, from), to < 0 ? undefined : to + 1))
+          props.push({
+            bold: !!r.props.bold,
+            italic: !!r.props.italic,
+            underline: r.props.underline ?? 'none',
+          });
+      }
+      return props;
+    });
+    return { ...ctx, state };
+  }
+  const runs = (editor: ReturnType<typeof setup>['editor']) =>
+    [...walkParagraphs(editor.body)].flatMap((p) =>
+      p.runs.map((r) => [paragraphText({ ...p, runs: [r] }), !!r.props.bold] as const),
+    );
+
+  it('选区切换加粗保留反向选区，全部加粗时再按一次取消，整次一个撤销单元', () => {
+    const { editor, state } = formatted('甲乙丙丁');
+    state.select({
+      start: { nodeId: 'r', contentIndex: 0, offset: 3 },
+      end: { nodeId: 'r', contentIndex: 0, offset: 1 },
+    });
+    state.toggleFormat('bold');
+    expect(runs(editor)).toEqual([
+      ['甲', false],
+      ['乙丙', true],
+      ['丁', false],
+    ]);
+    const bold = [...walkParagraphs(editor.body)][0]?.runs[1];
+    expect(state.selection).toEqual({
+      start: { nodeId: bold?.id, contentIndex: 0, offset: 0 },
+      end: { nodeId: bold?.id, contentIndex: 0, offset: 2 },
+    });
+    expect(state.focus).toEqual(state.selection?.start);
+    state.toggleFormat('bold');
+    expect(runs(editor).map(([, b]) => b)).toEqual([false, false, false]);
+    editor.undo();
+    editor.undo();
+    expect(runs(editor)).toEqual([['甲乙丙丁', false]]);
+  });
+
+  it('折叠光标暂存格式到下一次输入，再按一次抵消，移动光标丢弃', () => {
+    const { editor, state } = formatted('正文');
+    state.select({
+      start: { nodeId: 'r', contentIndex: 0, offset: 2 },
+      end: { nodeId: 'r', contentIndex: 0, offset: 2 },
+    });
+    state.toggleFormat('bold');
+    expect(state.pendingFormat).toEqual({ bold: true });
+    expect(editor.canUndo).toBe(false);
+    state.insert('加', true);
+    state.insert('粗', true);
+    expect(runs(editor)).toEqual([
+      ['正文', false],
+      ['加粗', true],
+    ]);
+    expect(state.pendingFormat).toBeUndefined();
+    state.toggleFormat('italic');
+    state.toggleFormat('italic');
+    expect(state.pendingFormat).toEqual({ italic: false });
+    state.move('backward');
+    expect(state.pendingFormat).toBeUndefined();
+  });
+
+  it('空段落里切换直接改段落标记，组合输入提交时带上格式', () => {
+    const { editor, state } = formatted();
+    state.toggleFormat('underline');
+    expect(state.pendingFormat).toBeUndefined();
+    expect([...walkParagraphs(editor.body)][0]?.props.markRunProps?.underline).toBe('single');
+    state.compositionStart();
+    state.compositionEnd('下划线');
+    expect([...walkParagraphs(editor.body)][0]?.runs[0]?.props.underline).toBe('single');
+    const other = formatted('正文');
+    other.state.toggleFormat('bold');
+    other.state.compositionStart();
+    other.state.toggleFormat('italic');
+    expect(other.state.pendingFormat).toEqual({ bold: true });
+    other.state.compositionEnd('前');
+    expect(runs(other.editor)).toEqual([
+      ['前', true],
+      ['正文', false],
+    ]);
+  });
+});

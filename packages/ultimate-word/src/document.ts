@@ -34,6 +34,7 @@ import {
   findText,
   queryNodes,
   rangeOfNode,
+  runPropsOfRange,
   textOfRange,
   walkBlocks,
 } from '@uw/model';
@@ -195,6 +196,7 @@ export class UwDocument {
       {
         editor,
         text: (range) => textOfRange(this.#loaded.resolved, range, this.#fieldValues),
+        format: (range) => runPropsOfRange(this.#loaded.resolved, range),
         subscribe: (listener) => {
           this.#listeners.add(listener);
           return () => {

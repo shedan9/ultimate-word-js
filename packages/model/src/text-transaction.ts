@@ -2,13 +2,19 @@
  * Phase 7 的文字事务：只改直接格式树，级联与重排由消费侧在提交后执行。
  * 草稿只复制被改的 run，提交时复制祖先路径；失败不会把半次编辑泄漏给读者。
  * 结构命令在同一块容器内拆段 / 合段，保留直接格式；域和非文字删除仍拒绝。
+ * 格式命令只在范围端点拆 run，不合并相邻同格式 run：合并会改掉后方 run 的 id 与片段下标，
+ * 已存的批注 / 选区就得跟着映射，而多几个 run 对排版和回写都没有影响。
  */
 import type { Block, Body, NodeId, Paragraph, Run } from './nodes.ts';
 import { walkBlocks, walkParagraphs } from './nodes.ts';
-import { rangeOfNode } from './order.ts';
+import { buildRunOrder, compareDocPositions, contentLength, rangeOfNode, runEnd, runStart } from './order.ts';
 import type { DocPosition, DocRange } from './position.ts';
+import type { RunProps } from './props.ts';
 import type { PositionMove, TextChange, TextChangeSet } from './text-change.ts';
-import { invertTextChanges } from './text-change.ts';
+import { invertTextChanges, mapTextRange } from './text-change.ts';
+
+/** 直接字符格式的修改：给值即写入，`null` 删除这一项直接格式、回到样式的值。 */
+export type RunPropsPatch = { [K in keyof RunProps]?: RunProps[K] | null };
 
 export interface TextTransaction {
   /** 在位置处拆段，返回新段开头；继承段落与字符直接格式。 */
@@ -19,6 +25,12 @@ export interface TextTransaction {
   insertText(position: DocPosition, text: string): DocPosition;
   /** 同一块容器内的文字范围，可跨 run / 段落。返回删除起点。 */
   deleteRange(range: DocRange): DocPosition;
+  /**
+   * 修改范围内文字的直接字符格式，可跨段落 / 表格 / 分节；端点落在 run 中间时拆出新 run。
+   * 覆盖到的段落标记（空段落、或范围越过段尾）同步修改，空段落首次输入与编号跟着它走。
+   * 返回拆分后的同一段文字范围，供后续命令继续使用。
+   */
+  setRunProps(range: DocRange, patch: RunPropsPatch): DocRange;
 }
 
 export interface TextHistoryOptions {
@@ -102,12 +114,17 @@ function indexRuns(body: Body): Map<NodeId, RunEntry> {
 }
 
 function replaceRuns(body: Body, replacements: Map<NodeId, Run>): Body {
+  return mapParagraphs(body, (block) => {
+    const runs = block.runs.map((r) => replacements.get(r.id) ?? r);
+    return runs.some((r, i) => r !== block.runs[i]) ? { ...block, runs } : block;
+  });
+}
+
+/** 只复制改动段落的祖先路径，未改的节 / 表格与历史快照共享。 */
+function mapParagraphs(body: Body, update: (paragraph: Paragraph) => Paragraph): Body {
   function blocks(items: Block[]): Block[] {
     const next = items.map((block): Block => {
-      if (block.kind === 'paragraph') {
-        const runs = block.runs.map((r) => replacements.get(r.id) ?? r);
-        return runs.some((r, i) => r !== block.runs[i]) ? { ...block, runs } : block;
-      }
+      if (block.kind === 'paragraph') return update(block);
       const rows = block.rows.map((row) => {
         const cells = row.cells.map((cell) => {
           const content = blocks(cell.blocks);
@@ -145,6 +162,26 @@ function textAt(entry: RunEntry, position: DocPosition): string {
     throw new RangeError('文字位置不能切开 UTF-16 代理对');
   }
   return text;
+}
+
+/** 仅应用有变化的项；全部相同返回 undefined，调用方据此不拆 run、不记变更。 */
+function patchRunProps(props: RunProps, patch: RunPropsPatch): RunProps | undefined {
+  const next: Record<string, unknown> = { ...props };
+  let changed = false;
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) continue;
+    if (value === null) {
+      if (key in next) {
+        delete next[key];
+        changed = true;
+      }
+    } else if (JSON.stringify(next[key]) !== JSON.stringify(value)) {
+      // 克隆调用方的值：冻结快照不能与外部对象共享可变引用。
+      next[key] = structuredClone(value);
+      changed = true;
+    }
+  }
+  return changed ? (next as RunProps) : undefined;
 }
 
 function samePosition(a: DocPosition, b: DocPosition): boolean {
@@ -330,6 +367,78 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
         return { ...entry, run: replacements.get(position.nodeId) ?? entry.run };
       }
 
+      /** 格式命令也接受域结果与对象旁的位置，只检查坐标本身是否存在。 */
+      function checkPosition(at: DocPosition): void {
+        const { contentIndex: ci, offset } = at;
+        if (!Number.isInteger(ci) || ci < 0 || !Number.isInteger(offset) || offset < 0)
+          throw new RangeError('文字位置必须是非负整数');
+        const entry = entries.get(at.nodeId);
+        if (entry === undefined) {
+          validatePosition(at);
+          return;
+        }
+        const c = entry.run.content[ci];
+        if (c === undefined) {
+          if (entry.run.content.length || ci || offset) throw new RangeError('文字位置超出 run');
+          return;
+        }
+        if (offset > contentLength(c)) throw new RangeError('文字位置超出片段长度');
+        if (offset > 0 && offset < contentLength(c) && c.kind !== 'text')
+          throw new RangeError('文字位置不能切开非文字片段');
+        if (c.kind === 'text') textAt({ ...entry, protected: false }, at);
+      }
+      /** 在 run 内部位置拆成两段，前段保留原 id；拆点在片段边界时不留空文字片段。 */
+      function splitRun(run: Run, at: DocPosition, log: TextChange[]): [Run, Run] {
+        let ci = at.contentIndex;
+        let offset = at.offset;
+        const current = run.content[ci];
+        if (current && offset === contentLength(current)) {
+          ci++;
+          offset = 0;
+        }
+        const right: Run = { ...run, id: newId(), content: [] };
+        const moves: PositionMove[] = [];
+        let left: Run;
+        if (offset === 0) {
+          left = { ...run, content: run.content.slice(0, ci) };
+          right.content = run.content.slice(ci);
+        } else {
+          const text = (run.content[ci] as { text: string }).text;
+          left = {
+            ...run,
+            content: [...run.content.slice(0, ci), { kind: 'text', text: text.slice(0, offset) }],
+          };
+          right.content = [{ kind: 'text', text: text.slice(offset) }, ...run.content.slice(ci + 1)];
+          moves.push({
+            from: { nodeId: run.id, contentIndex: ci, offset },
+            to: { nodeId: right.id, contentIndex: 0, offset: 0 },
+            length: text.length - offset,
+            afterOnly: true,
+          });
+          ci++;
+        }
+        const shift = run.content.length - right.content.length;
+        for (let i = ci; i < run.content.length; i++)
+          moves.push({
+            from: { nodeId: run.id, contentIndex: i, offset: 0 },
+            to: { nodeId: right.id, contentIndex: i - shift, offset: 0 },
+            length: contentLength(run.content[i] as Run['content'][number]),
+          });
+        const paragraphId = (entries.get(run.id) as RunEntry).paragraph.id;
+        log.push({
+          paragraphId,
+          nodeId: '',
+          contentIndex: 0,
+          offset: 0,
+          deletedText: '',
+          insertedText: '',
+          moves,
+          inverseMoves: moves.map((m) => ({ from: m.to, to: m.from, length: m.length })),
+          affectedParagraphIds: [paragraphId],
+        });
+        return [left, right];
+      }
+
       function splice(position: DocPosition, count: number, insertedText: string): void {
         const entry = entryAt(position);
         const text = textAt(entry, position);
@@ -344,7 +453,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
         changes.push({ ...position, paragraphId: entry.paragraph.id, deletedText, insertedText });
       }
 
-      function command(action: () => DocPosition): DocPosition {
+      function command<T>(action: () => T): T {
         if (!open) throw new Error('事务已结束');
         try {
           return action();
@@ -500,6 +609,68 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
               }
             }
             return { ...start };
+          });
+        },
+        setRunProps(range, patch) {
+          return command(() => {
+            if (patch === null || typeof patch !== 'object' || Array.isArray(patch))
+              throw new TypeError('setRunProps 需要属性对象');
+            flush();
+            for (const at of [range.start, range.end]) checkPosition(at);
+            const order = buildRunOrder(draft);
+            const cmp = (a: DocPosition, b: DocPosition) => compareDocPositions(order, a, b) as number;
+            if (cmp(range.start, range.end) > 0) throw new RangeError('格式范围的起点必须在终点之前');
+            const { start, end } = range;
+            const collapsed = cmp(start, end) === 0;
+            const paragraphs = [...walkParagraphs(draft)];
+            const indexOf = (at: DocPosition) =>
+              paragraphs.findIndex((p) => p.id === at.nodeId || p.runs.some((r) => r.id === at.nodeId));
+            const last = indexOf(end);
+            const updates = new Map<NodeId, Paragraph>();
+            const local: TextChange[] = [];
+            for (let i = indexOf(start); i <= last; i++) {
+              const paragraph = paragraphs[i] as Paragraph;
+              let props = paragraph.props;
+              // 空段落只有段落标记；非空段落的标记只在范围越过段尾时被选中，折叠光标不改标记。
+              if (!paragraph.runs.length || (!collapsed && i < last)) {
+                const mark = patchRunProps(props.markRunProps ?? {}, patch);
+                if (mark) props = { ...props, markRunProps: mark };
+              }
+              const runs: Run[] = [];
+              for (const run of paragraph.runs) {
+                const rs = runStart(run);
+                const re = runEnd(run);
+                const covered =
+                  !collapsed &&
+                  (run.content.length
+                    ? cmp(re, start) > 0 && cmp(rs, end) < 0
+                    : cmp(start, rs) <= 0 && cmp(rs, end) < 0);
+                const next = covered ? patchRunProps(run.props, patch) : undefined;
+                if (!next) {
+                  runs.push(run);
+                  continue;
+                }
+                // 先切末端：起点坐标仍对前半段有效；位置映射按记录顺序逐次应用。
+                let head = run;
+                let tail: Run | undefined;
+                if (end.nodeId === run.id && cmp(end, re) < 0) [head, tail] = splitRun(head, end, local);
+                let before: Run | undefined;
+                let middle = head;
+                if (start.nodeId === run.id && cmp(start, rs) > 0)
+                  [before, middle] = splitRun(head, start, local);
+                if (before) runs.push(before);
+                runs.push({ ...middle, props: next });
+                if (tail) runs.push(tail);
+              }
+              if (props !== paragraph.props || runs.some((r, ri) => r !== paragraph.runs[ri]))
+                updates.set(paragraph.id, { ...paragraph, props, runs });
+            }
+            if (!updates.size) return structuredClone(range);
+            draft = mapParagraphs(draft, (p) => updates.get(p.id) ?? p);
+            entries = indexRuns(draft);
+            changes.push(...local);
+            structural([...updates.keys()], []);
+            return mapTextRange(range, { changes: local, paragraphIds: [] });
           });
         },
       };

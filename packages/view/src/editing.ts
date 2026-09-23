@@ -1,15 +1,30 @@
 /** 输入状态只存模型位置；组合文字暂存，compositionend 才提交一个撤销单元。 */
-import type { DocPosition, DocRange, TextChangeSet, TextEditor } from '@uw/model';
+import type {
+  DocPosition,
+  DocRange,
+  ResolvedRunProps,
+  RunPropsPatch,
+  TextChangeSet,
+  TextEditor,
+} from '@uw/model';
 import { buildRunOrder, compareDocPositions, mapTextRange, rangeOfNode, walkParagraphs } from '@uw/model';
 import type { TextGranularity } from './text-navigation.ts';
 import { paragraphNavigation } from './text-navigation.ts';
+
+/** 快捷键切换的三种格式；其余格式走 `doc.tx` 的 `setRunProps`。 */
+export type ToggleFormat = 'bold' | 'italic' | 'underline';
+/** 选区当前的最终格式（级联后），切换按「全部都是才取消」判断。 */
+export type FormatQuery = (range: DocRange) => readonly Pick<ResolvedRunProps, ToggleFormat>[];
 
 export interface EditingController {
   readonly selection: DocRange | undefined;
   readonly anchor: DocPosition | undefined;
   readonly focus: DocPosition | undefined;
   readonly composing: boolean;
+  /** 折叠光标上切换、尚未落到文字上的格式；下一次输入使用，移动光标即丢弃。 */
+  readonly pendingFormat: RunPropsPatch | undefined;
   select(range: DocRange): void;
+  toggleFormat(format: ToggleFormat): void;
   insert(text: string, input?: boolean): void;
   enter(): void;
   delete(direction: 'backward' | 'forward', granularity?: TextGranularity): void;
@@ -24,8 +39,11 @@ export interface EditingController {
   apply(change: TextChangeSet): void;
 }
 
-export function createEditingController(editor: TextEditor): EditingController {
+const underlined = (value: string) => value !== 'none' && value !== '';
+
+export function createEditingController(editor: TextEditor, formatOf?: FormatQuery): EditingController {
   let selection: DocRange | undefined;
+  let pending: RunPropsPatch | undefined;
   let composing = false;
   let compositionRange: DocRange | undefined;
   let anchor: DocPosition | undefined;
@@ -83,30 +101,70 @@ export function createEditingController(editor: TextEditor): EditingController {
     get composing() {
       return composing;
     },
+    get pendingFormat() {
+      return pending && { ...pending };
+    },
     select(range) {
       if (composing) return;
       editor.breakHistory();
+      pending = undefined;
       select(range);
+    },
+    toggleFormat(format) {
+      if (!selection || composing) return;
+      const range = selection;
+      const collapsed = equal(range.start, range.end);
+      const on = (p: Pick<ResolvedRunProps, ToggleFormat>) =>
+        format === 'underline' ? underlined(p.underline) : p[format];
+      const current = formatOf?.(range) ?? [];
+      const queued = collapsed ? pending?.[format] : undefined;
+      const active =
+        queued !== undefined && queued !== null
+          ? typeof queued === 'string'
+            ? underlined(queued)
+            : queued
+          : current.length > 0 && current.every(on);
+      const patch: RunPropsPatch =
+        format === 'underline' ? { underline: active ? 'none' : 'single' } : { [format]: !active };
+      const backward = focus !== undefined && !collapsed && equal(focus, range.start);
+      let next = range;
+      editor.breakHistory();
+      // 空段落的折叠光标由模型改段落标记；非空段落内折叠时模型无修改，格式暂存到下一次输入。
+      const change = editor.tx((tx) => {
+        next = tx.setRunProps(range, patch);
+      });
+      if (collapsed) {
+        if (!change) pending = { ...pending, ...patch };
+        return;
+      }
+      select(backward ? { start: next.end, end: next.start } : next);
     },
     insert(text, input = false) {
       if (!selection || composing || text === '') return;
       let at = selection.start;
       const range = selection;
+      const format = pending;
       editor.tx(
         (tx) => {
           if (!equal(range.start, range.end)) at = tx.deleteRange(range);
           const lines = text.replace(/\r\n?/g, '\n').split('\n');
           for (const [i, line] of lines.entries()) {
             if (i > 0) at = tx.splitParagraph(at);
-            if (line) at = tx.insertText(at, line);
+            if (!line) continue;
+            at = tx.insertText(at, line);
+            // 空段落首次输入会先建 run，插入起点只能从返回的终点倒推。
+            if (format)
+              at = tx.setRunProps({ start: { ...at, offset: at.offset - line.length }, end: at }, format).end;
           }
         },
         { origin: input ? 'input' : 'command' },
       );
+      pending = undefined;
       collapse(at);
     },
     enter() {
       if (!selection || composing) return;
+      pending = undefined;
       let at = selection.start;
       const range = selection;
       editor.tx((tx) => {
@@ -128,6 +186,7 @@ export function createEditingController(editor: TextEditor): EditingController {
     },
     delete(direction, granularity = 'grapheme') {
       if (!selection || composing) return;
+      pending = undefined;
       let range = selection;
       if (equal(range.start, range.end)) {
         const next = neighbor(range.start, direction, granularity);
@@ -144,6 +203,7 @@ export function createEditingController(editor: TextEditor): EditingController {
     move(direction, extend = false, granularity = 'grapheme') {
       if (!selection || composing) return;
       editor.breakHistory();
+      pending = undefined;
       if (!extend && !equal(selection.start, selection.end)) {
         collapse(direction === 'backward' ? selection.start : selection.end);
         return;

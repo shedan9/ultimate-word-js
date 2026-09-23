@@ -1,11 +1,14 @@
 import type { DocPosition, DocRange, TextChangeSet, TextEditor } from '@uw/model';
 import type { DomView } from './dom.ts';
+import type { FormatQuery, ToggleFormat } from './editing.ts';
 import { createEditingController } from './editing.ts';
 import { moveVertically } from './vertical-navigation.ts';
 
 export interface EditingBinding {
   editor: TextEditor;
   text(range: DocRange): string;
+  /** 缺省时切换只看暂存格式，选区一律按「未设置」处理。 */
+  format?: FormatQuery;
   subscribe(listener: (change: TextChangeSet) => void): () => void;
 }
 export interface DomEditing {
@@ -16,11 +19,14 @@ export interface DomEditing {
   dispose(): void;
 }
 
+/** Word 与浏览器富文本共用的 B / I / U；Ctrl 与 Cmd 都认，Alt / Shift 组合留给系统与宿主。 */
+const TOGGLE_KEYS: Readonly<Record<string, ToggleFormat>> = { b: 'bold', i: 'italic', u: 'underline' };
+
 /** textarea 常驻容器，重排只替换页树，不能打断操作系统持有的 IME 节点。 */
 export function mountEditing(container: Element, view: DomView, binding: EditingBinding): DomEditing {
   const doc = container.ownerDocument;
   const win = doc.defaultView;
-  const state = createEditingController(binding.editor);
+  const state = createEditingController(binding.editor, binding.format);
   const input = doc.createElement('textarea');
   input.dataset.uwInput = 'true';
   input.setAttribute('aria-label', '文档编辑输入');
@@ -150,6 +156,15 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
         case 'deleteWordForward':
           state.delete('forward', 'word');
           break;
+        case 'formatBold':
+          state.toggleFormat('bold');
+          break;
+        case 'formatItalic':
+          state.toggleFormat('italic');
+          break;
+        case 'formatUnderline':
+          state.toggleFormat('underline');
+          break;
         case 'historyUndo':
           binding.editor.undo();
           break;
@@ -168,7 +183,10 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
     else if (mod && event.key.toLowerCase() === 'y') action = () => binding.editor.redo();
     else if (mod && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'a')
       action = () => state.selectAll();
-    else if (
+    else if (mod && !event.altKey && !event.shiftKey && event.key.toLowerCase() in TOGGLE_KEYS) {
+      const format = TOGGLE_KEYS[event.key.toLowerCase()] as ToggleFormat;
+      action = () => state.toggleFormat(format);
+    } else if (
       !event.altKey &&
       ((event.ctrlKey && !event.metaKey && (event.key === 'Home' || event.key === 'End')) ||
         (event.metaKey && !event.ctrlKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')))

@@ -25,6 +25,7 @@ export * from './parse-table-props.ts';
 export * from './position.ts';
 export * from './props.ts';
 export * from './query.ts';
+export * from './range-format.ts';
 export * from './range-text.ts';
 export * from './resolve-body.ts';
 export * from './search.ts';
