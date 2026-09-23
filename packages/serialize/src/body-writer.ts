@@ -464,7 +464,8 @@ class BodyWriter {
   }
 
   // ── 表格 ──────────────────────────────────────────────────────────────────
-  // 行与列都可以插、可以删（`insertRow` / `deleteRows` / `insertColumn` / `deleteColumns`），
+  // 行与列都可以插、可以删（`insertRow` / `deleteRows` / `insertColumn` / `deleteColumns`），格可以合并 / 拆分
+  // （`mergeCells` / `splitCell`：段落搬进首格时 id 不变，走 `#rest` 吐回它自己的原元素，书签跟着走），
   // 跟着变的只有结构：`w:tblGrid`、`w:tblW`、行的 `w:gridBefore` / `w:gridAfter`、格的 `w:tcW` /
   // `w:gridSpan` / `w:vMerge`。表格 / 行 / 格的其余属性还改不了，原样照抄
 

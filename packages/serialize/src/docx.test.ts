@@ -479,3 +479,65 @@ describe('表格的列', () => {
     expect(rows[1]).toContain('<w:trHeight w:val="400"/>');
   });
 });
+
+describe('合并 / 拆分单元格', () => {
+  const border = '<w:tcBorders><w:top w:val="single" w:sz="4"/></w:tcBorders>';
+  const cell = (text: string, w: number, pr = '') =>
+    `<w:tc><w:tcPr><w:tcW w:w="${w}" w:type="dxa"/>${pr}${border}</w:tcPr><w:p><w:pPr><w:jc w:val="center"/></w:pPr>${text ? `<w:r><w:rPr><w:b/></w:rPr><w:t>${text}</w:t></w:r>` : ''}<w:bookmarkStart w:id="0" w:name="${text || '空'}"/><w:bookmarkEnd w:id="0"/></w:p></w:tc>`;
+  const table =
+    '<w:tbl><w:tblPr><w:tblW w:w="6000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1000"/><w:gridCol w:w="2000"/><w:gridCol w:w="3000"/></w:tblGrid>' +
+    `<w:tr>${cell('甲', 1000)}${cell('乙', 2000)}${cell('丙', 3000)}</w:tr>` +
+    `<w:tr><w:trPr><w:trHeight w:val="400"/></w:trPr>${cell('', 1000)}${cell('丁', 2000)}${cell('戊', 3000)}</w:tr>` +
+    '</w:tbl><w:p><w:r><w:t>表后</w:t></w:r></w:p>';
+  const find = (body: Body, text: string): DocPosition => {
+    const run = paragraphs(body)
+      .flatMap((p) => p.runs)
+      .find((r) => r.content.some((c) => c.kind === 'text' && c.text === text));
+    if (run === undefined) throw new Error(`没有「${text}」`);
+    return { nodeId: run.id, contentIndex: 0, offset: 0 };
+  };
+  const xmlOf = (out: Uint8Array) => decoder.decode(unzip(out).get('word/document.xml'));
+
+  it('跨两行两列合并：搬过去的段落逐字节原样（书签跟着走），续格写 vMerge 与 gridSpan，被并掉的格不写', () => {
+    const { edited, out, again } = roundTrip(docx(table), (t, body) => {
+      t.mergeCells({ start: find(body, '甲'), end: find(body, '丁') });
+    });
+    expect(shape(again.body)).toEqual(shape(edited));
+    const rows = xmlOf(out)
+      .split(/<w:tr[ >]/)
+      .slice(1);
+    expect(rows[0]).toMatch(
+      /^<w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"\/><w:gridSpan w:val="2"\/><w:vMerge w:val="restart"\/><w:tcBorders>/,
+    );
+    // 首格里依次是甲、乙、丁（第二行首格是空的，不贡献段落），每段带着自己的书签
+    expect(rows[0]?.match(/<w:t>(.)<\/w:t>/g)).toEqual([
+      '<w:t>甲</w:t>',
+      '<w:t>乙</w:t>',
+      '<w:t>丁</w:t>',
+      '<w:t>丙</w:t>',
+    ]);
+    expect(rows[0]).toContain('w:name="乙"');
+    expect(rows[1]).toMatch(
+      /<w:trHeight w:val="400"\/><\/w:trPr><w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"\/><w:gridSpan w:val="2"\/><w:vMerge\/>/,
+    );
+    expect(rows[1]?.match(/<w:tc>/g)).toHaveLength(2);
+    expect(rows[1]).not.toContain('<w:t>丁</w:t>');
+  });
+
+  it('合并再拆回：新格照原格抄 tcPr 与段落格式，宽按网格重算', () => {
+    const { edited, out, again } = roundTrip(docx(table), (t, body) => {
+      t.mergeCells({ start: find(body, '甲'), end: find(body, '丁') });
+      t.splitCell(find(body, '甲'));
+    });
+    expect(shape(again.body)).toEqual(shape(edited));
+    const rows = xmlOf(out)
+      .split(/<w:tr[ >]/)
+      .slice(1);
+    expect(rows.map((r) => r.match(/<w:tc>/g)?.length)).toEqual([3, 3]);
+    expect(rows[1]).toMatch(
+      /<w:tcW w:w="1000" w:type="dxa"\/><w:tcBorders>.*<w:tcW w:w="2000" w:type="dxa"\/><w:tcBorders>.*<w:jc w:val="center"\/>/,
+    );
+    expect(xmlOf(out)).not.toContain('w:vMerge');
+    expect(xmlOf(out)).not.toContain('w:gridSpan');
+  });
+});

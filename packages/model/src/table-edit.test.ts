@@ -364,3 +364,137 @@ describe('插列 / 删列', () => {
     ).toThrow(/同一张表/);
   });
 });
+
+describe('合并 / 拆分单元格', () => {
+  const w = (n: number) => `<w:tcW w:w="${n}" w:type="dxa"/>`;
+  const grid3 =
+    '<w:tblGrid><w:gridCol w:w="1000"/><w:gridCol w:w="2000"/><w:gridCol w:w="3000"/></w:tblGrid>';
+  const t3 = (...rows: string[]) => `<w:tbl>${grid3}${rows.join('')}</w:tbl>`;
+  const texts = (cell: { blocks: unknown[] } | undefined) =>
+    (cell?.blocks ?? []).map((b) => paragraphText(b as never));
+  const shape = (t: Table) =>
+    t.rows.map((r) => r.cells.map((c) => [c.gridSpan, c.vMerge, c.props.width?.value]));
+
+  it('横向合并：内容按左到右接进首格、空格不贡献段落，宽按网格重算；段落 id 不变，位置不用映射', () => {
+    const body = parse(t3(tr(tc(p('甲'), w(1000)), tc(p(''), w(2000)), tc(p('丙') + p('丙二'), w(3000)))));
+    const editor = createTextEditor(body);
+    let caret: DocPosition | undefined;
+    const changes = editor.tx((t) => {
+      caret = t.mergeCells({ start: at(body, '甲'), end: at(body, '丙') });
+    });
+    const table = tables(editor.body)[0] as Table;
+    expect(shape(table)).toEqual([[[3, 'none', 6000]]]);
+    expect(texts(table.rows[0]?.cells[0])).toEqual(['甲', '丙', '丙二']);
+    expect(caret).toEqual(at(body, '甲'));
+    expect(mapTextPosition(at(body, '丙', 1), changes as never)).toEqual(at(body, '丙', 1));
+    editor.undo();
+    expect(editor.body).toEqual(createTextEditor(body).body);
+  });
+
+  it('跨两行合并：首格 restart、下面留跨同样列数的续格；内容按行接起来', () => {
+    const body = parse(
+      t3(
+        tr(tc(p('甲'), w(1000)), tc(p('乙'), w(2000)), tc(p('外一'), w(3000))),
+        tr(tc(p('丙'), w(1000)), tc(p(''), w(2000)), tc(p('外二'), w(3000))),
+      ),
+    );
+    const editor = createTextEditor(body);
+    editor.tx((t) => {
+      t.mergeCells({ start: at(body, '甲'), end: at(body, '丙') });
+    });
+    const table = tables(editor.body)[0] as Table;
+    // 只选了第一列 —— 矩形就是第一列两行
+    expect(shape(table)).toEqual([
+      [
+        [1, 'restart', 1000],
+        [1, 'none', 2000],
+        [1, 'none', 3000],
+      ],
+      [
+        [1, 'continue', 1000],
+        [1, 'none', 2000],
+        [1, 'none', 3000],
+      ],
+    ]);
+    expect(texts(table.rows[0]?.cells[0])).toEqual(['甲', '丙']);
+    expect(texts(table.rows[1]?.cells[0])).toEqual(['']);
+
+    const wide = createTextEditor(body);
+    wide.tx((t) => {
+      t.mergeCells({ start: at(body, '甲'), end: { ...at(body, '外二'), offset: 1 } });
+    });
+    const all = tables(wide.body)[0] as Table;
+    expect(shape(all)).toEqual([[[3, 'restart', 6000]], [[3, 'continue', 6000]]]);
+    expect(texts(all.rows[0]?.cells[0])).toEqual(['甲', '乙', '外一', '丙', '外二']);
+    wide.undo();
+    expect(wide.body).toEqual(createTextEditor(body).body);
+  });
+
+  it('选区被合并格撑大：碰到跨列格与纵向合并区就把它们整个包进来', () => {
+    const body = parse(
+      t3(
+        tr(
+          tc(p('横'), `${w(3000)}<w:gridSpan w:val="2"/>`),
+          tc(p('纵'), `${w(3000)}<w:vMerge w:val="restart"/>`),
+        ),
+        tr(tc(p('丙'), w(1000)), tc(p('丁'), w(2000)), tc(p(''), `${w(3000)}<w:vMerge/>`)),
+      ),
+    );
+    const editor = createTextEditor(body);
+    // 只点了「丁」与「纵」：纵向合并区往下撑到第二行、跨列格往左撑到第一列
+    editor.tx((t) => {
+      t.mergeCells({ start: at(body, '纵'), end: at(body, '丁') });
+    });
+    const table = tables(editor.body)[0] as Table;
+    expect(shape(table)).toEqual([[[3, 'restart', 6000]], [[3, 'continue', 6000]]]);
+    expect(texts(table.rows[0]?.cells[0])).toEqual(['横', '纵', '丙', '丁']);
+  });
+
+  it('跳过的网格列撑不成矩形时拒绝；只有一格时不修改', () => {
+    const body = parse(
+      t3(
+        tr(tc(p('甲'), w(1000)), tc(p('乙'), w(2000)), tc(p('丙'), w(3000))),
+        `<w:tr><w:trPr><w:gridBefore w:val="1"/></w:trPr>${tc(p('丁'), w(2000))}${tc(p('戊'), w(3000))}</w:tr>`,
+      ),
+    );
+    const editor = createTextEditor(body);
+    expect(() =>
+      editor.tx((t) => {
+        t.mergeCells({ start: at(body, '甲'), end: at(body, '丁') });
+      }),
+    ).toThrow(/矩形/);
+    expect(
+      editor.tx((t) => {
+        t.mergeCells({ start: at(body, '甲'), end: { ...at(body, '甲'), offset: 1 } });
+      }),
+    ).toBeUndefined();
+  });
+
+  it('拆分是合并的逆操作：合并再拆回，结构与原表一致，内容留在首格', () => {
+    const body = parse(
+      t3(
+        tr(tc(p('甲'), w(1000)), tc(p('乙'), w(2000)), tc(p('丙'), w(3000))),
+        tr(tc(p(''), w(1000)), tc(p(''), w(2000)), tc(p('丁'), w(3000))),
+      ),
+    );
+    const editor = createTextEditor(body);
+    editor.tx((t) => {
+      t.mergeCells({ start: at(body, '甲'), end: { ...at(body, '乙'), offset: 1 } });
+      t.mergeCells({ start: at(body, '甲'), end: at(body, '丁') });
+    });
+    expect(shape(tables(editor.body)[0] as Table)).toEqual([[[3, 'restart', 6000]], [[3, 'continue', 6000]]]);
+    let caret: DocPosition | undefined;
+    editor.tx((t) => {
+      caret = t.splitCell(at(body, '甲'));
+    });
+    const table = tables(editor.body)[0] as Table;
+    expect(shape(table)).toEqual(shape(tables(createTextEditor(body).body)[0] as Table));
+    expect(texts(table.rows[0]?.cells[0])).toEqual(['甲', '乙', '丙', '丁']);
+    expect(caret).toEqual(at(body, '甲'));
+    expect(
+      editor.tx((t) => {
+        t.splitCell(at(body, '甲'));
+      }),
+    ).toBeUndefined();
+  });
+});

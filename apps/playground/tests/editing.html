@@ -559,6 +559,22 @@ try {
   tableDoc.undo();
   tableDoc.undo();
   assert(columns() === 2 && tableDoc.find('新列').length === 0 && tableDoc.find('格乙').length === 1, '两次撤销回到插列之前');
+  // 合并 / 拆分：格甲格乙并成一格，「格乙」接到「格甲」下面一行；导出再加载仍是合并的；拆回两格、撤销回原样
+  const yiBefore = tableView.caretRect(cellRange('格乙').start);
+  tableDoc.tx((t) => { t.mergeCells({ start: cellRange('格甲').start, end: cellRange('格乙').start }); return undefined; });
+  await frame();
+  const mergedRow = tableDoc.query('row')[0];
+  const yiMerged = tableView.caretRect(cellRange('格乙').start);
+  assert(mergedRow.cells.length === 1 && mergedRow.cells[0].gridSpan === 2 && mergedRow.cells[0].blocks.length === 2, '两格并成一格、两个段落都在');
+  assert(yiMerged.x < yiBefore.x - 100 && yiMerged.y > tableView.caretRect(cellRange('格甲').start).y + 5, '格乙排到格甲下面一行');
+  const mergedExport = await UltimateWord.load(await tableDoc.toDocx());
+  assert(mergedExport.query('row')[0].cells.length === 1 && mergedExport.query('row')[1].cells.length === 2, '导出再加载仍是合并的');
+  tableDoc.tx((t) => { t.splitCell(cellRange('格甲').start); return undefined; });
+  assert(tableDoc.query('row')[0].cells.length === 2 && tableDoc.query('row')[0].cells[1].blocks[0].runs.length === 0, '拆回两格，右边是空格');
+  tableDoc.undo();
+  tableDoc.undo();
+  await frame();
+  assert(Math.abs(tableView.caretRect(cellRange('格乙').start).x - yiBefore.x) < 1, '两次撤销回到合并之前');
   tableView.select({ start: cellRange('表后正文').start, end: cellRange('表后正文').start });
   assert(tableKey('Tab') && cellTabs() === 1, '表外 Tab 照常插制表位');
   tableDoc.undo();

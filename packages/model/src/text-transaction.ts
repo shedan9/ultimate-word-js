@@ -15,11 +15,14 @@ import type { DocPosition, DocRange } from './position.ts';
 import type { Indent, NumberingRef, ParagraphSpacing, ParaProps, RunProps } from './props.ts';
 import {
   cellColumns,
+  cellRect,
   findRow,
   withInsertedColumn,
   withInsertedRow,
+  withMergedCells,
   withoutColumns,
   withoutRows,
+  withSplitCell,
 } from './table-edit.ts';
 import type { PositionMove, TextChange, TextChangeSet } from './text-change.ts';
 import { invertTextChanges, mapTextRange } from './text-change.ts';
@@ -93,6 +96,17 @@ export interface TextTransaction {
    * 整表删掉时同 `deleteRows`。格里有域时拒绝。
    */
   deleteColumns(range: DocRange): DocPosition;
+  /**
+   * 把范围两端所在的格撑成的矩形（被合并格撑大，见 table-edit.ts）并成一格，两端须在同一张最内层表里。
+   * 内容按行、行内从左到右接进首格，空格不贡献段落；多行时下面各行留纵向合并的续格。
+   * 返回合并后那一格的开头。矩形里有 `w:gridBefore` / `w:gridAfter` 的空缺时拒绝，只有一格时不修改。
+   */
+  mergeCells(range: DocRange): DocPosition;
+  /**
+   * 把位置所在的合并格拆回合并前的样子（跨列拆成一列一格、纵向合并区逐格解开），内容留在原格，
+   * 新格各一个空段落。返回原位置；这一格没有合并过时不修改。
+   */
+  splitCell(position: DocPosition): DocPosition;
 }
 
 /**
@@ -1079,6 +1093,64 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
               [],
             );
             return { ...target };
+          });
+        },
+        mergeCells(range) {
+          return command(() => {
+            flush();
+            const a = findRow(draft, range.start.nodeId);
+            const b = findRow(draft, range.end.nodeId);
+            if (a === undefined || b === undefined || a.table.id !== b.table.id)
+              throw new Error('只能合并同一张表里的格');
+            const rect = cellRect(a.table, a, b);
+            if (rect === undefined) throw new Error('选中的格撑不成完整的矩形（有跳过的网格列）');
+            const merged = withMergedCells(a.table, rect, newId);
+            if (merged === undefined) return structuredClone(range.start);
+            const { table, head, dropped, added: fresh } = merged;
+            draft = a.replace(table, () => {
+              throw new Error('合并不会删表');
+            });
+            entries = indexRuns(draft);
+            const target = rangeOfNode(head)?.start;
+            if (target === undefined) throw new Error('合并后找不到光标位置');
+            // 搬进首格的段落 id 不变，位置照旧有效；只有丢掉的空段落收拢、撤销时续格里新造的空段落收拢回首格
+            structural(
+              [...head.blocks.map((x) => x.id), ...fresh],
+              collapseInto(dropped, target),
+              fresh.map((id) => ({
+                from: { nodeId: id, contentIndex: 0, offset: 0 },
+                to: target,
+                length: 0,
+                collapse: true,
+              })),
+            );
+            return { ...target };
+          });
+        },
+        splitCell(position) {
+          return command(() => {
+            flush();
+            const hit = findRow(draft, position.nodeId);
+            if (hit === undefined) throw new Error('位置不在表格里');
+            const split = withSplitCell(hit.table, hit.rowIndex, hit.cellIndex, newId);
+            if (split === undefined) return { ...position };
+            draft = hit.replace(split.table, () => {
+              throw new Error('拆分不会删表');
+            });
+            entries = indexRuns(draft);
+            const added = split.cells.flatMap((c) => c.blocks.map((x) => x.id));
+            const back = { ...position };
+            structural(
+              added,
+              [],
+              added.map((id) => ({
+                from: { nodeId: id, contentIndex: 0, offset: 0 },
+                to: back,
+                length: 0,
+                collapse: true,
+              })),
+            );
+            return { ...position };
           });
         },
         addList(kind) {

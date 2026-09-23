@@ -26,6 +26,16 @@
  *    （`dxa` 的 `w:tcW` 跟着减）。一行删到一格不剩就删掉整行（没有格的 `w:tr` Word 报损坏），
  *    删掉的格可能是合并区的首格，于是删完再把「上面没有同列首格的续格」升成 restart（同 ③）。
  *    网格删光或行删光就删整张表。
+ *
+ * 合并 / 拆分再两处：
+ * ⑦ 合并的区域先**撑成矩形**：两端格的网格区间取并集、行取两端之间，再反复往外扩，直到没有格
+ *    只露出一半（跨列格横着撑、纵向合并区竖着撑）—— Word 的选区也是这样被合并格撑大的。
+ *    内容**按行、行内从左到右**接起来，空格（只有空段落）不贡献段落，全空就留首格原来的段落；
+ *    段落是**搬过去**的（id 不变），所以落在它们里面的位置不用映射，只有被丢掉的空段落要收拢。
+ *    多行时首行那一格是 `restart`，下面每行留一个跨同样列数的 `continue` 格（一个空段落）——
+ *    Word 自己就这么存，不删行：别的列在这些行里还有自己的格。
+ * ⑧ 拆分只做**合并的逆操作**：跨列格拆回一列一格、纵向合并区的每一格变回 `none`，内容留在首格。
+ *    Word「拆分单元格」对话框能拆成任意行列数，那要新增网格列 / 行，不在这一步。
  */
 import type { Twips } from '@uw/core';
 import type { Block, Body, NodeId, Paragraph, Table, TableCell, TableRow } from './nodes.ts';
@@ -308,4 +318,180 @@ export function withoutColumns(
     table: { ...table, props: widen(table.props, -widthOf(from, to)), grid, rows: repairVMerge(rows) },
     removed,
   };
+}
+
+/** 只有空段落（没有字、没有对象）的格 —— 合并时不贡献内容（见文件头 ⑦） */
+function isBlank(cell: TableCell): boolean {
+  return cell.blocks.every(
+    (b) =>
+      b.kind === 'paragraph' &&
+      b.runs.every((r) => r.content.every((c) => c.kind === 'text' && c.text === '')),
+  );
+}
+
+/** 这一行里与网格区间 [from, to) 有交集的格的下标 */
+function cellsIn(row: TableRow, from: number, to: number): number[] {
+  return row.cells.flatMap((_, i) => {
+    const { start, end } = cellColumns(row, i);
+    return start < to && end > from ? [i] : [];
+  });
+}
+
+/**
+ * 两个格撑成的矩形（见文件头 ⑦）：行 [top, bottom]、网格列 [from, to)。
+ * 区域里有没有格的空缺（`w:gridBefore` / `w:gridAfter` 跳过的列）答 undefined —— 那不是一块能合并的矩形。
+ */
+export function cellRect(
+  table: Table,
+  a: { rowIndex: number; cellIndex: number },
+  b: { rowIndex: number; cellIndex: number },
+): { top: number; bottom: number; from: number; to: number } | undefined {
+  const ca = cellColumns(table.rows[a.rowIndex] as TableRow, a.cellIndex);
+  const cb = cellColumns(table.rows[b.rowIndex] as TableRow, b.cellIndex);
+  let top = Math.min(a.rowIndex, b.rowIndex);
+  let bottom = Math.max(a.rowIndex, b.rowIndex);
+  let from = Math.min(ca.start, cb.start);
+  let to = Math.max(ca.end, cb.end);
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (let r = top; r <= bottom; r++) {
+      const row = table.rows[r] as TableRow;
+      for (const i of cellsIn(row, from, to)) {
+        const { start, end } = cellColumns(row, i);
+        const cell = row.cells[i] as TableCell;
+        if (start < from || end > to) {
+          from = Math.min(from, start);
+          to = Math.max(to, end);
+          changed = true;
+        }
+        if (r === top && cell.vMerge === 'continue' && top > 0) {
+          top--;
+          changed = true;
+        }
+        const below = cellAtColumn(table.rows[r + 1], start);
+        if (r === bottom && cell.vMerge !== 'none' && below?.vMerge === 'continue') {
+          bottom++;
+          changed = true;
+        }
+      }
+    }
+  }
+  for (let r = top; r <= bottom; r++) {
+    const row = table.rows[r] as TableRow;
+    const covered = cellsIn(row, from, to).reduce((n, i) => n + (row.cells[i] as TableCell).gridSpan, 0);
+    if (covered !== to - from) return undefined;
+  }
+  return { top, bottom, from, to };
+}
+
+/**
+ * 把矩形里的格并成一格（见文件头 ⑦），返回新表、合并后的首格、被丢掉的空段落与续格里新造的空段落。
+ * 矩形里只有一格时答 undefined（没什么可合并的）。
+ */
+export function withMergedCells(
+  table: Table,
+  rect: { top: number; bottom: number; from: number; to: number },
+  newId: () => NodeId,
+): { table: Table; head: TableCell; dropped: Paragraph[]; added: NodeId[] } | undefined {
+  const { top, bottom, from, to } = rect;
+  const picked = table.rows
+    .slice(top, bottom + 1)
+    .map((row) => cellsIn(row, from, to).map((i) => row.cells[i] as TableCell));
+  if (picked.flat().length <= 1) return undefined;
+  const all = picked.flat();
+  const filled = all.filter((c) => !isBlank(c));
+  const first = all[0] as TableCell;
+  const blocks = filled.length === 0 ? first.blocks : filled.flatMap((c) => c.blocks);
+  const kept = new Set(blocks.map((b) => b.id));
+  const dropped = all.flatMap((c) =>
+    [...c.blocks].filter((b): b is Paragraph => b.kind === 'paragraph' && !kept.has(b.id)),
+  );
+  const span = to - from;
+  const width = table.grid.length ? table.grid.slice(from, to).reduce((n, w) => n + w, 0) : undefined;
+  const sized = (c: TableCell) =>
+    width === undefined || c.props.width?.type !== 'dxa'
+      ? c.props
+      : { ...c.props, width: { value: width, type: 'dxa' as const } };
+  const head: TableCell = {
+    ...first,
+    props: sized(first),
+    gridSpan: span,
+    vMerge: bottom > top ? 'restart' : 'none',
+    blocks,
+  };
+  const added: NodeId[] = [];
+  const rows = table.rows.map((row, r) => {
+    if (r < top || r > bottom) return row;
+    const own = picked[r - top] as TableCell[];
+    const lead = own[0] as TableCell;
+    let cell = head;
+    if (r > top) {
+      const para = lead.blocks.find((b): b is Paragraph => b.kind === 'paragraph');
+      const id = newId();
+      added.push(id);
+      cell = {
+        ...lead,
+        props: sized(lead),
+        gridSpan: span,
+        vMerge: 'continue',
+        blocks: [{ kind: 'paragraph', id, props: para?.props ?? {}, runs: [] }],
+      };
+    }
+    const at = row.cells.indexOf(lead);
+    return { ...row, cells: [...row.cells.slice(0, at), cell, ...row.cells.slice(at + own.length)] };
+  });
+  return { table: { ...table, rows }, head, dropped, added };
+}
+
+/**
+ * 拆回合并前的格（见文件头 ⑧）：位置所在的格跨列就拆成一列一格，是纵向合并区的首格就把整个区解开。
+ * 新格照原格抄属性（`dxa` 宽按网格列重算），每格一个空段落。没有合并过答 undefined。
+ */
+export function withSplitCell(
+  table: Table,
+  rowIndex: number,
+  cellIndex: number,
+  newId: () => NodeId,
+): { table: Table; cells: TableCell[] } | undefined {
+  const row = table.rows[rowIndex];
+  const target = row?.cells[cellIndex];
+  if (row === undefined || target === undefined)
+    throw new RangeError(`表格没有第 ${rowIndex} 行第 ${cellIndex} 格`);
+  if (target.gridSpan === 1 && target.vMerge !== 'restart') return undefined;
+  const { start } = cellColumns(row, cellIndex);
+  const added: TableCell[] = [];
+  const sized = (c: TableCell, col: number) => {
+    const w = table.grid[col];
+    return w === undefined || c.props.width?.type !== 'dxa'
+      ? c.props
+      : { ...c.props, width: { value: w, type: 'dxa' as const } };
+  };
+  const splitRow = (r: TableRow, cell: TableCell): TableRow => {
+    const para = cell.blocks.find((b): b is Paragraph => b.kind === 'paragraph');
+    const extra = Array.from({ length: cell.gridSpan - 1 }, (_, k): TableCell => {
+      const c: TableCell = {
+        kind: 'cell',
+        id: newId(),
+        props: sized(cell, start + k + 1),
+        gridSpan: 1,
+        vMerge: 'none',
+        blocks: [{ kind: 'paragraph', id: newId(), props: para?.props ?? {}, runs: [] }],
+      };
+      added.push(c);
+      return c;
+    });
+    const self: TableCell = { ...cell, props: sized(cell, start), gridSpan: 1, vMerge: 'none' };
+    const at = r.cells.indexOf(cell);
+    return { ...r, cells: [...r.cells.slice(0, at), self, ...extra, ...r.cells.slice(at + 1)] };
+  };
+  const rows = [...table.rows];
+  rows[rowIndex] = splitRow(row, target);
+  if (target.vMerge === 'restart')
+    for (let r = rowIndex + 1; r < rows.length; r++) {
+      const cur = rows[r] as TableRow;
+      const cont = cellAtColumn(cur, start);
+      if (cont?.vMerge !== 'continue') break;
+      rows[r] = splitRow(cur, cont);
+    }
+  return { table: { ...table, rows }, cells: added };
 }
