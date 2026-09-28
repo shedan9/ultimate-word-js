@@ -70,12 +70,15 @@ export async function load(
     diagnostics: sink,
   });
   const paragraphCache = new ParagraphLayoutCache();
+  // 交给排版的设置深冻结一份：段落缓存对冻结对象按身份记序列化串，否则每段都要重新
+  // 序列化这约 765 字节（级联那边的原件不动，谁也不该经由排版改它）
+  const settings = deepFreeze(structuredClone(loaded.cascade.settings));
   // 没改的段落跨事务复用同一个冻结的级联结果，段落缓存才能按身份认出它（见 ResolveCache）
   const resolveCache = createResolveCache();
   const result = layoutDocumentWithFields(loaded.resolved, loaded.fields, {
     paragraphCache,
     measurer,
-    settings: loaded.cascade.settings,
+    settings,
     headerFooters: loaded.headerFooters,
     diagnostics: sink,
   });
@@ -108,7 +111,7 @@ export async function load(
       const result = layoutDocumentWithFields(resolved, fields, {
         paragraphCache,
         measurer,
-        settings: loaded.cascade.settings,
+        settings,
         headerFooters: loaded.headerFooters,
         diagnostics: sink,
       });
@@ -129,4 +132,10 @@ export async function load(
     fieldValues: result.values,
     diagnostics: sink.list(),
   });
+}
+
+function deepFreeze<T>(value: T): T {
+  if (typeof value !== 'object' || value === null || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value)) deepFreeze(child);
+  return Object.freeze(value);
 }

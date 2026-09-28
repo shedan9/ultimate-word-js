@@ -176,6 +176,43 @@ describe('段落缓存', () => {
     expect(cache.size).toBe(0);
     expect(() => new ParagraphLayoutCache(0)).toThrow(RangeError);
   });
+
+  it('同一段落的几种宽度各算一项，超容量从最冷的段落淘汰', () => {
+    const opts = options();
+    const cache = new ParagraphLayoutCache(3);
+    opts.paragraphCache = cache;
+    const [a, b, c] = [para([run('甲')]), para([run('乙')]), para([run('丙')])].map((p) => Object.freeze(p));
+    if (a === undefined || b === undefined || c === undefined) throw new Error('缺段落');
+    layoutParagraph(a, opts);
+    layoutParagraph(a, { ...opts, contentWidth: 1200 });
+    layoutParagraph(b, opts);
+    expect(cache.size).toBe(3);
+    const measured = vi.spyOn(opts.measurer, 'advances');
+    layoutParagraph(a, { ...opts, contentWidth: 1200 });
+    expect(measured).not.toHaveBeenCalled();
+    // 第四项挤掉最冷的段落 b（a 刚命中过，两种宽度跟着整段挪到了队尾）
+    layoutParagraph(c, opts);
+    expect(cache.size).toBe(3);
+    measured.mockClear();
+    layoutParagraph(a, opts);
+    layoutParagraph(a, { ...opts, contentWidth: 1200 });
+    expect(measured).not.toHaveBeenCalled();
+    layoutParagraph(b, opts);
+    expect(measured).toHaveBeenCalled();
+  });
+
+  it('冻结的设置按身份记串；可写的设置原地改了照样失效', () => {
+    const opts = options();
+    const p = para([run('设置')]);
+    layoutParagraph(p, opts);
+    const measured = vi.spyOn(opts.measurer, 'advances');
+    layoutParagraph(p, { ...opts, settings: Object.freeze(structuredClone(opts.settings)) });
+    // 值相同的冻结副本照样命中：身份只是省序列化的捷径，键仍然按值比
+    expect(measured).not.toHaveBeenCalled();
+    opts.settings.defaultTabStop += 100;
+    layoutParagraph(p, opts);
+    expect(measured).toHaveBeenCalled();
+  });
 });
 
 function fixture(name: string) {
