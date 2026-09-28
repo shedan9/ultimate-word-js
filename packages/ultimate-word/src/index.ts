@@ -38,6 +38,7 @@ export type {
   OverlayHandle,
   OverlayOptions,
   OverlayPlacement,
+  PngOptions,
   ScrollOptions,
   ScrollTarget,
 } from '@uw/view/dom';

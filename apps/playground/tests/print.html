@@ -63,6 +63,44 @@ try {
   assert(sheet() === null && inline.root.querySelectorAll('[data-rendered="true"]').length === doc.pageCount, 'inline 模式的 Ctrl+P 原地补画');
   window.dispatchEvent(new Event('afterprint'));
   inline.dispose();
+  // ⑤ toPNG：按 scale 出纸张尺寸的位图，与屏幕缩放无关；页里真画了字；越界抛 RangeError
+  const shot = doc.mount(host, { zoom: 0.3 });
+  const blob = await shot.toPNG(0, { scale: 2 });
+  assert(blob.type === 'image/png', `toPNG 出 PNG（${blob.type}）`);
+  const bitmap = await createImageBitmap(blob);
+  const px = (tw, s) => Math.round(tw / 1440 * 96 * s);
+  assert(bitmap.width === px(paper.width, 2) && bitmap.height === px(paper.height, 2), `尺寸 = 纸张 × scale（${bitmap.width}×${bitmap.height}）`);
+  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+  const g = canvas.getContext('2d'); g.drawImage(bitmap, 0, 0);
+  const data = g.getImageData(0, 0, bitmap.width, bitmap.height).data;
+  let dark = 0, clear = 0;
+  for (let i = 0; i < data.length; i += 4) { if (data[i] < 128) dark++; if (data[i + 3] < 255) clear++; }
+  assert(dark > 1000, `页里画出了字（${dark} 个深色像素）`);
+  assert(clear === 0, `纸是不透明的（${clear} 个透明像素）`);
+  const one = await createImageBitmap(await shot.toPNG(doc.pageCount - 1));
+  assert(one.width === px(doc.layout.pages[doc.pageCount - 1].geometry.width, 1), '默认 scale = 1，最后一页也能导');
+  let threw = false; try { await shot.toPNG(doc.pageCount); } catch (e) { threw = e instanceof RangeError; }
+  assert(threw, '页号越界抛 RangeError');
+  shot.dispose();
+  // ⑥ 宿主 @font-face 引进来的字体要内联进快照（图片沙箱里的 SVG 看不见宿主样式表）：
+  // 同一页用「有 @font-face 的族」与「没有的族」各导一张，像素不同才说明网络字体真的画上去了
+  const fontUrl = Object.values(import.meta.glob('../../fidelity/node_modules/pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf', { query: '?url', import: 'default', eager: true }))[0];
+  const face = document.createElement('style');
+  face.textContent = `@font-face { font-family: "UwProbe"; src: url("${fontUrl}") format("truetype"); }`;
+  document.head.append(face);
+  // 探针字体只有拉丁字形，所以用中西混排的 gongwen-01（默认样本是纯中文，换哪个族都一样）
+  const mixed = await UltimateWord.load(await fixtures['../../fidelity/fixtures/gongwen-01.docx']());
+  const pixels = async (family) => {
+    const v = mixed.mount(host, { fontFamily: () => `${family}, monospace` });
+    const b = await createImageBitmap(await v.toPNG(0));
+    v.dispose();
+    const c = new OffscreenCanvas(b.width, b.height); const x = c.getContext('2d'); x.drawImage(b, 0, 0);
+    return x.getImageData(0, 0, b.width, b.height).data;
+  };
+  const withFace = await pixels("'UwProbe'"), without = await pixels("'UwMissing'");
+  let diff = 0; for (let i = 0; i < withFace.length; i += 4) if (withFace[i] !== without[i]) diff++;
+  face.remove();
+  assert(diff > 100, `@font-face 字体内联进了快照（${diff} 个像素不同）`);
   // 留一个视图给外部的 printToPDF 检查用
   window.__view = doc.mount(host, { zoom: 0.5 });
   result.textContent = `PASS: ${passed} print browser assertions`;

@@ -42,6 +42,7 @@ function fakeDocument() {
         caretRect: () => null,
         scrollTo: () => false,
         print: () => undefined,
+        toPNG: () => Promise.reject(new Error('假视图')),
         on: () => ({ dispose: () => undefined }),
         decorate: (range) => {
           const item = { range, dispose: vi.fn() };

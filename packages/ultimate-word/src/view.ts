@@ -25,6 +25,7 @@ import type {
   EditingBinding,
   OverlayHandle,
   OverlayOptions,
+  PngOptions,
   ScrollOptions,
   ScrollTarget,
 } from '@uw/view/dom';
@@ -115,6 +116,12 @@ export interface UwView extends Disposable {
   setZoom(zoom: ZoomSpec): void;
   /** 按文档自带的页面设置打印：一页一张纸、不重排、与屏幕缩放无关。走 `window.print()` */
   print(): void;
+  /**
+   * 第 `page` 页（0 起）导出成 PNG。`scale` 1 = 100% 缩放下的 CSS px（96 dpi），默认 1；
+   * 与屏幕缩放无关、不含装饰与 overlay。宿主 `@font-face` 引入的字体会被内联进去 ——
+   * `FontFace` 对象加的与跨域不开 CORS 的拿不到字节，退到本机字体。页号越界抛 RangeError
+   */
+  toPNG(page: number, options?: PngOptions): Promise<Blob>;
   /** 挂一个事件监听者，见 `ViewEvents`。`dispose()` 视图时一并摘掉 */
   on<K extends keyof ViewEvents>(type: K, listener: (payload: ViewEvents[K]) => void): Disposable;
 }
@@ -263,6 +270,10 @@ export function createView(
     overlay: (position, element, opts) => inner.overlay(position, element, opts),
     scrollTo: (target, opts) => inner.scrollTo(target, opts),
     print: () => inner.print(),
+    toPNG: (page, opts) => {
+      if (disposed) return Promise.reject(new Error('视图已销毁'));
+      return inner.toPNG(page, opts);
+    },
     on: (type, listener) => {
       if (disposed) throw new Error('视图已销毁');
       return events.on(type, listener);

@@ -505,7 +505,7 @@ view.on('click:element', e => {});
 
 // ── 导出 ────────────────────────────────────────────
 await doc.toDocx();      // → Blob
-await view.toPNG(3);     // 第 3 页
+await view.toPNG(2);     // 第 3 页（页序号从 0 起，与 scrollTo({ page }) 同一套）
 ```
 
 设计原则：
@@ -964,6 +964,15 @@ await view.toPNG(3);     // 第 3 页
     每页正好 340.15 × 340.15pt、每页首字与布局一致；gongwen-01 印出来的基线 y 与 Word 真值差 **0.06pt**
     ——与屏幕上同一个数，这正是「打印不需要重排」的实证。浏览器回归 `/tests/print.html`（12 项，
     body 故意钉成一屏高 + overflow:hidden 的应用壳布局）
+- ✅ **单页导出 PNG `view.toPNG(page, { scale })`**（2026-09-28，api.md §13）：`@uw/view` 的 `snapshot.ts`（纯数据）+
+  `snapshot-dom.ts`。与打印同理**不截屏幕那一份**（虚拟化卸掉了大半页、带着屏幕缩放和装饰），同一份 `PageLayout`
+  按 `scale` 重画成独立 SVG → `<img>` → canvas → PNG，不重排。难处在「SVG 当图片用」的沙箱：看不见宿主的 `@font-face`、
+  不许加载外部资源 —— 所以宿主样式表里**这一页用到的族**的 `@font-face` 取字节内联成 data URI（一份中文 webfont 动辄 10 MB，
+  全塞进去每页都编码一遍），非 data URI 的图片地址（宿主给的 blob URL / CDN）同样内联；取不到的退到本机字体 / 不画那张图，
+  不挡整页。`FontFace` 对象加的与跨域不开 CORS 的字体拿不到字节。画布先铺白：纸宽折成 px 带小数，取整后边上一列只盖住一部分。
+  页号从 0 起、越界抛 RangeError，单边超过 16384px 事先拦（超了 `toBlob` 答 null 不报错）。
+  7 项纯数据单测 + 1 项 jsdom 单测（jsdom 的 CSSOM 会丢 `src`，内联只能在浏览器验）+ `/tests/print.html` 增至 19 项
+  （尺寸 = 纸张 × scale、画出了字、不透明、越界、以及用只有拉丁字形的探针字体比出 @font-face 真的画上去了）。
 - ~~`@uw/react`~~ ✅（2026-09-13）`packages/react`：`<UltimateWordView>` + `useDocument` + `useDecoration`。
   **不另起 API**，`ref` 拿到的就是 `UwView`
   - 构造选项变了就 dispose 再 mount（`UwView` 没有 `update()`），`zoom` 单独走 `setZoom()`

@@ -16,6 +16,8 @@ import type { PrintSheet } from './print.ts';
 import { buildPrintSheet, PRINT_SHEET_ATTR } from './print.ts';
 import type { ScrollOptions, ScrollTarget } from './scroll.ts';
 import { scrollTargetRect } from './scroll.ts';
+import type { PngOptions } from './snapshot-dom.ts';
+import { pageToPng } from './snapshot-dom.ts';
 import { buildTextLayer } from './text-layer.ts';
 import type { ClientPoint, ClientRect, PageViewport } from './transform.ts';
 import { createReadonlyView } from './view.ts';
@@ -29,6 +31,7 @@ export type {
   OverlayOptions,
 } from './annotations-dom.ts';
 export type { ScrollOptions, ScrollTarget } from './scroll.ts';
+export type { PngOptions } from './snapshot-dom.ts';
 
 export interface ViewOptions extends MountOptions {
   /** 默认开启；常驻原生文字层，不因绘制页卸载而丢失选区 / 浏览器查找。 */
@@ -66,6 +69,12 @@ export interface DomView {
    * 走 `window.print()`，打印页在 `beforeprint` 里造、`afterprint` 里拆；没有 `window` 时抛错。
    */
   print(): void;
+  /**
+   * 第 `page` 页（页序号，0 起，与 `scrollTo({ page })` 同一套）导出成 PNG。按 `scale` 重画，
+   * 不看屏幕缩放、不含装饰与 overlay；宿主 `@font-face` 引入的字体与非 data URI 的图片会被内联。
+   * 页号越界抛 RangeError。
+   */
+  toPNG(page: number, options?: PngOptions): Promise<Blob>;
   /** 只改页面占位尺寸，保留文字层、选区与已绘制的内容。 */
   setZoom(zoom: number): void;
   update(layout: DocumentLayout, options?: ViewOptions): void;
@@ -382,6 +391,13 @@ export function mountView(container: Element, layout: DocumentLayout, options: V
         // Safari 的 print() 不阻塞、afterprint 稍后才到；阻塞的浏览器里 afterprint 已经把它删了
         if (sheet === undefined && printClaims.get(doc) === token) printClaims.delete(doc);
       }
+    },
+    async toPNG(page, options) {
+      assertLive();
+      const target = Number.isInteger(page) ? layout.pages[page] : undefined;
+      if (target === undefined)
+        throw new RangeError(`没有第 ${page} 页（共 ${layout.pages.length} 页，页号从 0 起）`);
+      return pageToPng(target, { ...opts, document: doc }, options);
     },
     setZoom(zoom) {
       assertLive();

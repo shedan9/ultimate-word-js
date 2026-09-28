@@ -685,11 +685,11 @@ interface Diagnostic {
 
 ---
 
-## 13. 导出与打印 🟡（打印 🟢 2026-09-13 · `toDocx` 🟢 2026-09-23）
+## 13. 导出与打印 🟢（打印 2026-09-13 · `toDocx` 2026-09-23 · `toPNG` 2026-09-28）
 
 ```ts
 await doc.toDocx(): Promise<Blob>;     // round-trip 安全：未识别的 XML 原样保留
-await view.toPNG(page: number, options?: { scale?: number }): Promise<Blob>;   // 未做
+await view.toPNG(page: number, options?: { scale?: number }): Promise<Blob>;   // page 从 0 起
 view.print(): void;                    // 走文档自带页面设置，不重排，与屏幕缩放无关
 ```
 
@@ -701,6 +701,13 @@ view.print(): void;                    // 走文档自带页面设置，不重�
 > `docProps/app.xml` 的字数 / 页数统计不更新（Word 打开时自己重算）。低层入口 `@uw/serialize` 的
 > `serializeDocx(pkg, body)`，`body` 必须来自同一个包的 `loadDocument(pkg)`（对应关系靠节点 id）。
 > 「Word 打开无修复提示」只能在 Windows / Mac 的 Word 里人工验，调试台有「导出 docx」按钮。
+
+> **`toPNG()`（2026-09-28）**：`page` 是页序号（**0 起**，与 `scrollTo({ page })`、`viewport:change` 同一套；
+> 原设想的示例 `toPNG(3)` 写的是「第 3 页」，按 1 起理解会差一页）。`scale` 1 = 100% 缩放下的 CSS px（96 dpi），默认 1，
+> 与屏幕当前缩放无关；装饰与 overlay 不进快照。实现是同一份布局重画成独立 SVG 再上 canvas，**不截屏幕**。
+> SVG 当图片用时看不见宿主的 `@font-face`，所以这一页用到的族会从宿主样式表取字节内联进去；
+> `document.fonts.add(new FontFace(…))` 加的、跨域没开 CORS 的样式表里的字体拿不到字节，退到本机字体。
+> 页号越界抛 `RangeError`，单边超过 16384px 也抛（调小 `scale`）。
 
 > **已实现的与原方案的差别**：`print()` 走 `window.print()`，印的**不是屏幕上那一份** ——
 > 它住在宿主的滚动容器里（`overflow:auto` 打印时只印第一屏）、带着缩放与页间距。

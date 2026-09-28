@@ -150,6 +150,9 @@ Ctrl/Cmd+Shift+= / Ctrl/Cmd+= 与对应 beforeinput。共享 `vertAlign`、互�
 页首丢段前间距、不丢边框。整层没有真值，规则在 layout / render-dom 的 `uncalibrated.ts`。
 **Unicode 正则查找修复**（2026-09-28）：零长匹配在 `u` / `v` 模式按完整码点推进，
 避免 emoji 代理对导致查找死循环；非 Unicode 仍按 UTF-16 单元推进，位置计数不变。新增 3 项回归。
+**单页导出 PNG 已接入**（2026-09-28，api.md §13）：`view.toPNG(page, { scale })`，页号 0 起。不截屏幕，
+同一份布局按 `scale` 重画成独立 SVG → `<img>` → canvas（`@uw/view` 的 `snapshot.ts` / `snapshot-dom.ts`）；
+SVG 当图片用时看不见宿主 `@font-face`，本页用到的族与外部图片取字节内联成 data URI。
 **Phase 8 已开始：回写 docx**（2026-09-23，新包 `@uw/serialize`，门面 `doc.toDocx()`，调试台「导出 docx」按钮）。
 补丁式：只重写改过的部件，没编辑的文档逐字节照搬；正文**走原文 XML 树**打补丁（见下）。Word 打开无修复提示只能人工验。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、
@@ -201,7 +204,9 @@ Ctrl/Cmd+Shift+= / Ctrl/Cmd+= 与对应 beforeinput。共享 `vertAlign`、互�
 同一页面几个视图只造一张（`data-uw-print` 标记，与 classPrefix 无关），`print()` 显式叫的那个优先
 （`printClaims`）；③ 分页用 `break-before` 不用 `break-after`（最后一页后面多印一张白纸）。
 装饰与 overlay 不进打印页。判据：headless Chrome `printToPDF` 出来的 PDF 页数 / 纸张 / 每页首字
-与布局一致，gongwen-01 的基线与真值差 0.06pt；浏览器回归 `/tests/print.html`（12 项）。
+与布局一致，gongwen-01 的基线与真值差 0.06pt；浏览器回归 `/tests/print.html`（19 项，含 `toPNG`）。
+`toPNG` 另一处容易搞反：jsdom 的 CSSOM 会丢 `@font-face` 的 `src`，字体内联只能在真浏览器里验
+（print.html ⑥ 拿只有拉丁字形的探针字体比像素，所以用中西混排的 gongwen-01，纯中文样本比不出差别）。
 
 **`@uw/react`**（`packages/react`）四处容易搞反：① **构造选项变了就重挂**（`UwView` 没有 `update()`），
 `zoom` 单独走 `setZoom()`，所以 `fontFamily` 要给稳定引用；② `overlays` 按 key 调和
