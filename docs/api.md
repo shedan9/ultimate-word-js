@@ -179,7 +179,8 @@ view.rectsOf(range): ClientRect[]; // { x, y, width, height }，CSS px
 >   传 `fieldValues`（`layoutDocumentWithFields()` 的 `values`）可以把求值过的域整个跳过 ——
 >   它们显示的是算出来的页码，文件里存的旧值搜到了也画不到屏幕上
 > - 字符串默认**不分大小写**（Word 的默认），`matchCase: true` 才分；正则跟自己的 flags 走，
->   `g` / `y` 由实现接管（调用方正则的 `lastIndex` 不会被动）。零长匹配跳过
+>   `g` / `y` 由实现接管（调用方正则的 `lastIndex` 不会被动）。零长匹配跳过；`u` / `v` 模式按完整码点推进，
+>   避免 emoji 的代理对导致重复匹配，返回位置仍按 UTF-16 单元计数
 > - 选择器**只有** `paragraph` / `run` / `table` / `row` / `cell` 五种类型；下表列的
 >   `image` / `field` / `sdt` 会抛错而不是答空 —— 图片是 run 内容的片段不是节点，域不在树上，
 >   内容控件解析时已剥成透明容器（`tag` / `alias` 根本没留下）。

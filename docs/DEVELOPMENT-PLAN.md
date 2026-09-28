@@ -911,7 +911,9 @@ await view.toPNG(3);     // 第 3 页
     串与排版看见的一致：隐藏 run / 域界桩与指令 / 软连字符不进串，对象算一个 U+FFFC 阻断匹配；
     `fieldValues` 里的 run 整个跳过（它们的旧值指不到屏幕上）。字符串默认不分大小写（Word 的默认），
     全部转成正则跑一条路 —— 用 `toLowerCase()` 比会改变 UTF-16 长度，位置就对不上了。
-    **吃级联完的树**：`w:vanish` 常写在字符样式里，直接格式树上看不见
+    **吃级联完的树**：`w:vanish` 常写在字符样式里，直接格式树上看不见。
+    2026-09-28 修复 Unicode 正则零长匹配卡死：`u` / `v` 模式按码点推进，原来 `lastIndex++`
+    会落进 emoji 代理对中间、被正则退回开头；非 Unicode 仍按 UTF-16 单元推进。新增 3 项回归。
   - `@uw/model` 的 `queryNodes(body, selector)` —— 类型 / 属性 / 后代 / 直接子 / 三个位置伪类，
     只有 `paragraph` / `run` / `table` / `row` / `cell` 五种；api.md 原来列的 `image` / `field` / `sdt`
     **抛错**而不是答空（图片不是节点、域不在树上、内容控件解析时已剥掉）

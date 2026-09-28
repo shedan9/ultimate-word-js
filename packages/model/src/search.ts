@@ -51,6 +51,7 @@ export function findText(
     throw new RangeError('limit 必须是非负整数');
   }
   const re = toRegExp(pattern, options.matchCase === true);
+  const fullUnicode = re.unicode || re.flags.includes('v');
   const out: DocRange[] = [];
   if (limit === 0) return out;
   for (const p of walkParagraphs(body)) {
@@ -61,8 +62,10 @@ export function findText(
       const m = re.exec(text);
       if (m === null) break;
       if (m[0].length === 0) {
-        // 零长匹配不推进 lastIndex，不手动跳一格会原地打转
-        re.lastIndex++;
+        // Unicode 模式必须跳过整个码点：落进代理对中间时 exec 会退回其开头，造成死循环。
+        // 非 Unicode 模式仍按 UTF-16 单元推进，否则会漏掉针对低代理项的合法匹配。
+        const codePoint = text.codePointAt(re.lastIndex);
+        re.lastIndex += fullUnicode && codePoint !== undefined && codePoint > 0xffff ? 2 : 1;
         continue;
       }
       const first = positions[m.index] as DocPosition;

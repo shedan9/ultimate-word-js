@@ -92,6 +92,37 @@ describe('findText', () => {
     expect(findText(resolved(p('aaa')), /x*/)).toEqual([]);
   });
 
+  it.each(['u', 'v'])('Unicode %s 模式跳过零长匹配时跨过完整代理对，位置仍用 UTF-16', (flag) => {
+    const body = resolved(p('😀', '甲😀乙'));
+    const runs = [...walkParagraphs(body)][0]?.runs ?? [];
+    const re = new RegExp('(?=😀)|甲|乙|$', `g${flag}`);
+    re.lastIndex = 2;
+    expect(findText(body, re)).toEqual([
+      {
+        start: { nodeId: runs[1]?.id, contentIndex: 0, offset: 0 },
+        end: { nodeId: runs[1]?.id, contentIndex: 0, offset: 1 },
+      },
+      {
+        start: { nodeId: runs[1]?.id, contentIndex: 0, offset: 3 },
+        end: { nodeId: runs[1]?.id, contentIndex: 0, offset: 4 },
+      },
+    ]);
+    expect(re.lastIndex).toBe(2);
+    expect(findText(body, new RegExp('(?:)', flag))).toEqual([]);
+    expect(findText(resolved(p('甲😀')), new RegExp('$', flag))).toEqual([]);
+  });
+
+  it('非 Unicode 零长匹配仍按 UTF-16 单元推进，不跳过低代理项', () => {
+    const body = resolved(p('😀甲'));
+    const run = [...walkParagraphs(body)][0]?.runs[0];
+    expect(findText(body, /(?=\ud83d)|\ude00/g)).toEqual([
+      {
+        start: { nodeId: run?.id, contentIndex: 0, offset: 1 },
+        end: { nodeId: run?.id, contentIndex: 0, offset: 2 },
+      },
+    ]);
+  });
+
   it('limit 截断', () => {
     expect(findText(resolved(p('aaaa')), 'a', { limit: 2 })).toHaveLength(2);
     expect(findText(resolved(p('aaaa')), 'a', { limit: 0 })).toEqual([]);
