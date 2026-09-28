@@ -78,6 +78,13 @@ export interface TextTransaction {
   /** 同一块容器内的文字范围，可跨 run / 段落。返回删除起点。 */
   deleteRange(range: DocRange): DocPosition;
   /**
+   * 把范围换成一串文字（查找替换），返回新文字的范围。`\t` 写成制表位、换行写成软换行（替换不拆段）。
+   * 新文字取**范围首字**的格式 —— Word 的替换就是这样：「**签**发人」换成「审批人」整个是粗体；
+   * 先删后插的话光标落在删除起点、继承的是**左边**那个 run，首字恰好是 run 开头时格式就丢了。
+   * 首字不是文字（制表位等）或范围折叠时退回「删掉再在起点插」。范围规则同 deleteRange。
+   */
+  replaceText(range: DocRange, text: string): DocRange;
+  /**
    * 修改范围内文字的直接字符格式，可跨段落 / 表格 / 分节；端点落在 run 中间时拆出新 run。
    * 覆盖到的段落标记（空段落、或范围越过段尾）同步修改，空段落首次输入与编号跟着它走。
    * 返回拆分后的同一段文字范围，供后续命令继续使用。
@@ -237,6 +244,30 @@ function indexRuns(body: Body): Map<NodeId, RunEntry> {
     }
   }
   return entries;
+}
+
+const editableIndex = new WeakMap<Body, Map<NodeId, RunEntry>>();
+
+/**
+ * 同一段内的范围能不能交给文字事务改：从首 run 到末 run（**含中间的隐藏 run**，删除会一起清掉）
+ * 都不在域里。批量替换先用它挑，而不是让事务去撞 —— 一条命令失败整个事务回滚，
+ * 「全部替换」不该因为有一处命中落在页码域里就一处都不换。跨段的范围答 false。
+ */
+export function rangeEditable(body: Body, range: DocRange): boolean {
+  // 一次替换几百处命中，每处都重建索引就是平方级；快照不可变，按对象缓存
+  let entries = editableIndex.get(body);
+  if (entries === undefined) {
+    entries = indexRuns(body);
+    editableIndex.set(body, entries);
+  }
+  const first = entries.get(range.start.nodeId);
+  const last = entries.get(range.end.nodeId);
+  if (first === undefined || last === undefined || first.paragraph !== last.paragraph) return false;
+  for (let i = first.runIndex; i <= last.runIndex; i++) {
+    const run = first.paragraph.runs[i] as Run;
+    if (entries.get(run.id)?.protected) return false;
+  }
+  return true;
 }
 
 function replaceRuns(body: Body, replacements: Map<NodeId, Run>): Body {
@@ -902,6 +933,44 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
               }
             }
             return { ...start };
+          });
+        },
+        replaceText(range, text) {
+          return command(() => {
+            if (typeof text !== 'string') throw new TypeError('replaceText 需要字符串');
+            const pieces = text.split(/(\r\n|\r|\n|\t)/).filter((x) => x !== '');
+            const write = (from: DocPosition): DocPosition => {
+              let at = from;
+              for (const piece of pieces) {
+                if (piece === '\t') at = transaction.insertInline(at, 'tab');
+                else if (/^[\r\n]/.test(piece)) at = transaction.insertInline(at, 'lineBreak');
+                else at = transaction.insertText(at, piece);
+              }
+              return at;
+            };
+            flush();
+            const { start, end } = range;
+            const entry = entries.has(start.nodeId) ? entryAt(start) : undefined;
+            const c = entry?.run.content[start.contentIndex];
+            const head =
+              !samePosition(start, end) && c?.kind === 'text' && start.offset < c.text.length
+                ? (c.text.codePointAt(start.offset) as number) > 0xffff
+                  ? 2
+                  : 1
+                : 0;
+            if (head === 0) {
+              const at = transaction.deleteRange(range);
+              return { start: { ...at }, end: write(at) };
+            }
+            // 删除只把片段清空、不挪槽位（见 deleteRange），所以 start / 首字之后的位置在删尾巴之后仍有效。
+            // 顺序：删首字之后的部分 → 接着首字写新文字（继承首字所在的 run）→ 删首字
+            const afterHead = { ...start, offset: start.offset + head };
+            if (!samePosition(afterHead, end)) transaction.deleteRange({ start: afterHead, end });
+            const at = write(afterHead);
+            transaction.deleteRange({ start, end: afterHead });
+            // 写入的文字还在首字那个片段里（没被制表位 / 换行切到后面的片段）时，偏移随首字左移
+            const sameSlot = at.nodeId === start.nodeId && at.contentIndex === start.contentIndex;
+            return { start: { ...start }, end: sameSlot ? { ...at, offset: at.offset - head } : at };
           });
         },
         clearRunProps(range) {

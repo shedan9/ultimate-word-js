@@ -46,13 +46,36 @@ export function findText(
   pattern: string | RegExp,
   options: FindOptions = {},
 ): DocRange[] {
+  return findMatches(body, pattern, options).map((m) => m.range);
+}
+
+/**
+ * 一处命中的全部信息：范围之外还带着命中的文字与捕获组 —— 替换要按 `$1` 展开，
+ * 光有 range 拿不回捕获组（组的边界不在 range 里）。`input` / `index` 是**本段**拼出来的串与命中起点，
+ * `` $` `` / `$'` 因此只看得到本段，与「匹配不跨段落」一致。
+ */
+export interface TextMatch {
+  range: DocRange;
+  text: string;
+  /** 下标 0 是整个命中，之后是各捕获组（没参与匹配的是 undefined），同 `RegExpExecArray` */
+  captures: readonly (string | undefined)[];
+  groups?: Readonly<Record<string, string | undefined>>;
+  index: number;
+  input: string;
+}
+
+export function findMatches(
+  body: ResolvedBody,
+  pattern: string | RegExp,
+  options: FindOptions = {},
+): TextMatch[] {
   const limit = options.limit ?? Number.POSITIVE_INFINITY;
   if (!(Number.isInteger(limit) || limit === Number.POSITIVE_INFINITY) || limit < 0) {
     throw new RangeError('limit 必须是非负整数');
   }
   const re = toRegExp(pattern, options.matchCase === true);
   const fullUnicode = re.unicode || re.flags.includes('v');
-  const out: DocRange[] = [];
+  const out: TextMatch[] = [];
   if (limit === 0) return out;
   for (const p of walkParagraphs(body)) {
     const { text, positions } = flattenParagraph(p, options.fieldValues);
@@ -70,9 +93,68 @@ export function findText(
       }
       const first = positions[m.index] as DocPosition;
       const last = positions[m.index + m[0].length - 1] as DocPosition;
-      out.push({ start: first, end: { ...last, offset: last.offset + 1 } });
+      out.push({
+        range: { start: first, end: { ...last, offset: last.offset + 1 } },
+        text: m[0],
+        captures: [...m],
+        ...(m.groups ? { groups: { ...m.groups } } : {}),
+        index: m.index,
+        input: text,
+      });
       if (out.length >= limit) return out;
     }
+  }
+  return out;
+}
+
+/**
+ * 按 `String.prototype.replace` 的规则展开替换模板（`$$` `$&` `` $` `` `$'` `$n` `$nn` `$<name>`）。
+ * 自己写一遍而不是借 `replace`：命中是在拼出来的段落串里找到的，拿命中的那一小段再跑一次正则，
+ * 前后断言（`(?<=…)`）就看不见上下文了，组的内容会变。
+ * 规则的细节照 ECMA-262 GetSubstitution：`$10` 在只有 1 个组时读作 `$1` 后跟 `0`，
+ * 没有命名组时 `$<` 原样留着，越界的 `$n` 原样留着。
+ */
+export function expandReplacement(template: string, match: TextMatch): string {
+  const { captures, groups, index, input } = match;
+  const groupCount = captures.length - 1;
+  let out = '';
+  for (let i = 0; i < template.length; i++) {
+    const ch = template[i];
+    const next = template[i + 1];
+    if (ch !== '$' || next === undefined) {
+      out += ch;
+      continue;
+    }
+    if (next === '$') {
+      out += '$';
+      i++;
+    } else if (next === '&') {
+      out += match.text;
+      i++;
+    } else if (next === '`') {
+      out += input.slice(0, index);
+      i++;
+    } else if (next === "'") {
+      out += input.slice(index + match.text.length);
+      i++;
+    } else if (next >= '0' && next <= '9') {
+      const two = template.slice(i + 1, i + 3);
+      const twoDigits = /^\d\d$/.test(two) ? Number(two) : 0;
+      if (twoDigits >= 1 && twoDigits <= groupCount) {
+        out += captures[twoDigits] ?? '';
+        i += 2;
+      } else if (Number(next) >= 1 && Number(next) <= groupCount) {
+        out += captures[Number(next)] ?? '';
+        i++;
+      } else out += '$';
+    } else if (next === '<' && groups !== undefined) {
+      const close = template.indexOf('>', i + 2);
+      if (close < 0) out += '$';
+      else {
+        out += groups[template.slice(i + 2, close)] ?? '';
+        i = close;
+      }
+    } else out += '$';
   }
   return out;
 }

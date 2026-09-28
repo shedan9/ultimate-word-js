@@ -347,3 +347,41 @@ describe('doc.bindings', () => {
     ]);
   });
 });
+
+describe('doc.replaceAll', () => {
+  it('一个事务换掉全部命中，一次撤销全回来；字符串查找时 $ 不展开', async () => {
+    const editing = await UltimateWord.load(bytes);
+    const initial = structuredClone(editing.layout);
+    const count = editing.find('通知').length;
+    expect(count).toBeGreaterThan(0);
+    let changes = 0;
+    editing.on('document:change', () => changes++);
+    expect(editing.replaceAll('通知', '$&告')).toEqual({ replaced: count, skipped: 0 });
+    expect(changes).toBe(1);
+    expect(editing.find('$&告')).toHaveLength(count);
+    expect(editing.find('通知')).toHaveLength(0);
+    const reloaded = await UltimateWord.load(await editing.toDocx());
+    expect(reloaded.find('$&告')).toHaveLength(count);
+    editing.undo();
+    expect(editing.layout).toEqual(initial);
+  });
+
+  it('正则替换展开捕获组，函数替换拿到命中；没有命中不开事务', async () => {
+    const editing = await UltimateWord.load(bytes);
+    const count = editing.find('通知').length;
+    expect(editing.replaceAll(/通(知)/, '[$1]')).toEqual({ replaced: count, skipped: 0 });
+    expect(editing.find('[知]')).toHaveLength(count);
+    expect(editing.replaceAll('[知]', (m) => `${m.text.length}`).replaced).toBe(count);
+    expect(editing.canUndo).toBe(true);
+    editing.undo();
+    expect(editing.find('[知]')).toHaveLength(count);
+    expect(editing.replaceAll('不存在的文字', 'x')).toEqual({ replaced: 0, skipped: 0 });
+    // 回调抛错时一个字都没改
+    expect(() =>
+      editing.replaceAll('[知]', () => {
+        throw new Error('停');
+      }),
+    ).toThrow('停');
+    expect(editing.find('[知]')).toHaveLength(count);
+  });
+});

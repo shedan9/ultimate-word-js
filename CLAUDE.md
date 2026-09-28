@@ -153,6 +153,9 @@ Ctrl/Cmd+Shift+= / Ctrl/Cmd+= 与对应 beforeinput。共享 `vertAlign`、互�
 **单页导出 PNG 已接入**（2026-09-28，api.md §13）：`view.toPNG(page, { scale })`，页号 0 起。不截屏幕，
 同一份布局按 `scale` 重画成独立 SVG → `<img>` → canvas（`@uw/view` 的 `snapshot.ts` / `snapshot-dom.ts`）；
 SVG 当图片用时看不见宿主 `@font-face`，本页用到的族与外部图片取字节内联成 data URI。
+**查找替换 `doc.replaceAll` 已接入**（2026-09-28，api.md §7）：一个事务倒序换掉全部命中，新文字取**首字**格式
+（`tx.replaceText`：删首字之后 → 接着首字写 → 删首字；先删后插会继承左边 run）。正则展开 `$1` / `$<name>`
+（`findMatches` / `expandReplacement` 自己展开，前后断言要看段落上下文），字符串查找时替换串原样写；域里的命中跳过计数。
 **Phase 8 已开始：回写 docx**（2026-09-23，新包 `@uw/serialize`，门面 `doc.toDocx()`，调试台「导出 docx」按钮）。
 补丁式：只重写改过的部件，没编辑的文档逐字节照搬；正文**走原文 XML 树**打补丁（见下）。Word 打开无修复提示只能人工验。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、

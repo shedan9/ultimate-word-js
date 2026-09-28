@@ -1167,6 +1167,14 @@ await view.toPNG(2);     // 第 3 页（页序号从 0 起，与 scrollTo({ page
   6 项模型单测 + 2 项回写单测 + 3 项门面单测，24 份 fixture 不编辑仍逐字节相同。
   未做：页眉页脚里的坑位、包整行的重复区块、复选框 / 图片控件的填写、`sdt[tag=…]` 选择器（控件是标记不是节点）、
   `click:element` 认坑位；Word 打开无修复提示待人工验收。
+- ✅ **查找替换 `doc.replaceAll`**（2026-09-28，api.md §7）：事务命令 `tx.replaceText(range, text)` + 门面批量替换。
+  新文字取命中**首字**的格式（Word 的行为）—— 先删后插会继承左边的 run，首字在 run 开头时格式丢失，
+  所以顺序是「删首字之后 → 接着首字写 → 删首字」，靠删除保留片段槽位这条既有保证让中间位置一直有效。
+  全部命中倒序在一个事务里换（一次重排、一个撤销单元）；正则按 `String.prototype.replace` 展开 `$1` / `$<name>`
+  （`search.ts` 的 `findMatches` / `expandReplacement`，自己展开是因为前后断言要看段落上下文），字符串查找时替换串原样写；
+  命中落在域里的按 `rangeEditable` 跳过计数，不让一处页码把整批回滚。`\t` / 换行写成制表位 / 软换行。
+  8 项模型单测 + 2 项门面单测（含导出再加载）。
+  未做：替换文字里的 `^p` 拆段、按格式查找 / 替换格式、编辑态的查找替换面板（调试台只有查找框）、内容控件锁。
 - ✅ **分页符 Ctrl+Enter**（2026-09-23）：`insertInline(position, 'pageBreak')` 插 `w:br w:type="page"`，控制器 `pageBreak()`
   再在它后面拆段（Word 2013 起分页符后跟段落标记；照界面行为写，没有真值样本）。Ctrl+Enter / Cmd+Return 接管，
   Ctrl+Shift+Enter（分栏符）不接管。布局与回写原本就认分页符，没改。单元格里事务拒绝（Word 会拆表）。

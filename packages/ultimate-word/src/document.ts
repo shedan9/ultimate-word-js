@@ -29,6 +29,7 @@ import type {
   RunOrder,
   TextChangeSet,
   TextEditor,
+  TextMatch,
   TextTransaction,
   TextTransactionOptions,
 } from '@uw/model';
@@ -36,10 +37,13 @@ import {
   buildRunOrder,
   compareDocPositions,
   createTextEditor,
+  expandReplacement,
+  findMatches,
   findText,
   fragmentOfRange,
   paragraphsOfRange,
   queryNodes,
+  rangeEditable,
   rangeOfNode,
   runPropsAtInsertion,
   runPropsOfRange,
@@ -57,7 +61,13 @@ import { createView } from './view.ts';
 /** `query()` 答的节点：段落 / run / 表格 / 行 / 格，直接格式那棵树上的 */
 export type DocNode = QueryNode<DirectProps>;
 
-export type { FindOptions };
+export type { FindOptions, TextMatch };
+
+/** `replaceAll` 的结果。跳过的是落在域（页码、目录、超链接域的显示文字）里的命中，事务改不了它们 */
+export interface ReplaceResult {
+  replaced: number;
+  skipped: number;
+}
 
 /** docx 的 MIME，`toDocx()` 的 Blob 带着它，下载时浏览器才知道扩展名 */
 export const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -233,6 +243,43 @@ export class UwDocument {
    */
   find(pattern: string | RegExp, options: Omit<FindOptions, 'fieldValues'> = {}): DocRange[] {
     return findText(this.#loaded.resolved, pattern, { ...options, fieldValues: this.#fieldValues });
+  }
+
+  /**
+   * 全部替换：一个事务、一次重排、一个撤销单元（与 `bindings.apply` 同理，逐处 `tx` 就是 N 次重排）。
+   * 查找规则同 `find`；新文字取每处**首字**的格式（`tx.replaceText`），`\t` 写成制表位、换行写成软换行。
+   * 正则查找时字符串替换按 `String.prototype.replace` 展开 `$1` / `$<name>` / `$&`；
+   * 字符串查找时替换串**原样**写入 —— 查找串本身就不当正则，`$` 也不该有特殊意思（Word 的查找框同理）。
+   * 命中落在域里的跳过并计数，不让一处失败把整批回滚。
+   */
+  replaceAll(
+    pattern: string | RegExp,
+    replacement: string | ((match: TextMatch) => string),
+    options: Omit<FindOptions, 'fieldValues' | 'limit'> = {},
+  ): ReplaceResult {
+    const matches = findMatches(this.#loaded.resolved, pattern, {
+      ...options,
+      fieldValues: this.#fieldValues,
+    });
+    const body = this.#editor.body;
+    const usable = matches.filter((m) => rangeEditable(body, m.range));
+    const text = (m: TextMatch): string => {
+      if (typeof replacement === 'function') {
+        const out = replacement(m);
+        if (typeof out !== 'string') throw new TypeError('替换函数必须返回字符串');
+        return out;
+      }
+      return typeof pattern === 'string' ? replacement : expandReplacement(replacement, m);
+    };
+    // 先把替换文字全算出来：回调抛错时一个字都还没改
+    const planned = usable.map((m) => ({ range: m.range, text: text(m) }));
+    if (planned.length) {
+      // 倒着换：删除不挪槽位、插入只动同一 run 里后面的片段，所以前面的命中位置一直有效
+      this.tx((t) => {
+        for (const p of planned.reverse()) t.replaceText(p.range, p.text);
+      });
+    }
+    return { replaced: planned.length, skipped: matches.length - usable.length };
   }
 
   /** 按结构找：`paragraph[styleId=Heading1]`、`table > row:first-child cell`。支持的语法见 api.md §7 */

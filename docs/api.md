@@ -155,6 +155,8 @@ doc.query('sdt[tag=applicant]'): DocNode[];
 // ② 按文本找
 doc.find('签发人'): DocRange[];
 doc.find(/第\s*\d+\s*条/g, { limit: 50 }): DocRange[];
+doc.replaceAll('甲方', '乙方'): { replaced: number; skipped: number };   // 2026-09-28，一个事务
+doc.replaceAll(/(\d{4})-(\d{2})/, '$1年$2月');                          // 正则展开 $1 / $<name> / $&
 
 // ③ 屏幕坐标 → 内容位置（命中测试）
 view.locate({ clientX: 320, clientY: 540 }): DocPosition | null;
@@ -185,6 +187,21 @@ view.rectsOf(range): ClientRect[]; // { x, y, width, height }，CSS px
 >   `image` / `field` / `sdt` 会抛错而不是答空 —— 图片是 run 内容的片段不是节点，域不在树上，
 >   内容控件解析时已剥成透明容器（`tag` / `alias` 根本没留下）。
 >   `:nth-child` 数的是父列表里的位置、**不分类型**（与 CSS 一致）
+>
+> **查找替换 `doc.replaceAll(pattern, replacement, options?)`（2026-09-28）**：查找规则与 `find` 完全相同
+> （同一份拼串，只是 `findMatches` 多带回捕获组），全部命中在**一个** `doc.tx()` 里倒序替换 ——
+> 一次重排、一个撤销单元、一次 `document:change`，与 `bindings.apply` 同理（逐处 `tx` 就是 N 次重排）。
+> - 新文字取命中**首字**的格式（Word 的行为）：「**签**发人」换成「审批人」整个是粗体。先删后插做不到这一点 ——
+>   删完光标落在删除起点，插入继承的是**左边**那个 run，首字恰好在 run 开头时格式就丢了；
+>   所以事务命令 `tx.replaceText(range, text)` 是「删首字之后的部分 → 接着首字写 → 删首字」
+> - `replacement` 是字符串时：**正则**查找按 `String.prototype.replace` 的规则展开 `$1` / `$<name>` / `$&` / `` $` `` / `$'`
+>   （`` $` `` / `$'` 只看得到本段，匹配本来就不跨段）；**字符串**查找时替换串原样写入，查找串本身就不当正则，`$` 也不该特殊。
+>   也可以传函数 `(match: TextMatch) => string`，所有替换文字**先算完再开事务**，回调抛错时一个字都没改
+> - 替换文字里的 `\t` 写成制表位、换行写成软换行（**不拆段** —— Word 的 `^p` 拆段，这里没做）
+> - 命中落在**域**里（页码、目录、`HYPERLINK` 域的显示文字，或跨过域代码）的**跳过**并计入 `skipped`：
+>   事务改不了域，一条命令失败整批回滚，不该因为一处页码让「全部替换」一处都不换。判据是 `@uw/model` 的 `rangeEditable(body, range)`
+> - 没有「替换当前这一处再找下一处」的门面方法：那是 `doc.tx(t => t.replaceText(range, text))`，返回值是新文字的范围，
+>   可以直接拿去选中。内容控件的锁（`contentLocked`）与文字事务的其他命令一样**不检查**
 >
 > 以下是已实现的低层只读入口：
 
@@ -390,6 +407,8 @@ editor.breakHistory(); // 光标移动、焦点切换等输入边界中断合并
 - `t.insertInline(position, 'tab' | 'lineBreak' | 'pageBreak')`（2026-09-23）插入 `w:tab` / `w:br`（软换行，不结束段落）/
   `w:br w:type="page"`（只插分页符本身，不拆段；单元格里抛错 —— Word 会从那一行拆表，拆表还没有），
   返回它后面的位置；文字中间切成「前半 / 片段 / 后半」，片段边界上不造空文字，后面的片段下标随之后移（位置由变更集映射）。
+- `t.replaceText(range, text)`（2026-09-28）把范围换成文字，返回新文字的范围；新文字取范围**首字**的格式，
+  `\t` / 换行写成制表位 / 软换行。首字不是文字（制表位等）或范围折叠时退回「删掉再在起点插」。见 §7 的 `replaceAll`。
 - `t.deleteRange(range)` 返回删除起点，支持跨 run / 文字片段，以及同一块容器内连续段落；合段保留前段格式和剩余 run 的样式 / 链接。
   只接受正向范围；位置按 UTF-16 计数，但不能切开合法代理对。
 - 空段落锚点可输入，首次输入建立带段落标记直接格式的 run；撤销恢复无 run 的原树。
