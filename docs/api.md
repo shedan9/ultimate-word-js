@@ -289,16 +289,34 @@ view.scrollTo(target: DocPosition | DocRange | { page: number }, options?: {
 
 ---
 
-## 9. 数据绑定（模板填充）🟡
+## 9. 数据绑定（模板填充）🟢（2026-09-28）
 
 模板填充是这类库最高频的实际用途，值得有一等公民的 API。
 
 ```ts
-doc.bindings.list(): BindingInfo[];              // 文档里有哪些坑位
-doc.bindings.set('applicant', '张三');
-doc.bindings.setMany({ applicant: '张三', date: '2026-08-13' });
-doc.bindings.apply();                            // 一次性提交 → 触发一次增量重排
+doc.bindings.list(): BindingInfo[];              // 文档里有哪些坑位（按文档序，含现值 / 是否占位 / 下拉选项 / range）
+doc.bindings.set('applicant', '张三');            // 名字不存在就抛；返回 this，可链式
+doc.bindings.setMany({ applicant: '张三', date: '2026-08-13' });   // → { skipped: string[] }
+doc.bindings.apply();                            // 一次性提交 → 一个事务、一次重排、一个撤销单元
+doc.bindings.pending / discard();                // 还没提交的值 / 丢掉它们
 ```
+
+> **已实现的与原方案的差别**（2026-09-28）：
+> - 坑位名是 `w:tag`，没有 tag 的控件退到 `w:alias`，两样都没有的不算坑位。**同名的几个控件一起填**
+>   （模板里「申请人」常在正文和落款各出现一次）。
+> - `set` 对不存在的名字**抛错**（拼错字段名静默不填是最难发现的错），`setMany` 却**跳过**并在返回值里列出来 ——
+>   数据对象常常带着模板用不上的字段，逐个挑太啰嗦。原设想两者形状一致，实际用法不一样。
+> - `apply()` 是一个 `doc.tx()`：任何一个坑位填不进去（锁了内容、下拉框没有这个选项）**整批回滚**，攒着的值留着。
+>   复选框、图片、文档部件（目录外壳）控件在 `set` 时就拒绝。值里的 `\n` 写成软换行、`\t` 写成制表位；
+>   单行纯文本控件（`w:text` 没开 `w:multiLine`）把换行换成空格；下拉框认显示文字或 `w:value`（值换成显示文字）。
+> - 占位状态（`w:showingPlcHdr`）的控件填值时，占位文字的 `PlaceholderText` 灰字格式换成控件自己的
+>   `sdtPr/w:rPr`，标记随事务清掉（跟着撤销走）。回写时**内容一变**就去掉 `w:showingPlcHdr` 与数据绑定
+>   （`w:dataBinding` / `w15:dataBinding`）：绑定的控件 Word 打开时会用 customXml 里的值**盖掉**内容，
+>   只改内容等于白填；去绑定比改 customXml 稳（不必解析 XPath 与前缀映射）。
+> - 「增量重排」目前是段落缓存那一档（§10.3），与普通事务相同。
+> - 只认**正文**里包着 run（行内）或包着段落 / 表格（块级）的控件；页眉页脚里的、以及包着整行 / 整格的
+>   （重复区块的外壳）照旧是透明容器。日期控件只换文字，不改 `w:date w:fullDate`。
+> - 低层入口：`@uw/model` 的 `contentControlSpans(body)` 与事务命令 `tx.fillContentControl(id, text)`（§10.1）。
 
 底层走 OOXML 原生的**内容控件 `w:sdt`**，所以：填完导回 docx，在 Word 里打开
 坑位仍然是坑位，可以继续用 Word 编辑——而不是变成一段死文本。
@@ -425,6 +443,10 @@ editor.breakHistory(); // 光标移动、焦点切换等输入边界中断合并
   返回合并后那一格的开头；矩形里有 `w:gridBefore` / `w:gridAfter` 的空缺抛错，只有一格时不修改。
 - `t.splitCell(position)` 是合并的**逆操作**：跨列格拆回一列一格、纵向合并区逐格解开，内容留在原格，新格各一个空段落。
   没合并过的格不修改。Word「拆分单元格」拆成任意行列数的那种还没有，拆表也还没有。
+- `t.fillContentControl(id, text)`（2026-09-28）把内容控件（`Body.contentControls` 的 id）的内容换成 `text`，返回新内容的范围。
+  块级控件跨段的内容并成一段；删空的成员 run 去掉（内层控件随之消失，位置收拢到起点）；占位状态换上控件自己的
+  字符格式并清掉占位标记（值与占位文字相同也算一次修改）。锁了内容、复选框 / 图片 / 文档部件控件、下拉框没有的选项都拒绝。
+  门面的 `doc.bindings`（§9）就是它按名字批量调用。
 - 默认最多 100 个撤销单元。只有显式 `origin: 'input'` 的单次纯插入、位置紧接上次末端、
   间隔不超过 1000ms 才合并；默认命令、超时、`breakHistory()`、undo/redo 都打断合并。
   `historyLimit: 0` 关闭历史，`mergeDelay: 0` 关闭合并。每次提交的变更集仍只含本次修改。
@@ -807,5 +829,5 @@ main.on('viewport:change', ({ visiblePages }) => thumbs.scrollTo({ page: visible
 | `query` · `find` · `locate` · `rectsOf` · `decorate` · `overlay` · `scrollTo` | Phase 6 ✅（门面 2026-09-13） |
 | `tx` · `undo` / `redo` · 选区 · IME | Phase 7 |
 | `toDocx` | Phase 8 |
-| `bindings` | Phase 5–6 |
+| `bindings` | ✅（2026-09-28，建在 Phase 7 的事务与 Phase 8 的回写上） |
 | `@uw/react` | Phase 6 ✅（2026-09-13） |

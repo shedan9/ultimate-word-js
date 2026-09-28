@@ -49,6 +49,7 @@ import {
 import type { OpcPackage } from '@uw/ooxml';
 import { imageHrefResolver } from '@uw/render-dom';
 import { serializeDocx } from '@uw/serialize';
+import { Bindings } from './bindings.ts';
 import { Emitter } from './events.ts';
 import type { Disposable, ElementHit, UwView, ViewOptions } from './view.ts';
 import { createView } from './view.ts';
@@ -128,6 +129,8 @@ export class UwDocument {
   #nodes: Map<NodeId, DocNode> | undefined;
   #resolvedRuns: Map<NodeId, ResolvedRun> | undefined;
   #imageHref: ((id: string) => string | undefined) | undefined;
+  /** 模板填充（api.md §9）：按内容控件的 tag 填值，`apply()` 一次提交 */
+  readonly bindings: Bindings;
 
   constructor(init: UwDocumentInit) {
     this.#loaded = init.loaded;
@@ -145,6 +148,7 @@ export class UwDocument {
     this.#fieldValues = init.fieldValues;
     this.#diagnostics = [...init.diagnostics];
     this.#diagnosticKeys = new Set(this.#diagnostics.map(diagnosticKey));
+    this.bindings = new Bindings({ body: () => this.#editor.body, tx: (callback) => this.tx(callback) });
   }
 
   /** 挂一个事件监听者，见 `DocumentEvents`。视图上的事件在 `UwView.on` */
@@ -319,7 +323,8 @@ export class UwDocument {
 
   /**
    * 点到的位置落在什么「元素」上（`click:element` 的数据）。现在只认超链接：
-   * 图片的绘制层不接指针事件、布局索引里也没有对象的矩形，内容控件解析时已经剥掉了。
+   * 图片的绘制层不接指针事件、布局索引里也没有对象的矩形；内容控件（run 上的标记）
+   * 还没接 —— 点坑位要答哪一层控件（嵌套时）还没定。
    */
   #elementAt(position: DocPosition): ElementHit | undefined {
     if (this.#resolvedRuns === undefined) {

@@ -6,7 +6,7 @@
  * Word 打开无修复提示」最稳的一种满足法：我们根本没碰它。
  *
  * 编辑过的文档目前最多动这几个部件：
- * - `document.xml` —— 正文变了（body-writer.ts，补丁式，未改的段落逐字节不变）
+ * - `document.xml` —— 正文变了（body-writer.ts，补丁式，未改的段落逐字节不变），或内容控件填了值
  * - `numbering.xml` —— 新建列表加了定义（numbering-writer.ts，只追加）
  * - `styles.xml` —— 套用文档里没有的内建样式补了定义（styles-writer.ts，只追加）
  * - 新建 numbering.xml / styles.xml 时，外加 `[Content_Types].xml` 与主文档的关系表各登记一条
@@ -50,7 +50,11 @@ export function serializeDocx(pkg: OpcPackage, body: Body, options: SerializeOpt
   // 重新解析的诊断在加载时已经报过一遍，这里丢掉
   const originalBody = parseBody(original, createDiagnosticSink(), main, sources);
 
-  if (!same(originalBody.sections, body.sections)) {
+  // 控件表单独比：值恰好等于占位文字时正文一个字没变，只有「占位符标记」清掉了
+  if (
+    !same(originalBody.sections, body.sections) ||
+    !same(originalBody.contentControls, body.contentControls)
+  ) {
     const doc = writeBody({
       original,
       originalBody,

@@ -8,12 +8,15 @@
  *    同名元素只报一次，否则一份带修订的文档能刷出上千条诊断
  * 2. **容器一律压平。** `w:hyperlink` / `w:ins` / `w:sdt` / `w:smartTag` / `w:fldSimple`
  *    在排版上都是透明的，只是包着 run 而已。压平之后段落的子节点是一列扁平的 run，
- *    断行算法不必递归下钻（见 nodes.ts 的 `RunNode.hyperlink`）
+ *    断行算法不必递归下钻（见 nodes.ts 的 `RunNode.hyperlink`）。内容控件多留一份身份
+ *    （`Body.contentControls`）与成员标记，给模板填充用（content-control.ts）
  * 3. **这里不做级联。** 产出的是直接格式（可缺席），级联在 resolve-body.ts
  */
 import type { DiagnosticSink } from '@uw/core';
 import type { XmlDocument, XmlElement } from '@uw/ooxml';
 import { attr, child, children, textContent } from '@uw/ooxml';
+import type { ContentControl } from './content-control.ts';
+import { parseContentControl } from './content-control.ts';
 import type {
   Block,
   Body,
@@ -92,6 +95,10 @@ interface Ctx {
   idPrefix: string;
   /** 回写用的源元素表，只有 `@uw/serialize` 重新解析时才给 —— 平时加载不付这份内存 */
   sources: BodySources | undefined;
+  /** 收到的内容控件（`Body.contentControls`） */
+  controls: Record<NodeId, ContentControl>;
+  /** 当前所在的最内层块级控件，新建的段落 / 表格记上它 */
+  blockControl: NodeId | undefined;
 }
 
 /**
@@ -105,7 +112,7 @@ interface Ctx {
 export interface BodySources {
   /**
    * 段落 / run / 表格 / 行 / 格 → `w:p` / `w:r` / `w:tbl` / `w:tr` / `w:tc`；节 → 它的 `w:sectPr`；
-   * 简单域（`RunNode.fieldSimple.id`）→ 它的 `w:fldSimple`
+   * 简单域（`RunNode.fieldSimple.id`）→ 它的 `w:fldSimple`；内容控件 → 它的 `w:sdt`
    */
   nodes: Map<NodeId, XmlElement>;
   /**
@@ -143,7 +150,16 @@ export function parseBody(
   part = 'document.xml',
   sources?: BodySources,
 ): Body {
-  const ctx: Ctx = { diagnostics, part, reported: new Set(), counters: new Map(), idPrefix: '', sources };
+  const ctx: Ctx = {
+    diagnostics,
+    part,
+    reported: new Set(),
+    counters: new Map(),
+    idPrefix: '',
+    sources,
+    controls: {},
+    blockControl: undefined,
+  };
   const body = child(doc.root, 'w:body');
   if (body === undefined) {
     // 结构性问题，但不抛 —— `OpcPackage.requirePart` 已经保证部件在，
@@ -194,7 +210,7 @@ export function parseBody(
     diagnostics.warn('missing-sectPr', '文档末尾没有 <w:sectPr>，页面尺寸用兜底值', { part });
     sections.push({ id: nextId(ctx, 'sec'), props: parseSectionProps(undefined), blocks: pending });
   }
-  return { sections };
+  return Object.keys(ctx.controls).length ? { sections, contentControls: ctx.controls } : { sections };
 }
 
 /**
@@ -220,6 +236,9 @@ export function parseHeaderFooter(
     counters: new Map(),
     idPrefix,
     sources: undefined,
+    // 页眉页脚里的控件照样标在节点上，但不收进正文的控件表 —— 填值只填正文（api.md §9）
+    controls: {},
+    blockControl: undefined,
   };
   const out: Block[] = [];
   for (const el of children(doc.root)) {
@@ -245,10 +264,16 @@ function sectPrOf(p: XmlElement): XmlElement | undefined {
   return pPr === undefined ? undefined : child(pPr, 'w:sectPr');
 }
 
-/** `w:sdt`（内容控件）在块级也是透明的，内容在 `w:sdtContent` 里 */
+/**
+ * `w:sdt`（内容控件）在块级也是透明的，内容在 `w:sdtContent` 里。
+ * 控件本身记进控件表，里面新建的段落 / 表格标上它（`ParagraphNode.contentControl`）
+ */
 function sdtBlocks(ctx: Ctx, sdt: XmlElement): Block[] {
   const content = child(sdt, 'w:sdtContent');
   if (content === undefined) return [];
+  const id = openControl(ctx, sdt, 'block', ctx.blockControl);
+  const outer = ctx.blockControl;
+  ctx.blockControl = id;
   const out: Block[] = [];
   for (const el of children(content)) {
     if (el.name === 'w:p') out.push(parseParagraph(ctx, el, parseParaProps(child(el, 'w:pPr'))));
@@ -256,7 +281,20 @@ function sdtBlocks(ctx: Ctx, sdt: XmlElement): Block[] {
     else if (el.name === 'w:sdt') out.push(...sdtBlocks(ctx, el));
     else if (!IGNORED.has(el.name)) unknown(ctx, el, 'w:sdtContent');
   }
+  ctx.blockControl = outer;
   return out;
+}
+
+function openControl(
+  ctx: Ctx,
+  sdt: XmlElement,
+  scope: ContentControl['scope'],
+  parent: NodeId | undefined,
+): NodeId {
+  const id = nextId(ctx, 'sdt');
+  record(ctx, id, sdt);
+  ctx.controls[id] = parseContentControl(sdt, id, scope, parent);
+  return id;
 }
 
 // ── 段落 ──────────────────────────────────────────────────────────────────────
@@ -266,7 +304,9 @@ function parseParagraph(ctx: Ctx, p: XmlElement, props: ParaProps): Paragraph {
   collectRuns(ctx, p, runs, {});
   const id = nextId(ctx, 'p');
   record(ctx, id, p);
-  return { kind: 'paragraph', id, props, runs };
+  const paragraph: Paragraph = { kind: 'paragraph', id, props, runs };
+  if (ctx.blockControl !== undefined) paragraph.contentControl = ctx.blockControl;
+  return paragraph;
 }
 
 /**
@@ -279,6 +319,7 @@ function parseParagraph(ctx: Ctx, p: XmlElement, props: ParaProps): Paragraph {
 interface RunMarks {
   link?: Run['hyperlink'];
   field?: Run['fieldSimple'];
+  control?: NodeId;
 }
 
 /**
@@ -309,7 +350,10 @@ function collectRuns(ctx: Ctx, parent: XmlElement, out: Run[], marks: RunMarks):
       collectRuns(ctx, el, out, marks);
     } else if (el.name === 'w:sdt') {
       const content = child(el, 'w:sdtContent');
-      if (content !== undefined) collectRuns(ctx, content, out, marks);
+      if (content !== undefined) {
+        const control = openControl(ctx, el, 'inline', marks.control ?? ctx.blockControl);
+        collectRuns(ctx, content, out, { ...marks, control });
+      }
     } else if (DELETED.has(el.name)) {
       // 修订只做显示、不做编辑（非目标），显示的是**接受后**的版式：删掉的字不占位。
       // 记一条 info 是因为「文档里有字没画出来」必须留痕，否则查起来无从下手
@@ -332,6 +376,7 @@ function parseRun(ctx: Ctx, r: XmlElement, marks: RunMarks): Run {
   if (origins !== undefined) ctx.sources?.content.set(run.id, origins);
   if (marks.link !== undefined) run.hyperlink = marks.link;
   if (marks.field !== undefined) run.fieldSimple = marks.field;
+  if (marks.control !== undefined) run.contentControl = marks.control;
   return run;
 }
 
@@ -445,13 +490,15 @@ function parseTable(ctx: Ctx, tbl: XmlElement): Table {
   }
   const id = nextId(ctx, 'tbl');
   record(ctx, id, tbl);
-  return {
+  const table: Table = {
     kind: 'table',
     id,
     props: parseTableProps(child(tbl, 'w:tblPr')),
     grid: parseTableGrid(child(tbl, 'w:tblGrid')),
     rows,
   };
+  if (ctx.blockControl !== undefined) table.contentControl = ctx.blockControl;
+  return table;
 }
 
 function parseRow(ctx: Ctx, tr: XmlElement): TableRow {

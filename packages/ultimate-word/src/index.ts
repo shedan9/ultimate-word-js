@@ -23,6 +23,7 @@ export type { Diagnostic, DiagnosticSeverity } from '@uw/core';
 export { UwError, UwErrorCode } from '@uw/core';
 export type { FontRegistry, FontStatus, MetricsPack } from '@uw/fonts';
 export type {
+  ContentControlType,
   DocPosition,
   DocRange,
   NodeId,
@@ -40,6 +41,7 @@ export type {
   ScrollOptions,
   ScrollTarget,
 } from '@uw/view/dom';
+export type { BindingInfo, Bindings } from './bindings.ts';
 export type { DocNode, DocumentEvents, FindOptions } from './document.ts';
 export { DOCX_MIME, UwDocument } from './document.ts';
 export type { FontsApi } from './fonts.ts';

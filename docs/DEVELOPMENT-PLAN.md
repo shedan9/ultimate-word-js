@@ -916,7 +916,8 @@ await view.toPNG(3);     // 第 3 页
     会落进 emoji 代理对中间、被正则退回开头；非 Unicode 仍按 UTF-16 单元推进。新增 3 项回归。
   - `@uw/model` 的 `queryNodes(body, selector)` —— 类型 / 属性 / 后代 / 直接子 / 三个位置伪类，
     只有 `paragraph` / `run` / `table` / `row` / `cell` 五种；api.md 原来列的 `image` / `field` / `sdt`
-    **抛错**而不是答空（图片不是节点、域不在树上、内容控件解析时已剥掉）
+    **抛错**而不是答空（图片不是节点、域不在树上、内容控件解析时已剥掉 —— 2026-09-28 起控件留下来了，
+    但成了节点上的**标记**而不是节点，`sdt` 选择器仍然抛，坑位走 `doc.bindings`）
   - `@uw/model` 的 `order.ts` —— 模型侧的文档序（`buildRunOrder` / `compareDocPositions` /
     `rangeContains` / `rangeOfNode`）。`LayoutIndex.compare()` 只认排出来的 run，
     查找与批注却常指着空 run / 隐藏 run。顺带把 api.md 里 `DocRange` 的两个方法改成了纯数据
@@ -1123,6 +1124,17 @@ await view.toPNG(3);     // 第 3 页
   避免重新露出样式上标。折叠光标暂存到输入 / IME，空段落改段落标记；复用已有模型、排版与回写。
   3 项控制器单测 + 15 项浏览器断言，编辑回归增至 222 项，覆盖样式清除后的切换、撤销重做与导出回读。
   上下标字号与基线仍沿用未标定规则；浏览器截获的缩放快捷键无法传入页面。
+- ✅ **模板填充 `doc.bindings`**（2026-09-28，api.md §9）：内容控件不再只是透明容器 ——
+  `sdtPr` 的身份（tag / alias / 类型 / 锁 / 占位标记 / 控件字符格式 / 下拉选项 / 数据绑定）进 `Body.contentControls`
+  （与 `numbering` / `styles` 同理挂在可编辑的树上随撤销走），成员关系是节点上的标记：行内控件标在 run 上、块级标在段落 / 表格上，
+  嵌套靠 `parent` 串（`content-control.ts`）。标记而不是「控件 → 起止位置」：内容会被编辑，标记跟着节点走，拆出来的节点自动带着。
+  事务 `fillContentControl(id, text)` 删掉原内容再写入（换行 → 软换行、`\t` → 制表位），去掉删空的成员 run（内层控件随之消失），
+  占位状态换上控件自己的格式并清标记。门面 `doc.bindings`：`list` / `set`（名字不存在抛）/ `setMany`（跳过并列出）/ `apply`（一个事务）。
+  回写：`w:sdt` 外壳原样，内容一变就去掉 `w:showingPlcHdr` 与数据绑定（绑定的控件 Word 打开时会被 customXml 盖掉）；
+  run 的外层标记多比一项控件，控件末尾之后拆出的新 run 不再被塞进控件里。
+  6 项模型单测 + 2 项回写单测 + 3 项门面单测，24 份 fixture 不编辑仍逐字节相同。
+  未做：页眉页脚里的坑位、包整行的重复区块、复选框 / 图片控件的填写、`sdt[tag=…]` 选择器（控件是标记不是节点）、
+  `click:element` 认坑位；Word 打开无修复提示待人工验收。
 - ✅ **分页符 Ctrl+Enter**（2026-09-23）：`insertInline(position, 'pageBreak')` 插 `w:br w:type="page"`，控制器 `pageBreak()`
   再在它后面拆段（Word 2013 起分页符后跟段落标记；照界面行为写，没有真值样本）。Ctrl+Enter / Cmd+Return 接管，
   Ctrl+Shift+Enter（分栏符）不接管。布局与回写原本就认分页符，没改。单元格里事务拒绝（Word 会拆表）。
@@ -1576,7 +1588,9 @@ CI 上无 Word，所以真值 PDF 与抽取结果**提交进仓库**（`fixtures
     （`/tests/scroll.html` 17 项）。两处把文档写在实现之前的说法改对了：`DocRange` 是纯数据
     （原先带 `text()` / `contains()`）、overlay 没有 `follow` 开关（一律跟随，关不掉也没必要关）。
     一处估计落空：api.md 列的 `sdt[tag=…]` 选择器做不了 —— 内容控件在 parse-body 里
-    是透明容器，`tag` / `alias` 根本没留下；要支持它得先改解析，那是数据绑定（§9）那一步的事
+    是透明容器，`tag` / `alias` 根本没留下；要支持它得先改解析，那是数据绑定（§9）那一步的事。
+    2026-09-28 数据绑定做完了，解析也改了，但选择器**仍然做不了**：控件常常只罩着 run 的一部分，
+    做成了节点上的标记而不是节点，答不出「这个节点」是哪一个
 
 18. ~~**`ultimate-word` 门面包**~~ ✅（2026-09-13）见 Phase 6 的条目。跨平台，不需要 Word。
     做的过程中照出一件工具链上的事：随库度量包在浏览器里没有一条**库自己**的路可走

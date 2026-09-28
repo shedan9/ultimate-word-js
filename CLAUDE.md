@@ -134,6 +134,11 @@ Word 2013 起分页符后面跟一个段落标记，后文从新段落开始（*
 Ctrl/Cmd+Shift+= / Ctrl/Cmd+= 与对应 beforeinput。共享 `vertAlign`、互斥切换，取消显式写 baseline，
 避免样式上标重新生效；折叠暂存、IME、撤销与回写复用现有通路。3 项控制器单测，编辑浏览器回归增至 222 项。
 字号与基线沿用已有未标定规则；浏览器缩放快捷键可能先截获，测试验证页面收到事件后的行为。
+**模板填充 `doc.bindings` 已接入**（2026-09-28，api.md §9）：内容控件的 `sdtPr`（tag / alias / 类型 / 锁 / 占位标记 /
+控件格式 / 下拉选项 / 数据绑定）进 `Body.contentControls`，成员是**节点上的标记**（行内控件标 run、块级标段落 / 表格，
+嵌套靠 `parent`，`content-control.ts`）—— 不存起止位置，内容一编辑就得映射。`tx.fillContentControl(id, text)` 换内容、
+占位状态换上控件格式并清标记（随撤销走）；门面 `list` / `set`（名字错抛）/ `setMany`（跳过）/ `apply`（一个事务，倒序填让外层盖内层）。
+回写内容一变就去 `w:showingPlcHdr` 与 `w:dataBinding` —— **绑定的控件 Word 打开时会被 customXml 盖掉**，只改内容等于白填。
 **Unicode 正则查找修复**（2026-09-28）：零长匹配在 `u` / `v` 模式按完整码点推进，
 避免 emoji 代理对导致查找死循环；非 Unicode 仍按 UTF-16 单元推进，位置计数不变。新增 3 项回归。
 **Phase 8 已开始：回写 docx**（2026-09-23，新包 `@uw/serialize`，门面 `doc.toDocx()`，调试台「导出 docx」按钮）。

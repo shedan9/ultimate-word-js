@@ -6,7 +6,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { FALLBACK_METRICS, FontRegistry } from '@uw/fonts';
-import { unzip } from '@uw/ooxml';
+import { unzip, zip } from '@uw/ooxml';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { UwDocument } from './index.ts';
 import { DOCX_MIME, UltimateWord, UwError, UwErrorCode } from './index.ts';
@@ -254,5 +254,96 @@ describe('UwDocument 的事件', () => {
     editing.undo();
     editing.redo();
     expect(got).toHaveLength(1);
+  });
+});
+
+describe('doc.bindings', () => {
+  const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+  const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  const control = (tag: string, text: string, pr = '') =>
+    `<w:sdt><w:sdtPr><w:tag w:val="${tag}"/>${pr}</w:sdtPr><w:sdtContent><w:r><w:t>${text}</w:t></w:r></w:sdtContent></w:sdt>`;
+  /** 最小模板：两个同名坑位、一个占位状态的纯文本、一个下拉框、一个复选框 */
+  function template(): Uint8Array {
+    const enc = new TextEncoder();
+    const body =
+      `<w:p><w:r><w:t>申请人：</w:t></w:r>${control('applicant', '单击输入', '<w:showingPlcHdr/><w:text/>')}</w:p>` +
+      `<w:p><w:r><w:t>日期：</w:t></w:r>${control('date', '某日')}<w:r><w:t>，签名：</w:t></w:r>${control('applicant', '单击输入', '<w:showingPlcHdr/><w:text/>')}</w:p>` +
+      `<w:p>${control('level', '一般', '<w:dropDownList><w:listItem w:displayText="紧急" w:value="1"/><w:listItem w:displayText="一般" w:value="2"/></w:dropDownList>')}${control('agree', '☐', '<w14:checkbox/>')}</w:p>`;
+    return zip(
+      new Map([
+        [
+          '[Content_Types].xml',
+          enc.encode(
+            '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+              '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+              '<Default Extension="xml" ContentType="application/xml"/>' +
+              '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>',
+          ),
+        ],
+        [
+          '_rels/.rels',
+          enc.encode(
+            `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${R}/officeDocument" Target="word/document.xml"/></Relationships>`,
+          ),
+        ],
+        [
+          'word/document.xml',
+          enc.encode(
+            `<w:document xmlns:w="${W}" xmlns:r="${R}" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"><w:body>${body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr></w:body></w:document>`,
+          ),
+        ],
+      ]),
+    );
+  }
+
+  it('list 按文档序列出坑位与现值；set 只记下，apply 一次提交成一个撤销单元', async () => {
+    const d = await UltimateWord.load(template());
+    expect(d.bindings.list().map((b) => [b.key, b.value, b.placeholder])).toEqual([
+      ['applicant', '单击输入', true],
+      ['date', '某日', false],
+      ['applicant', '单击输入', true],
+      ['level', '一般', false],
+      ['agree', '☐', false],
+    ]);
+    expect(d.bindings.list()[3]?.options).toEqual(['紧急', '一般']);
+    const changes: string[] = [];
+    d.on('document:change', (e) => changes.push(e.source));
+    d.bindings.set('applicant', '张三').set('level', '1');
+    expect(d.find('张三')).toHaveLength(0);
+    const { skipped } = d.bindings.setMany({ date: '2026年9月28日', unused: 'x' });
+    expect(skipped).toEqual(['unused']);
+    expect(d.bindings.apply()).toBeDefined();
+    expect(changes).toEqual(['tx']);
+    expect(d.bindings.pending.size).toBe(0);
+    expect(d.find('张三')).toHaveLength(2);
+    expect(d.bindings.list().map((b) => b.value)).toEqual(['张三', '2026年9月28日', '张三', '紧急', '☐']);
+    expect(d.bindings.list().every((b) => !b.placeholder)).toBe(true);
+    d.undo();
+    expect(d.bindings.list().map((b) => b.value)).toEqual(['单击输入', '某日', '单击输入', '一般', '☐']);
+  });
+
+  it('名字拼错、复选框在 set 时就抛；下拉框没有的选项在 apply 时整批回滚、值留着', async () => {
+    const d = await UltimateWord.load(template());
+    expect(() => d.bindings.set('aplicant', '张三')).toThrow(/没有坑位/);
+    expect(() => d.bindings.set('agree', '☑')).toThrow(/checkbox/);
+    d.bindings.set('applicant', '张三').set('level', '特急');
+    expect(() => d.bindings.apply()).toThrow();
+    expect(d.find('张三')).toHaveLength(0);
+    expect(d.canUndo).toBe(false);
+    expect(d.bindings.pending.get('applicant')).toBe('张三');
+    d.bindings.discard();
+    expect(d.bindings.apply()).toBeUndefined();
+  });
+
+  it('填完导出再加载：坑位还是坑位，值留着、占位标记没了', async () => {
+    const d = await UltimateWord.load(template());
+    d.bindings.set('applicant', '李四');
+    d.bindings.apply();
+    const again = await UltimateWord.load(await d.toDocx());
+    const applicant = again.bindings.list().filter((b) => b.key === 'applicant');
+    expect(applicant.map((b) => [b.value, b.placeholder])).toEqual([
+      ['李四', false],
+      ['李四', false],
+    ]);
   });
 });

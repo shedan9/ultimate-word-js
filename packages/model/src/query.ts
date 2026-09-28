@@ -14,7 +14,9 @@
  * api.md 里列的 `image` / `field` / `sdt` 三种类型**这里没有**，各有各的原因：
  * 图片是 run 内容的一个片段（`ObjectContent`），不是节点、没有 id，查出来也没法当锚点；
  * 域不在树上（`LoadedDocument.fields` 单独一份，因为它跨段落）；
- * 内容控件（`w:sdt`）解析时当成透明容器剥掉了（parse-body.ts），`tag` / `alias` 根本没留下。
+ * 内容控件（`w:sdt`）不是节点而是节点上的标记（行内控件标在 run 上、块级标在段落上，
+ * 见 content-control.ts）—— 一个控件常常只罩着 run 的一部分，当成节点答不出「它是哪一个」；
+ * 按 tag 找坑位走 `contentControlSpans`（门面的 `doc.bindings.list()`）。
  * 三种一律抛错而不是静默答空 —— 「查不到」与「查不了」是两回事。
  *
  * 属性值按**字符串**比（`String(props[key]) === value`），`[bold=true]` 因此也能写。
@@ -29,7 +31,7 @@ const TYPES = new Set(['paragraph', 'run', 'table', 'row', 'cell']);
 const UNSUPPORTED: Record<string, string> = {
   image: '图片是 run 内容的片段，不是节点',
   field: '域不在节点树上（见 LoadedDocument.fields）',
-  sdt: '内容控件解析时已剥成透明容器',
+  sdt: '内容控件是节点上的标记而不是节点，请用 contentControlSpans / doc.bindings',
 };
 
 interface Attr {

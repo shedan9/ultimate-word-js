@@ -7,6 +7,7 @@
  */
 
 import { CLEAR_RUN_PROPS } from './clear-format.ts';
+import { contentControlSpans, rangeOfContentControl, withinContentControl } from './content-control.ts';
 import type { Block, Body, NodeId, Paragraph, Run, RunContent, TableCell, TableRow } from './nodes.ts';
 import { walkBlocks, walkParagraphs } from './nodes.ts';
 import { EMPTY_NUMBERING } from './numbering.ts';
@@ -126,6 +127,14 @@ export interface TextTransaction {
    * 新格各一个空段落。返回原位置；这一格没有合并过时不修改。
    */
   splitCell(position: DocPosition): DocPosition;
+  /**
+   * 把内容控件（`Body.contentControls` 里的 id）的内容整个换成 `text`，返回新内容的范围。
+   * `\n` 写成软换行、`\t` 写成制表位（块级控件也不拆段：跨段删除只在同一容器里做得到，
+   * 拆段又会让多段内容的控件与单段的行为不同）。占位符状态的控件换上控件自己的字符格式、
+   * 清掉占位符标记；下拉框只接受选项里的文字或值（值换成显示文字）。
+   * 复选框 / 图片 / 文档部件（目录）/ 锁了内容的控件拒绝。
+   */
+  fillContentControl(id: NodeId, text: string): DocRange;
 }
 
 /**
@@ -1193,6 +1202,79 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             return { ...position };
           });
         },
+        fillContentControl(id, text) {
+          return command(() => {
+            if (typeof text !== 'string') throw new TypeError('fillContentControl 需要字符串');
+            flush();
+            const control = draft.contentControls?.[id];
+            if (control === undefined) throw new RangeError(`文档中没有内容控件：${id}`);
+            if (!FILLABLE.has(control.type)) throw new Error(`不支持填写这种内容控件：${control.type}`);
+            if (control.lock === 'contentLocked' || control.lock === 'sdtContentLocked')
+              throw new Error('内容控件锁定了内容');
+            if (control.type === 'dropDownList' && control.items?.length) {
+              const item =
+                control.items.find((i) => i.text === text) ?? control.items.find((i) => i.value === text);
+              if (item === undefined) throw new RangeError(`下拉框没有这个选项：${text}`);
+              text = item.text;
+            } else if (control.type === 'comboBox') {
+              // 组合框可以随便写；写的恰好是某个选项的值（不是显示文字）就换成它的显示文字
+              const items = control.items ?? [];
+              if (!items.some((i) => i.text === text))
+                text = items.find((i) => i.value === text)?.text ?? text;
+            }
+            if (control.type === 'text' && !control.multiLine) text = text.replace(/\r\n|\r|\n/g, ' ');
+            const span = contentControlSpans(draft).find((s) => s.control.id === id);
+            const range = span === undefined ? undefined : rangeOfContentControl(span);
+            if (range === undefined) throw new Error('内容控件里没有可写的位置');
+            const start = transaction.deleteRange(range);
+            let at = start;
+            for (const piece of text.split(/(\r\n|\r|\n|\t)/)) {
+              if (piece === '') continue;
+              if (piece === '\t') at = transaction.insertInline(at, 'tab');
+              else if (/^[\r\n]/.test(piece)) at = transaction.insertInline(at, 'lineBreak');
+              else at = transaction.insertText(at, piece);
+            }
+            // 删字留下的空 run（占位文字的后半截、内层控件）去掉：留着的话内层控件回写出来
+            // 是个空壳，而 Word 里覆盖外层内容时内层控件是跟着消失的。落点所在的 run 留着 ——
+            // 值为空时控件还得有个能写字的位置
+            flush();
+            const host = entryAt(start).paragraph;
+            const controls = draft.contentControls ?? {};
+            const dropped = host.runs.filter(
+              (r) =>
+                r.id !== start.nodeId &&
+                r.id !== at.nodeId &&
+                withinContentControl(controls, r.contentControl ?? host.contentControl, id) &&
+                r.content.every((c) => c.kind === 'text' && c.text === ''),
+            );
+            if (dropped.length) {
+              draft = mapParagraphs(draft, (p) =>
+                p.id === host.id ? { ...p, runs: p.runs.filter((r) => !dropped.includes(r)) } : p,
+              );
+              entries = indexRuns(draft);
+              structural([host.id], collapseInto([{ ...host, runs: dropped }], { ...start }), []);
+            }
+            // 插入是从 start 往后长的，start 自己不动；空值时是折叠范围
+            const filled: DocRange = { start: { ...start }, end: { ...at } };
+            if (control.showingPlaceholder) {
+              if (!samePosition(start, at)) {
+                transaction.clearRunProps(filled);
+                if (control.runProps !== undefined) transaction.setRunProps(filled, control.runProps);
+              }
+              flush();
+              draft = {
+                ...draft,
+                contentControls: {
+                  ...draft.contentControls,
+                  [id]: { ...control, showingPlaceholder: false },
+                },
+              };
+              // 值与占位文字恰好相同时上面一条变更都没有，标记变了也得成一个撤销单元
+              structural([host.id], []);
+            }
+            return filled;
+          });
+        },
         addStyle(definition) {
           return command(() => {
             if (typeof definition?.id !== 'string' || definition.id === '')
@@ -1265,6 +1347,9 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
     },
   };
 }
+
+/** 能填文字的控件类型；复选框要改符号、图片要换图、文档部件是目录这类生成内容 */
+const FILLABLE = new Set(['richText', 'text', 'date', 'dropDownList', 'comboBox']);
 
 /** 一行的首格（纵向合并的续格不显示内容，跳过）第一个段落的开头 */
 /** 这些段落里每一个位置都收拢到 `dest`（被删掉的行 / 列：按偏移平移会指到不存在的字） */

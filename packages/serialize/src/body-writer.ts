@@ -65,17 +65,33 @@ function cursor<T extends { id: NodeId }>(items: readonly T[]): Cursor<T> {
   return { items, i: 0, ids: new Set(items.map((x) => x.id)) };
 }
 
-/** run 身上那两个压平的外层容器标记 */
+/** run 身上那三个压平的外层容器标记 */
 interface Marks {
   link: Run['hyperlink'];
   field: Run['fieldSimple'];
+  /**
+   * 行内内容控件。拆出来的新 run 带着它，才知道自己该留在控件**里面**还是外面 ——
+   * 不比它的话，控件末尾之后新拆出的 run 会被当成控件里的一路塞进去
+   */
+  control: Run['contentControl'];
 }
 
-const NO_MARKS: Marks = { link: undefined, field: undefined };
+const NO_MARKS: Marks = { link: undefined, field: undefined, control: undefined };
 
 function sameMarks(run: Run, marks: Marks): boolean {
-  return same(run.hyperlink, marks.link) && same(run.fieldSimple, marks.field);
+  return (
+    same(run.hyperlink, marks.link) &&
+    same(run.fieldSimple, marks.field) &&
+    run.contentControl === marks.control
+  );
 }
+
+/**
+ * 内容一变就失效的控件属性：`w:showingPlcHdr`（「里面是占位文字」—— 留着的话 Word 把填进去的字
+ * 当占位符，点一下整段选中、一打字就没了）与数据绑定（绑定的控件 Word 打开时用 customXml 里的值
+ * **盖掉**内容，只改内容等于白填；去掉绑定比去改 customXml 部件稳，XPath 与前缀映射都不用解析）
+ */
+const STALE_WHEN_FILLED = new Set(['w:showingPlcHdr', 'w:dataBinding', 'w15:dataBinding']);
 
 export interface BodyWriteInput {
   /** 原文的 `document.xml` */
@@ -165,10 +181,7 @@ class BodyWriter {
         // 块级内容控件：外壳照抄，里面的块照常对齐（拆出来的新段留在控件里面）
         const content = child(node, 'w:sdtContent');
         if (content === undefined) out.push(node);
-        else {
-          const inner = { ...content, children: this.#blocks(content.children, cur) };
-          out.push({ ...node, children: node.children.map((c) => (c === content ? inner : c)) });
-        }
+        else out.push(this.#sdt(node, content, this.#blocks(content.children, cur)));
       } else out.push(node);
     }
     return out;
@@ -278,12 +291,7 @@ class BodyWriter {
         const children = this.#runs(content.children, cur, inner, home);
         // 容器里原有的 run 全删光了，容器也不留（空超链接在 Word 里是个点不中的幽灵）
         if (hasModelRun(content.children, this.#idOf) && cur.i === start) continue;
-        const rebuilt = { ...content, children };
-        out.push(
-          content === node
-            ? rebuilt
-            : { ...node, children: node.children.map((c) => (c === content ? rebuilt : c)) },
-        );
+        out.push(content === node ? { ...content, children } : this.#sdt(node, content, children));
         trailing();
       } else out.push(node); // 书签、批注范围、w:del、w:proofErr……原样
     }
@@ -303,7 +311,32 @@ class BodyWriter {
       const id = this.#idOf.get(node);
       return id === undefined ? marks : { ...marks, field: { id, instr: node.attrs['w:instr'] ?? '' } };
     }
+    if (node.name === 'w:sdt') return { ...marks, control: this.#idOf.get(node) };
     return marks;
+  }
+
+  /**
+   * 内容控件的外壳：`w:sdtPr` 原样，除非内容变了（或模型里清掉了占位符标记）——
+   * 那时去掉 `STALE_WHEN_FILLED`。内容变没变按**元素身份**比：没改的节点吐回的就是原元素
+   */
+  #sdt(node: XmlElement, content: XmlElement, children: XmlNode[]): XmlElement {
+    const id = this.#idOf.get(node);
+    const now = id === undefined ? undefined : this.#in.body.contentControls?.[id];
+    const was = id === undefined ? undefined : this.#in.originalBody.contentControls?.[id];
+    const changed =
+      children.length !== content.children.length ||
+      children.some((c, i) => c !== content.children[i]) ||
+      (was?.showingPlaceholder === true && now?.showingPlaceholder === false);
+    const inner = { ...content, children };
+    return {
+      ...node,
+      children: node.children.map((c) => {
+        if (c === content) return inner;
+        if (changed && c.kind === 'element' && c.name === 'w:sdtPr')
+          return { ...c, children: withoutChildren(c.children, STALE_WHEN_FILLED) };
+        return c;
+      }),
+    };
   }
 
   /**

@@ -277,6 +277,55 @@ describe('模型不认识的 XML 留在文件里', () => {
   });
 });
 
+describe('内容控件', () => {
+  const FORM =
+    '<w:p><w:r><w:t>申请人：</w:t></w:r><w:sdt><w:sdtPr><w:rPr><w:b/></w:rPr><w:tag w:val="applicant"/>' +
+    '<w:showingPlcHdr/><w:dataBinding w:xpath="/root/applicant" w:storeItemID="{X}"/><w:text/></w:sdtPr>' +
+    '<w:sdtContent><w:r><w:rPr><w:rStyle w:val="PlaceholderText"/></w:rPr><w:t>单击此处</w:t></w:r>' +
+    '<w:r><w:rPr><w:rStyle w:val="PlaceholderText"/></w:rPr><w:t>输入文字。</w:t></w:r></w:sdtContent></w:sdt>' +
+    '<w:r><w:t>（签字）</w:t></w:r></w:p>' +
+    '<w:p><w:sdt><w:sdtPr><w:tag w:val="untouched"/><w:showingPlcHdr/></w:sdtPr><w:sdtContent>' +
+    '<w:r><w:t>没填</w:t></w:r></w:sdtContent></w:sdt></w:p>';
+
+  const idOf = (body: Body, tag: string) =>
+    Object.values(body.contentControls ?? {}).find((c) => c.tag === tag)?.id as string;
+
+  it('填值：外壳留着、去掉占位符标记与数据绑定，值换上控件的格式；没填的控件原样', () => {
+    const { out, again } = roundTrip(docx(FORM), (t, body) => {
+      t.fillContentControl(idOf(body, 'applicant'), '张三');
+    });
+    const xml = decoder.decode(unzip(out).get('word/document.xml'));
+    expect(xml).toContain(
+      '<w:sdt><w:sdtPr><w:rPr><w:b/></w:rPr><w:tag w:val="applicant"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:rPr><w:b/></w:rPr><w:t>张三</w:t></w:r></w:sdtContent></w:sdt>',
+    );
+    expect(xml).not.toContain('PlaceholderText');
+    expect(xml).toContain('<w:tag w:val="untouched"/><w:showingPlcHdr/>');
+    expect(paragraphs(again.body).map((p) => paragraphText(p))).toEqual(['申请人：张三（签字）', '没填']);
+    const control = again.body.contentControls?.[idOf(again.body, 'applicant')];
+    expect(control).toMatchObject({ showingPlaceholder: false });
+    expect(control?.dataBound).toBeUndefined();
+  });
+
+  it('在控件末尾之后拆出来的 run 留在控件外面', () => {
+    const { out } = roundTrip(docx(FORM), (t, body) => {
+      const tail = paragraphs(body)[0]?.runs.at(-1)?.id as string;
+      t.setRunProps(
+        {
+          start: { nodeId: tail, contentIndex: 0, offset: 1 },
+          end: { nodeId: tail, contentIndex: 0, offset: 2 },
+        },
+        { italic: true },
+      );
+    });
+    const xml = decoder.decode(unzip(out).get('word/document.xml'));
+    expect(xml).toMatch(
+      /<\/w:sdtContent><\/w:sdt><w:r><w:t>（<\/w:t><\/w:r><w:r><w:rPr><w:i\/><\/w:rPr><w:t>签<\/w:t>/,
+    );
+    // 内容没变的控件：占位符标记与绑定都留着
+    expect(xml).toContain('<w:showingPlcHdr/><w:dataBinding');
+  });
+});
+
 describe('分节', () => {
   const TWO_SECTIONS =
     '<w:p><w:r><w:t>第一节末段</w:t></w:r><w:pPr><w:sectPr><w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/></w:sectPr></w:pPr></w:p>' +

@@ -17,6 +17,7 @@
  * （图片、脚注…），每加一种就改遍所有签名的设计撑不住。
  */
 import type { Twips } from '@uw/core';
+import type { ContentControl } from './content-control.ts';
 import type { Numbering } from './numbering.ts';
 import type { ParaProps, ResolvedParaProps, ResolvedRunProps, RunProps } from './props.ts';
 import type { StyleDefinition } from './styles.ts';
@@ -211,6 +212,16 @@ export interface RunNode<S extends PropSet> {
    * 挨着的两个 `w:instr="PAGE"` 是两个域，只比指令文字会把它们并成一个。
    */
   fieldSimple?: { id: NodeId; instr: string };
+  /**
+   * 最内层的**行内**内容控件（`w:sdt` 包着 run）的 id，见 content-control.ts。
+   *
+   * 压平的道理与超链接相同；外层是谁由 `Body.contentControls` 的 `parent` 串起来，
+   * 这里只记一个 —— 记整条链的话，拆 run / 合段时每个 run 都得背一份数组。
+   * 块级控件记在段落 / 表格上（`ParagraphNode.contentControl`），不铺到 run 上：
+   * 回写按「run 的外层标记与所在层是否相同」决定新 run 落在哪一层容器里，
+   * 块级控件铺到 run 上，段落这一层就对不上了。
+   */
+  contentControl?: NodeId;
 }
 
 export interface ParagraphNode<S extends PropSet> {
@@ -218,6 +229,8 @@ export interface ParagraphNode<S extends PropSet> {
   id: NodeId;
   props: S['para'];
   runs: RunNode<S>[];
+  /** 罩着这一段的最内层**块级**内容控件（隔着表格也算），见 content-control.ts */
+  contentControl?: NodeId;
 }
 
 export interface TableNode<S extends PropSet> {
@@ -233,6 +246,8 @@ export interface TableNode<S extends PropSet> {
    */
   grid: Twips[];
   rows: TableRowNode<S>[];
+  /** 同 `ParagraphNode.contentControl` */
+  contentControl?: NodeId;
 }
 
 export interface TableRowNode<S extends PropSet> {
@@ -376,6 +391,14 @@ export type Body = DocumentBody<DirectProps> & {
    * 与 `numbering` 同理挂在树上随撤销走；只放新增的，已有的样式仍在 `CascadeContext.styles`。
    */
   styles?: readonly StyleDefinition[];
+  /**
+   * 内容控件（`w:sdt`）的属性，按 id 索引；文档里没有控件时缺席。
+   *
+   * 放在可编辑的树上而不是 `LoadedDocument` 上：填了值的控件要去掉「显示占位符」标记，
+   * 这个标记得跟着撤销走 —— 撤销回占位文字、标记却还是「已填」，回写出来 Word 会把占位文字当正文。
+   * 控件**有哪些内容**不在这里，在节点的 `contentControl` 标记上（内容会被编辑，标记跟着节点走）。
+   */
+  contentControls?: Readonly<Record<NodeId, ContentControl>>;
 };
 
 export type ResolvedRun = RunNode<ResolvedProps>;
