@@ -127,6 +127,8 @@ export function paraProps(over: Partial<ResolvedParaProps> = {}): ResolvedParaPr
     autoSpaceDE: true,
     autoSpaceDN: true,
     overflowPunct: true,
+    borders: {},
+    shading: undefined,
     markRunProps: runProps(),
     ...over,
   };

@@ -179,3 +179,23 @@ export const FIELD_CHINESE_NUM_FORMATS: Readonly<Record<string, string>> = {
   chinesenum2: 'chineseLegalSimplified',
   chinesenum3: 'ideographDigital',
 };
+
+/**
+ * 段落边框（`w:pBdr`）与底纹（`w:pPr/w:shd`）的几何 —— **整块没有真值**，本机没有 Word。
+ * 按 Word 界面行为与规范写的几条，每条都改坐标（除了最后一条）：
+ *
+ * 1. **让出的高度 = 线的厚度 + `w:space`**，上边框让在段前间距与首行之间、下边框让在末行与段后间距之间
+ *    （段前段后间距在框**外**）。厚度沿用表格格线那张 `BORDER_THICKNESS_FACTOR`（双线 3 倍）
+ * 2. **成组**：相邻两段的可见边框、底纹、框的左右边（即左右缩进）全都一样才框在一起 ——
+ *    就是下面这张键表。组内段与段之间的段后 + 段前间距在框**里**，底纹与竖线接过去
+ * 3. 组内相邻两段之间画 `between`，它像上边框一样让在**下面那段**的段前间距之后；没有就什么都不让
+ * 4. 框的左边取首行与其余行里更靠左的那个（悬挂缩进的编号在框里），竖线画在框外 `space` 处，
+ *    **不挤文字区**
+ * 5. 行网格：边框让出的高度不吸网格（公文开着网格时，带边框的段落之后每行都可能偏）
+ *
+ * 钉死办法：一份关掉网格的 docx，几段分别带「只有上 / 只有下 / 四周 / 双线 / 不同 space」的边框，
+ * 再来三段一样的与一段缩进不同的（成组），用真值量每段首行基线与上一段末行基线的差 ——
+ * 与 `spike-table-01` 量格线占高同一招；线本身的位置读 `truth.json` 的 `pages[].rules[]`。
+ * 跨页时框封不封口是画法的事，见 render-dom 的 `uncalibrated.ts`。
+ */
+export const PARA_FRAME_GROUP_KEYS = ['borders', 'shading', 'x', 'width'] as const;

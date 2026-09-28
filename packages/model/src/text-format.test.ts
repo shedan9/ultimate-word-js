@@ -307,6 +307,33 @@ describe('段落格式命令', () => {
   });
 });
 
+describe('段落边框与底纹命令', () => {
+  it('边框逐边合并、null 删单边；底纹整项替换；清除段落格式一并清掉', () => {
+    const editor = createTextEditor(
+      parse(
+        '<w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="4" w:space="1" w:color="auto"/></w:pBdr></w:pPr><w:r><w:t>甲</w:t></w:r></w:p>',
+      ),
+    );
+    const at = pos(editor.body, 0);
+    const red = { style: 'single', size: 30, space: 20, color: 'FF0000' };
+    editor.tx((t) => {
+      t.setParagraphProps(
+        { start: at, end: at },
+        { borders: { top: red }, shading: { pattern: 'clear', color: 'auto', fill: 'FFFF00' } },
+      );
+    });
+    expect(Object.keys(para(editor.body).props.borders ?? {})).toEqual(['bottom', 'top']);
+    editor.tx((t) => {
+      t.setParagraphProps({ start: at, end: at }, { borders: { bottom: null } });
+    });
+    expect(para(editor.body).props.borders).toEqual({ top: red });
+    editor.tx((t) => {
+      t.clearParagraphProps({ start: at, end: at });
+    });
+    expect(para(editor.body).props).toEqual({});
+  });
+});
+
 describe('段落编号引用', () => {
   it('numbering 按字段合并：只写 level 保留 numId，numId 0 取消编号', () => {
     const editor = createTextEditor(

@@ -116,7 +116,7 @@ describe('编辑后重新加载，正文结构与编辑结果一致', () => {
   it('清除字符和段落格式后回读保持一致，样式引用、超链接及未知 XML 保留', () => {
     const { pkg, loaded } = load(
       docx(
-        '<w:p><w:pPr><w:pStyle w:val="Heading1"/><w:jc w:val="center"/><w:ind w:left="420"/><w:pBdr><w:bottom w:val="single" w:sz="4"/></w:pBdr></w:pPr><w:bookmarkStart w:id="1" w:name="keep"/><w:hyperlink r:id="rId9"><w:r><w:rPr><w:rStyle w:val="Emphasis"/><w:b/><w:sz w:val="36"/><w:highlight w:val="yellow"/><w:lang w:eastAsia="zh-CN"/></w:rPr><w:t>甲乙丙丁</w:t></w:r></w:hyperlink><w:bookmarkEnd w:id="1"/></w:p>',
+        '<w:p><w:pPr><w:pStyle w:val="Heading1"/><w:jc w:val="center"/><w:ind w:left="420"/><w:suppressAutoHyphens/><w:pBdr><w:bottom w:val="single" w:sz="4"/></w:pBdr></w:pPr><w:bookmarkStart w:id="1" w:name="keep"/><w:hyperlink r:id="rId9"><w:r><w:rPr><w:rStyle w:val="Emphasis"/><w:b/><w:sz w:val="36"/><w:highlight w:val="yellow"/><w:lang w:eastAsia="zh-CN"/></w:rPr><w:t>甲乙丙丁</w:t></w:r></w:hyperlink><w:bookmarkEnd w:id="1"/></w:p>',
       ),
     );
     const editor = createTextEditor(loaded.body);
@@ -133,7 +133,9 @@ describe('编辑后重新加载，正文结构与编辑结果一致', () => {
     expect(paragraph.runs[1]?.props).toEqual({ langEastAsia: 'zh-CN' });
     expect(paragraph.runs.every((r) => r.hyperlink?.relId === 'rId9')).toBe(true);
     const xml = decoder.decode(unzip(bytes).get('word/document.xml'));
-    expect(xml).toContain('w:pBdr');
+    // 段落边框已建模，属于要清的段落格式（Word 的 Ctrl+Q 也清它）；不认识的 pPr 子元素照旧保留
+    expect(xml).not.toContain('w:pBdr');
+    expect(xml).toContain('w:suppressAutoHyphens');
     expect(xml).toContain('w:highlight');
     expect(xml).toContain('w:bookmarkStart');
     expect(xml).not.toContain('w:jc');
@@ -277,6 +279,34 @@ describe('模型不认识的 XML 留在文件里', () => {
       t.clearRunProps(whole(b));
     });
     expect(decoder.decode(unzip(cleared.out).get('word/document.xml'))).not.toContain('w:shd');
+  });
+
+  it('段落边框逐边补：只改变了的那条，w:bar 与主题色留着，新边按 CT_PBdr 顺序插；段落底纹插在 pBdr 后', () => {
+    const body =
+      '<w:p><w:pPr><w:pBdr><w:top w:val="single" w:sz="4" w:space="1" w:color="4472C4" w:themeColor="accent1"/><w:bar w:val="single" w:sz="4"/></w:pBdr><w:jc w:val="center"/></w:pPr><w:r><w:t>版头</w:t></w:r></w:p>';
+    const { out, again, edited } = roundTrip(docx(body), (t, b) => {
+      const at = textPosition(b, 0, 0) as DocPosition;
+      t.setParagraphProps(
+        { start: at, end: at },
+        {
+          borders: { bottom: { style: 'single', size: 30, space: 20, color: 'FF0000' } },
+          shading: { pattern: 'clear', color: 'auto', fill: 'FFFF00' },
+        },
+      );
+    });
+    const xml = decoder.decode(unzip(out).get('word/document.xml'));
+    expect(xml).toContain(
+      '<w:pPr><w:pBdr><w:top w:val="single" w:sz="4" w:space="1" w:color="4472C4" w:themeColor="accent1"/><w:bottom w:val="single" w:sz="12" w:space="1" w:color="FF0000"/><w:bar w:val="single" w:sz="4"/></w:pBdr><w:shd w:val="clear" w:color="auto" w:fill="FFFF00"/><w:jc w:val="center"/></w:pPr>',
+    );
+    expect(shape(again.body)).toEqual(shape(edited));
+    // 删掉最后一条认识的边：w:bar 还在，pBdr 外壳就留着
+    const removed = roundTrip(docx(body), (t, b) => {
+      const at = textPosition(b, 0, 0) as DocPosition;
+      t.setParagraphProps({ start: at, end: at }, { borders: null });
+    });
+    expect(decoder.decode(unzip(removed.out).get('word/document.xml'))).toContain(
+      '<w:pBdr><w:bar w:val="single" w:sz="4"/></w:pBdr>',
+    );
   });
 
   it('拆出来的新段落沿用原段落的边框，但不抄 paraId', () => {

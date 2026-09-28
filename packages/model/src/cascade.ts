@@ -30,6 +30,7 @@ import type {
   Justification,
   NumberingRef,
   NumberLabel,
+  ParagraphBorders,
   ParagraphSpacing,
   ParaProps,
   ResolvedParaProps,
@@ -219,6 +220,7 @@ interface ParaAccum {
   indent: Indent;
   spacing: ParagraphSpacing;
   numbering: NumberingRef;
+  borders: ParagraphBorders;
   /** 制表位按 `pos` 索引：同一个位置只能有一个，后来的层覆盖前面的 */
   tabs: Map<number, TabStop>;
 }
@@ -250,11 +252,14 @@ function applyParaLevel(acc: ParaAccum, level: ParaProps): void {
   if (level.autoSpaceDN !== undefined) p.autoSpaceDN = level.autoSpaceDN;
   if (level.overflowPunct !== undefined) p.overflowPunct = level.overflowPunct;
   if (level.outlineLevel !== undefined) p.outlineLevel = level.outlineLevel;
+  if (level.shading !== undefined) p.shading = level.shading;
 
   // 嵌套的三块逐属性合并，不整块替换
   if (level.indent !== undefined) Object.assign(acc.indent, definedOnly(level.indent));
   if (level.spacing !== undefined) Object.assign(acc.spacing, definedOnly(level.spacing));
   if (level.numbering !== undefined) Object.assign(acc.numbering, definedOnly(level.numbering));
+  // 边框逐边合并：样式的下边框 + 直接格式的上边框 = 两条都在
+  if (level.borders !== undefined) Object.assign(acc.borders, definedOnly(level.borders));
   if (level.tabs !== undefined) applyTabs(acc, level.tabs);
 }
 
@@ -307,7 +312,14 @@ export function resolveParaProps(
   const ref = numberingRefOf(ctx, chain, direct);
   const numbered = numberingOf(ctx, ref, counters);
 
-  const acc: ParaAccum = { props: {}, indent: {}, spacing: {}, numbering: {}, tabs: new Map() };
+  const acc: ParaAccum = {
+    props: {},
+    indent: {},
+    spacing: {},
+    numbering: {},
+    borders: {},
+    tabs: new Map(),
+  };
   applyParaLevel(acc, ctx.styles.defaults.paraProps);
   for (const l of ctx.tableStyleLayers ?? []) applyParaLevel(acc, l.paraProps);
   for (const s of chain) applyParaLevel(acc, s.paraProps);
@@ -337,6 +349,8 @@ export function resolveParaProps(
     // 以下四项 Word 默认是**开**的，不是关的
     widowControl: p.widowControl ?? true,
     snapToGrid: p.snapToGrid ?? true,
+    borders: { ...acc.borders },
+    shading: p.shading,
     autoSpaceDE: p.autoSpaceDE ?? true,
     autoSpaceDN: p.autoSpaceDN ?? true,
     overflowPunct: p.overflowPunct ?? true,

@@ -34,9 +34,11 @@
  */
 import type { Twips } from '@uw/core';
 import type { Border, TableBorders } from '@uw/model';
+import { openFrame } from './para-frame.ts';
 import type { BlockLayout, CellLayout, RowLayout } from './table.ts';
 import { contentHeightOf } from './table.ts';
 import type { BorderSegment } from './table-borders.ts';
+import type { ParagraphLayout } from './types.ts';
 
 /**
  * 拆行的四条规则。**都由 `spike-table-04` 实测**（14 页、七张表，跑
@@ -300,9 +302,19 @@ function splitBlock(b: BlockLayout, avail: Twips): { head?: BlockLayout; tail?: 
   // 段前间距就把 avail 吃光了：整段推到下一片，而不是切出一片只有间距的空壳
   if (n === 0) return { tail: b };
   // 行全放得下、只有段后间距溢出：段后间距落在页底本来就不用留（与段落跨页同理）
-  if (n >= p.lines.length) return { head: { kind: 'paragraph', layout: { ...p, spaceAfter: 0 } } };
+  // 下边框让出的那一截不是间距，跟着末行留下
+  if (n >= p.lines.length)
+    return { head: { kind: 'paragraph', layout: { ...p, spaceAfter: p.frame?.insetBottom ?? 0 } } };
   return {
-    head: { kind: 'paragraph', layout: { ...p, lines: p.lines.slice(0, n), spaceAfter: 0 } },
-    tail: { kind: 'paragraph', layout: { ...p, lines: p.lines.slice(n), spaceBefore: 0 } },
+    head: { kind: 'paragraph', layout: cut(p, { lines: p.lines.slice(0, n), spaceAfter: 0 }, 'bottom') },
+    tail: { kind: 'paragraph', layout: cut(p, { lines: p.lines.slice(n), spaceBefore: 0 }, 'top') },
   };
+}
+
+/** 切开的段落：切口那一侧的框不封口（`openFrame`） */
+function cut(p: ParagraphLayout, patch: Partial<ParagraphLayout>, side: 'top' | 'bottom'): ParagraphLayout {
+  const frame = openFrame(p.frame, side);
+  const out: ParagraphLayout = { ...p, ...patch };
+  if (frame !== undefined) out.frame = frame;
+  return out;
 }

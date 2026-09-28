@@ -1,8 +1,8 @@
 /**
  * `ParaProps` / `RunProps` → `w:pPr` / `w:rPr`，**以原元素为底打补丁**。
  *
- * 不从模型整个重新生成属性容器，因为模型只认识 Word 属性的一个子集：`w:pBdr`（段落边框）、
- * 段落的 `w:shd`（底纹）、`w:framePr`、`w:rPrChange`（格式修订）、`w:eastAsianLayout`（双行合一）……
+ * 不从模型整个重新生成属性容器，因为模型只认识 Word 属性的一个子集：`w:framePr`、`w:bdr`（字符边框）、
+ * `w:pBdr/w:bar`、`w:rPrChange`（格式修订）、`w:eastAsianLayout`（双行合一）……
  * 这些我们不解析，但它们在用户的文档里。重新生成等于把它们全删了（原则 1.4）。
  *
  * 所以做法是**按字段组比对**：解析原元素得到「原来的值」，与模型上的值逐组比，
@@ -10,8 +10,8 @@
  * （`patchAttrs`）。没变的组连同它的原始写法（`w:jc="start"`、`w:ind w:start=`）一字不改 ——
  * 解析是有损的（`start` 读成 `left`），只有「没变就不碰」才能保证不改写用户的原文。
  */
-import { twipsToHalfPt } from '@uw/core';
-import type { ParaProps, RunProps, TabStop } from '@uw/model';
+import { twipsToHalfPt, twipsToPt } from '@uw/core';
+import type { Border, ParagraphBorders, ParaProps, RunProps, Shading, TabStop } from '@uw/model';
 import { parseParaProps, parseRunProps } from '@uw/model';
 import type { XmlElement, XmlNode } from '@uw/ooxml';
 import { child } from '@uw/ooxml';
@@ -180,6 +180,49 @@ const onOffAttr = (v: boolean | undefined): string | undefined =>
 const num = (v: number | undefined): string | undefined =>
   v === undefined ? undefined : String(Math.round(v));
 
+/** 字符与段落的 `w:shd` 同一个写法（表格那份不经过这里） */
+function shadingField<P extends { shading?: Shading }>(): Field<P> {
+  return {
+    keys: ['shading'],
+    name: 'w:shd',
+    write(old, p) {
+      const shd = p.shading;
+      if (shd === undefined) return undefined;
+      // 与 w:color 同理：底色换了就丢掉主题底色（Word 里 w:themeFill 压过 w:fill，留着就是两个颜色）
+      const keepThemeFill = old?.attrs['w:fill'] === shd.fill;
+      const keepThemeColor = old?.attrs['w:color'] === shd.color;
+      return el(
+        'w:shd',
+        patchAttrs(
+          old?.attrs ?? {},
+          [
+            'w:val',
+            'w:color',
+            'w:fill',
+            'w:themeFill',
+            'w:themeFillTint',
+            'w:themeFillShade',
+            'w:themeColor',
+            'w:themeTint',
+            'w:themeShade',
+          ],
+          {
+            'w:val': shd.pattern,
+            'w:color': shd.color,
+            'w:fill': shd.fill,
+            'w:themeFill': keepThemeFill ? old?.attrs['w:themeFill'] : undefined,
+            'w:themeFillTint': keepThemeFill ? old?.attrs['w:themeFillTint'] : undefined,
+            'w:themeFillShade': keepThemeFill ? old?.attrs['w:themeFillShade'] : undefined,
+            'w:themeColor': keepThemeColor ? old?.attrs['w:themeColor'] : undefined,
+            'w:themeTint': keepThemeColor ? old?.attrs['w:themeTint'] : undefined,
+            'w:themeShade': keepThemeColor ? old?.attrs['w:themeShade'] : undefined,
+          },
+        ),
+      );
+    },
+  };
+}
+
 // ── 字符属性 ──────────────────────────────────────────────────────────────────
 
 const FONT_ATTRS = [
@@ -262,45 +305,7 @@ const RUN_FIELDS: readonly Field<RunProps>[] = [
   val('sizeCs', 'w:szCs', halfPt),
   val('highlight', 'w:highlight'),
   val('underline', 'w:u'),
-  {
-    keys: ['shading'],
-    name: 'w:shd',
-    write(old, p) {
-      const shd = p.shading;
-      if (shd === undefined) return undefined;
-      // 与 w:color 同理：底色换了就丢掉主题底色（Word 里 w:themeFill 压过 w:fill，留着就是两个颜色）
-      const keepThemeFill = old?.attrs['w:fill'] === shd.fill;
-      const keepThemeColor = old?.attrs['w:color'] === shd.color;
-      return el(
-        'w:shd',
-        patchAttrs(
-          old?.attrs ?? {},
-          [
-            'w:val',
-            'w:color',
-            'w:fill',
-            'w:themeFill',
-            'w:themeFillTint',
-            'w:themeFillShade',
-            'w:themeColor',
-            'w:themeTint',
-            'w:themeShade',
-          ],
-          {
-            'w:val': shd.pattern,
-            'w:color': shd.color,
-            'w:fill': shd.fill,
-            'w:themeFill': keepThemeFill ? old?.attrs['w:themeFill'] : undefined,
-            'w:themeFillTint': keepThemeFill ? old?.attrs['w:themeFillTint'] : undefined,
-            'w:themeFillShade': keepThemeFill ? old?.attrs['w:themeFillShade'] : undefined,
-            'w:themeColor': keepThemeColor ? old?.attrs['w:themeColor'] : undefined,
-            'w:themeTint': keepThemeColor ? old?.attrs['w:themeTint'] : undefined,
-            'w:themeShade': keepThemeColor ? old?.attrs['w:themeShade'] : undefined,
-          },
-        ),
-      );
-    },
-  },
+  shadingField<RunProps>(),
   val('vertAlign', 'w:vertAlign'),
   {
     keys: ['langEastAsia'],
@@ -345,6 +350,51 @@ const SPACING_ATTRS = [
   'w:afterAutospacing',
 ] as const;
 
+const PBDR_SIDES = [
+  'top',
+  'left',
+  'bottom',
+  'right',
+  'between',
+] as const satisfies readonly (keyof ParagraphBorders)[];
+/** `CT_PBdr` 的子元素顺序 */
+const PBDR_ORDER = ['w:top', 'w:left', 'w:start', 'w:bottom', 'w:right', 'w:end', 'w:between', 'w:bar'];
+
+/**
+ * 一条边。`w:sz` 是 1/8 磅、`w:space` 是**磅**（同一个元素上两种刻度，见 model 的 `parseBorder`）。
+ * 颜色变了就丢掉主题色（与 `w:color` 同理），其余不认识的属性（`w:frame`）留着。
+ */
+function borderElement(name: string, old: XmlElement | undefined, b: Border): XmlElement {
+  const keepTheme = old?.attrs['w:color'] === b.color;
+  return el(
+    name,
+    patchAttrs(
+      old?.attrs ?? {},
+      ['w:val', 'w:sz', 'w:space', 'w:color', 'w:shadow', 'w:themeColor', 'w:themeTint', 'w:themeShade'],
+      {
+        'w:val': b.style,
+        'w:sz': String(Math.round(twipsToPt(b.size) * 8)),
+        'w:space': String(Math.round(twipsToPt(b.space))),
+        'w:color': b.color,
+        'w:shadow': onOffAttr(b.shadow),
+        'w:themeColor': keepTheme ? old?.attrs['w:themeColor'] : undefined,
+        'w:themeTint': keepTheme ? old?.attrs['w:themeTint'] : undefined,
+        'w:themeShade': keepTheme ? old?.attrs['w:themeShade'] : undefined,
+      },
+    ),
+  );
+}
+
+/** 这一侧现有的那条边。左右两侧也认新名字 `w:start` / `w:end`（与解析一致） */
+function sideElement(
+  children: readonly XmlNode[],
+  side: (typeof PBDR_SIDES)[number],
+): XmlElement | undefined {
+  const names =
+    side === 'left' ? ['w:left', 'w:start'] : side === 'right' ? ['w:right', 'w:end'] : [`w:${side}`];
+  return children.find((c): c is XmlElement => c.kind === 'element' && names.includes(c.name));
+}
+
 function tabElement(t: TabStop): XmlElement {
   const attrs: Record<string, string> = { 'w:val': t.alignment };
   if (t.leader !== 'none') attrs['w:leader'] = t.leader;
@@ -376,6 +426,28 @@ const PARA_FIELDS: readonly Field<ParaProps>[] = [
       return { ...(old ?? el('w:numPr')), children };
     },
   },
+  {
+    keys: ['borders'],
+    name: 'w:pBdr',
+    write(old, p) {
+      // 整组删掉也走逐边：`w:bar` 这类不认识的边还在就留着外壳
+      const b = p.borders ?? {};
+      // 逐边补：只改变了的那一条，`w:bar` 这类不认识的边与它们的原写法留着
+      const before = parseParaProps(el('w:pPr', {}, old === undefined ? [] : [old])).borders ?? {};
+      let children: XmlNode[] = old?.children ?? [];
+      for (const side of PBDR_SIDES) {
+        if (same(before[side], b[side])) continue;
+        const prev = sideElement(children, side);
+        const next = b[side] === undefined ? undefined : borderElement(`w:${side}`, prev, b[side]);
+        const at = prev === undefined ? -1 : children.indexOf(prev);
+        if (at >= 0)
+          children = next === undefined ? children.toSpliced(at, 1) : children.toSpliced(at, 1, next);
+        else if (next !== undefined) children = insertOrdered(children, next, PBDR_ORDER);
+      }
+      return children.length === 0 ? undefined : { ...(old ?? el('w:pBdr')), children };
+    },
+  },
+  shadingField<ParaProps>(),
   {
     keys: ['tabs'],
     name: 'w:tabs',

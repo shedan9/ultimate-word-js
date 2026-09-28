@@ -60,13 +60,14 @@ import {
 import { WIDTH_RULES, type WidthRules } from './items.ts';
 import type { ObjectRules, ScriptRules } from './line-height.ts';
 import { OBJECT_RULES, SCRIPT_RULES } from './line-height.ts';
+import { joinParagraphFrames } from './para-frame.ts';
 import { layoutParagraph } from './paragraph.ts';
 import type { ParagraphLayoutCache } from './paragraph-cache.ts';
 import type { RowLayout, TableLayout, TableRules } from './table.ts';
 import { layoutTable, TABLE_RULES } from './table.ts';
 import type { SplitRowOptions, TableSplitRules } from './table-split.ts';
 import { splitRow, TABLE_SPLIT_RULES } from './table-split.ts';
-import type { LineFloat, LineLayout, LineObject, ParagraphLayout } from './types.ts';
+import type { LineFloat, LineLayout, LineObject, ParagraphFrame, ParagraphLayout } from './types.ts';
 
 // ── 输出的数据形状 ────────────────────────────────────────────────────────────
 
@@ -99,6 +100,12 @@ export interface PlacedParagraph {
    */
   first: boolean;
   last: boolean;
+  /**
+   * 段落边框与底纹（`ParagraphLayout.frame`，已按邻居成组）。框顶 = 首行行顶 − `insetTop`
+   * （只在 `first` 那一片），框底 = 末行行底 + `insetBottom`（只在 `last` 那一片）——
+   * 跨页的段落在切口那一侧不封口
+   */
+  frame?: ParagraphFrame;
 }
 
 export interface PlacedRow {
@@ -390,7 +397,7 @@ export function layoutDocument(body: ResolvedBody, opts: LayoutDocumentOptions):
     flow.sectionIndex = index;
     startSection(flow, section.props, index);
 
-    const blocks = section.blocks.map((b) => prepare(b, section.props, opts));
+    const blocks = joinPreparedFrames(section.blocks.map((b) => prepare(b, section.props, opts)));
     // keepNext 把相邻的块串成「接缝不许跨页」的链，接缝高度要在排**上一块**时就知道
     blocks.forEach((b, i) => {
       place(flow, b, joinHeight(blocks, i, flow.rules));
@@ -707,6 +714,15 @@ function prepare(b: ResolvedBlock, section: SectionProps, opts: LayoutDocumentOp
   };
 }
 
+/** 相邻段落的框成组（`para-frame.ts`）。分节把组截断：两节各排各的 */
+function joinPreparedFrames(blocks: Prepared[]): Prepared[] {
+  const joined = joinParagraphFrames(blocks.map((b) => (b.kind === 'paragraph' ? b.layout : undefined)));
+  return blocks.map((b, i) => {
+    const layout = joined[i];
+    return b.kind === 'paragraph' && layout !== undefined ? { ...b, layout } : b;
+  });
+}
+
 /**
  * `w:keepNext` 的接缝高度：本块的**末行**与下一块**必须留在本页的那一截**要一起放得下。
  *
@@ -785,13 +801,17 @@ function placeParagraph(flow: Flow, b: Extract<Prepared, { kind: 'paragraph' }>,
   // 段前间距落在页首**不算**（实测，见 PAGINATION_RULES ②）。判断必须在开页**之前**做：
   // `currentPage()` 一开页，`pageHasContent()` 看的就是新页了。
   // 段落整段被推到下一页的那条路不用管：`flow.y` 会在换页时清零，加过的段前间距自然就没了
+  // 边框让出的高度（已折进 spaceBefore，见 ParagraphLayout）不是间距，页首照算
+  const insetTop = b.layout.frame?.insetTop ?? 0;
+  const insetBottom = b.layout.frame?.insetBottom ?? 0;
   const atPageTop = !pageHasContent(flow);
   currentPage(flow);
-  if (!atPageTop || flow.rules.spaceBeforeAtPageTop) flow.y += b.layout.spaceBefore;
+  flow.y += !atPageTop || flow.rules.spaceBeforeAtPageTop ? b.layout.spaceBefore : insetTop;
 
   let i = 0;
   while (i < total) {
-    const raw = fitLines(lines, i, availHeight(flow), join);
+    // 下边框跟着末行走：末行要连它一起放得下
+    const raw = fitLines(lines, i, availHeight(flow), join + insetBottom);
     let count = adjust(raw, lines, i, b.props, flow.rules);
 
     if (count === 0) {
@@ -799,6 +819,8 @@ function placeParagraph(flow: Flow, b: Extract<Prepared, { kind: 'paragraph' }>,
       if (pageHasContent(flow)) {
         breakPage(flow);
         currentPage(flow);
+        // 整段挪到新页：上边框跟着首行过去（段前间距在页首不算，已随换页清零）
+        if (i === 0) flow.y += insetTop;
         continue;
       }
       count = Math.max(1, raw);
@@ -892,6 +914,7 @@ function emitLines(
     lines: placed,
     first: from === 0,
     last: from + count >= total,
+    ...(b.layout.frame === undefined ? {} : { frame: b.layout.frame }),
   });
 }
 

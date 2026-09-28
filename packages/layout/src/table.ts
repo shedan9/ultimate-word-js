@@ -35,6 +35,7 @@ import type {
   Shading,
   TableWidth,
 } from '@uw/model';
+import { joinParagraphFrames } from './para-frame.ts';
 import type { LayoutParagraphOptions } from './paragraph.ts';
 import { layoutParagraph } from './paragraph.ts';
 import type { CellBorderLayout } from './table-borders.ts';
@@ -338,7 +339,7 @@ function layoutCell(
   // 边距比格子还宽时可用宽度会变负 —— 夹到 0，别让负宽度传进断行算法
   const contentWidth = Math.max(0, width - paddingLeft - paddingRight - eaten);
 
-  const blocks = c.blocks.map((b) => blockLayout(b, contentWidth, opts));
+  const blocks = joinBlockFrames(c.blocks.map((b) => blockLayout(b, contentWidth, opts)));
   return {
     cellId: c.id,
     col,
@@ -357,6 +358,17 @@ function layoutCell(
     blocks,
     contentHeight: contentHeightOf(blocks) + paddingTop + paddingBottom,
   };
+}
+
+/** 格内相邻段落的框成组（`para-frame.ts`），表格把组截断 */
+function joinBlockFrames(blocks: BlockLayout[]): BlockLayout[] {
+  const joined = joinParagraphFrames(blocks.map((b) => (b.kind === 'paragraph' ? b.layout : undefined)));
+  return blocks.map((b, i) => {
+    const layout = joined[i];
+    return b.kind === 'paragraph' && layout !== undefined && layout !== b.layout
+      ? { kind: 'paragraph', layout }
+      : b;
+  });
 }
 
 function blockLayout(b: ResolvedBlock, contentWidth: Twips, opts: LayoutTableOptions): BlockLayout {

@@ -44,6 +44,7 @@ import type {
   LineLayout,
   LineObject,
   PageLayout,
+  ParagraphFrame,
   PlacedBlock,
   PlacedFloat,
   PlacedHeaderFooter,
@@ -52,7 +53,7 @@ import type {
   RowLayout,
   TabLeader,
 } from '@uw/layout';
-import { contentHeightOf } from '@uw/layout';
+import { borderThicknessFactor, contentHeightOf } from '@uw/layout';
 import { defaultFontFamily } from './font-stack.ts';
 import type { RElement } from './tree.ts';
 import { el, fmt, fmtList, textEl } from './tree.ts';
@@ -180,7 +181,7 @@ function buildPageWith(page: PageLayout, ctx: Ctx): RElement {
   if (page.header !== undefined) children.push(paintFrame(page.header, ctx));
 
   const inner: RElement[] = [];
-  for (const block of page.blocks) paintBlock(block, ctx, inner);
+  for (const [i, block] of page.blocks.entries()) paintBlock(block, page.blocks[i + 1], ctx, inner);
   children.push(
     el(
       'g',
@@ -218,7 +219,7 @@ function buildPageWith(page: PageLayout, ctx: Ctx): RElement {
  */
 function paintFrame(frame: PlacedHeaderFooter, ctx: Ctx): RElement {
   const inner: RElement[] = [];
-  for (const block of frame.blocks) paintBlock(block, ctx, inner);
+  for (const [i, block] of frame.blocks.entries()) paintBlock(block, frame.blocks[i + 1], ctx, inner);
   if (ctx.debug) {
     inner.unshift(
       el('rect', {
@@ -247,15 +248,98 @@ function paintFrame(frame: PlacedHeaderFooter, ctx: Ctx): RElement {
 
 // ── 块 ────────────────────────────────────────────────────────────────────────
 
-function paintBlock(block: PlacedBlock, ctx: Ctx, out: RElement[]): void {
-  if (block.kind === 'paragraph') out.push(paintPlacedParagraph(block, ctx));
+/** `next` 是同一个容器里紧跟着的那一块：同组的段落框要往下接到它的框顶 */
+function paintBlock(block: PlacedBlock, next: PlacedBlock | undefined, ctx: Ctx, out: RElement[]): void {
+  if (block.kind === 'paragraph') out.push(paintPlacedParagraph(block, next, ctx));
   else out.push(paintPlacedTable(block, ctx));
 }
 
-function paintPlacedParagraph(p: PlacedParagraph, ctx: Ctx): RElement {
+function paintPlacedParagraph(p: PlacedParagraph, next: PlacedBlock | undefined, ctx: Ctx): RElement {
   const children: RElement[] = [];
+  const first = p.lines[0];
+  const last = p.lines.at(-1);
+  if (p.frame !== undefined && first !== undefined && last !== undefined) {
+    const f = p.frame;
+    const lastBottom = last.y + last.line.height;
+    // 同组的下一段在同一页上接着排时，底纹与竖线接过段间空当；挪到下一页了就在这儿断开
+    const nextFirst = next?.kind === 'paragraph' && next.first ? next.lines[0] : undefined;
+    const extend =
+      p.last && f.joinNext && nextFirst !== undefined && next?.kind === 'paragraph' && next.frame?.joinPrev
+        ? nextFirst.y - next.frame.insetTop - lastBottom
+        : 0;
+    paintParagraphFrame(
+      f,
+      0,
+      first.y - (p.first ? f.insetTop : 0),
+      lastBottom + (p.last ? f.insetBottom : 0) + Math.max(0, extend),
+      p.first,
+      p.last,
+      ctx,
+      children,
+    );
+  }
   for (const placed of p.lines) paintLine(placed.line, 0, placed.y, ctx, children);
   return el('g', { class: ctx.cls('para'), 'data-id': p.id }, children);
+}
+
+/**
+ * 段落框：先铺底纹，再画四条边（文字随后画在最上面）。`top` / `bottom` 是这一片框的上下沿
+ * （已含边框让出的高度与往下接的段间空当）；`drawTop` / `drawBottom` 为 false 的一侧是跨页的切口，
+ * 不封口（`uncalibrated.ts`「段落框跨页」）。
+ *
+ * 横向：底纹铺到竖线的内沿（文字区两侧各加上竖线的 `space`），横线画到竖线的外沿，四角接上。
+ * 几何全是照 Word 界面写的，没有真值，见 `@uw/layout` 的 `uncalibrated.ts`「段落边框」一节。
+ */
+function paintParagraphFrame(
+  f: ParagraphFrame,
+  x0: Twips,
+  top: Twips,
+  bottom: Twips,
+  drawTop: boolean,
+  drawBottom: boolean,
+  ctx: Ctx,
+  out: RElement[],
+): void {
+  const thick = (b: ParagraphFrame['top']): Twips =>
+    b === undefined ? 0 : b.size * borderThicknessFactor(b.style);
+  const upper = drawTop ? f.top : undefined;
+  const lower = drawBottom ? f.bottom : undefined;
+  const { left, right } = f.borders;
+  const innerLeft = x0 + f.x - (left?.space ?? 0);
+  const innerRight = x0 + f.x + f.width + (right?.space ?? 0);
+  const fill = shadingFill(f.shading);
+  if (fill !== undefined) {
+    const y1 = top + thick(upper);
+    const y2 = bottom - thick(lower);
+    out.push(
+      el('rect', {
+        class: ctx.cls('para-shading'),
+        x: fmt(pt(innerLeft)),
+        y: fmt(pt(y1)),
+        width: fmt(pt(Math.max(0, innerRight - innerLeft))),
+        height: fmt(pt(Math.max(0, y2 - y1))),
+        fill,
+      }),
+    );
+  }
+  const outerLeft = innerLeft - thick(left);
+  const outerRight = innerRight + thick(right);
+  if (upper !== undefined) {
+    const y = top + thick(upper) / 2;
+    pushLine(ctx, undefined, out, outerLeft, y, outerRight, y, upper, 'para-border');
+  }
+  if (lower !== undefined) {
+    const y = bottom - thick(lower) / 2;
+    pushLine(ctx, undefined, out, outerLeft, y, outerRight, y, lower, 'para-border');
+  }
+  if (left !== undefined) {
+    const x = innerLeft - thick(left) / 2;
+    pushLine(ctx, undefined, out, x, top, x, bottom, left, 'para-border');
+  }
+  if (right !== undefined) {
+    const x = innerRight + thick(right) / 2;
+    pushLine(ctx, undefined, out, x, top, x, bottom, right, 'para-border');
+  }
 }
 
 /**
@@ -654,7 +738,7 @@ function paintBlockStack(
   out: RElement[],
 ): void {
   let y = y0;
-  for (const b of blocks) {
+  for (const [i, b] of blocks.entries()) {
     if (b.kind === 'table') {
       for (const row of b.layout.rows) {
         paintNestedRow(row, x0 + b.layout.x, y, ctx, out);
@@ -666,6 +750,17 @@ function paintBlockStack(
       continue;
     }
     y += b.layout.spaceBefore;
+    const f = b.layout.frame;
+    if (f !== undefined) {
+      // 格内段落没有跨页的切口：拆行切开的那一侧已经由布局层去掉了线（`openFrame`）
+      const height = b.layout.lines.reduce((h, l) => h + l.height, 0);
+      const next = blocks[i + 1];
+      const extend =
+        f.joinNext && next?.kind === 'paragraph' && next.layout.frame !== undefined
+          ? b.layout.spaceAfter + next.layout.spaceBefore - next.layout.frame.insetTop
+          : 0;
+      paintParagraphFrame(f, x0, y - f.insetTop, y + height + f.insetBottom + extend, true, true, ctx, out);
+    }
     for (const line of b.layout.lines) {
       paintLine(line, x0, y, ctx, out);
       y += line.height;
@@ -757,6 +852,7 @@ function pushLine(
   x2: Twips,
   y2: Twips,
   border: CellLayout['borders']['left'],
+  className = 'border',
 ): void {
   if (border === undefined || border.size <= 0) return;
   if (border.style === 'nil' || border.style === 'none') return;
@@ -767,7 +863,7 @@ function pushLine(
   }
   const width = pt(border.size);
   const attrs: Record<string, string> = {
-    class: ctx.cls('border'),
+    class: ctx.cls(className),
     x1: fmt(pt(x1)),
     y1: fmt(pt(y1)),
     x2: fmt(pt(x2)),

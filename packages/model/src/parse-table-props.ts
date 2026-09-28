@@ -47,7 +47,8 @@ function parseWidth(el: XmlElement | undefined, attrName = 'w:w'): TableWidth | 
   return { value: value ?? 0, type: type ?? 'auto' };
 }
 
-function parseBorder(el: XmlElement | undefined): Border | undefined {
+/** 表格、单元格与段落（`w:pBdr`）的边框同一个写法 */
+export function parseBorder(el: XmlElement | undefined): Border | undefined {
   if (el === undefined) return undefined;
   const size = attrInt(el, 'w:sz');
   const space = attrInt(el, 'w:space');

@@ -404,7 +404,7 @@ editor.breakHistory(); // 光标移动、焦点切换等输入边界中断合并
   **可以删**（2026-09-23 起；原来一律拒绝），删掉的片段换成空文字占住槽位，与文字删空一样不挪后面的下标。
   结构命令可原样搬运未被切开的对象。
 - `t.setParagraphProps(range, patch)` 修改范围触及的每个段落（含其间的单元格段落，折叠范围即所在段）
-  的直接段落格式，不拆 run、不移动位置，返回原范围。`indent` / `spacing` / `numbering` 按字段合并，字段 `null`
+  的直接段落格式，不拆 run、不移动位置，返回原范围。`indent` / `spacing` / `numbering` / `borders`（段落边框，按边，2026-09-28）按字段合并，字段 `null`
   删单项、整组 `null` 删整组，合并后为空的组不保留；其余键与 `setRunProps` 相同。
   字符单位优先：改 `firstLine` 等 twips 值时须把对应 `*Chars` 置 `null`，否则不生效。
   段落标记格式（`markRunProps`）只能走 `setRunProps`，写在这里抛错。
@@ -412,7 +412,7 @@ editor.breakHistory(); // 光标移动、焦点切换等输入边界中断合并
 - `t.clearRunProps(range)`（2026-09-28）移除已识别的字符直接格式与字符样式，保留语言标记，恢复段落样式的字符格式。
   选区、拆 run、段落标记与返回值语义同 `setRunProps`；非空段落的折叠范围无修改，空段落清段落标记。
 - `t.clearParagraphProps(range)`（2026-09-28）移除已识别的段落直接格式（含直接编号），保留段落样式和段落标记的字符格式，
-  作用范围同 `setParagraphProps`。两种清除均支持撤销 / 重做；未知 XML 继续保留；高亮与字符底纹已建模、一并清除，字符边框等尚未建模的格式清不掉。
+  作用范围同 `setParagraphProps`。两种清除均支持撤销 / 重做；未知 XML 继续保留；高亮与字符底纹、段落边框与段落底纹已建模、一并清除，字符边框等尚未建模的格式清不掉。
 - `t.addList(kind)` 新增一份九级列表定义（`'bullet'` 项目符号 ● ○ ■ / `'decimal'` 编号 `1.` `a)` `i.` 三级一轮，
   每级左缩进 420 twips × 级数、悬挂 420），返回 numId，再用 `setParagraphProps(range, { numbering: { numId, level: 0 } })`
   引用。定义存在 `editor.body.numbering` 上，随事务提交与撤销；本次没有段落改动时整次无修改、定义不留下。

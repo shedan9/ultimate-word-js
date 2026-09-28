@@ -10,6 +10,8 @@ import type {
   LineFragment,
   LineLayout,
   PageLayout,
+  ParagraphFrame,
+  PlacedParagraph,
   PlacedRow,
   PlacedTable,
   RowLayout,
@@ -291,6 +293,83 @@ function tablePage(row: RowLayout, columns: number[]): PageLayout {
   };
   return page([table]);
 }
+
+describe('段落框', () => {
+  const border = { style: 'single', size: 20, space: 20, color: 'FF0000' };
+  function framed(
+    over: Partial<ParagraphFrame> = {},
+    placed: Partial<PlacedParagraph> = {},
+    open?: 'top' | 'bottom',
+  ): PlacedParagraph {
+    const p: PlacedParagraph = {
+      kind: 'paragraph',
+      id: 'p1',
+      y: 40,
+      lines: [{ index: 0, y: 40, line: line() }],
+      first: true,
+      last: true,
+      frame: {
+        x: 200,
+        width: 2000,
+        borders: { top: border, bottom: border, left: border },
+        shading: { pattern: 'clear', color: 'auto', fill: 'EEEEEE' },
+        top: border,
+        bottom: border,
+        insetTop: 40,
+        insetBottom: 40,
+        joinPrev: false,
+        joinNext: false,
+        ...(over as Partial<ParagraphFrame>),
+      },
+      ...placed,
+    };
+    if (open !== undefined) delete p.frame?.[open];
+    return p;
+  }
+  const lines = (svg: RElement) => collect(svg, 'line').filter((l) => l.attrs.class === 'uw-para-border');
+
+  it('底纹铺到竖线内沿、夹在上下线之间，画在字之前；横线画到竖线外沿', () => {
+    const svg = buildPage(page([framed()]));
+    const g = collect(svg, 'g').find((n) => n.attrs.class === 'uw-para') as RElement;
+    expect(g.children.map((c) => c.attrs.class)).toEqual([
+      'uw-para-shading',
+      'uw-para-border',
+      'uw-para-border',
+      'uw-para-border',
+      'uw-frag',
+    ]);
+    const shade = g.children[0] as RElement;
+    // 框顶 = 首行 40 − 让出 40 = 0，线厚 1pt；框底 = 40 + 480 + 40 = 560 = 28pt
+    expect([shade.attrs.x, shade.attrs.y, shade.attrs.width, shade.attrs.height]).toEqual([
+      '9',
+      '1',
+      '101',
+      '26',
+    ]);
+    const [top, bottom, left] = lines(svg) as [RElement, RElement, RElement];
+    expect([top.attrs.x1, top.attrs.y1, top.attrs.x2]).toEqual(['8', '0.5', '110']);
+    expect(bottom.attrs.y1).toBe('27.5');
+    expect([left.attrs.x1, left.attrs.y1, left.attrs.y2]).toEqual(['8.5', '0', '28']);
+    expect(top.attrs.stroke).toBe('#ff0000');
+  });
+
+  it('跨页的切口不封口：非首片不画上边、非末片不画下边', () => {
+    expect(lines(buildPage(page([framed({}, { first: false, last: false })])))).toHaveLength(1);
+  });
+
+  it('同组的下一段在同一页上时，底纹与竖线往下接到它的框顶', () => {
+    const a = framed({ insetBottom: 0, joinNext: true }, {}, 'bottom');
+    const b = framed(
+      { insetTop: 0, joinPrev: true },
+      { id: 'p2', y: 800, lines: [{ index: 0, y: 800, line: line() }] },
+      'top',
+    );
+    const svg = buildPage(page([a, b]));
+    const shade = collect(svg, 'rect').find((r) => r.attrs.class === 'uw-para-shading') as RElement;
+    // a 的框从 0 接到 b 的首行 800 = 40pt，上边线占掉 1pt
+    expect(shade.attrs.height).toBe('39');
+  });
+});
 
 describe('表格', () => {
   it('共享的那条格线只画一次', () => {

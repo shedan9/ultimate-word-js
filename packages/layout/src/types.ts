@@ -14,11 +14,13 @@
 import type { Twips } from '@uw/core';
 import type { ScriptKind } from '@uw/fonts';
 import type {
+  Border,
   DocPosition,
   DrawingAnchor,
   ImageRef,
   NodeId,
   ObjectContent,
+  ParagraphBorders,
   Shading,
   VerticalAlign,
 } from '@uw/model';
@@ -323,9 +325,44 @@ export interface LineLayout {
 export interface ParagraphLayout {
   paragraphId: NodeId;
   lines: LineLayout[];
-  /** 段前 / 段后间距，`w:*Lines`（1/100 行）已经换算成 twips */
+  /**
+   * 首行行顶之上 / 末行行底之下空出多少。`w:*Lines`（1/100 行）已经换算成 twips，
+   * **段落边框让出的那一截（`frame.insetTop` / `insetBottom`）也已经算在里面** ——
+   * 表格单元格、页眉页脚、命中测试、画法这几处把块往下摞时因此一处都不用改。
+   * 唯一要把两者分开看的是分页：段前间距落在页首不算，边框让出的高度照算（`page.ts`）。
+   */
   spaceBefore: Twips;
   spaceAfter: Twips;
   /** 版心可用宽度，回归比对时要知道行是在多宽的框里排的 */
   contentWidth: Twips;
+  /** 段落边框与底纹。没有可见边框也没有底纹时缺席（绝大多数段落），见 `para-frame.ts` */
+  frame?: ParagraphFrame;
+}
+
+/**
+ * 段落的框：边框（`w:pBdr`）与底纹（`w:pPr/w:shd`）画在哪、占多高。
+ *
+ * **框看邻居**：连续几段边框、底纹、左右边都相同时 Word 把它们框成一个框 ——
+ * 组内不画各自的上下边（有 `between` 时画那一条），底纹与左右竖线接过段与段之间的空当。
+ * 所以 `layoutParagraph` 先给出「单独一段」的框（可缓存，与邻居无关），
+ * 摞块的那一方再用 `joinParagraphFrames()` 按邻居改写 `top` / `bottom` / 两个 inset / 两个 join。
+ */
+export interface ParagraphFrame {
+  /** 框的左边与宽度，相对容器左边：取文字区（缩进之后），竖线画在它外面 `space` 处 */
+  x: Twips;
+  width: Twips;
+  /** 这一段**写了的、看得见的**边（`nil` / `none` 已滤掉）。成组判定与左右竖线用它 */
+  borders: ParagraphBorders;
+  shading?: Shading;
+  /** 实际画在顶上的线：组首是 `top`，组内是 `between`；同组又没有 `between` 时缺席 */
+  top?: Border;
+  /** 实际画在底下的线：只有组末才有 */
+  bottom?: Border;
+  /** 顶线让出的高度（线的厚度 + `space`），已含在 `spaceBefore` 里 */
+  insetTop: Twips;
+  /** 底线让出的高度，已含在 `spaceAfter` 里 */
+  insetBottom: Twips;
+  /** 与上一段 / 下一段同组。底纹与竖线要往下接过段间空当时看 `joinNext` */
+  joinPrev: boolean;
+  joinNext: boolean;
 }

@@ -43,9 +43,11 @@ import type { Twips } from '@uw/core';
 import type { TextMeasurer } from '@uw/fonts';
 import type { DocumentSettings, HeaderFooterRef, NodeId, ResolvedBlock, SectionProps } from '@uw/model';
 import type { PageGeometry, PlacedBlock, PlacedLine } from './page.ts';
+import { joinParagraphFrames } from './para-frame.ts';
 import { layoutParagraph } from './paragraph.ts';
 import type { ParagraphLayoutCache } from './paragraph-cache.ts';
 import { layoutTable } from './table.ts';
+import type { ParagraphLayout } from './types.ts';
 
 /** 页眉 / 页脚的内容来源：关系 id → 级联完的块。形状与 `LoadedDocument.headerFooters` 对得上 */
 export type HeaderFooterSource = Readonly<Record<string, { resolved: readonly ResolvedBlock[] }>>;
@@ -142,9 +144,14 @@ export function stackBlocks(blocks: readonly ResolvedBlock[], opts: StackOptions
   const out: PlacedBlock[] = [];
   let y: Twips = 0;
 
-  for (const b of blocks) {
+  const paragraphs = joinParagraphFrames(
+    blocks.map((b) =>
+      b.kind === 'paragraph' ? layoutParagraph(b, { ...shared, contentWidth: opts.contentWidth }) : undefined,
+    ),
+  );
+  for (const [i, b] of blocks.entries()) {
     if (b.kind === 'paragraph') {
-      const layout = layoutParagraph(b, { ...shared, contentWidth: opts.contentWidth });
+      const layout = paragraphs[i] as ParagraphLayout;
       y += layout.spaceBefore;
       const top = y;
       const lines: PlacedLine[] = [];
@@ -152,7 +159,15 @@ export function stackBlocks(blocks: readonly ResolvedBlock[], opts: StackOptions
         lines.push({ index, y, line });
         y += line.height;
       });
-      out.push({ kind: 'paragraph', id: b.id, y: top, lines, first: true, last: true });
+      out.push({
+        kind: 'paragraph',
+        id: b.id,
+        y: top,
+        lines,
+        first: true,
+        last: true,
+        ...(layout.frame === undefined ? {} : { frame: layout.frame }),
+      });
       y += layout.spaceAfter;
       continue;
     }

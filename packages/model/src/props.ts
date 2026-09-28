@@ -13,7 +13,7 @@
  * 2. 这些类型必须可结构化克隆 —— 它们是 `LayoutInput` 的组成部分（原则 1.1）
  */
 import type { Twips } from '@uw/core';
-import type { Shading } from './table-props.ts';
+import type { Border, Shading } from './table-props.ts';
 
 // ── 字符属性 ──────────────────────────────────────────────────────────────────
 
@@ -188,6 +188,23 @@ export interface TabStop {
   leader: 'none' | 'dot' | 'hyphen' | 'underscore' | 'heavy' | 'middleDot';
 }
 
+/**
+ * `w:pBdr`：段落边框。
+ *
+ * **逐边**级联（样式给了下边框、直接格式再加一条上边框，两条都在），与 `indent` 同理。
+ * `between` 画在**同组**相邻两段之间 —— 连续几段边框设置相同时 Word 把它们框成一个框，
+ * 组内不再画各自的上下边，改画这一条（没有它就什么都不画）。成组是布局层的事（`para-frame.ts`），
+ * 模型只管每段自己写了什么。`w:bar`（装订线一侧的竖线）不解析：罕见，且 Word 自己在
+ * 奇偶页上画的位置各不相同，没有样本。
+ */
+export interface ParagraphBorders {
+  top?: Border;
+  left?: Border;
+  bottom?: Border;
+  right?: Border;
+  between?: Border;
+}
+
 /** `w:numPr`：列表编号引用 */
 export interface NumberingRef {
   numId?: number;
@@ -233,6 +250,10 @@ export interface ParaProps {
   numbering?: NumberingRef;
   /** 段落是否吸附行网格。公文的「每页 22 行」靠它 */
   snapToGrid?: boolean;
+  /** `w:pBdr`。公文版头那条红色分隔线常就是发文机关标志段的下边框 */
+  borders?: ParagraphBorders;
+  /** `w:pPr/w:shd`：段落底纹。与字符底纹（`RunProps.shading`）是两样东西：它铺满整个段落框 */
+  shading?: Shading;
   /** 中西文之间自动加 1/4 em 间距（实测，见 @uw/layout 的 WIDTH_RULES），默认开 */
   autoSpaceDE?: boolean;
   /** 中文与数字之间的自动间距，默认开 */
@@ -264,6 +285,10 @@ export interface ResolvedParaProps {
    */
   numbering: { numId: number; level: number; label?: NumberLabel };
   snapToGrid: boolean;
+  /** 只含写了的边（`nil` / `none` 也留着：它们能盖掉样式给的线）。没有边框是 `{}` */
+  borders: ParagraphBorders;
+  /** 没有底纹时是 undefined，与 `ResolvedRunProps.shading` 同一约定 */
+  shading: Shading | undefined;
   autoSpaceDE: boolean;
   autoSpaceDN: boolean;
   overflowPunct: boolean;

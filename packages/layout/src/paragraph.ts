@@ -23,6 +23,7 @@ import type { ObjectRules, ScriptRules } from './line-height.ts';
 import { lineHeight, OBJECT_RULES, objectBoxHeight } from './line-height.ts';
 import type { BrokenLine, LineBreakContext } from './linebreak.ts';
 import { breakLines } from './linebreak.ts';
+import { standaloneFrame } from './para-frame.ts';
 import type { ParagraphLayoutCache } from './paragraph-cache.ts';
 import type {
   LayoutItem,
@@ -183,12 +184,18 @@ function computeParagraph(p: ResolvedParagraph, opts: LayoutParagraphOptions): P
     lines[0].sourceRunOrder = p.runs.filter((r) => ids.has(r.id)).map((r) => r.id);
   }
   const firstHeight = lines[0]?.height ?? 0;
+  const left = Math.min(geom.firstLeft, geom.left);
+  const frame = standaloneFrame(p.props, left, geom.left + geom.restAvail - left);
+  // 边框让出的高度折进段前段后（见 ParagraphLayout），摞块的各处因此不用认识边框
   return {
     paragraphId: p.id,
     lines,
-    spaceBefore: spacing(p.props.spacing.before, p.props.spacing.beforeLines, firstHeight),
-    spaceAfter: spacing(p.props.spacing.after, p.props.spacing.afterLines, firstHeight),
+    spaceBefore:
+      spacing(p.props.spacing.before, p.props.spacing.beforeLines, firstHeight) + (frame?.insetTop ?? 0),
+    spaceAfter:
+      spacing(p.props.spacing.after, p.props.spacing.afterLines, firstHeight) + (frame?.insetBottom ?? 0),
     contentWidth: opts.contentWidth,
+    ...(frame === undefined ? {} : { frame }),
   };
 }
 

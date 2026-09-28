@@ -161,6 +161,45 @@ describe('高亮与字符底纹', () => {
   });
 });
 
+describe('段落边框与底纹', () => {
+  const ctx = ctxFrom(`
+    <w:style w:type="paragraph" w:styleId="Head">
+      <w:name w:val="Head"/>
+      <w:pPr>
+        <w:pBdr><w:bottom w:val="single" w:sz="12" w:space="1" w:color="FF0000"/></w:pBdr>
+        <w:shd w:val="clear" w:color="auto" w:fill="EEEEEE"/>
+      </w:pPr>
+    </w:style>
+  `);
+
+  it('逐边合并：样式给下边、直接格式加上边，两条都在；刻度一个 1/8 磅一个磅', () => {
+    const p = resolveParaProps(
+      ctx,
+      pPr(
+        '<w:pStyle w:val="Head"/><w:pBdr><w:top w:val="double" w:sz="4" w:space="4" w:color="auto"/></w:pBdr>',
+      ),
+    );
+    // sz=12 → 1.5pt = 30 twips；space=1 → 1pt = 20 twips（不是 1/8 磅）
+    expect(p.borders.bottom).toEqual({ style: 'single', size: 30, space: 20, color: 'FF0000' });
+    expect(p.borders.top).toEqual({ style: 'double', size: 10, space: 80, color: 'auto' });
+    expect(p.shading).toEqual({ pattern: 'clear', color: 'auto', fill: 'EEEEEE' });
+  });
+
+  it('直接格式的 nil 盖掉样式的线；没写时是空对象、底纹缺席', () => {
+    const p = resolveParaProps(ctx, pPr('<w:pStyle w:val="Head"/><w:pBdr><w:bottom w:val="nil"/></w:pBdr>'));
+    expect(p.borders.bottom?.style).toBe('nil');
+    const plain = resolveParaProps(ctx, pPr(''));
+    expect(plain.borders).toEqual({});
+    expect(plain.shading).toBeUndefined();
+  });
+
+  it('w:start / w:end 认作左右', () => {
+    const p = pPr('<w:pBdr><w:start w:val="single" w:sz="4"/><w:end w:val="single" w:sz="8"/></w:pBdr>');
+    expect(p.borders?.left?.size).toBe(10);
+    expect(p.borders?.right?.size).toBe(20);
+  });
+});
+
 describe('默认值', () => {
   const ctx = ctxFrom('');
 

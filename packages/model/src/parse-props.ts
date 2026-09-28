@@ -9,12 +9,13 @@
 import { halfPtToTwips } from '@uw/core';
 import type { XmlElement } from '@uw/ooxml';
 import { attr, child, children } from '@uw/ooxml';
-import { parseShading } from './parse-table-props.ts';
+import { parseBorder, parseShading } from './parse-table-props.ts';
 import type {
   Indent,
   Justification,
   LineRule,
   NumberingRef,
+  ParagraphBorders,
   ParagraphSpacing,
   ParaProps,
   RunFonts,
@@ -118,6 +119,19 @@ export function parseParaProps(pPr: XmlElement | undefined): ParaProps {
   put(out, 'autoSpaceDN', onOff(pPr, 'w:autoSpaceDN'));
   put(out, 'overflowPunct', onOff(pPr, 'w:overflowPunct'));
   put(out, 'outlineLevel', intVal(pPr, 'w:outlineLvl'));
+
+  const pBdr = child(pPr, 'w:pBdr');
+  if (pBdr !== undefined) {
+    const borders: ParagraphBorders = {};
+    // w:start / w:end 是 w:left / w:right 的新名字，与 w:ind 同理
+    put(borders, 'top', parseBorder(child(pBdr, 'w:top')));
+    put(borders, 'left', parseBorder(child(pBdr, 'w:left') ?? child(pBdr, 'w:start')));
+    put(borders, 'bottom', parseBorder(child(pBdr, 'w:bottom')));
+    put(borders, 'right', parseBorder(child(pBdr, 'w:right') ?? child(pBdr, 'w:end')));
+    put(borders, 'between', parseBorder(child(pBdr, 'w:between')));
+    if (Object.keys(borders).length > 0) out.borders = borders;
+  }
+  put(out, 'shading', parseShading(child(pPr, 'w:shd')));
 
   const ind = child(pPr, 'w:ind');
   if (ind !== undefined) {
