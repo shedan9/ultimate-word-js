@@ -50,6 +50,74 @@ interface Pass {
   ctx: CascadeContext;
   counters: NumberingCounters;
   hyperlinks: ReadonlyMap<NodeId, FieldHyperlink> | undefined;
+  /** 跨调用的备忘；缺席 = 每段都重算（加载那一趟与低层调用） */
+  memo: WeakMap<Paragraph, MemoEntry> | undefined;
+  /** 本段所在单元格命中的表格样式层，序列化成串供备忘比对；正文里是空串 */
+  layersKey: string;
+}
+
+interface MemoEntry {
+  resolved: ResolvedParagraph;
+  layersKey: string;
+}
+
+/**
+ * 跨 `resolveBody` 调用复用段落的级联结果（`createResolveCache()` 造，调用方只管传）。
+ *
+ * 为什么需要它：打一个字只改一个段落，但级联要整份重跑，结果又是一棵全新的树 ——
+ * 下游的段落缓存只能按**值**比，于是每一趟都把全文每段约 3.6KB 的级联属性序列化一遍
+ * 当键（54 页的文档每次按键 9ms，比排版本身还贵）。复用了对象，下游就能按**身份**认出
+ * 「这一段没变」。
+ *
+ * 复用的判据，缺一不可：
+ * 1. **源段落已冻结且是同一个对象** —— 编辑器的快照深冻结、按修改路径共享子树，没改的
+ *    段落跨事务就是同一个对象；可写的段落可能被原地改过，一律重算
+ * 2. **上下文的来源没变**：级联上下文、树上的编号定义与补充样式（新建列表 / 套标题会换掉它们，
+ *    换了就整份作废 —— 它们能改任何一段的结果）、所在单元格命中的样式层
+ * 3. **上次没有编号**（numId = 0）：编号「第几」取决于前文，前面插一条列表项，
+ *    后面每一项的文字都变；而 numId 由样式链与直接格式定，前两条成立时它也不会变，
+ *    所以「上次 numId = 0」就说明这次也不推进计数器、跳过它不会让后文数错
+ * 4. **HYPERLINK 域给每个 run 的链接没变**：域跨段落，别处改了界桩也能改这一段的链接
+ *
+ * 复用出去的结果**深冻结**：它同时挂在前后两棵级联树上，谁改了都会串到另一份。
+ */
+export interface ResolveCache {
+  readonly __brand: 'ResolveCache';
+}
+
+interface ResolveCacheState extends ResolveCache {
+  context: CascadeContext | undefined;
+  numbering: Body['numbering'];
+  styles: Body['styles'];
+  paragraphs: WeakMap<Paragraph, MemoEntry>;
+}
+
+export function createResolveCache(): ResolveCache {
+  const state: ResolveCacheState = {
+    __brand: 'ResolveCache',
+    context: undefined,
+    numbering: undefined,
+    styles: undefined,
+    paragraphs: new WeakMap(),
+  };
+  return state;
+}
+
+/** 上下文的来源换了就整份作废，返回这一趟可用的备忘 */
+function memoFor(
+  cache: ResolveCache | undefined,
+  context: CascadeContext,
+  body: Body,
+): WeakMap<Paragraph, MemoEntry> | undefined {
+  if (cache === undefined) return undefined;
+  const state = cache as ResolveCacheState;
+  if (state.context !== context || state.numbering !== body.numbering || state.styles !== body.styles) {
+    state.context = context;
+    state.numbering = body.numbering;
+    state.styles = body.styles;
+    state.paragraphs = new WeakMap();
+  }
+  return state.paragraphs;
 }
 
 export interface ResolveBodyOptions {
@@ -61,6 +129,8 @@ export interface ResolveBodyOptions {
    * 扫描要的是**直接格式**那棵树，级联改不了界桩的位置。
    */
   hyperlinks?: ReadonlyMap<NodeId, FieldHyperlink>;
+  /** 跨调用复用没变的段落（见 `ResolveCache`）。门面每份文档持有一份 */
+  cache?: ResolveCache;
 }
 
 export function resolveBody(
@@ -79,6 +149,8 @@ export function resolveBody(
     ctx,
     counters: createNumberingCounters(ctx.numbering, ctx.styles),
     hyperlinks: opts.hyperlinks,
+    memo: memoFor(opts.cache, context, body),
+    layersKey: '',
   };
   return {
     sections: body.sections.map((s): ResolvedSection => {
@@ -100,10 +172,13 @@ export function resolveBlocks(
   blocks: readonly Block[],
   opts: ResolveBodyOptions = {},
 ): ResolvedBlock[] {
+  // 页眉页脚不走备忘：它们只在加载时级联一次
   const pass: Pass = {
     ctx,
     counters: createNumberingCounters(ctx.numbering, ctx.styles),
     hyperlinks: opts.hyperlinks,
+    memo: undefined,
+    layersKey: '',
   };
   return blocks.map((b) => block(pass, b));
 }
@@ -113,6 +188,32 @@ function block(pass: Pass, b: Block): ResolvedBlock {
 }
 
 function paragraph(pass: Pass, p: Paragraph): ResolvedParagraph {
+  const memo = pass.memo !== undefined && Object.isFrozen(p) ? pass.memo : undefined;
+  const hit = memo?.get(p);
+  if (hit !== undefined && reusable(pass, p, hit)) return hit.resolved;
+  const out = resolveParagraph(pass, p);
+  memo?.set(p, { resolved: deepFreeze(out), layersKey: pass.layersKey });
+  return out;
+}
+
+function reusable(pass: Pass, p: Paragraph, hit: MemoEntry): boolean {
+  if (hit.layersKey !== pass.layersKey || hit.resolved.props.numbering.numId !== 0) return false;
+  return p.runs.every((r, i) => {
+    // 容器链接跟着源 run 走，源没变它就没变；只有域给的链接要对
+    if (r.hyperlink !== undefined) return true;
+    const now = pass.hyperlinks?.get(r.id);
+    const before = hit.resolved.runs[i]?.hyperlink;
+    return now?.url === before?.url && now?.anchor === before?.anchor;
+  });
+}
+
+function deepFreeze<T>(value: T): T {
+  if (typeof value !== 'object' || value === null || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value)) deepFreeze(child);
+  return Object.freeze(value);
+}
+
+function resolveParagraph(pass: Pass, p: Paragraph): ResolvedParagraph {
   const ctx = pass.ctx;
   // 段落的直接 pPr 要同时喂给字符级联 —— 段落样式链上的 rPr 是字符属性的一层，
   // 而 ResolvedParaProps 里已经没有「段落样式 id 之外的原始信息」了。
@@ -179,7 +280,12 @@ function table(pass: Pass, t: Table): ResolvedTable {
           col += c.gridSpan;
           const { props: cellProps, layers } = resolveCellProps(pass.ctx, rowTable, t.props, c.props, pos);
           // 格内的段落 / run 走同一条级联，只是多了这几层前置样式
-          const inner: Pass = { ...pass, ctx: { ...pass.ctx, tableStyleLayers: layers } };
+          const inner: Pass = {
+            ...pass,
+            ctx: { ...pass.ctx, tableStyleLayers: layers },
+            // 层按格的位置命中（首行 / 隔行带），插一行就能换掉下面每一格的层
+            layersKey: pass.memo === undefined ? '' : JSON.stringify(layers),
+          };
           return {
             kind: 'cell',
             id: c.id,

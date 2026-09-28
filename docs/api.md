@@ -594,7 +594,10 @@ textarea 常驻挂载容器，提交后更新页树与全部挂载视图，重�
 低层 `@uw/layout` 调用可复用 `new ParagraphLayoutCache(capacity?)`，通过
 `layoutParagraph` / `layoutDocument` / `layoutDocumentWithFields` 的 `paragraphCache` 选项传入。
 容量是正整数，默认 2048 项，按 LRU 淘汰；`size` 查看项数，`clear()` 显式释放。
-缓存不写入 `DocumentLayout`，输出仍可结构化克隆，并与缓存内部数据隔离。
+缓存不写入 `DocumentLayout`，输出仍可结构化克隆，并与缓存内部数据隔离：
+缓存里的段落几何**深冻结后共享**（2026-09-28 起；原来是命中时克隆一份），写入会抛 TypeError，
+要改请先 `structuredClone`。门面的级联同样复用没变的段落（`resolveBody` 的 `cache` 选项 +
+`createResolveCache()`），复用出去的级联结果也是冻结的。
 
 缓存比较段落内容、节点 id、级联属性、宽度、网格、设置、布局规则及本段域显示值。
 更换度量器或其 `revision` 变化时清空缓存；`createTextMeasurer()` 的版本跟随

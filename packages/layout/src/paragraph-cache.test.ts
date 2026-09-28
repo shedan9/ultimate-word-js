@@ -36,7 +36,7 @@ function required<T>(value: T | undefined): T {
 }
 
 describe('段落缓存', () => {
-  it('重建的同值段落直接复用，调用方修改布局不会污染下一帧', () => {
+  it('重建的同值段落直接复用同一份冻结结果，调用方写不进去', () => {
     const opts = options();
     const measured = vi.spyOn(opts.measurer, 'advances');
     const p = para([run('正文中文与 ABC')]);
@@ -44,13 +44,21 @@ describe('段落缓存', () => {
     const expected = structuredClone(first);
     expect(measured).toHaveBeenCalled();
     measured.mockClear();
-    required(required(first.lines[0]).fragments[0]).text = '被调用方修改';
+    // 未命中的那一次也冻结：可写与否不该取决于是不是第一次排
+    expect(() => {
+      required(required(first.lines[0]).fragments[0]).text = '被调用方修改';
+    }).toThrow(TypeError);
     const second = layoutParagraph(structuredClone(p), opts);
+    expect(second).toBe(first);
     expect(second).toEqual(expected);
-    required(second.lines[0]).height = -1;
-    expect(layoutParagraph(p, opts)).toEqual(expected);
+    expect(() => {
+      required(second.lines[0]).height = -1;
+    }).toThrow(TypeError);
     expect(measured).not.toHaveBeenCalled();
-    expect(structuredClone(second)).toEqual(second);
+    // 结构化克隆得到的是可写副本，过 Worker 边界不受影响
+    const copy = structuredClone(second);
+    required(copy.lines[0]).height = -1;
+    expect(layoutParagraph(p, opts)).toEqual(expected);
   });
 
   it.each(['width', 'grid', 'settings', 'font', 'objectRules', 'scriptRules', 'widthRules'])(
@@ -73,6 +81,16 @@ describe('段落缓存', () => {
       expect(actual).toEqual(layoutParagraph(p, uncached));
     },
   );
+
+  it('冻结的段落按身份记住序列化串，第二次命中不再序列化整段', () => {
+    const opts = options();
+    const p = Object.freeze(para([run('冻结的段落')]));
+    const first = layoutParagraph(p, opts);
+    const stringify = vi.spyOn(JSON, 'stringify');
+    expect(layoutParagraph(p, opts)).toBe(first);
+    expect(stringify.mock.calls.some(([value]) => value === p)).toBe(false);
+    stringify.mockRestore();
+  });
 
   it('原地修改文字和样式也失效，不能只看节点引用或 id', () => {
     const opts = options();

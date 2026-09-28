@@ -14,6 +14,7 @@ import type { FontRegistry } from '@uw/fonts';
 import { createTextMeasurer } from '@uw/fonts';
 import { layoutDocumentWithFields, ParagraphLayoutCache } from '@uw/layout';
 import {
+  createResolveCache,
   DEFAULT_SECTION_PROPS,
   fieldHyperlinks,
   fontNameCandidates,
@@ -69,6 +70,8 @@ export async function load(
     diagnostics: sink,
   });
   const paragraphCache = new ParagraphLayoutCache();
+  // 没改的段落跨事务复用同一个冻结的级联结果，段落缓存才能按身份认出它（见 ResolveCache）
+  const resolveCache = createResolveCache();
   const result = layoutDocumentWithFields(loaded.resolved, loaded.fields, {
     paragraphCache,
     measurer,
@@ -98,7 +101,10 @@ export async function load(
             sink,
           ),
         );
-      const resolved = resolveBody(loaded.cascade, body, { hyperlinks: fieldHyperlinks(fields) });
+      const resolved = resolveBody(loaded.cascade, body, {
+        hyperlinks: fieldHyperlinks(fields),
+        cache: resolveCache,
+      });
       const result = layoutDocumentWithFields(resolved, fields, {
         paragraphCache,
         measurer,
