@@ -661,6 +661,60 @@ try {
   assert(!resetKey('q', { metaKey: true }) && !resetKey(' ', { metaKey: true }) && !resetKey(' ', { ctrlKey: true, isComposing: true }), '系统快捷键与组合期不接管');
   plainView.dispose();
   styleHost.remove();
+  // 上下标共享 vertAlign：快捷键、beforeinput、样式继承、暂存输入与回写走同一条路径。
+  const scriptDoc = await UltimateWord.load(listDocx());
+  const scriptHost = document.createElement('div'); document.body.append(scriptHost);
+  const scriptView = scriptDoc.mount(scriptHost, { mode: 'edit' });
+  const scriptInput = scriptHost.querySelector('textarea');
+  const scriptParagraph = () => scriptDoc.query('paragraph')[0];
+  const scriptRange = () => scriptDoc.rangeOf(scriptParagraph());
+  const scriptKey = (key, modifiers = {}) => {
+    const event = new KeyboardEvent('keydown', { key, ...modifiers, bubbles: true, cancelable: true });
+    scriptInput.dispatchEvent(event); return event.defaultPrevented;
+  };
+  const scriptBefore = (inputType, data = null) => scriptInput.dispatchEvent(new InputEvent('beforeinput', { inputType, data, bubbles: true, cancelable: true }));
+  scriptView.select({ start: scriptRange().end, end: scriptRange().start });
+  assert(scriptKey('+', { code: 'Equal', ctrlKey: true, shiftKey: true }), 'Ctrl+Shift+= 接管上标');
+  assert(scriptParagraph().runs.every((r) => r.props.vertAlign === 'superscript'), '反向选区全部变成上标');
+  assert(scriptKey('=', { code: 'Equal', ctrlKey: true }), 'Ctrl+= 接管下标');
+  assert(scriptParagraph().runs.every((r) => r.props.vertAlign === 'subscript'), '下标替换上标');
+  const scriptExport = await UltimateWord.load(await scriptDoc.toDocx());
+  assert(scriptExport.query('paragraph')[0].runs.every((r) => r.props.vertAlign === 'subscript'), '上下标写回 docx 后可重新加载');
+  scriptDoc.undo();
+  assert(scriptParagraph().runs.every((r) => r.props.vertAlign === 'superscript'), '一次撤销下标回到上标');
+  scriptDoc.redo();
+  assert(scriptParagraph().runs.every((r) => r.props.vertAlign === 'subscript'), '一次重做恢复下标');
+  scriptBefore('formatSubscript');
+  assert(scriptParagraph().runs.every((r) => r.props.vertAlign === 'baseline'), 'beforeinput 再次切换下标恢复正文');
+  scriptBefore('formatSuperscript');
+  assert(scriptParagraph().runs.every((r) => r.props.vertAlign === 'superscript'), 'beforeinput 可切换上标');
+  // 样式里的上标也算激活；取消须显式写 baseline，不能删掉直接属性后又露出样式。
+  scriptDoc.tx((t) => {
+    const styleId = t.addStyle({ id: 'ScriptStyle', name: 'Script style', paraProps: {}, runProps: { vertAlign: 'superscript' } });
+    t.setParagraphProps(scriptRange(), { styleId });
+    t.clearRunProps(scriptRange());
+    return undefined;
+  });
+  scriptView.select(scriptRange());
+  scriptKey('+', { metaKey: true, shiftKey: true });
+  assert(scriptParagraph().runs.every((r) => r.props.vertAlign === 'baseline'), 'Cmd+Shift+= 按级联结果取消样式上标');
+  const scriptAt = scriptRange().end;
+  scriptView.select({ start: scriptAt, end: scriptAt });
+  scriptKey(' ', { ctrlKey: true });
+  scriptKey('+', { ctrlKey: true, shiftKey: true });
+  scriptBefore('insertText', '清后正文');
+  assert(scriptParagraph().runs.find((r) => r.id === scriptDoc.find('清后正文')[0]?.start.nodeId)?.props.vertAlign === 'baseline', '暂存清格式后重新级联，切换取消样式上标');
+  scriptDoc.undo();
+  assert(scriptDoc.find('清后正文').length === 0, '暂存格式与输入一次撤销');
+  const scriptEnd = scriptRange().end;
+  scriptView.select({ start: scriptEnd, end: scriptEnd });
+  scriptKey('=', { metaKey: true });
+  scriptInput.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+  assert(!scriptKey('+', { ctrlKey: true, shiftKey: true, isComposing: true }), '组合期不切换上下标');
+  scriptInput.dispatchEvent(new CompositionEvent('compositionend', { data: '下标输入', bubbles: true }));
+  assert(scriptParagraph().runs.find((r) => r.id === scriptDoc.find('下标输入')[0]?.start.nodeId)?.props.vertAlign === 'subscript', '折叠下标作用于组合提交的文字');
+  assert(!scriptKey('+', { code: 'NumpadAdd', ctrlKey: true, shiftKey: true }) && !scriptKey('=', { code: 'Equal', ctrlKey: true, altKey: true }), '不接管小键盘加号与 Alt 组合');
+  scriptView.dispose(); scriptHost.remove();
   result.textContent = `PASS ${passed} 项`;
 } catch (error) { result.textContent = `FAIL ${passed} 项后\n${error.stack ?? error}`; }
 </script>

@@ -30,8 +30,8 @@ import type { PasteParagraph } from './clipboard.ts';
 import type { TextGranularity } from './text-navigation.ts';
 import { paragraphNavigation } from './text-navigation.ts';
 
-/** 快捷键切换的三种格式；其余格式走 `doc.tx` 的 `setRunProps`。 */
-export type ToggleFormat = 'bold' | 'italic' | 'underline';
+/** 上下标共享 vertAlign，切换其中一个会替换另一个。其余格式走 `doc.tx` 的 `setRunProps`。 */
+export type ToggleFormat = 'bold' | 'italic' | 'underline' | 'superscript' | 'subscript';
 /**
  * 选区当前的最终格式（级联后），切换按「全部都是才取消」判断。
  * pending 仅用于折叠光标；提供时须先应用再级联，尤其 null 要恢复样式值（见 runPropsAtInsertion）。
@@ -39,7 +39,8 @@ export type ToggleFormat = 'bold' | 'italic' | 'underline';
 export type FormatQuery = (
   range: DocRange,
   pending?: RunPropsPatch,
-) => readonly Pick<ResolvedRunProps, ToggleFormat>[];
+) => readonly (Pick<ResolvedRunProps, 'bold' | 'italic' | 'underline'> &
+  Partial<Pick<ResolvedRunProps, 'vertAlign'>>)[];
 /**
  * 选区触及段落的级联对齐、编号、缩进与段距。`charUnit` 是字符单位缩进里一个字的宽度（twips，
  * 见 `@uw/layout` 的 `indentCharUnit`）；没有它就换算不了 `w:leftChars`，Ctrl+T 遇到字符单位时不动。
@@ -448,18 +449,26 @@ export function createEditingController(
       if (!selection || composing) return;
       const range = selection;
       const collapsed = equal(range.start, range.end);
-      const on = (p: Pick<ResolvedRunProps, ToggleFormat>) =>
-        format === 'underline' ? underlined(p.underline) : p[format];
+      const script = format === 'superscript' || format === 'subscript';
+      const key = script ? 'vertAlign' : format;
+      const on = (value: boolean | string | undefined) =>
+        script
+          ? value === format
+          : format === 'underline'
+            ? typeof value === 'string' && underlined(value)
+            : value === true;
       const current = formatOf?.(range, collapsed ? pending : undefined) ?? [];
-      const queued = collapsed ? pending?.[format] : undefined;
+      const queued = collapsed ? pending?.[key] : undefined;
       const active =
         queued !== undefined && queued !== null
-          ? typeof queued === 'string'
-            ? underlined(queued)
-            : queued
-          : current.length > 0 && current.every(on);
-      const patch: RunPropsPatch =
-        format === 'underline' ? { underline: active ? 'none' : 'single' } : { [format]: !active };
+          ? on(queued)
+          : current.length > 0 && current.every((p) => on(p[key]));
+      // 取消必须写 baseline：删除直接格式会重新露出样式里的上标或下标。
+      const patch: RunPropsPatch = script
+        ? { vertAlign: active ? 'baseline' : format }
+        : format === 'underline'
+          ? { underline: active ? 'none' : 'single' }
+          : { [format]: !active };
       const backward = focus !== undefined && !collapsed && equal(focus, range.start);
       let next = range;
       editor.breakHistory();

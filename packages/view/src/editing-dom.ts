@@ -219,6 +219,12 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
         case 'formatUnderline':
           state.toggleFormat('underline');
           break;
+        case 'formatSuperscript':
+          state.toggleFormat('superscript');
+          break;
+        case 'formatSubscript':
+          state.toggleFormat('subscript');
+          break;
         case 'historyUndo':
           binding.editor.undo();
           break;
@@ -306,6 +312,13 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
       action = () => state.clearParagraphFormat();
     else if (mod && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'a')
       action = () => state.selectAll();
+    // Equal 的 key 在 Shift 下通常变成 +，按物理键认；合成事件没有 code 时按 key 兜底。
+    else if (
+      mod &&
+      !event.altKey &&
+      (event.code === 'Equal' || (!event.code && (event.key === '=' || event.key === '+')))
+    )
+      action = () => state.toggleFormat(event.shiftKey ? 'superscript' : 'subscript');
     else if (mod && !event.altKey && !event.shiftKey && event.key.toLowerCase() in TOGGLE_KEYS) {
       const format = TOGGLE_KEYS[event.key.toLowerCase()] as ToggleFormat;
       action = () => state.toggleFormat(format);

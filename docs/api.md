@@ -488,6 +488,11 @@ Ctrl/Cmd+B / I / U（以及 `formatBold` 等输入事件）切换加粗 / 斜体
 选区全部已有时取消，否则设置；拆 run 后选区与反向 focus 保持不变，一次切换一个撤销单元。
 空段落里的折叠光标直接修改段落标记；非空段落里的折叠光标不改模型，格式暂存到下一次输入
 （含 IME 提交与多行粘贴），移动、删除、Enter 或重新选择即丢弃。带 Alt / Shift 的组合与组合期不接管。
+Ctrl/Cmd+Shift+= 切换上标，Ctrl/Cmd+= 切换下标（`toggleFormat('superscript' | 'subscript')`），
+也接收 `formatSuperscript` / `formatSubscript` 输入事件。上下标互斥，选区全为目标格式时显式写
+`vertAlign: 'baseline'` 恢复正文，否则统一设置；样式继承、折叠暂存、IME 与撤销规则同 B / I / U。
+快捷键按 `Equal` 键识别，缺少 `code` 时接受 `=` / `+`；不接管 Alt 组合、小键盘加号或组合期。
+浏览器可能截获缩放快捷键，以上行为仅在页面收到事件时生效；也可通过输入事件或低层控制器调用。
 低层 `runPropsOfRange(resolvedBody, range)` 返回选区覆盖的级联字符格式，可用于工具栏状态。
 Ctrl+Space 清字符格式，Ctrl+Q 清段落直接格式（控制器 `clearRunFormat()` / `clearParagraphFormat()`）。
 字符清除保留语言、移除字符样式；段落清除保留段落样式与字符格式。反向选区保持方向，每次实际修改独立撤销。

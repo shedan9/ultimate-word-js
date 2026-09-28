@@ -1118,6 +1118,11 @@ await view.toPNG(3);     // 第 3 页
   以清除后的样式值为准（包括本次新增样式、表格条件样式），不把 `null` 当 false。未知 XML 仍原样保留。
   5 项模型单测、2 项控制器单测、1 项回写单测与 11 项浏览器断言，编辑浏览器回归增至 207 项。
   未做：尚未建模的高亮 / 边框等格式的清除；操作系统截获的 Ctrl+Space 无法传入页面，Word 逐格对照待人工验收。
+- ✅ **上标 / 下标编辑**（2026-09-28）：`toggleFormat('superscript' | 'subscript')`，Ctrl/Cmd+Shift+= / Ctrl/Cmd+=，
+  以及 `formatSuperscript` / `formatSubscript` 输入事件。共用 `vertAlign` 保证互斥，按级联结果判断，取消显式写 baseline，
+  避免重新露出样式上标。折叠光标暂存到输入 / IME，空段落改段落标记；复用已有模型、排版与回写。
+  3 项控制器单测 + 15 项浏览器断言，编辑回归增至 222 项，覆盖样式清除后的切换、撤销重做与导出回读。
+  上下标字号与基线仍沿用未标定规则；浏览器截获的缩放快捷键无法传入页面。
 - ✅ **分页符 Ctrl+Enter**（2026-09-23）：`insertInline(position, 'pageBreak')` 插 `w:br w:type="page"`，控制器 `pageBreak()`
   再在它后面拆段（Word 2013 起分页符后跟段落标记；照界面行为写，没有真值样本）。Ctrl+Enter / Cmd+Return 接管，
   Ctrl+Shift+Enter（分栏符）不接管。布局与回写原本就认分页符，没改。单元格里事务拒绝（Word 会拆表）。

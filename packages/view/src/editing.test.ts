@@ -7,7 +7,7 @@ import {
   walkParagraphs,
 } from '@uw/model';
 import { describe, expect, it } from 'vitest';
-import type { ParagraphQuery } from './editing.ts';
+import type { FormatQuery, ParagraphQuery } from './editing.ts';
 import { createEditingController } from './editing.ts';
 
 function setup(text: string | Run[] = '') {
@@ -570,18 +570,24 @@ describe('字符格式切换', () => {
     const ctx = setup(text);
     // 测试树没有样式，直接格式即最终格式；门面传入级联后的格式。
     const state = createEditingController(ctx.editor, (range) => {
-      const props: { bold: boolean; italic: boolean; underline: string }[] = [];
+      const props: ReturnType<FormatQuery>[number][] = [];
       for (const p of walkParagraphs(ctx.editor.body)) {
         const ids = p.runs.map((r) => r.id);
         const from = range.start.nodeId === p.id ? 0 : ids.indexOf(range.start.nodeId);
         const to = range.end.nodeId === p.id ? 0 : ids.indexOf(range.end.nodeId);
         if (!p.runs.length && from === 0)
-          props.push({ bold: !!p.props.markRunProps?.bold, italic: false, underline: 'none' });
+          props.push({
+            bold: !!p.props.markRunProps?.bold,
+            italic: false,
+            underline: 'none',
+            vertAlign: p.props.markRunProps?.vertAlign ?? 'baseline',
+          });
         for (const r of p.runs.slice(Math.max(0, from), to < 0 ? undefined : to + 1))
           props.push({
             bold: !!r.props.bold,
             italic: !!r.props.italic,
             underline: r.props.underline ?? 'none',
+            vertAlign: r.props.vertAlign ?? 'baseline',
           });
       }
       return props;
@@ -592,6 +598,61 @@ describe('字符格式切换', () => {
     [...walkParagraphs(editor.body)].flatMap((p) =>
       p.runs.map((r) => [paragraphText({ ...p, runs: [r] }), !!r.props.bold] as const),
     );
+
+  it('上下标互斥，反向选区保持，混合格式统一设置，再次切换恢复正文', () => {
+    const { editor, state } = formatted([
+      { kind: 'run', id: 'r', props: { vertAlign: 'superscript' }, content: [{ kind: 'text', text: '甲' }] },
+      { kind: 'run', id: 'r2', props: {}, content: [{ kind: 'text', text: '乙' }] },
+    ]);
+    state.select({
+      start: { nodeId: 'r2', contentIndex: 0, offset: 1 },
+      end: { nodeId: 'r', contentIndex: 0, offset: 0 },
+    });
+    const values = () => [...walkParagraphs(editor.body)][0]?.runs.map((r) => r.props.vertAlign);
+    state.toggleFormat('superscript');
+    expect(values()).toEqual(['superscript', 'superscript']);
+    expect(state.focus).toEqual(state.selection?.start);
+    state.toggleFormat('subscript');
+    expect(values()).toEqual(['subscript', 'subscript']);
+    state.toggleFormat('subscript');
+    expect(values()).toEqual(['baseline', 'baseline']);
+    editor.undo();
+    expect(values()).toEqual(['subscript', 'subscript']);
+    editor.redo();
+    expect(values()).toEqual(['baseline', 'baseline']);
+  });
+
+  it('折叠上下标暂存与加粗并存，组合期不切换，输入和格式一次撤销', () => {
+    const { editor, state } = formatted('正文');
+    const before = editor.body;
+    state.toggleFormat('superscript');
+    state.toggleFormat('subscript');
+    state.toggleFormat('subscript');
+    expect(state.pendingFormat).toEqual({ vertAlign: 'baseline' });
+    state.toggleFormat('superscript');
+    state.toggleFormat('bold');
+    expect(editor.body).toBe(before);
+    state.compositionStart();
+    state.toggleFormat('subscript');
+    state.compositionEnd('注');
+    expect([...walkParagraphs(editor.body)][0]?.runs[0]?.props).toEqual({
+      vertAlign: 'superscript',
+      bold: true,
+    });
+    editor.undo();
+    expect(editor.body).toBe(before);
+  });
+
+  it('空段落上下标修改段落标记，再次切换恢复正文', () => {
+    const { editor, state } = formatted();
+    state.toggleFormat('superscript');
+    expect([...walkParagraphs(editor.body)][0]?.props.markRunProps?.vertAlign).toBe('superscript');
+    state.toggleFormat('superscript');
+    expect([...walkParagraphs(editor.body)][0]?.props.markRunProps?.vertAlign).toBe('baseline');
+    state.toggleFormat('subscript');
+    state.insert('下');
+    expect([...walkParagraphs(editor.body)][0]?.runs[0]?.props.vertAlign).toBe('subscript');
+  });
 
   it('选区切换加粗保留反向选区，全部加粗时再按一次取消，整次一个撤销单元', () => {
     const { editor, state } = formatted('甲乙丙丁');
