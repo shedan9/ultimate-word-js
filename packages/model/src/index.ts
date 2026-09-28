@@ -9,6 +9,7 @@
  */
 export * from './cascade.ts';
 export * from './cascade-table.ts';
+export * from './clear-format.ts';
 export * from './fields.ts';
 export * from './font-table.ts';
 export * from './images.ts';

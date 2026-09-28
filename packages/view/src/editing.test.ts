@@ -37,6 +37,66 @@ function setup(text: string | Run[] = '') {
   return { editor, state, texts };
 }
 describe('编辑输入状态', () => {
+  it('清字符格式保留反向选区，折叠清除只影响后续组合输入', () => {
+    const { editor, state } = setup([
+      {
+        kind: 'run',
+        id: 'r',
+        props: { bold: true, size: 400 },
+        content: [{ kind: 'text', text: '甲乙丙丁' }],
+      },
+    ]);
+    const at = (offset: number) => ({ nodeId: 'r', contentIndex: 0, offset });
+    state.select({ start: at(3), end: at(1) });
+    state.clearRunFormat();
+    expect([...walkParagraphs(editor.body)][0]?.runs.map((r) => r.props.bold)).toEqual([
+      true,
+      undefined,
+      true,
+    ]);
+    expect(state.focus).toEqual(state.selection?.start);
+    const undo = editor.undo();
+    if (undo) state.apply(undo);
+    state.select({ start: at(1), end: at(1) });
+    const before = editor.body;
+    state.toggleFormat('italic');
+    state.clearRunFormat();
+    expect(editor.body).toBe(before);
+    expect(editor.canUndo).toBe(false);
+    expect(state.pendingFormat?.italic).toBeNull();
+    state.compositionStart();
+    state.clearParagraphFormat();
+    state.clearRunFormat();
+    expect(editor.body).toBe(before);
+    state.compositionEnd('输入');
+    const runs = [...walkParagraphs(editor.body)][0]?.runs ?? [];
+    expect(runs.find((r) => r.content.some((c) => c.kind === 'text' && c.text === '输入'))?.props).toEqual(
+      {},
+    );
+    expect(runs[0]?.props.bold).toBe(true);
+    editor.undo();
+    expect(editor.body).toBe(before);
+  });
+
+  it('清段落格式保持选区和字符格式，移动光标丢弃暂存清除', () => {
+    const { editor, state } = setup('正文');
+    const at = { nodeId: 'r', contentIndex: 0, offset: 1 };
+    const range = { start: at, end: at };
+    editor.tx((t) => {
+      t.setParagraphProps(range, { styleId: 'Heading1', justification: 'center' });
+      t.setRunProps({ start: { ...at, offset: 0 }, end: { ...at, offset: 2 } }, { bold: true });
+    });
+    state.select(range);
+    state.clearParagraphFormat();
+    expect([...walkParagraphs(editor.body)][0]?.props).toEqual({ styleId: 'Heading1' });
+    expect(state.selection).toEqual(range);
+    state.clearRunFormat();
+    state.move('forward');
+    expect(state.pendingFormat).toBeUndefined();
+    state.insert('新');
+    expect([...walkParagraphs(editor.body)][0]?.runs.every((r) => r.props.bold)).toBe(true);
+  });
+
   it('空段输入、Enter、段首退格合段以及撤销映射', () => {
     const { editor, state, texts } = setup();
     state.insert('甲');

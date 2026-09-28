@@ -1,8 +1,42 @@
-import type { ResolvedBody, ResolvedParagraph } from './nodes.ts';
+import type { CascadeContext } from './cascade.ts';
+import type { Body, ResolvedBody, ResolvedParagraph } from './nodes.ts';
 import { walkParagraphs } from './nodes.ts';
 import { buildRunOrder, compareDocPositions, runEnd, runStart } from './order.ts';
-import type { DocRange } from './position.ts';
+import type { DocPosition, DocRange } from './position.ts';
 import type { ResolvedRunProps } from './props.ts';
+import { resolveBody } from './resolve-body.ts';
+import type { RunPropsPatch } from './text-transaction.ts';
+
+/**
+ * 暂存格式的查询必须重新级联：null 是回到样式，不能被当作 false，也不能再读旧的直接格式。
+ * 在副本上应用，不创建事务 / 历史。复用整棵树的级联，以保留单元格条件样式与本次新建样式。
+ * 只在带暂存格式的切换命令里调用，不进入输入与布局的热路径。
+ */
+export function runPropsAtInsertion(
+  ctx: CascadeContext,
+  body: Body,
+  position: DocPosition,
+  patch: RunPropsPatch,
+): ResolvedRunProps[] {
+  const preview = structuredClone(body);
+  for (const paragraph of walkParagraphs(preview)) {
+    if (paragraph.id !== position.nodeId && !paragraph.runs.some((r) => r.id === position.nodeId)) continue;
+    // 字缝沿用左 run、空段看标记；给所在段的候选都打补丁，具体选择仍由 runPropsOfRange 决定。
+    const candidates = paragraph.runs.map((r) => r.props);
+    if (!candidates.length) {
+      paragraph.props.markRunProps ??= {};
+      candidates.push(paragraph.props.markRunProps);
+    }
+    for (const props of candidates) {
+      for (const [key, value] of Object.entries(patch)) {
+        if (value === null) delete props[key as keyof typeof props];
+        else if (value !== undefined) Object.assign(props, { [key]: value });
+      }
+    }
+    break;
+  }
+  return runPropsOfRange(resolveBody(ctx, preview), { start: position, end: position });
+}
 
 /**
  * 选区里的字符格式，给工具栏状态与 Ctrl+B 这类「全是才取消」的切换用。

@@ -41,6 +41,7 @@ import {
   paragraphsOfRange,
   queryNodes,
   rangeOfNode,
+  runPropsAtInsertion,
   runPropsOfRange,
   textOfRange,
   walkBlocks,
@@ -286,7 +287,10 @@ export class UwDocument {
         editor,
         text: (range) => textOfRange(this.#loaded.resolved, range, this.#fieldValues),
         fragment: (range) => fragmentOfRange(this.#loaded.resolved, range, this.#fieldValues),
-        format: (range) => runPropsOfRange(this.#loaded.resolved, range),
+        format: (range, pending) =>
+          pending
+            ? runPropsAtInsertion(this.#loaded.cascade, this.#editor.body, range.start, pending)
+            : runPropsOfRange(this.#loaded.resolved, range),
         paragraphFormat: (range) =>
           paragraphsOfRange(this.#loaded.resolved, range).map((p) => ({ ...p, charUnit: indentCharUnit(p) })),
         tabStop: this.#loaded.cascade.settings.defaultTabStop,

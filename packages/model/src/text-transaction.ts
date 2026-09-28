@@ -5,6 +5,8 @@
  * 格式命令只在范围端点拆 run，不合并相邻同格式 run：合并会改掉后方 run 的 id 与片段下标，
  * 已存的批注 / 选区就得跟着映射，而多几个 run 对排版和回写都没有影响。
  */
+
+import { CLEAR_RUN_PROPS } from './clear-format.ts';
 import type { Block, Body, NodeId, Paragraph, Run, RunContent, TableCell, TableRow } from './nodes.ts';
 import { walkBlocks, walkParagraphs } from './nodes.ts';
 import { EMPTY_NUMBERING } from './numbering.ts';
@@ -70,11 +72,15 @@ export interface TextTransaction {
    * 返回拆分后的同一段文字范围，供后续命令继续使用。
    */
   setRunProps(range: DocRange, patch: RunPropsPatch): DocRange;
+  /** 清除已识别的字符直接格式与字符样式，保留语言标记；范围语义同 setRunProps。 */
+  clearRunProps(range: DocRange): DocRange;
   /**
    * 修改范围触及的每个段落（含其间的单元格段落）的直接段落格式；折叠范围即光标所在段。
    * 不拆 run、不移动位置，返回原范围。
    */
   setParagraphProps(range: DocRange, patch: ParaPropsPatch): DocRange;
+  /** 清除已识别的段落直接格式，保留段落样式与段落标记的字符格式。 */
+  clearParagraphProps(range: DocRange): DocRange;
   /**
    * 新增一份列表定义（九级，见 numbering-edit.ts），返回它的 numId，交给 `setParagraphProps` 引用。
    * 定义随本次事务提交与撤销；本次没有段落改动时整次无修改，定义也不留下。
@@ -876,6 +882,20 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
               }
             }
             return { ...start };
+          });
+        },
+        clearRunProps(range) {
+          return transaction.setRunProps(range, CLEAR_RUN_PROPS);
+        },
+        clearParagraphProps(range) {
+          return command(() => {
+            flush();
+            const patch: Record<string, null> = {};
+            for (const p of walkParagraphs(draft)) {
+              for (const key of Object.keys(p.props))
+                if (key !== 'styleId' && key !== 'markRunProps') patch[key] = null;
+            }
+            return transaction.setParagraphProps(range, patch);
           });
         },
         setRunProps(range, patch) {

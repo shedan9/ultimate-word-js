@@ -113,6 +113,37 @@ describe('不编辑：逐字节照搬', () => {
 });
 
 describe('编辑后重新加载，正文结构与编辑结果一致', () => {
+  it('清除字符和段落格式后回读保持一致，样式引用、超链接及未知 XML 保留', () => {
+    const { pkg, loaded } = load(
+      docx(
+        '<w:p><w:pPr><w:pStyle w:val="Heading1"/><w:jc w:val="center"/><w:ind w:left="420"/><w:pBdr><w:bottom w:val="single" w:sz="4"/></w:pBdr></w:pPr><w:bookmarkStart w:id="1" w:name="keep"/><w:hyperlink r:id="rId9"><w:r><w:rPr><w:rStyle w:val="Emphasis"/><w:b/><w:sz w:val="36"/><w:highlight w:val="yellow"/><w:lang w:eastAsia="zh-CN"/></w:rPr><w:t>甲乙丙丁</w:t></w:r></w:hyperlink><w:bookmarkEnd w:id="1"/></w:p>',
+      ),
+    );
+    const editor = createTextEditor(loaded.body);
+    const at = textPosition(editor.body, 0, 1) as DocPosition;
+    editor.tx((t) => {
+      const range = t.clearRunProps({ start: at, end: { ...at, offset: 3 } });
+      t.clearParagraphProps(range);
+    });
+    const bytes = serializeDocx(pkg, editor.body);
+    const again = load(bytes);
+    expect(shape(again.loaded.body)).toEqual(shape(editor.body));
+    const paragraph = paragraphs(again.loaded.body)[0] as Paragraph;
+    expect(paragraph.props).toEqual({ styleId: 'Heading1' });
+    expect(paragraph.runs[1]?.props).toEqual({ langEastAsia: 'zh-CN' });
+    expect(paragraph.runs.every((r) => r.hyperlink?.relId === 'rId9')).toBe(true);
+    const xml = decoder.decode(unzip(bytes).get('word/document.xml'));
+    expect(xml).toContain('w:pBdr');
+    expect(xml).toContain('w:highlight');
+    expect(xml).toContain('w:bookmarkStart');
+    expect(xml).not.toContain('w:jc');
+    expect(xml).not.toContain('w:ind');
+    editor.undo();
+    expect(unzip(serializeDocx(pkg, editor.body)).get('word/document.xml')).toEqual(
+      pkg.requirePart('/word/document.xml').bytes,
+    );
+  });
+
   it.each(docxFixtures)('%s：输入 + 拆段 + 加粗 + 对齐', (name) => {
     const { edited, again } = roundTrip(fixture(name), (t, body) => {
       const at = textPosition(body);

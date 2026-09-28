@@ -19,6 +19,7 @@ import {
   adjacentCellRange,
   buildRunOrder,
   builtinStyleDefinition,
+  CLEAR_RUN_PROPS,
   compareDocPositions,
   mapTextRange,
   paragraphText,
@@ -31,8 +32,14 @@ import { paragraphNavigation } from './text-navigation.ts';
 
 /** 快捷键切换的三种格式；其余格式走 `doc.tx` 的 `setRunProps`。 */
 export type ToggleFormat = 'bold' | 'italic' | 'underline';
-/** 选区当前的最终格式（级联后），切换按「全部都是才取消」判断。 */
-export type FormatQuery = (range: DocRange) => readonly Pick<ResolvedRunProps, ToggleFormat>[];
+/**
+ * 选区当前的最终格式（级联后），切换按「全部都是才取消」判断。
+ * pending 仅用于折叠光标；提供时须先应用再级联，尤其 null 要恢复样式值（见 runPropsAtInsertion）。
+ */
+export type FormatQuery = (
+  range: DocRange,
+  pending?: RunPropsPatch,
+) => readonly Pick<ResolvedRunProps, ToggleFormat>[];
 /**
  * 选区触及段落的级联对齐、编号、缩进与段距。`charUnit` 是字符单位缩进里一个字的宽度（twips，
  * 见 `@uw/layout` 的 `indentCharUnit`）；没有它就换算不了 `w:leftChars`，Ctrl+T 遇到字符单位时不动。
@@ -89,6 +96,10 @@ export interface EditingController {
   readonly pendingFormat: RunPropsPatch | undefined;
   select(range: DocRange): void;
   toggleFormat(format: ToggleFormat): void;
+  /** 选区清字符格式；非空段落的折叠光标只暂存到下一次输入，组合期不接管。 */
+  clearRunFormat(): void;
+  /** 选区触及的段落恢复样式格式，保留段落样式与字符格式。 */
+  clearParagraphFormat(): void;
   /** Word 的 Ctrl+L/E/R/J：全部已是该对齐时回到左对齐，否则设置；选区不变。 */
   align(justification: Justification): void;
   /** 选区全是列表段落，且（折叠时）光标在段首：Tab 交给列表升降级而不是移走焦点。 */
@@ -439,7 +450,7 @@ export function createEditingController(
       const collapsed = equal(range.start, range.end);
       const on = (p: Pick<ResolvedRunProps, ToggleFormat>) =>
         format === 'underline' ? underlined(p.underline) : p[format];
-      const current = formatOf?.(range) ?? [];
+      const current = formatOf?.(range, collapsed ? pending : undefined) ?? [];
       const queued = collapsed ? pending?.[format] : undefined;
       const active =
         queued !== undefined && queued !== null
@@ -461,6 +472,27 @@ export function createEditingController(
         return;
       }
       select(backward ? { start: next.end, end: next.start } : next);
+    },
+    clearRunFormat() {
+      if (!selection || composing) return;
+      const range = selection;
+      const collapsed = equal(range.start, range.end);
+      const backward = focus !== undefined && !collapsed && equal(focus, range.start);
+      let next = range;
+      editor.breakHistory();
+      const change = editor.tx((tx) => {
+        next = tx.clearRunProps(range);
+      });
+      pending = collapsed && !change ? { ...CLEAR_RUN_PROPS } : undefined;
+      if (!collapsed) select(backward ? { start: next.end, end: next.start } : next);
+    },
+    clearParagraphFormat() {
+      if (!selection || composing) return;
+      const range = selection;
+      editor.breakHistory();
+      editor.tx((tx) => {
+        tx.clearParagraphProps(range);
+      });
     },
     align(justification) {
       if (!selection || composing) return;

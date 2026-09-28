@@ -28,6 +28,90 @@ function textOf(body: Body, range: DocRange): string {
 }
 
 describe('字符格式命令', () => {
+  it('清字符格式只拆选中文字，移除字符样式但保留语言与超链接，支持撤销和重做', () => {
+    const editor = createTextEditor(
+      parse(
+        '<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:hyperlink r:id="rId1"><w:r><w:rPr><w:rStyle w:val="Emphasis"/><w:b/><w:sz w:val="36"/><w:lang w:eastAsia="zh-CN"/></w:rPr><w:t>甲乙丙丁</w:t></w:r></w:hyperlink></w:p>',
+      ),
+    );
+    const before = editor.body;
+    let range = { start: pos(before, 1), end: pos(before, 3) };
+    editor.tx((t) => {
+      range = t.clearRunProps(range);
+    });
+    const runs = para(editor.body).runs;
+    expect(runs).toHaveLength(3);
+    expect(runs[1]?.props).toEqual({ langEastAsia: 'zh-CN' });
+    expect(runs[0]?.props).toEqual(runs[2]?.props);
+    expect(runs.every((r) => r.hyperlink?.relId === 'rId1')).toBe(true);
+    expect(para(editor.body).props.styleId).toBe('Heading1');
+    expect(textOf(editor.body, range)).toBe('乙丙');
+    const after = editor.body;
+    expect(
+      editor.tx((t) => {
+        t.clearRunProps(range);
+      }),
+    ).toBeUndefined();
+    editor.undo();
+    expect(editor.body).toBe(before);
+    editor.redo();
+    expect(editor.body).toBe(after);
+  });
+
+  it('清格式读取同事务的最新草稿，跨单元格与空段标记，末段标记不清', () => {
+    const editor = createTextEditor(
+      parse(
+        '<w:p><w:pPr><w:rPr><w:b/></w:rPr></w:pPr><w:r><w:t>正文</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:pPr><w:rPr><w:i/></w:rPr></w:pPr></w:p></w:tc></w:tr></w:tbl><w:p><w:pPr><w:rPr><w:b/></w:rPr></w:pPr><w:r><w:rPr><w:i/></w:rPr><w:t>末段</w:t></w:r></w:p>',
+      ),
+    );
+    const before = editor.body;
+    const range = { start: pos(before), end: pos(before, 2, 0, 0, 2) };
+    editor.tx((t) => {
+      t.setRunProps(range, { size: 500 });
+      t.setParagraphProps(range, { indent: { left: 420 }, spacing: { before: 100 } });
+      t.clearRunProps(range);
+      t.clearParagraphProps(range);
+    });
+    const ps = [...walkParagraphs(editor.body)];
+    expect(ps.every((p) => p.runs.every((r) => Object.keys(r.props).length === 0))).toBe(true);
+    expect(ps.map((p) => p.props)).toEqual([
+      { markRunProps: {} },
+      { markRunProps: {} },
+      { markRunProps: { bold: true } },
+    ]);
+    editor.undo();
+    expect(editor.body).toBe(before);
+  });
+
+  it('清段落格式保留样式、段落标记与文字格式，空操作无历史，错误原子回滚', () => {
+    const editor = createTextEditor(
+      parse(
+        '<w:p><w:pPr><w:pStyle w:val="Heading1"/><w:jc w:val="center"/><w:numPr><w:numId w:val="4"/></w:numPr><w:rPr><w:b/></w:rPr></w:pPr><w:r><w:rPr><w:i/></w:rPr><w:t>标题</w:t></w:r></w:p>',
+      ),
+    );
+    const at = pos(editor.body, 1);
+    const range = { start: at, end: at };
+    editor.tx((t) => {
+      t.clearParagraphProps(range);
+    });
+    expect(para(editor.body).props).toEqual({ styleId: 'Heading1', markRunProps: { bold: true } });
+    expect(para(editor.body).runs[0]?.props).toEqual({ italic: true });
+    expect(
+      editor.tx((t) => {
+        t.clearParagraphProps(range);
+        t.clearRunProps(range);
+      }),
+    ).toBeUndefined();
+    const before = editor.body;
+    expect(() =>
+      editor.tx((t) => {
+        t.insertText(at, '插');
+        t.clearParagraphProps({ start: at, end: { ...at, nodeId: 'missing' } });
+      }),
+    ).toThrow();
+    expect(editor.body).toBe(before);
+  });
+
   it('范围在 run 中间时拆成三段，只改中间一段并返回拆分后的同一段文字', () => {
     const editor = createTextEditor(
       parse(

@@ -390,6 +390,10 @@ editor.breakHistory(); // 光标移动、焦点切换等输入边界中断合并
   字符单位优先：改 `firstLine` 等 twips 值时须把对应 `*Chars` 置 `null`，否则不生效。
   段落标记格式（`markRunProps`）只能走 `setRunProps`，写在这里抛错。
   `{ numbering: { level } }` 只改层级、沿用样式或直接格式里的 numId；`{ numbering: { numId: 0 } }` 取消编号。
+- `t.clearRunProps(range)`（2026-09-28）移除已识别的字符直接格式与字符样式，保留语言标记，恢复段落样式的字符格式。
+  选区、拆 run、段落标记与返回值语义同 `setRunProps`；非空段落的折叠范围无修改，空段落清段落标记。
+- `t.clearParagraphProps(range)`（2026-09-28）移除已识别的段落直接格式（含直接编号），保留段落样式和段落标记的字符格式，
+  作用范围同 `setParagraphProps`。两种清除均支持撤销 / 重做；未知 XML 继续保留，不能清除尚未建模的高亮、边框等格式。
 - `t.addList(kind)` 新增一份九级列表定义（`'bullet'` 项目符号 ● ○ ■ / `'decimal'` 编号 `1.` `a)` `i.` 三级一轮，
   每级左缩进 420 twips × 级数、悬挂 420），返回 numId，再用 `setParagraphProps(range, { numbering: { numId, level: 0 } })`
   引用。定义存在 `editor.body.numbering` 上，随事务提交与撤销；本次没有段落改动时整次无修改、定义不留下。
@@ -484,6 +488,11 @@ Ctrl/Cmd+B / I / U（以及 `formatBold` 等输入事件）切换加粗 / 斜体
 空段落里的折叠光标直接修改段落标记；非空段落里的折叠光标不改模型，格式暂存到下一次输入
 （含 IME 提交与多行粘贴），移动、删除、Enter 或重新选择即丢弃。带 Alt / Shift 的组合与组合期不接管。
 低层 `runPropsOfRange(resolvedBody, range)` 返回选区覆盖的级联字符格式，可用于工具栏状态。
+Ctrl+Space 清字符格式，Ctrl+Q 清段落直接格式（控制器 `clearRunFormat()` / `clearParagraphFormat()`）。
+字符清除保留语言、移除字符样式；段落清除保留段落样式与字符格式。反向选区保持方向，每次实际修改独立撤销。
+非空段落的折叠光标只暂存字符清除到后续输入（含 IME），移动或重新选择即丢弃；组合期不接管。
+暂存清除后再按 B / I / U 时，`runPropsAtInsertion(cascade, body, position, patch)` 在副本上重新级联，
+以恢复后的样式值判断切换方向。只认 Ctrl，Cmd+Q / Cmd+Space 留给系统；系统若截获 Ctrl+Space，页面收不到该按键。
 Ctrl/Cmd+L / E / R / J 设置左 / 居中 / 右 / 两端对齐，作用于选区触及的全部段落；按级联结果判断，
 全部已是该对齐时回到左对齐（Word 的行为：样式给的居中标题按 Ctrl+E 同样变成左对齐）。
 选区与光标不变，一次一个撤销单元。`paragraphsOfRange(resolvedBody, range)` 返回选区触及的级联段落节点。

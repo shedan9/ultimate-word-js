@@ -621,6 +621,44 @@ try {
   assert(plainDoc.query('paragraph')[0].props.styleId === 'Heading2', '没有标题样式的文档补一份 Heading2（Cmd+Option+2）');
   const plainExport = await UltimateWord.load(await plainDoc.toDocx());
   assert(plainExport.query('paragraph')[0].props.styleId === 'Heading2' && plainExport.layout.pages[0].blocks[0].lines[0].line.height > plainDoc.layout.pages[0].blocks[1].lines[0].line.height, '导出再加载：定义进了 styles.xml，标题照样排得更高');
+  // 清除格式恢复样式：清字符格式移除覆盖值，清段落格式保留标题样式；撤销与导出都经过门面。
+  const resetInput = styleHost.querySelector('textarea');
+  const resetKey = (key, modifiers = {}) => {
+    const event = new KeyboardEvent('keydown', { key, ...modifiers, bubbles: true, cancelable: true });
+    resetInput.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+  const resetParagraph = () => plainDoc.query('paragraph')[0];
+  const resetRange = () => plainDoc.rangeOf(resetParagraph());
+  plainDoc.tx((t) => {
+    t.setRunProps(resetRange(), { bold: false, italic: true, size: 800 });
+    t.setParagraphProps(resetRange(), { justification: 'right', spacing: { before: 120 } });
+    return undefined;
+  });
+  plainView.select({ start: resetRange().end, end: resetRange().start });
+  assert(resetKey(' ', { ctrlKey: true }), 'Ctrl+Space 接管清字符格式');
+  assert(resetParagraph().runs.every((r) => r.props.bold === undefined && r.props.italic === undefined && r.props.size === undefined), '字符直接格式清除，标题的加粗字号重新生效');
+  assert(resetKey('q', { ctrlKey: true }), 'Ctrl+Q 接管清段落格式');
+  assert(resetParagraph().props.styleId === 'Heading2' && resetParagraph().props.justification === undefined && resetParagraph().props.spacing === undefined, '段落恢复样式，保留 Heading2');
+  const resetExport = await UltimateWord.load(await plainDoc.toDocx());
+  assert(resetExport.query('paragraph')[0].props.styleId === 'Heading2' && resetExport.query('paragraph')[0].runs.every((r) => r.props.bold === undefined), '清格式导出回读仍继承标题样式');
+  plainDoc.undo(); plainDoc.undo();
+  assert(resetParagraph().props.justification === 'right' && resetParagraph().runs[0].props.bold === false, '两次撤销分别恢复段落与字符格式');
+  plainDoc.redo(); plainDoc.redo();
+  assert(resetParagraph().props.justification === undefined && resetParagraph().runs[0].props.bold === undefined, '两次重做重新清除格式');
+  // 折叠光标清除后再切换加粗，必须看标题样式的 true，不能看旧的直接格式 false。
+  plainDoc.tx((t) => { t.setRunProps(resetRange(), { bold: false }); return undefined; });
+  const resetAt = { ...resetRange().start, offset: 1 };
+  plainView.select({ start: resetAt, end: resetAt });
+  resetKey(' ', { ctrlKey: true });
+  assert(resetParagraph().runs[0].props.bold === false, '折叠清除不改已有文字');
+  resetKey('b', { ctrlKey: true });
+  resetInput.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: '清后输入', bubbles: true, cancelable: true }));
+  const resetInserted = resetParagraph().runs.find((r) => r.id === plainDoc.find('清后输入')[0]?.start.nodeId);
+  assert(resetInserted?.props.bold === false, '清除后再 Ctrl+B 按标题样式取消加粗');
+  plainDoc.undo();
+  assert(plainDoc.find('清后输入').length === 0, '暂存清除与后续输入合成一个撤销单元');
+  assert(!resetKey('q', { metaKey: true }) && !resetKey(' ', { metaKey: true }) && !resetKey(' ', { ctrlKey: true, isComposing: true }), '系统快捷键与组合期不接管');
   plainView.dispose();
   styleHost.remove();
   result.textContent = `PASS ${passed} 项`;

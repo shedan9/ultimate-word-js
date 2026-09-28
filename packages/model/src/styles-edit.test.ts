@@ -2,11 +2,13 @@ import { createDiagnosticSink } from '@uw/core';
 import { parseXml } from '@uw/ooxml';
 import { describe, expect, it } from 'vitest';
 import type { CascadeContext } from './cascade.ts';
+import { CLEAR_RUN_PROPS } from './clear-format.ts';
 import type { ResolvedParagraph } from './nodes.ts';
 import { walkParagraphs } from './nodes.ts';
 import { EMPTY_NUMBERING } from './numbering.ts';
 import { rangeOfNode } from './order.ts';
 import { parseBody } from './parse-body.ts';
+import { runPropsAtInsertion } from './range-format.ts';
 import { resolveBody } from './resolve-body.ts';
 import { DEFAULT_SETTINGS } from './settings.ts';
 import { extendStyleSheet, parseStyles } from './styles.ts';
@@ -70,6 +72,31 @@ describe('内建样式定义', () => {
 });
 
 describe('事务 addStyle', () => {
+  it.each([true, false])('暂存清格式重新级联新增样式（加粗 %s），查询不改原树', (bold) => {
+    const { context, editor, start } = editable();
+    editor.tx((t) => {
+      const styleId = t.addStyle({
+        id: 'ResetBase',
+        name: 'Reset Base',
+        paraProps: {},
+        runProps: { bold, size: 360 },
+      });
+      const range = { start: start(0), end: { ...start(0), offset: 2 } };
+      t.setParagraphProps(range, { styleId });
+      t.setRunProps(range, { bold: !bold, size: 200 });
+    });
+    const before = editor.body;
+    expect(
+      runPropsAtInsertion(context, before, { ...start(0), offset: 1 }, CLEAR_RUN_PROPS)[0],
+    ).toMatchObject({ bold, size: 360 });
+    expect(
+      runPropsAtInsertion(context, before, { ...start(0), offset: 1 }, { ...CLEAR_RUN_PROPS, bold: !bold })[0]
+        ?.bold,
+    ).toBe(!bold);
+    expect(editor.body).toBe(before);
+    expect([...walkParagraphs(before)][0]?.runs[0]?.props).toEqual({ bold: !bold, size: 200 });
+  });
+
   it('新增定义并引用，级联用上它；撤销连定义一起回退，重做恢复', () => {
     const { editor, paragraphs, start } = editable();
     const def = builtinStyleDefinition('heading 2', () => false, 'a');

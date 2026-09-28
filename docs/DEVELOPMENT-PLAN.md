@@ -1109,6 +1109,13 @@ await view.toPNG(3);     // 第 3 页
   没有就新建并登记 —— 与新建 numbering.xml 同时发生时两次登记改同一份清单（原来各自从原包读，后者会覆盖前者）。
   4 项模型单测 + 2 项拆段单测 + 3 项控制器单测 + 4 项回写单测，编辑浏览器回归增至 196 项。
   未做：样式库 UI / 自定义样式、修改已有样式定义、标题 4–9，字符直接格式「过半」的边界与 Word 未对过。
+- ✅ **清除直接格式**（2026-09-28）：事务 `clearRunProps(range)` / `clearParagraphProps(range)`，控制器
+  `clearRunFormat()` / `clearParagraphFormat()`，Ctrl+Space / Ctrl+Q。字符清除移除已识别的直接格式与字符样式、
+  保留语言；段落清除保留段落样式和段落标记格式。复用原格式事务的范围、位置映射、原子回滚与撤销。
+  折叠光标清字符格式只暂存到下一次输入，组合期不执行；随后切换 B / I / U 经 `runPropsAtInsertion` 在副本上重新级联，
+  以清除后的样式值为准（包括本次新增样式、表格条件样式），不把 `null` 当 false。未知 XML 仍原样保留。
+  5 项模型单测、2 项控制器单测、1 项回写单测与 11 项浏览器断言，编辑浏览器回归增至 207 项。
+  未做：尚未建模的高亮 / 边框等格式的清除；操作系统截获的 Ctrl+Space 无法传入页面，Word 逐格对照待人工验收。
 - ✅ **分页符 Ctrl+Enter**（2026-09-23）：`insertInline(position, 'pageBreak')` 插 `w:br w:type="page"`，控制器 `pageBreak()`
   再在它后面拆段（Word 2013 起分页符后跟段落标记；照界面行为写，没有真值样本）。Ctrl+Enter / Cmd+Return 接管，
   Ctrl+Shift+Enter（分栏符）不接管。布局与回写原本就认分页符，没改。单元格里事务拒绝（Word 会拆表）。

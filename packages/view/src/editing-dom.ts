@@ -293,6 +293,17 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
     // Word 的 Ctrl+Enter（Mac 上 Cmd+Return）插分页符；Ctrl+Shift+Enter 是分栏符，单栏文档里没有意义，不接管。
     else if (mod && !event.altKey && !event.shiftKey && event.key === 'Enter')
       action = () => state.pageBreak();
+    // 只认 Ctrl：Cmd+Q 是系统退出应用，Cmd+Space 是系统搜索。
+    else if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && event.key === ' ')
+      action = () => state.clearRunFormat();
+    else if (
+      event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey &&
+      !event.shiftKey &&
+      event.key.toLowerCase() === 'q'
+    )
+      action = () => state.clearParagraphFormat();
     else if (mod && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'a')
       action = () => state.selectAll();
     else if (mod && !event.altKey && !event.shiftKey && event.key.toLowerCase() in TOGGLE_KEYS) {

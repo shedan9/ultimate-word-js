@@ -125,6 +125,11 @@ Word 2013 起分页符后面跟一个段落标记，后文从新段落开始（*
 `resolveBody` 用 `extendStyleSheet()` 补一层；事务**看不到样式表**，撞不撞 id 由控制器判断。段尾回车按 `w:next`
 换样式时新段落一点直接格式都不带，靠 `splitParagraph(pos, { inherit: false })`（原来拆段总留一个抄了格式的空 run，
 控制器清不掉它）。回写追加进 `styles.xml`。编辑浏览器回归现有 196 项。
+**清除直接格式已接入**（2026-09-28）：事务 `clearRunProps` / `clearParagraphProps`，编辑态 Ctrl+Space / Ctrl+Q。
+字符清除移除已识别的直接格式与字符样式、保留语言标记；段落清除保留段落样式与段落标记格式。
+非空段落的折叠光标只暂存到后续输入（含 IME），不动已有文字；清除后再切换加粗经 `runPropsAtInsertion`
+在副本上重新级联，不能把 `null` 当成不加粗或继续读清除前的格式。未知 XML 仍保留。
+编辑浏览器回归增至 207 项；系统可能截获 Ctrl+Space，测试覆盖页面实际收到按键后的行为。
 **Phase 8 已开始：回写 docx**（2026-09-23，新包 `@uw/serialize`，门面 `doc.toDocx()`，调试台「导出 docx」按钮）。
 补丁式：只重写改过的部件，没编辑的文档逐字节照搬；正文**走原文 XML 树**打补丁（见下）。Word 打开无修复提示只能人工验。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、
