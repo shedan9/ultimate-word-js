@@ -250,6 +250,35 @@ describe('模型不认识的 XML 留在文件里', () => {
     );
   });
 
+  it('高亮与字符底纹：按 schema 顺序插；只改高亮时底纹的主题色原样，底色改了才丢主题底色', () => {
+    const body =
+      '<w:p><w:r><w:rPr><w:shd w:val="clear" w:color="auto" w:fill="D9D9D9" w:themeFill="background1" w:themeFillShade="D9"/></w:rPr><w:t>底纹文字</w:t></w:r></w:p>';
+    const whole = (b: Body) => {
+      const at = textPosition(b, 0, 0) as DocPosition;
+      return { start: at, end: { ...at, offset: 4 } };
+    };
+    const onlyHighlight = roundTrip(docx(body), (t, b) => {
+      t.setRunProps(whole(b), { highlight: 'yellow', underline: 'single' });
+    });
+    const xml = decoder.decode(unzip(onlyHighlight.out).get('word/document.xml'));
+    expect(xml).toContain(
+      '<w:rPr><w:highlight w:val="yellow"/><w:u w:val="single"/><w:shd w:val="clear" w:color="auto" w:fill="D9D9D9" w:themeFill="background1" w:themeFillShade="D9"/></w:rPr>',
+    );
+    const refill = roundTrip(docx(body), (t, b) => {
+      t.setRunProps(whole(b), {
+        highlight: null,
+        shading: { pattern: 'pct15', color: 'auto', fill: 'FFFFFF' },
+      });
+    });
+    const xml2 = decoder.decode(unzip(refill.out).get('word/document.xml'));
+    expect(xml2).toContain('<w:shd w:val="pct15" w:color="auto" w:fill="FFFFFF"/>');
+    expect(shape(refill.again.body)).toEqual(shape(refill.edited));
+    const cleared = roundTrip(docx(body), (t, b) => {
+      t.clearRunProps(whole(b));
+    });
+    expect(decoder.decode(unzip(cleared.out).get('word/document.xml'))).not.toContain('w:shd');
+  });
+
   it('拆出来的新段落沿用原段落的边框，但不抄 paraId', () => {
     const { out, again } = roundTrip(docx(PRESERVED), (t, body) => {
       t.splitParagraph(textPosition(body, 0, 2) as DocPosition);

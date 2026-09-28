@@ -132,6 +132,35 @@ describe('逐属性合并', () => {
   });
 });
 
+describe('高亮与字符底纹', () => {
+  const ctx = ctxFrom(`
+    <w:style w:type="character" w:styleId="Mark">
+      <w:name w:val="Mark"/><w:rPr><w:highlight w:val="yellow"/><w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/></w:rPr>
+    </w:style>
+  `);
+
+  it('没写时高亮是 none、底纹缺席；字符样式带的两项都级联下来', () => {
+    const plain = resolveRunProps(ctx, undefined, undefined);
+    expect(plain.highlight).toBe('none');
+    expect(plain.shading).toBeUndefined();
+    const marked = resolveRunProps(ctx, undefined, rPr('<w:rStyle w:val="Mark"/>'));
+    expect(marked.highlight).toBe('yellow');
+    expect(marked.shading).toEqual({ pattern: 'clear', color: 'auto', fill: 'D9D9D9' });
+  });
+
+  it('直接写 none 能盖掉样式的高亮；网点底纹原样带着图案与前景色', () => {
+    const r = resolveRunProps(
+      ctx,
+      undefined,
+      rPr(
+        '<w:rStyle w:val="Mark"/><w:highlight w:val="none"/><w:shd w:val="pct15" w:color="auto" w:fill="FFFFFF"/>',
+      ),
+    );
+    expect(r.highlight).toBe('none');
+    expect(r.shading).toEqual({ pattern: 'pct15', color: 'auto', fill: 'FFFFFF' });
+  });
+});
+
 describe('默认值', () => {
   const ctx = ctxFrom('');
 

@@ -212,6 +212,38 @@ describe('装饰', () => {
     expect(collect(two, 'rect').filter((r) => r.attrs.class === 'uw-strike')).toHaveLength(2);
   });
 
+  it('高亮与字符底纹铺满行盒、画在字之前；两者都有时高亮在上', () => {
+    const style: FragmentStyle = {
+      ...STYLE,
+      highlight: 'yellow',
+      shading: { pattern: 'clear', color: 'auto', fill: 'D9D9D9' },
+    };
+    const svg = buildPage(paragraphPage(line({ fragments: [frag({ style, x: 100 })] })));
+    const g = collect(svg, 'g').find((n) => n.attrs.class === 'uw-para') as RElement;
+    expect(g.children.map((c) => c.attrs.class)).toEqual(['uw-run-shading', 'uw-highlight', 'uw-frag']);
+    const mark = g.children[1] as RElement;
+    // 行顶 0、行高 480 twips = 24pt；x 与宽取片段的推进范围
+    expect([mark.attrs.x, mark.attrs.y, mark.attrs.width, mark.attrs.height]).toEqual(['5', '0', '32', '24']);
+    expect(mark.attrs.fill).toBe('#ffff00');
+  });
+
+  it('一行的背景先铺完再画字 —— 挤压让后一片伸进前一片时，不能盖住前一个字', () => {
+    const style: FragmentStyle = { ...STYLE, highlight: 'green' };
+    const l = line({ fragments: [frag({ style }), frag({ style, runId: 'r2', x: 600 })] });
+    const g = collect(buildPage(paragraphPage(l)), 'g').find((n) => n.attrs.class === 'uw-para') as RElement;
+    expect(g.children.map((c) => c.tag)).toEqual(['rect', 'rect', 'text', 'text']);
+  });
+
+  it('高亮名字认不出不画；字符底纹的网点按比例混色（「字符底纹」按钮写的是白底 pct15）', () => {
+    const odd = buildPage(
+      paragraphPage(line({ fragments: [frag({ style: { ...STYLE, highlight: 'none' } })] })),
+    );
+    expect(collect(odd, 'rect').filter((r) => r.attrs.class === 'uw-highlight')).toHaveLength(0);
+    const shading = { pattern: 'pct15', color: 'auto', fill: 'FFFFFF' };
+    const svg = buildPage(paragraphPage(line({ fragments: [frag({ style: { ...STYLE, shading } })] })));
+    expect(collect(svg, 'rect').find((r) => r.attrs.class === 'uw-run-shading')?.attrs.fill).toBe('#d9d9d9');
+  });
+
   it('没有装饰时一个多余元素都不出', () => {
     const svg = buildPage(paragraphPage());
     const g = collect(svg, 'g').find((n) => n.attrs.class === 'uw-para') as RElement;
@@ -309,11 +341,23 @@ describe('表格', () => {
     expect([lines[0]?.attrs.x1, lines[0]?.attrs.x2]).toEqual(['0', '200']);
   });
 
-  it('底纹取 fill 不取 color，clear 以外的图案也只铺纯色', () => {
+  it('底纹取 fill 不取 color —— color 是网点的前景，clear 时不参与', () => {
     const c = cell({ shading: { pattern: 'clear', color: 'FF0000', fill: 'D9D9D9' } });
     const svg = buildPage(tablePage({ rowId: 'r1', cells: [c], gridAbove: 0, height: 480 }, [4000]));
     const bg = collect(svg, 'rect').find((r) => r.attrs.class === 'uw-cell-bg');
     expect(bg?.attrs.fill).toBe('#d9d9d9');
+  });
+
+  it('网点按比例把前景混进底色，solid 是满前景；条纹类只铺底色', () => {
+    const fillOf = (shading: CellLayout['shading']) => {
+      const svg = buildPage(
+        tablePage({ rowId: 'r1', cells: [cell({ shading })], gridAbove: 0, height: 480 }, [4000]),
+      );
+      return collect(svg, 'rect').find((r) => r.attrs.class === 'uw-cell-bg')?.attrs.fill;
+    };
+    expect(fillOf({ pattern: 'pct50', color: 'FF0000', fill: '0000FF' })).toBe('#800080');
+    expect(fillOf({ pattern: 'solid', color: 'auto', fill: 'FFFFFF' })).toBe('#000000');
+    expect(fillOf({ pattern: 'horzStripe', color: 'FF0000', fill: 'D9D9D9' })).toBe('#d9d9d9');
   });
 
   it('auto / nil 的底纹不铺 —— 铺了会把页面背景压成白块', () => {

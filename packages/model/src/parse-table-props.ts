@@ -85,7 +85,8 @@ function parseCellBorders(el: XmlElement | undefined): CellBorders | undefined {
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-function parseShading(el: XmlElement | undefined): Shading | undefined {
+/** 单元格、表格与 run 的 `w:shd` 同一个写法，字符底纹也走这里 */
+export function parseShading(el: XmlElement | undefined): Shading | undefined {
   if (el === undefined) return undefined;
   return {
     pattern: attrOf(el, 'w:val') ?? 'clear',

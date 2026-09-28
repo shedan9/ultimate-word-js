@@ -13,6 +13,7 @@
  * 2. 这些类型必须可结构化克隆 —— 它们是 `LayoutInput` 的组成部分（原则 1.1）
  */
 import type { Twips } from '@uw/core';
+import type { Shading } from './table-props.ts';
 
 // ── 字符属性 ──────────────────────────────────────────────────────────────────
 
@@ -72,6 +73,13 @@ export interface RunProps {
   color?: string;
   themeColor?: string;
   vertAlign?: VerticalAlign;
+  /**
+   * `w:highlight w:val`：荧光笔，十六种具名颜色之一（`yellow` / `darkBlue`…）或 `none`。
+   * 与 `shading` 是**两样东西**：高亮只有这十六种，而且画在底纹之上（两者都有时看见的是高亮）
+   */
+  highlight?: string;
+  /** `w:shd`：字符底纹（「边框和底纹」里给文字加的那个）。与单元格底纹同一个类型 */
+  shading?: Shading;
   /** `w:spacing`：字符间距，本来就是 twips */
   charSpacing?: Twips;
   /** `w:w`：字符横向缩放，百分比（100 = 不缩放）。**直接改字符宽度**，排版必须认 */
@@ -104,6 +112,10 @@ export interface ResolvedRunProps {
   underline: string;
   color: string;
   vertAlign: VerticalAlign;
+  /** 没有高亮时是 `none` */
+  highlight: string;
+  /** 没有底纹时是 undefined（不伪造一个「无填充」的底纹） */
+  shading: Shading | undefined;
   charSpacing: Twips;
   scale: number;
   position: Twips;

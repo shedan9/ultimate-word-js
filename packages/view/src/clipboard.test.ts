@@ -19,6 +19,8 @@ const base: ResolvedRunProps = {
   underline: 'none',
   color: 'auto',
   vertAlign: 'baseline',
+  highlight: 'none',
+  shading: undefined,
   charSpacing: 0,
   scale: 100,
   position: 0,
@@ -47,7 +49,7 @@ describe('剪贴板 HTML', () => {
     });
     expect(isTrustedHtml(html)).toBe(true);
     const fonts = { ascii: 'Times New Roman', hAnsi: 'Times New Roman', eastAsia: '仿宋' };
-    const common = { strike: false, size: 320, fonts };
+    const common = { strike: false, size: 320, fonts, highlight: null, shading: null };
     expect(parse(html)).toEqual([
       {
         justification: 'center',
@@ -83,7 +85,14 @@ style='font-size:16.0pt;font-family:仿宋_GB2312;mso-ascii-font-family:"Times N
 <p class=MsoListParagraph><![if !supportLists]><span style='mso-list:Ignore'>1.<span
 style='font:7.0pt "Times New Roman"'>&nbsp;&nbsp; </span></span><![endif]><b>要点</b></p>
 <!--EndFragment--></body></html>`;
-    const off = { italic: false, underline: 'none', strike: false, vertAlign: 'baseline' } as const;
+    const off = {
+      italic: false,
+      underline: 'none',
+      strike: false,
+      vertAlign: 'baseline',
+      highlight: null,
+      shading: null,
+    } as const;
     expect(parse(html)).toEqual([
       {
         justification: 'center',
@@ -111,6 +120,40 @@ style='font:7.0pt "Times New Roman"'>&nbsp;&nbsp; </span></span><![endif]><b>要
       },
       { runs: [] },
       { runs: [{ text: '要点', patch: { ...off, bold: true } }] },
+    ]);
+  });
+
+  it('高亮与字符底纹：复制写 background + mso-highlight，读回分得清哪个是高亮；Word 的 CSS 色名与块背景', () => {
+    const html = fragmentToHtml({
+      paragraphs: [
+        {
+          justification: 'left',
+          runs: [
+            { text: '亮', props: { ...base, highlight: 'darkYellow' } },
+            // 中文版 Word「字符底纹」按钮的写法：白底上 15% 的黑网点
+            { text: '纹', props: { ...base, shading: { pattern: 'pct15', color: 'auto', fill: 'FFFFFF' } } },
+            { text: '素', props: base },
+          ],
+        },
+      ],
+    });
+    expect(html).toContain('background:#808000;mso-highlight:darkYellow');
+    expect(html).toContain('background:#d9d9d9');
+    const runs = parse(html)[0]?.runs ?? [];
+    expect(runs.map((r) => [r.text, r.patch.highlight, r.patch.shading])).toEqual([
+      ['亮', 'darkYellow', null],
+      ['纹', null, { pattern: 'clear', color: 'auto', fill: 'D9D9D9' }],
+      ['素', null, null],
+    ]);
+
+    // Word 自己写 CSS 色名；段落（块）上的背景是段落底纹，不能铺到 run 上
+    const word = `<html xmlns:o="urn:schemas-microsoft-com:office:office"><body>
+<p class=MsoNormal style='background:silver'><span style='background:lime;mso-highlight:lime'>绿</span>普通</p>
+</body></html>`;
+    const wordRuns = parse(word)[0]?.runs ?? [];
+    expect(wordRuns.map((r) => [r.text, r.patch.highlight, r.patch.shading])).toEqual([
+      ['绿', 'green', null],
+      ['普通', null, null],
     ]);
   });
 

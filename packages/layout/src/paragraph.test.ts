@@ -278,6 +278,16 @@ describe('渲染片段', () => {
     expect(layoutParagraph(p, opts()).lines[0]?.leaders).toEqual([{ x1: 0, x2: 1000, leader: 'dot' }]);
   });
 
+  it('高亮与字符底纹带进片段样式；没有时两项缺席，而不是带着 none', () => {
+    const shading = { pattern: 'pct15', color: 'auto', fill: 'FFFFFF' };
+    const out = layoutParagraph(para([run('亮', { highlight: 'yellow', shading }), run('素')]), opts());
+    const [marked, plain] = out.lines[0]?.fragments ?? [];
+    expect(marked?.style.highlight).toBe('yellow');
+    expect(marked?.style.shading).toEqual(shading);
+    expect(plain?.style).not.toHaveProperty('highlight');
+    expect(plain?.style).not.toHaveProperty('shading');
+  });
+
   it('布局结果整个可结构化克隆 —— 它要过 Worker 边界', () => {
     const out = layoutParagraph(para([run('中文abc')]), opts());
     expect(structuredClone(out)).toEqual(out);

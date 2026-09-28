@@ -15,7 +15,8 @@
  */
 
 import { TWIP_PER_PT } from '@uw/core';
-import type { FragmentRun, Justification, RichFragment, RunPropsPatch } from '@uw/model';
+import type { FragmentRun, Justification, RichFragment, RunPropsPatch, Shading } from '@uw/model';
+import { HIGHLIGHT_COLORS, highlightFill, shadingFill } from '@uw/render-dom';
 
 /** 粘贴进来的一段文字；补丁在光标处继承来的格式之上再改。 */
 export interface PasteRun {
@@ -63,8 +64,20 @@ function runStyle(props: FragmentRun['props']): string {
     ...(props.vertAlign === 'baseline'
       ? []
       : [`vertical-align:${props.vertAlign === 'superscript' ? 'super' : 'sub'}`]),
+    ...backgroundStyle(props),
   ];
   return style.join(';');
+}
+
+/**
+ * 高亮照 Word 的写法出 `background` + `mso-highlight`：浏览器只认前者，粘回来靠后者分辨
+ * 「这是高亮」而不是一块底纹。两者都有时看得见的是高亮（与画法一致），底纹不再写。
+ */
+function backgroundStyle(props: FragmentRun['props']): string[] {
+  const highlight = highlightFill(props.highlight);
+  if (highlight !== undefined) return [`background:${highlight}`, `mso-highlight:${props.highlight}`];
+  const shading = shadingFill(props.shading);
+  return shading === undefined ? [] : [`background:${shading}`];
 }
 
 /** Word 写分页符的原样：粘进 Word 仍是分页符，浏览器与我们自己都认 `page-break-before`。 */
@@ -169,6 +182,9 @@ interface Inherited {
   hAnsi?: string | undefined;
   eastAsia?: string | undefined;
   family?: string | undefined;
+  /** 高亮的 `w:highlight` 名字；与 `shading` 互斥（后写的那个说了算） */
+  highlight?: string | undefined;
+  shading?: Shading | undefined;
   pre: boolean;
   align?: Justification | undefined;
 }
@@ -281,11 +297,47 @@ function inherit(el: Element, from: Inherited): Inherited {
   if (hAnsi) next.hAnsi = firstFamily(hAnsi);
   const eastAsia = style.get('mso-fareast-font-family');
   if (eastAsia) next.eastAsia = firstFamily(eastAsia);
+  // 背景只从行内元素上读：块上的背景是段落底纹，铺到每个 run 上就成了字符底纹。
+  // CSS 的 background 本不继承，这里顺着 span 往下带，是因为它包住的字确实都铺着这块底
+  if (!BLOCKS.has(tag)) readBackground(style, next);
   const whiteSpace = style.get('white-space');
   if (whiteSpace) next.pre = whiteSpace.startsWith('pre') || whiteSpace === 'break-spaces';
   const textAlign = style.get('text-align');
   if (textAlign && CSS_JUSTIFY[textAlign.toLowerCase()]) next.align = CSS_JUSTIFY[textAlign.toLowerCase()];
   return next;
+}
+
+/** 高亮色值 → `w:highlight` 名字。Word 的 `mso-highlight` 写 CSS 色名（`lime` / `olive`），我们写规范名 */
+const HIGHLIGHT_BY_HEX: ReadonlyMap<string, string> = new Map(
+  Object.entries(HIGHLIGHT_COLORS).map(([name, hex]) => [hex.slice(1).toUpperCase(), name]),
+);
+
+function readBackground(style: Map<string, string>, next: Inherited): void {
+  const mso = style.get('mso-highlight');
+  if (mso !== undefined) {
+    const name = mso in HIGHLIGHT_COLORS ? mso : HIGHLIGHT_BY_HEX.get(parseColor(mso) ?? '');
+    if (name !== undefined) {
+      next.highlight = name;
+      next.shading = undefined;
+      return;
+    }
+  }
+  const background = style.get('background') ?? style.get('background-color');
+  if (background === undefined) return;
+  // `background` 简写可能带着图片、位置；只取第一个认得出的颜色词
+  const fill = background
+    .split(/\s+/)
+    .map((word) => parseColor(word))
+    .find((c) => c !== undefined);
+  if (fill === undefined || fill === 'auto') {
+    if (/^(none|transparent)$/i.test(background.trim())) {
+      next.highlight = undefined;
+      next.shading = undefined;
+    }
+    return;
+  }
+  next.highlight = undefined;
+  next.shading = { pattern: 'clear', color: 'auto', fill };
 }
 
 function patchOf(state: Inherited, trusted: boolean): RunPropsPatch {
@@ -309,6 +361,10 @@ function patchOf(state: Inherited, trusted: boolean): RunPropsPatch {
     vertAlign: state.vertAlign,
     ...(state.size !== undefined ? { size: state.size } : {}),
     ...(state.color !== undefined ? { color: state.color } : {}),
+    // 与开关同理，源里没有就清掉：光标左边的高亮不该染到粘进来的字上。
+    // 清成 null（回到样式值）而不是写 none，免得每个粘进来的 run 都多一个 `<w:highlight w:val="none"/>`
+    highlight: state.highlight ?? null,
+    shading: state.shading ?? null,
     ...(ascii || eastAsia
       ? {
           fonts: {

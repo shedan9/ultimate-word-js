@@ -9,6 +9,7 @@
 import { halfPtToTwips } from '@uw/core';
 import type { XmlElement } from '@uw/ooxml';
 import { attr, child, children } from '@uw/ooxml';
+import { parseShading } from './parse-table-props.ts';
 import type {
   Indent,
   Justification,
@@ -87,6 +88,8 @@ export function parseRunProps(rPr: XmlElement | undefined): RunProps {
 
   put(out, 'underline', valOf(rPr, 'w:u'));
   put(out, 'vertAlign', enumVal(valOf(rPr, 'w:vertAlign'), VERT_ALIGNS));
+  put(out, 'highlight', valOf(rPr, 'w:highlight'));
+  put(out, 'shading', parseShading(child(rPr, 'w:shd')));
 
   const color = child(rPr, 'w:color');
   if (color !== undefined) {

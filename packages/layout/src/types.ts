@@ -13,7 +13,15 @@
  */
 import type { Twips } from '@uw/core';
 import type { ScriptKind } from '@uw/fonts';
-import type { DocPosition, DrawingAnchor, ImageRef, NodeId, ObjectContent, VerticalAlign } from '@uw/model';
+import type {
+  DocPosition,
+  DrawingAnchor,
+  ImageRef,
+  NodeId,
+  ObjectContent,
+  Shading,
+  VerticalAlign,
+} from '@uw/model';
 
 /**
  * 一段文字**位置以外**的一切 —— 渲染层照着画，不必回头去查 `ResolvedRunProps`。
@@ -47,6 +55,13 @@ export interface FragmentStyle {
    * 但**字形本身**也要跟着扁 —— 那件事只有渲染层做得了，所以这个数得带过去
    */
   scale: number;
+  /**
+   * `w:highlight`（十六种具名色之一）。没有高亮时**缺席**，不写 `none` ——
+   * 绝大多数 run 没有它，缺席让渲染层一个判断就跳过，也不必改一堆只关心字形的测试数据
+   */
+  highlight?: string;
+  /** `w:shd` 字符底纹，原样带着（不解析成 RGB，与单元格底纹一致）。没有时缺席 */
+  shading?: Shading;
 }
 
 /** 断行与度量的最小单位。一个码点一个 item —— 逐字 x 是中文排版的硬需求 */

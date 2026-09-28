@@ -623,7 +623,7 @@ await view.toPNG(3);     // 第 3 页
   - 端到端断言在 `packages/render-dom/src/fixture.test.ts`：拿画出来的 `<text>`
     **属性**跟真值比，L3 / L4 都在 0.5pt 内。与布局侧的 fixture.test.ts 不重复 ——
     中间隔着三步翻译（twips → pt、版心原点搬进 `<g transform>`、逐字 x 拼成 x 列表）
-  - 未画：run 级高亮（model 没解析）、增量更新；可选文本层已由 Phase 6 的 `@uw/view` 实现
+  - 未画：增量更新（run 级高亮与字符底纹 2026-09-28 补上，见 Phase 7 同名条目）；可选文本层已由 Phase 6 的 `@uw/view` 实现
     （页眉页脚原本也在这一行，Phase 3 做完后已经画上了 —— 与版心 `<g>` 平级的两个框；
     **图片**也在这一行，Phase 5 做完了，见下）
   - 未标定的画法常数关在 `packages/render-dom/src/uncalibrated.ts`：下划线 / 删除线的
@@ -1118,12 +1118,24 @@ await view.toPNG(3);     // 第 3 页
   折叠光标清字符格式只暂存到下一次输入，组合期不执行；随后切换 B / I / U 经 `runPropsAtInsertion` 在副本上重新级联，
   以清除后的样式值为准（包括本次新增样式、表格条件样式），不把 `null` 当 false。未知 XML 仍原样保留。
   5 项模型单测、2 项控制器单测、1 项回写单测与 11 项浏览器断言，编辑浏览器回归增至 207 项。
-  未做：尚未建模的高亮 / 边框等格式的清除；操作系统截获的 Ctrl+Space 无法传入页面，Word 逐格对照待人工验收。
+  未做：尚未建模的字符边框等格式的清除（高亮 / 底纹 2026-09-28 建模后已一并清除）；操作系统截获的 Ctrl+Space 无法传入页面，Word 逐格对照待人工验收。
 - ✅ **上标 / 下标编辑**（2026-09-28）：`toggleFormat('superscript' | 'subscript')`，Ctrl/Cmd+Shift+= / Ctrl/Cmd+=，
   以及 `formatSuperscript` / `formatSubscript` 输入事件。共用 `vertAlign` 保证互斥，按级联结果判断，取消显式写 baseline，
   避免重新露出样式上标。折叠光标暂存到输入 / IME，空段落改段落标记；复用已有模型、排版与回写。
   3 项控制器单测 + 15 项浏览器断言，编辑回归增至 222 项，覆盖样式清除后的切换、撤销重做与导出回读。
   上下标字号与基线仍沿用未标定规则；浏览器截获的缩放快捷键无法传入页面。
+- ✅ **run 级高亮与字符底纹**（2026-09-28）：`w:highlight` / `w:shd` 进 `RunProps`（级联照常，缺席时高亮 `none`、
+  底纹 undefined），`FragmentStyle` 只在有的时候带上（绝大多数 run 没有，缺席省一个判断也不动旧测试数据）。
+  渲染层每行**先铺完背景再画字**：标点挤压（负 `gapBefore`）让后一片伸进前一片，逐片交替画会盖住前一个字的墨；
+  底纹在下、高亮在上；纵向铺满行盒（未对过真值，记在 render-dom 的 `uncalibrated.ts`）。
+  底纹的网点图案（`pctNN`）按比例把前景混进底色 —— 中文版 Word「字符底纹」按钮写的是
+  `pct15` + `fill="FFFFFF"`，原来只看 `fill` 等于铺一块白；表格底纹同一个函数，一起修了。
+  回写按字段组补丁（`w:highlight` / `w:shd` 按 schema 顺序插，底色没变时保留 `w:themeFill`）；`clearRunProps` 一并清除。
+  剪贴板照 Word 写 `background` + `mso-highlight`，粘贴只信可信来源、只从行内元素读（块上的背景是段落底纹），
+  `mso-highlight` 的 CSS 色名（`lime`）按 RGB 映回规范名（`green`）；源里没有就清掉，不让左边的高亮染到粘进来的字上。
+  2 项级联单测 + 1 项布局单测 + 4 项画法单测 + 1 项回写单测 + 1 项剪贴板单测，浏览器回归不变全绿。
+  未做：制表位 / 空白补位处的背景（它们不出文字片段，高亮在制表位处断开）、段落底纹 `w:pPr/w:shd`、
+  高亮的编辑命令与工具栏（Word 的荧光笔没有默认快捷键）。
 - ✅ **模板填充 `doc.bindings`**（2026-09-28，api.md §9）：内容控件不再只是透明容器 ——
   `sdtPr` 的身份（tag / alias / 类型 / 锁 / 占位标记 / 控件字符格式 / 下拉选项 / 数据绑定）进 `Body.contentControls`
   （与 `numbering` / `styles` 同理挂在可编辑的树上随撤销走），成员关系是节点上的标记：行内控件标在 run 上、块级标在段落 / 表格上，

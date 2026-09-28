@@ -26,8 +26,8 @@
  * - **图形（图表 / SmartArt / 形状）**：画的是一个虚线占位框加可选文本。图片本身已经画了
  *   （`paintObject`），画不出来的只剩这些「本来就不是位图」的东西与 EMF / WMF ——
  *   它们的**尺寸是对的**，所以周围的文字不会跟着错位
- * - **run 级底纹与高亮**（`w:highlight` / `w:shd`）：`ResolvedRunProps` 里就没有这两项，
- *   要先在 model 侧补
+ * - **制表位与空白补位上的高亮 / 底纹**：它们不出文字片段，于是 run 级背景在制表位处断开；
+ *   Word 会把制表位那一段也铺上
  * - **纵向合并区的内容裁剪**：`vMerge="restart"` 那一格的内容整个算在起始行里
  *   （见 `table.ts` 的 `rowHeight` 注释），这里照画，不裁到合并区
  * - **粗体 / 斜体是「让浏览器合成」**：度量走的是常规字重的度量包（`@uw/fonts` 的
@@ -285,12 +285,48 @@ function paintLine(line: LineLayout, x0: Twips, y0: Twips, ctx: Ctx, out: REleme
     const painted = paintObject(obj, x0 + obj.x, baseline - obj.height - (obj.raise ?? 0), ctx);
     if (painted !== undefined) out.push(painted);
   }
+  // 字符底纹与高亮整行先铺完再画字：逐片段交替画的话，标点挤压（负的 gapBefore）让后一片的底
+  // 伸进前一片，会盖住前一个字的墨
+  for (const frag of line.fragments) paintRunBackground(frag, line, x0, y0, ctx, out);
   for (const leader of line.leaders) out.push(paintLeader(leader, line, x0, baseline, ctx));
   for (const frag of line.fragments) {
     // 装饰先画：下划线在文字之下，画在后面会盖住字的下半截
     for (const d of decorations(frag, x0, baseline, ctx)) out.push(d);
     out.push(paintFragment(frag, x0, baseline, ctx));
   }
+}
+
+/**
+ * run 级底纹（`w:shd`）与高亮（`w:highlight`）。两者都有时底纹在下、高亮在上 ——
+ * Word 里看见的是高亮色。
+ *
+ * 纵向铺满**行盒**（行顶到行底，不含段前段后），横向是片段的推进宽度（含两端对齐拉开的字距）。
+ * 行盒这一条没有真值，见 `uncalibrated.ts` 末尾「run 级背景的纵向范围」。
+ */
+function paintRunBackground(
+  frag: LineFragment,
+  line: LineLayout,
+  x0: Twips,
+  y0: Twips,
+  ctx: Ctx,
+  out: RElement[],
+): void {
+  const style = frag.style;
+  if (style.shading === undefined && style.highlight === undefined) return;
+  const box = (name: string, fill: string): RElement => {
+    return el('rect', {
+      class: ctx.cls(name),
+      x: fmt(pt(x0 + frag.x)),
+      y: fmt(pt(y0)),
+      width: fmt(pt(Math.max(0, frag.width))),
+      height: fmt(pt(line.height)),
+      fill,
+    });
+  };
+  const shading = shadingFill(style.shading);
+  if (shading !== undefined) out.push(box('run-shading', shading));
+  const highlight = highlightFill(style.highlight);
+  if (highlight !== undefined) out.push(box('highlight', highlight));
 }
 
 /**
@@ -525,14 +561,65 @@ function paintCellShading(
  * `w:shd` → 填充色。
  *
  * `fill` 才是底色，`color` 是网点图案的前景色 —— 取反了「浅色底纹」会变成实心块
- * （model 的 `Shading` 注释里也写着这一条）。网点图案（`pct25` / `diagStripe` …）
- * **不画图案**，只按 `fill` 铺纯色：画图案要 SVG pattern，而公文里的底纹几乎全是 `clear`。
+ * （model 的 `Shading` 注释里也写着这一条）。
+ *
+ * 网点（`pctNN`）按比例把前景色混进底色，铺成纯色而不画点阵：中文版 Word 工具栏上的
+ * 「字符底纹」按钮写的正是 `w:val="pct15" w:color="auto" w:fill="FFFFFF"`，只看 `fill`
+ * 会铺一块白 —— 等于没画。`auto` 在前景一侧是黑、在底色一侧是白（白纸上的默认）。
+ * `solid` 是 100% 前景色。条纹 / 格子类图案（`horzStripe` / `diagCross` …）仍只铺底色：
+ * 画图案要 SVG pattern，公文里用不到。
  */
-function shadingFill(shading: CellLayout['shading']): string | undefined {
+export function shadingFill(shading: CellLayout['shading']): string | undefined {
   if (shading === undefined) return undefined;
   if (shading.pattern === 'nil') return undefined;
-  if (shading.fill === '' || shading.fill === 'auto') return undefined;
-  return cssColor(shading.fill);
+  const ratio = shading.pattern === 'solid' ? 1 : patternRatio(shading.pattern);
+  if (ratio === undefined || ratio === 0) {
+    if (shading.fill === '' || shading.fill === 'auto') return undefined;
+    return cssColor(shading.fill);
+  }
+  const fg = rgbOf(shading.color, [0, 0, 0]);
+  const bg = rgbOf(shading.fill, [255, 255, 255]);
+  const mix = fg.map((c, i) => Math.round(c * ratio + (bg[i] as number) * (1 - ratio)));
+  return `#${mix.map((c) => c.toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** `pct15` → 0.15；`clear` 与认不出的图案答 undefined */
+function patternRatio(pattern: string): number | undefined {
+  const m = /^pct(\d+)$/.exec(pattern);
+  return m === null ? undefined : Number(m[1]) / 100;
+}
+
+function rgbOf(value: string, auto: [number, number, number]): [number, number, number] {
+  if (!HEX6.test(value)) return auto;
+  const n = Number.parseInt(value, 16);
+  return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
+}
+
+/**
+ * `w:highlight` 的十六种颜色（ST_HighlightColor，规范给定的 RGB，不是标定值）。
+ * 认不出的名字（规范之外的扩展）不画 —— 高亮画错颜色比不画更误导人。
+ */
+export const HIGHLIGHT_COLORS: Readonly<Record<string, string>> = {
+  black: '#000000',
+  blue: '#0000ff',
+  cyan: '#00ffff',
+  green: '#00ff00',
+  magenta: '#ff00ff',
+  red: '#ff0000',
+  yellow: '#ffff00',
+  white: '#ffffff',
+  darkBlue: '#000080',
+  darkCyan: '#008080',
+  darkGreen: '#008000',
+  darkMagenta: '#800080',
+  darkRed: '#800000',
+  darkYellow: '#808000',
+  darkGray: '#808080',
+  lightGray: '#c0c0c0',
+};
+
+export function highlightFill(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : HIGHLIGHT_COLORS[value];
 }
 
 /**

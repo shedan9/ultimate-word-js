@@ -139,6 +139,10 @@ Ctrl/Cmd+Shift+= / Ctrl/Cmd+= 与对应 beforeinput。共享 `vertAlign`、互�
 嵌套靠 `parent`，`content-control.ts`）—— 不存起止位置，内容一编辑就得映射。`tx.fillContentControl(id, text)` 换内容、
 占位状态换上控件格式并清标记（随撤销走）；门面 `list` / `set`（名字错抛）/ `setMany`（跳过）/ `apply`（一个事务，倒序填让外层盖内层）。
 回写内容一变就去 `w:showingPlcHdr` 与 `w:dataBinding` —— **绑定的控件 Word 打开时会被 customXml 盖掉**，只改内容等于白填。
+**run 级高亮与字符底纹已接入**（2026-09-28）：`w:highlight` / `w:shd` 从解析、级联一路到画与回写，
+`FragmentStyle` 只在有的时候带。每行先铺背景再画字（挤压让后一片伸进前一片），网点底纹按比例混色 ——
+中文版 Word「字符底纹」按钮写的是白底 `pct15`，只看 `fill` 等于没画。剪贴板照 Word 写 `mso-highlight`，
+粘贴只从行内元素读背景。制表位处的背景与段落底纹未做。
 **Unicode 正则查找修复**（2026-09-28）：零长匹配在 `u` / `v` 模式按完整码点推进，
 避免 emoji 代理对导致查找死循环；非 Unicode 仍按 UTF-16 单元推进，位置计数不变。新增 3 项回归。
 **Phase 8 已开始：回写 docx**（2026-09-23，新包 `@uw/serialize`，门面 `doc.toDocx()`，调试台「导出 docx」按钮）。
@@ -239,7 +243,7 @@ scroll / facade / print / react 一口气跑完，要先起调试台）。
 页眉页脚是与版心 `<g>` **平级**的另外两个 `<g>`（坐标相对纸左上角）—— 它们不在版心里，
 版心正是被它们挤出来的。浮动对象（印章 / 水印）同样与版心平级，**衬于文字下方的画在正文之前、
 浮于上方的画在最后** —— SVG 里的「层」就是画的先后。
-未画：run 级高亮（model 没解析）、增量更新。可选文本层已由 `@uw/view` 实现。
+未画：增量更新、段落底纹。run 级高亮与字符底纹已画（每行先铺背景再画字，纵向铺满行盒未标定）。可选文本层已由 `@uw/view` 实现。
 画法里没有真值的常数（下划线 / 删除线的位置粗细、上下标升降量、前导符点距）
 关在 `packages/render-dom/src/uncalibrated.ts` ——
 **它们一个都不改坐标**，所以 L2/L3/L4 全绿也证明不了它们对。

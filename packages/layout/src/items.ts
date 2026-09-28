@@ -439,6 +439,8 @@ function styleOf(props: ResolvedRunProps): FragmentStyle {
     position: props.position,
     scale: props.scale,
   };
+  if (props.highlight !== 'none' && props.highlight !== '') style.highlight = props.highlight;
+  if (props.shading !== undefined) style.shading = props.shading;
   STYLE_CACHE.set(props, style);
   return style;
 }

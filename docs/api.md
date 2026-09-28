@@ -412,7 +412,7 @@ editor.breakHistory(); // 光标移动、焦点切换等输入边界中断合并
 - `t.clearRunProps(range)`（2026-09-28）移除已识别的字符直接格式与字符样式，保留语言标记，恢复段落样式的字符格式。
   选区、拆 run、段落标记与返回值语义同 `setRunProps`；非空段落的折叠范围无修改，空段落清段落标记。
 - `t.clearParagraphProps(range)`（2026-09-28）移除已识别的段落直接格式（含直接编号），保留段落样式和段落标记的字符格式，
-  作用范围同 `setParagraphProps`。两种清除均支持撤销 / 重做；未知 XML 继续保留，不能清除尚未建模的高亮、边框等格式。
+  作用范围同 `setParagraphProps`。两种清除均支持撤销 / 重做；未知 XML 继续保留；高亮与字符底纹已建模、一并清除，字符边框等尚未建模的格式清不掉。
 - `t.addList(kind)` 新增一份九级列表定义（`'bullet'` 项目符号 ● ○ ■ / `'decimal'` 编号 `1.` `a)` `i.` 三级一轮，
   每级左缩进 420 twips × 级数、悬挂 420），返回 numId，再用 `setParagraphProps(range, { numbering: { numId, level: 0 } })`
   引用。定义存在 `editor.body.numbering` 上，随事务提交与撤销；本次没有段落改动时整次无修改、定义不留下。

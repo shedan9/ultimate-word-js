@@ -2,7 +2,7 @@
  * `ParaProps` / `RunProps` → `w:pPr` / `w:rPr`，**以原元素为底打补丁**。
  *
  * 不从模型整个重新生成属性容器，因为模型只认识 Word 属性的一个子集：`w:pBdr`（段落边框）、
- * `w:shd`（底纹）、`w:framePr`、`w:rPrChange`（格式修订）、`w:eastAsianLayout`（双行合一）……
+ * 段落的 `w:shd`（底纹）、`w:framePr`、`w:rPrChange`（格式修订）、`w:eastAsianLayout`（双行合一）……
  * 这些我们不解析，但它们在用户的文档里。重新生成等于把它们全删了（原则 1.4）。
  *
  * 所以做法是**按字段组比对**：解析原元素得到「原来的值」，与模型上的值逐组比，
@@ -260,7 +260,47 @@ const RUN_FIELDS: readonly Field<RunProps>[] = [
   val('position', 'w:position', halfPt),
   val('size', 'w:sz', halfPt),
   val('sizeCs', 'w:szCs', halfPt),
+  val('highlight', 'w:highlight'),
   val('underline', 'w:u'),
+  {
+    keys: ['shading'],
+    name: 'w:shd',
+    write(old, p) {
+      const shd = p.shading;
+      if (shd === undefined) return undefined;
+      // 与 w:color 同理：底色换了就丢掉主题底色（Word 里 w:themeFill 压过 w:fill，留着就是两个颜色）
+      const keepThemeFill = old?.attrs['w:fill'] === shd.fill;
+      const keepThemeColor = old?.attrs['w:color'] === shd.color;
+      return el(
+        'w:shd',
+        patchAttrs(
+          old?.attrs ?? {},
+          [
+            'w:val',
+            'w:color',
+            'w:fill',
+            'w:themeFill',
+            'w:themeFillTint',
+            'w:themeFillShade',
+            'w:themeColor',
+            'w:themeTint',
+            'w:themeShade',
+          ],
+          {
+            'w:val': shd.pattern,
+            'w:color': shd.color,
+            'w:fill': shd.fill,
+            'w:themeFill': keepThemeFill ? old?.attrs['w:themeFill'] : undefined,
+            'w:themeFillTint': keepThemeFill ? old?.attrs['w:themeFillTint'] : undefined,
+            'w:themeFillShade': keepThemeFill ? old?.attrs['w:themeFillShade'] : undefined,
+            'w:themeColor': keepThemeColor ? old?.attrs['w:themeColor'] : undefined,
+            'w:themeTint': keepThemeColor ? old?.attrs['w:themeTint'] : undefined,
+            'w:themeShade': keepThemeColor ? old?.attrs['w:themeShade'] : undefined,
+          },
+        ),
+      );
+    },
+  },
   val('vertAlign', 'w:vertAlign'),
   {
     keys: ['langEastAsia'],
