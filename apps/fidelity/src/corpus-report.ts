@@ -102,6 +102,7 @@ for (const name of names()) {
     settings: doc.cascade.settings,
     diagnostics: sink,
     headerFooters: doc.headerFooters,
+    notes: doc.notes,
     bookmarks: bookmarkTargets(doc.body),
     styleNames: paragraphStyleNames(doc.cascade.styles, doc.body.styles),
   });

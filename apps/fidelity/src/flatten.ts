@@ -120,7 +120,8 @@ export function piecesOf(page: PageLayout): Piece[] {
   const out: Piece[] = [];
   const c = page.geometry.content;
   collectBlocks(page.blocks, c.x, c.y, out);
-  for (const hf of [page.header, page.footer]) {
+  // 脚注区与页眉页脚同一套坐标（相对纸）；真值按 y 分桶，所以收进来的先后不要紧
+  for (const hf of [page.header, page.footnotes, page.footer]) {
     if (hf !== undefined) collectBlocks(hf.blocks, hf.x, hf.y, out);
   }
   return out;

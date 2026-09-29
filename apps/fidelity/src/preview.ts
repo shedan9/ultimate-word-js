@@ -175,6 +175,7 @@ async function preview(name: string, args: Args): Promise<void> {
     measurer,
     settings: doc.cascade.settings,
     headerFooters: doc.headerFooters,
+    notes: doc.notes,
     bookmarks: bookmarkTargets(doc.body),
     styleNames: paragraphStyleNames(doc.cascade.styles, doc.body.styles),
     diagnostics: sink,

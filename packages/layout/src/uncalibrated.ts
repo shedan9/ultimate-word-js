@@ -227,3 +227,20 @@ export const SEQ_RESET_ON_HIGHER_HEADINGS = true;
  * 每章里放一个 `{ STYLEREF 1 \s }` 和一个 `{ STYLEREF 1 \n \t }`，F9 后看显示什么。
  */
 export const STYLEREF_NUMERIC_CHARS = /[0-9〇零一二三四五六七八九十百千壹贰叁肆伍陆柒捌玖拾佰仟.\-–—:]/u;
+
+/**
+ * 脚注分隔线的长度，twips。取 2 英寸（144pt）：英文版 Word 在 Letter 纸上那条线约占版心的三分之一，
+ * 中文版 A4 上看着也是这个长度 —— 但都是**看**出来的，没有量过。
+ *
+ * 钉死办法：一份带两条脚注的 docx（A4 与 Letter 各一节）导 PDF，`truth.json` 的
+ * `pages[].rules[]` 直接给出那条线的起止 x 与 y；顺带把下一条 `FOOTNOTE_SEPARATOR_LINE_Y` 一起钉死。
+ */
+export const FOOTNOTE_SEPARATOR_WIDTH = 2880;
+
+/**
+ * 分隔线画在分隔线那一段（`footnotes.xml` 里 `separator` 那条的空段落）的什么高度，
+ * 按那一段总高的比例。取 0.5（居中）。只影响画在哪，**不改任何一行的坐标** ——
+ * 那一段占多高由它自己的段落属性决定，是已经标定过的行高规则。
+ * 钉死办法同上。
+ */
+export const FOOTNOTE_SEPARATOR_LINE_Y = 0.5;

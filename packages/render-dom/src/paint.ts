@@ -47,6 +47,7 @@ import type {
   ParagraphFrame,
   PlacedBlock,
   PlacedFloat,
+  PlacedFootnotes,
   PlacedHeaderFooter,
   PlacedParagraph,
   PlacedTable,
@@ -59,6 +60,7 @@ import type { RElement } from './tree.ts';
 import { el, fmt, fmtList, textEl } from './tree.ts';
 import {
   DOUBLE_STRIKE_GAP_EM,
+  FOOTNOTE_SEPARATOR_STROKE_PT,
   LEADER_DOT_PITCH_EM,
   LEADER_FALLBACK_SIZE,
   LEADER_THICKNESS_EM,
@@ -190,6 +192,8 @@ function buildPageWith(page: PageLayout, ctx: Ctx): RElement {
     ),
   );
 
+  // 脚注区在版心里面（正文让出来的那一块），但坐标照页眉那一套相对纸，所以也与版心平级
+  if (page.footnotes !== undefined) children.push(paintFrame(page.footnotes, ctx));
   if (page.footer !== undefined) children.push(paintFrame(page.footer, ctx));
 
   // 浮于文字上方的浮动对象最后画。衬于文字下方的那些已经在正文之前画过了 ——
@@ -217,8 +221,22 @@ function buildPageWith(page: PageLayout, ctx: Ctx): RElement {
  * 页眉 / 页脚。**坐标相对纸左上角**，与版心那个 `<g>` 平级 ——
  * 它不在版心里（版心是被它挤出来的），套进去会平白多偏一个上边距。
  */
-function paintFrame(frame: PlacedHeaderFooter, ctx: Ctx): RElement {
+function paintFrame(frame: PlacedHeaderFooter | PlacedFootnotes, ctx: Ctx): RElement {
   const inner: RElement[] = [];
+  if (frame.kind === 'footnotes') {
+    const sep = frame.separator;
+    inner.push(
+      el('line', {
+        class: ctx.cls('footnote-separator'),
+        x1: fmt(pt(sep.x)),
+        y1: fmt(pt(sep.y)),
+        x2: fmt(pt(sep.x + sep.width)),
+        y2: fmt(pt(sep.y)),
+        stroke: '#000000',
+        'stroke-width': fmt(FOOTNOTE_SEPARATOR_STROKE_PT),
+      }),
+    );
+  }
   for (const [i, block] of frame.blocks.entries()) paintBlock(block, frame.blocks[i + 1], ctx, inner);
   if (ctx.debug) {
     inner.unshift(
@@ -239,7 +257,7 @@ function paintFrame(frame: PlacedHeaderFooter, ctx: Ctx): RElement {
     'g',
     {
       class: ctx.cls(frame.kind),
-      'data-rel': frame.relId,
+      ...(frame.kind === 'footnotes' ? {} : { 'data-rel': frame.relId }),
       transform: `translate(${fmt(pt(frame.x))} ${fmt(pt(frame.y))})`,
     },
     inner,

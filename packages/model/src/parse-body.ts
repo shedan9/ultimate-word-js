@@ -34,7 +34,7 @@ import { parseParaProps, parseRunProps } from './parse-props.ts';
 import { parseCellProps, parseRowProps, parseTableGrid, parseTableProps } from './parse-table-props.ts';
 import type { ParaProps } from './props.ts';
 import { parseSectionProps } from './section.ts';
-import { attrOf, enumVal } from './xml-values.ts';
+import { attrOf, attrOnOff, enumVal } from './xml-values.ts';
 
 /**
  * 排版上完全无关、见到就跳过的元素 —— 书签终点、拼写检查标记、批注范围、编辑权限范围。
@@ -59,17 +59,21 @@ const IGNORED = new Set([
   'w:moveToRangeEnd',
 ]);
 
-/** run 内部同样跳过的：脚注/尾注/批注的引用标记（Phase 3 之后才接），以及 Word 缓存的分页提示 */
+/**
+ * run 内部同样跳过的：批注的引用标记、脚注分隔线，以及 Word 缓存的分页提示。
+ * 脚注 / 尾注的引用标记**不在这里**了 —— 它们显示成号，见 `RunContent` 的 `noteReference`
+ */
 const IGNORED_IN_RUN = new Set([
   'w:rPr',
   // 规范不许它进 `w:r`，第三方生成器偶尔这么写；位置已经说不清是哪个字，不收也不报
   'w:bookmarkStart',
-  'w:footnoteReference',
-  'w:endnoteReference',
   'w:commentReference',
   'w:annotationRef',
-  'w:footnoteRef',
-  'w:endnoteRef',
+  // 脚注区那条分隔线：它只出现在 `w:type="separator"` 的那条脚注里，
+  // 布局认的是「这条是分隔线」（notes.ts 的 `NoteContent.type`），不必再认一个片段
+  'w:separator',
+  'w:continuationSeparator',
+  'w:continuationNotice',
   // Word 自己排完版后写回来的「这里分了页」。**绝不能采信** ——
   // 采信它等于让 Word 替我们排版，而这个引擎的立身之本就是自己算
   'w:lastRenderedPageBreak',
@@ -241,7 +245,50 @@ export function parseHeaderFooter(
   part: string,
   idPrefix: string,
 ): Block[] {
-  const ctx: Ctx = {
+  const ctx = partCtx(diagnostics, part, idPrefix);
+  const out = blockList(ctx, doc.root);
+  flushBookmarks(ctx);
+  return out;
+}
+
+/** `footnotes.xml` / `endnotes.xml` 里的一条 */
+export interface ParsedNote {
+  /** `w:id`。正文里的 `w:footnoteReference w:id` 指的就是它 */
+  id: string;
+  /** `w:type`：`normal`（缺席即是）/ `separator` / `continuationSeparator` / `continuationNotice` */
+  type: string;
+  blocks: Block[];
+}
+
+/**
+ * `footnotes.xml` / `endnotes.xml` → 一条条注。
+ *
+ * 与页眉页脚同一套：根下一列 `w:footnote`（`w:endnote`），每条里面直接挂块。
+ * 整个部件共用**一个** id 前缀与计数器 —— 各条之间的节点 id 因此不会撞车，
+ * 也不必为每一条再拼一层前缀。
+ */
+export function parseNotes(
+  doc: XmlDocument,
+  diagnostics: DiagnosticSink,
+  part: string,
+  idPrefix: string,
+): ParsedNote[] {
+  const ctx = partCtx(diagnostics, part, idPrefix);
+  const out: ParsedNote[] = [];
+  for (const el of children(doc.root)) {
+    if (el.name !== 'w:footnote' && el.name !== 'w:endnote') continue;
+    const id = attr(el, 'w:id');
+    if (id === undefined) continue;
+    const blocks = blockList(ctx, el);
+    flushBookmarks(ctx);
+    out.push({ id, type: attr(el, 'w:type') ?? 'normal', blocks });
+  }
+  return out;
+}
+
+/** 正文以外的部件（页眉页脚、脚注）共用的解析上下文 */
+function partCtx(diagnostics: DiagnosticSink, part: string, idPrefix: string): Ctx {
+  return {
     diagnostics,
     part,
     reported: new Set(),
@@ -254,8 +301,12 @@ export function parseHeaderFooter(
     bookmarks: [],
     lastParagraph: undefined,
   };
+}
+
+/** 块**直接**挂在 `parent` 下（没有 `w:body`、没有 `w:sectPr`）的那种容器 */
+function blockList(ctx: Ctx, parent: XmlElement): Block[] {
   const out: Block[] = [];
-  for (const el of children(doc.root)) {
+  for (const el of children(parent)) {
     switch (el.name) {
       case 'w:p':
         out.push(parseParagraph(ctx, el, parseParaProps(child(el, 'w:pPr'))));
@@ -270,10 +321,9 @@ export function parseHeaderFooter(
         pendBookmark(ctx, el);
         break;
       default:
-        if (!IGNORED.has(el.name)) unknown(ctx, el, doc.root.name);
+        if (!IGNORED.has(el.name)) unknown(ctx, el, parent.name);
     }
   }
-  flushBookmarks(ctx);
   return out;
 }
 
@@ -473,6 +523,24 @@ function collectContentItem(ctx: Ctx, el: XmlElement, out: RunContent[]): void {
       break;
     case 'w:sym':
       out.push(parseSymbol(el));
+      break;
+    case 'w:footnoteReference':
+    case 'w:endnoteReference': {
+      const noteId = attr(el, 'w:id');
+      if (noteId === undefined) break;
+      const noteType = el.name === 'w:footnoteReference' ? 'footnote' : 'endnote';
+      out.push(
+        attrOnOff(el, 'w:customMarkFollows') === true
+          ? { kind: 'noteReference', noteType, noteId, customMark: true }
+          : { kind: 'noteReference', noteType, noteId },
+      );
+      break;
+    }
+    case 'w:footnoteRef':
+      out.push({ kind: 'noteMark', noteType: 'footnote' });
+      break;
+    case 'w:endnoteRef':
+      out.push({ kind: 'noteMark', noteType: 'endnote' });
       break;
     case 'w:fldChar': {
       const t = enumVal(attr(el, 'w:fldCharType'), ['begin', 'separate', 'end'] as const);

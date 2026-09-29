@@ -81,7 +81,8 @@ export class ParagraphLayoutCache {
       options.objectRules,
       options.scriptRules,
       options.widthRules,
-      paragraph.runs.map((run) => options.fieldValues?.get(run.id)),
+      // 同一个 run 不会既是域结果又带脚注号（域结果整个换掉 run），合成一列省一次序列化
+      paragraph.runs.map((run) => options.fieldValues?.get(run.id) ?? options.noteLabels?.get(run.id)),
     ]);
     const bucket = this.#entries.get(paragraphKey);
     const hit = bucket?.get(envKey);

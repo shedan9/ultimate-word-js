@@ -25,7 +25,7 @@
 import type { Twips } from '@uw/core';
 import type { DocPosition, DocRange, NodeId } from '@uw/model';
 import type { PlacedHeaderFooter } from './header-footer.ts';
-import type { DocumentLayout, PlacedBlock } from './page.ts';
+import type { DocumentLayout, PlacedBlock, PlacedFootnotes } from './page.ts';
 import type { BlockLayout, CellLayout, RowLayout } from './table.ts';
 import { contentHeightOf } from './table.ts';
 import type { LineFragment, LineLayout } from './types.ts';
@@ -69,8 +69,12 @@ export interface IndexedLine {
    * 前向映射（`rectsOf`）照样给它的矩形 —— 选中表头行时每页都高亮，也是 Word 的样子。
    */
   repeated: boolean;
-  /** 页眉 / 页脚里的行。正文的行没有这个字段 */
-  frame?: 'header' | 'footer';
+  /**
+   * 页眉 / 页脚 / 脚注区里的行。正文的行没有这个字段。
+   * 脚注区的行**进索引**（可选文本层要能复制、Ctrl+F 要能搜到脚注），
+   * 但与页眉一样不在正文的上下导航里（它们的 run 不在正文的树上）
+   */
+  frame?: FrameKind;
 }
 
 export interface LayoutIndex {
@@ -111,6 +115,7 @@ export function buildLayoutIndex(doc: DocumentLayout): LayoutIndex {
     for (const block of page.blocks) {
       collectBlock(block, g.content.x, g.content.y, page.index, false, undefined, lines);
     }
+    if (page.footnotes !== undefined) collectFrame(page.footnotes, page.index, lines);
     if (page.footer !== undefined) collectFrame(page.footer, page.index, lines);
   }
 
@@ -273,7 +278,10 @@ export function buildLayoutIndex(doc: DocumentLayout): LayoutIndex {
 // 说的是同一件事。两边各写一遍是因为依赖方向单向（渲染层依赖布局，反过来不行），
 // 而摊平这件事布局层自己就该会做 —— 命中测试不该逼着调用方先渲染一遍。
 
-function collectFrame(frame: PlacedHeaderFooter, page: number, out: IndexedLine[]): void {
+/** 正文之外的三种行容器 */
+export type FrameKind = 'header' | 'footer' | 'footnotes';
+
+function collectFrame(frame: PlacedHeaderFooter | PlacedFootnotes, page: number, out: IndexedLine[]): void {
   for (const block of frame.blocks) {
     collectBlock(block, frame.x, frame.y, page, false, frame.kind, out);
   }
@@ -285,7 +293,7 @@ function collectBlock(
   oy: Twips,
   page: number,
   repeated: boolean,
-  frame: 'header' | 'footer' | undefined,
+  frame: FrameKind | undefined,
   out: IndexedLine[],
 ): void {
   if (block.kind === 'paragraph') {
@@ -314,7 +322,7 @@ function collectCell(
   rowHeight: Twips,
   page: number,
   repeated: boolean,
-  frame: 'header' | 'footer' | undefined,
+  frame: FrameKind | undefined,
   out: IndexedLine[],
 ): void {
   const inner = contentHeightOf(cell.blocks);
@@ -332,7 +340,7 @@ function collectStack(
   y0: Twips,
   page: number,
   repeated: boolean,
-  frame: 'header' | 'footer' | undefined,
+  frame: FrameKind | undefined,
   out: IndexedLine[],
 ): void {
   let y = y0;
@@ -361,7 +369,7 @@ function collectNestedRow(
   y: Twips,
   page: number,
   repeated: boolean,
-  frame: 'header' | 'footer' | undefined,
+  frame: FrameKind | undefined,
   out: IndexedLine[],
 ): void {
   for (const cell of row.cells) {
@@ -377,7 +385,7 @@ function push(
   top: Twips,
   line: LineLayout,
   repeated: boolean,
-  frame: 'header' | 'footer' | undefined,
+  frame: FrameKind | undefined,
 ): void {
   out.push({ page, originX, top, line, repeated, ...(frame === undefined ? {} : { frame }) });
 }

@@ -19,10 +19,13 @@ import { parseFontTable } from './font-table.ts';
 import type { ImageResource } from './images.ts';
 import { collectImages } from './images.ts';
 import type { Block, Body, ResolvedBlock, ResolvedBody, SectionProps } from './nodes.ts';
+import type { LoadedNotes } from './notes.ts';
+import { allNoteContents, parseNoteParts } from './notes.ts';
 import type { Numbering } from './numbering.ts';
 import { parseNumbering } from './numbering.ts';
 import { parseBody, parseHeaderFooter } from './parse-body.ts';
 import { resolveBlocks, resolveBody } from './resolve-body.ts';
+import { DEFAULT_SECTION_PROPS } from './section.ts';
 import { parseSettings } from './settings.ts';
 import { parseStyles } from './styles.ts';
 import { EMPTY_THEME, parseTheme } from './theme.ts';
@@ -99,6 +102,12 @@ export interface LoadedDocument {
    * 只需要 `wp:extent` 那个外框；真正要它的是渲染层，而渲染层在主线程这一侧。
    */
   images: Record<string, ImageResource>;
+  /**
+   * 脚注 / 尾注的内容与编号规则，见 notes.ts。与页眉页脚同理按 id 摊成表：
+   * 正文里只有引用（`noteReference` 片段），内容在这里。**不可编辑**（注里的编辑还没做），
+   * 所以重排时照旧用加载时级联好的这一份
+   */
+  notes: LoadedNotes;
 }
 
 /** 一个 header / footer 部件解析完的样子。两棵树的分工与 `LoadedDocument` 一致 */
@@ -122,11 +131,26 @@ export function loadDocument(pkg: OpcPackage, diagnostics: DiagnosticSink): Load
   // 页眉页脚要在算 hyperlinks **之前**解析完：它们里面的 HYPERLINK 域同样要铺到 run 上，
   // 而铺这件事发生在下面那一趟级联里
   const headerFooters = parseHeaderFooters(pkg, partName, body, fields, diagnostics);
-  const hyperlinks = fieldHyperlinks(fields);
+  const notes = parseNoteParts(pkg, diagnostics);
+  const noteContents = allNoteContents(notes);
+  // 注里的域**只取超链接**，不进 `fields`：那张表是给页码求值的，注里的 PAGE 求值没做，
+  // 放进去会让求值那边去找一个不在正文里的 run
+  const noteFields = noteContents.flatMap((n) =>
+    scanFields(
+      {
+        sections: [
+          { id: `${n.id}:sec`, props: body.sections[0]?.props ?? DEFAULT_SECTION_PROPS, blocks: n.blocks },
+        ],
+      },
+      diagnostics,
+    ),
+  );
+  const hyperlinks = new Map([...fieldHyperlinks(fields), ...fieldHyperlinks(noteFields)]);
 
   for (const hf of Object.values(headerFooters)) {
     hf.resolved = resolveBlocks(cascade, hf.blocks, { hyperlinks });
   }
+  for (const n of noteContents) n.resolved = resolveBlocks(cascade, n.blocks, { hyperlinks });
 
   return {
     cascade,
@@ -145,12 +169,19 @@ export function loadDocument(pkg: OpcPackage, diagnostics: DiagnosticSink): Load
           idPrefix: `${hf.relId}:`,
           blocks: hf.blocks,
         })),
+        // 注里的图（公式截图、小图标）按注所在部件的关系表解引用
+        ...noteContents.map((n) => ({
+          part: n.part,
+          idPrefix: n.part === notes.footnotes.part ? 'fn:' : 'en:',
+          blocks: n.blocks,
+        })),
       ],
       diagnostics,
     ),
     fonts: parseFontTable(partXml(pkg, RelType.FONT_TABLE)),
     // 不重新解析一遍：同一份定义解析两次会让 numbering.xml 的诊断也报两次
     numbering: cascade.numbering,
+    notes,
   };
 }
 

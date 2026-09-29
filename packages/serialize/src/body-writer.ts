@@ -494,9 +494,18 @@ class BodyWriter {
         return el('w:instrText', { 'xml:space': 'preserve' }, [{ kind: 'text', text: c.text }]);
       case 'symbol':
       case 'fieldChar':
+      case 'noteReference':
+      case 'noteMark':
       case 'object': {
         const found = own(c) ?? this.#fromPool(c);
         if (found !== undefined) return found;
+        if (c.kind === 'noteReference') {
+          return el(c.noteType === 'footnote' ? 'w:footnoteReference' : 'w:endnoteReference', {
+            ...(c.customMark === true ? { 'w:customMarkFollows': '1' } : {}),
+            'w:id': c.noteId,
+          });
+        }
+        if (c.kind === 'noteMark') return el(c.noteType === 'footnote' ? 'w:footnoteRef' : 'w:endnoteRef');
         if (c.kind === 'symbol') {
           const code = c.char.codePointAt(0) ?? 0;
           return el('w:sym', {
@@ -523,7 +532,10 @@ class BodyWriter {
           const e = origins[j];
           if (
             e === undefined ||
-            (item.kind !== 'object' && item.kind !== 'symbol' && item.kind !== 'fieldChar')
+            (item.kind !== 'object' &&
+              item.kind !== 'symbol' &&
+              item.kind !== 'fieldChar' &&
+              item.kind !== 'noteReference')
           )
             return;
           const key = stableKey(item);

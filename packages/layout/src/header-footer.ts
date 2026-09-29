@@ -116,6 +116,8 @@ export interface StackOptions {
   contentWidth: Twips;
   defaultFont?: string;
   fieldValues?: ReadonlyMap<NodeId, string>;
+  /** 脚注号（脚注内容也走这里摞，开头那个号要它） */
+  noteLabels?: ReadonlyMap<NodeId, string>;
 }
 
 /** 摞出来的结果：块 + 总高。页眉不分页，所以这里没有任何「放不下」的分支 */
@@ -139,6 +141,7 @@ export function stackBlocks(blocks: readonly ResolvedBlock[], opts: StackOptions
     docGrid: opts.docGrid,
     ...(opts.defaultFont === undefined ? {} : { defaultFont: opts.defaultFont }),
     ...(opts.fieldValues === undefined ? {} : { fieldValues: opts.fieldValues }),
+    ...(opts.noteLabels === undefined ? {} : { noteLabels: opts.noteLabels }),
   };
 
   const out: PlacedBlock[] = [];

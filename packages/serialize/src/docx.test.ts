@@ -240,6 +240,28 @@ describe('模型不认识的 XML 留在文件里', () => {
     expect(paragraphText(paragraphs(again.body)[0] as Paragraph)).toBe('高新亮文字');
   });
 
+  it('脚注引用与文字同在一个 run 里：run 的内容重写时引用照原元素写回、位置不变', () => {
+    const { out, again } = roundTrip(
+      docx(
+        '<w:p><w:r><w:t>甲</w:t><w:footnoteReference w:customMarkFollows="1" w:id="3"/><w:t>*</w:t></w:r></w:p>',
+      ),
+      (t, body) => {
+        t.insertText(textPosition(body, 0, 0) as DocPosition, '乙');
+      },
+    );
+    const xml = decoder.decode(unzip(out).get('word/document.xml'));
+    expect(xml).toContain(
+      '<w:t>乙甲</w:t><w:footnoteReference w:customMarkFollows="1" w:id="3"/><w:t>*</w:t>',
+    );
+    const content = paragraphs(again.body)[0]?.runs[0]?.content;
+    expect(content?.[1]).toEqual({
+      kind: 'noteReference',
+      noteType: 'footnote',
+      noteId: '3',
+      customMark: true,
+    });
+  });
+
   it('改格式只动那一个属性：w:lang 的 w:val 留着，新元素按 schema 顺序插', () => {
     const { out } = roundTrip(docx(PRESERVED), (t, body) => {
       const at = textPosition(body, 0, 0) as DocPosition;

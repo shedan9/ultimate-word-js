@@ -95,7 +95,21 @@ export type RunContent =
   /** `w:fldChar`：域的三个界桩。域的**求值**是后续阶段的事，这里只保留位置 */
   | { kind: 'fieldChar'; charType: 'begin' | 'separate' | 'end' }
   /** `w:instrText`：域代码正文（如 `PAGE`）。不参与排版，但求值要靠它 */
-  | { kind: 'fieldInstruction'; text: string };
+  | { kind: 'fieldInstruction'; text: string }
+  /**
+   * `w:footnoteReference` / `w:endnoteReference`：正文里的脚注 / 尾注号。
+   *
+   * **文件里不存显示的号**，只存指向哪一条（`w:id`）—— 号是 Word 按文档序现数的
+   * （删掉第 2 条，后面的全部往前挪一个），所以数号在布局那一侧（layout 的 notes.ts），
+   * 与 SEQ 同理。`customMark`（`w:customMarkFollows`）：不显示自动编号，
+   * 紧跟着的文字（「*」「注」）就是号。
+   */
+  | { kind: 'noteReference'; noteType: NoteType; noteId: string; customMark?: true }
+  /** `w:footnoteRef` / `w:endnoteRef`：脚注**内容**开头那个号，显示的是所在那一条的号 */
+  | { kind: 'noteMark'; noteType: NoteType };
+
+/** 脚注还是尾注。两者的内容各在一个部件里、各自编号（默认格式也不同） */
+export type NoteType = 'footnote' | 'endnote';
 
 // ── 内嵌 / 浮动对象 ───────────────────────────────────────────────────────────
 
@@ -359,6 +373,27 @@ export interface SectionProps {
    * 就是靠分节 + 这个字段实现的），页眉里的页码同理。域自己写了 `\*` 的以域为准。
    */
   pageNumFormat?: string;
+  /**
+   * `w:sectPr/w:footnotePr` / `w:endnotePr`：本节脚注 / 尾注怎么编号，盖在 `settings.xml`
+   * 那一份上（逐字段）。缺席 = 跟文档级的走，见 notes.ts 的 `NoteNumbering`
+   */
+  footnotePr?: NoteNumbering;
+  endnotePr?: NoteNumbering;
+}
+
+/**
+ * `w:footnotePr` / `w:endnotePr` 里与**编号**有关的那几项，字段缺席 = 这一层没写。
+ * 放在 nodes.ts 而不是 notes.ts：`SectionProps` 要它，而 notes.ts 要 import 节点类型。
+ */
+export interface NoteNumbering {
+  /** `w:numFmt`，取值同 `w:lvl/w:numFmt`。脚注默认 `decimal`、尾注默认 `lowerRoman` */
+  numFmt?: string;
+  /** `w:numStart` */
+  numStart?: number;
+  /** `w:numRestart`：`continuous`（默认）/ `eachSect` / `eachPage` */
+  numRestart?: 'continuous' | 'eachSect' | 'eachPage';
+  /** `w:pos`：脚注 `pageBottom`（默认）/ `beneathText`；尾注 `docEnd`（默认）/ `sectEnd` */
+  pos?: string;
 }
 
 /**

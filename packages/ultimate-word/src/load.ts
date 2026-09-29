@@ -85,6 +85,8 @@ export async function load(
     measurer,
     settings,
     headerFooters: loaded.headerFooters,
+    // 脚注内容不可编辑，重排时照旧用加载时级联好的那一份；号每趟按正文重新数
+    notes: loaded.notes,
     // 目录页码（PAGEREF）靠它找标题；编辑会挪段落，所以每趟从当前的树现摊
     bookmarks: bookmarkTargets(loaded.body),
     styleNames: paragraphStyleNames(loaded.cascade.styles, loaded.body.styles),
@@ -122,6 +124,7 @@ export async function load(
         measurer,
         settings,
         headerFooters: loaded.headerFooters,
+        notes: loaded.notes,
         bookmarks: bookmarkTargets(body),
         styleNames: paragraphStyleNames(loaded.cascade.styles, body.styles),
         now,

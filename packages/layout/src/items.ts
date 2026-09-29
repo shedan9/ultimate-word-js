@@ -124,6 +124,12 @@ export interface BuildItemsOptions {
    * 同样可结构化克隆（原则 1.1），Worker 化时跟着一起过去就行。
    */
   fieldValues?: ReadonlyMap<NodeId, string>;
+  /**
+   * 脚注 / 尾注的号：**run id → 这个 run 里那个号显示什么**（notes.ts 的 `noteLabels()`）。
+   * 号按文档序现数，文件里没有；走外挂的表而不是改树，理由同 `fieldValues`。
+   * 缺席时号显示成空（等于没传脚注数据的离线工具看到的样子）
+   */
+  noteLabels?: ReadonlyMap<NodeId, string>;
   /** 宽度规则。**标定用的接缝**，正常调用不要传，见 `WIDTH_RULES` */
   widthRules?: WidthRules;
 }
@@ -139,9 +145,13 @@ export function buildItems(p: ResolvedParagraph, opts: BuildItemsOptions): Layou
   // 空格的字体要等邻居都到齐才能定（见 applySpaceFont），先记下位置
   const spaces: SpaceRef[] = [];
   appendNumbering(out, p, opts, spaces);
+  // 自定义标记的脚注没有自动号，等它后面第一个字来认领（见 CharItem.note）
+  const pending: string[] = [];
   for (const run of p.runs) {
     if (run.props.hidden) continue;
-    appendRun(out, run, opts, spaces);
+    const start = out.length;
+    appendRun(out, run, opts, spaces, pending);
+    if (pending.length > 0) claimPendingNotes(out, start, pending);
   }
   applySpaceFont(out, spaces, opts);
   applyAutoSpace(out, p.props.autoSpaceDE, p.props.autoSpaceDN, opts.widthRules ?? WIDTH_RULES);
@@ -218,7 +228,27 @@ export function numberingRunId(paragraphId: NodeId): NodeId {
   return `${paragraphId}#num`;
 }
 
-function appendRun(out: LayoutItem[], run: ResolvedRun, opts: BuildItemsOptions, spaces: SpaceRef[]): void {
+/** 从 `start` 起第一个还没带脚注的字认领等着的那几条（自定义标记之后紧跟的「*」） */
+function claimPendingNotes(out: LayoutItem[], start: number, pending: string[]): void {
+  for (let i = start; i < out.length && pending.length > 0; i++) {
+    const item = out[i] as LayoutItem;
+    if (item.kind !== 'char' || item.note !== undefined) continue;
+    item.note = pending.shift() as string;
+  }
+}
+
+/** 脚注的键：分页、`LineLayout.notes`、`DocumentLayout` 的脚注区都按它认是哪一条 */
+export function noteKey(noteType: 'footnote' | 'endnote', noteId: string): string {
+  return `${noteType}:${noteId}`;
+}
+
+function appendRun(
+  out: LayoutItem[],
+  run: ResolvedRun,
+  opts: BuildItemsOptions,
+  spaces: SpaceRef[],
+  pending: string[],
+): void {
   const props = run.props;
   const size = effectiveSize(props);
 
@@ -306,6 +336,27 @@ function appendRun(out: LayoutItem[], run: ResolvedRun, opts: BuildItemsOptions,
         // 真实尺寸不能丢：浮动对象照样要画出来，只是不占文字的地方
         if (floating) item.float = { anchor: c.anchor as DrawingAnchor, width: c.width, height: c.height };
         out.push(item);
+        break;
+      }
+      case 'noteReference':
+      case 'noteMark': {
+        // 号是按文档序现数的（notes.ts），文件里没有那串数字 —— 与域结果同一套标记
+        const key =
+          c.kind === 'noteReference' && c.noteType === 'footnote' ? noteKey('footnote', c.noteId) : undefined;
+        const label =
+          c.kind === 'noteReference' && c.customMark === true ? '' : (opts.noteLabels?.get(run.id) ?? '');
+        const start = out.length;
+        appendText(out, run.id, props, ci, transformCase(label, props), label, size, opts, spaces);
+        for (let i = start; i < out.length; i++) {
+          const item = out[i] as LayoutItem;
+          if (item.kind !== 'char') continue;
+          item.field = true;
+          item.offset = -1;
+        }
+        if (key === undefined) break;
+        const first = out[start];
+        if (first?.kind === 'char') first.note = key;
+        else pending.push(key);
         break;
       }
       // fieldChar / fieldInstruction 不占宽度

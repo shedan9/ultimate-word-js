@@ -31,9 +31,20 @@
  * `w:cantSplit` 与表头行（`w:tblHeader`，它每页都要重复一遍）除外，那些仍然整行挪走。
  * 切法与几处没有真值的判断写在 `table-split.ts` 的文件头。
  *
- * ## 一件**没做**的（写下来免得以为已经做了）
+ * ## 脚注
  *
- * - **脚注 / 尾注 / 浮动对象**：完全不参与占位
+ * 引用落在哪一行，那条脚注就排进**同一页**的页底（`PageLayout.footnotes`）：放一行之前
+ * 先量它带出来的脚注（`LineLayout.notes`）连同分隔线要多高，从本页剩下的地方里一起扣 ——
+ * 放不下就连这一行一起挪到下一页。所以「版心还剩多高」（`availHeight`）减的是正文 + 已收的脚注。
+ * 脚注区**底边贴着版心底**（`w:pos="pageBottom"`，默认值），分隔线那一段的高度来自
+ * `footnotes.xml` 里那条 `separator` 的段落。整层没有真值，常数在 `uncalibrated.ts`。
+ *
+ * ## 几件**没做**的（写下来免得以为已经做了）
+ *
+ * - **脚注跨页续排**：一条脚注长过一整页时 Word 会把后半截挪到下一页（续页上画通栏的
+ *   `continuationSeparator`），这里整条硬塞在引用所在的那一页并记诊断
+ * - **尾注**的内容：号数了（`notes.ts`），文末那一摞还没排，记诊断
+ * - 浮动对象的**文字让开**：方形 / 上下型环绕的位置对，文字不绕着走
  */
 import type { DiagnosticSink, Twips } from '@uw/core';
 import type { TextMeasurer } from '@uw/fonts';
@@ -60,14 +71,17 @@ import {
 import { WIDTH_RULES, type WidthRules } from './items.ts';
 import type { ObjectRules, ScriptRules } from './line-height.ts';
 import { OBJECT_RULES, SCRIPT_RULES } from './line-height.ts';
+import type { NoteSource } from './notes.ts';
+import { noteLabels } from './notes.ts';
 import { joinParagraphFrames } from './para-frame.ts';
 import { layoutParagraph } from './paragraph.ts';
 import type { ParagraphLayoutCache } from './paragraph-cache.ts';
-import type { RowLayout, TableLayout, TableRules } from './table.ts';
+import type { BlockLayout, RowLayout, TableLayout, TableRules } from './table.ts';
 import { layoutTable, TABLE_RULES } from './table.ts';
 import type { SplitRowOptions, TableSplitRules } from './table-split.ts';
 import { splitRow, TABLE_SPLIT_RULES } from './table-split.ts';
 import type { LineFloat, LineLayout, LineObject, ParagraphFrame, ParagraphLayout } from './types.ts';
+import { FOOTNOTE_SEPARATOR_LINE_Y, FOOTNOTE_SEPARATOR_WIDTH } from './uncalibrated.ts';
 
 // ── 输出的数据形状 ────────────────────────────────────────────────────────────
 
@@ -169,8 +183,34 @@ export interface PageLayout {
    * （那一份是输入：与页无关、可缓存，见 types.ts）。
    */
   floats?: PlacedFloat[];
+  /** 这一页的脚注区。本页没有引用脚注时缺席 */
+  footnotes?: PlacedFootnotes;
   /** `evenPage` / `oddPage` 为了凑奇偶补出来的空页 */
   filler?: true;
+}
+
+/**
+ * 一页页底的脚注区：分隔线 + 本页引到的那几条脚注，从上往下摞，**底边贴着版心底**。
+ *
+ * 坐标与页眉页脚同一套（`x` / `y` 相对纸左上角，`blocks` 相对区域左上角），
+ * 渲染层与命中测试因此能拿画页眉的那条路画它。它**在版心里面**（与页眉页脚不同）——
+ * 正文让出来的正是这一块，所以 `y + height` = 版心底。
+ */
+export interface PlacedFootnotes {
+  kind: 'footnotes';
+  x: Twips;
+  y: Twips;
+  width: Twips;
+  height: Twips;
+  /**
+   * 分隔线，相对区域左上角；`y` 是线的**中心**。粗细是渲染层的事（没有真值，
+   * 见 render-dom 的 uncalibrated.ts）。文档里没有 `separator` 那条时也画，占高 0
+   */
+  separator: { x: Twips; y: Twips; width: Twips };
+  /** 本页的脚注（`noteKey()`），按引用的先后 */
+  notes: string[];
+  /** 分隔线那一段不在这里（它只有一个空段落，收进来会给命中测试多一个假的插入点） */
+  blocks: PlacedBlock[];
 }
 
 /**
@@ -286,6 +326,11 @@ export interface LayoutDocumentOptions {
   tableRules?: Partial<TableRules>;
   /** 表格**拆行**的规则。同上，标定用的接缝，见 `TABLE_SPLIT_RULES` */
   splitRules?: Partial<TableSplitRules>;
+  /**
+   * 脚注与尾注的内容（直接传 `LoadedDocument.notes`）。不传 = 号显示成空、页底不留脚注区 ——
+   * 与不传页眉页脚同理，离线工具少传一项不会错位到别的地方去
+   */
+  notes?: NoteSource;
 }
 
 export interface PaginationRules {
@@ -368,6 +413,25 @@ interface Flow {
   hf: Map<string, StackResult>;
   /** 哪些部件里有要算的域（关系 id）。没有的那些缓存键里就不必带页码 */
   hfDynamic: Set<string>;
+  /** 脚注的排版状态。文档没有脚注时缺席，分页的每一处因此一个判断就跳过 */
+  notes: NoteFlow | undefined;
+}
+
+/**
+ * 分页过程中的脚注状态。脚注内容按「哪一条 × 哪一节」只排一次（宽度与网格都跟着节走），
+ * 本页收了哪几条、它们连同分隔线一共多高，换页时清零。
+ */
+interface NoteFlow {
+  source: NoteSource;
+  labels: ReadonlyMap<NodeId, string>;
+  stacked: Map<string, StackResult>;
+  /** 当前页已收的脚注 */
+  onPage: string[];
+  /** 当前页脚注区的总高（含分隔线那一段），没有脚注时是 0 */
+  height: Twips;
+  /** 每一页收的脚注，整份排完再造脚注区（区域的 y 要这一页的版心，那时才定） */
+  byPage: Map<PageLayout, string[]>;
+  overflowReported: boolean;
 }
 
 /** 排完行、还没分页的中间形态。分页只关心高度，所以两种块在这里被拉平成同一个层级 */
@@ -399,13 +463,31 @@ export function layoutDocument(body: ResolvedBody, opts: LayoutDocumentOptions):
     nextNumber: 1,
     hf: new Map(),
     hfDynamic: dynamicParts(opts.headerFooters, opts.headerFields),
+    notes: undefined,
   };
+  // 号要在排段落之前数好：号的宽度参与断行
+  const labels = opts.notes === undefined ? undefined : noteLabels(body, opts.notes, opts.diagnostics);
+  if (opts.notes !== undefined && labels !== undefined && labels.size > 0) {
+    flow.notes = {
+      source: opts.notes,
+      labels,
+      stacked: new Map(),
+      onPage: [],
+      height: 0,
+      byPage: new Map(),
+      overflowReported: false,
+    };
+    if (Object.keys(opts.notes.endnotes.notes).length > 0) {
+      opts.diagnostics?.warn('endnotes-not-rendered', '文档有尾注：号已显示，文末的尾注内容还没有排出来');
+    }
+  }
+  const prepareOpts = labels === undefined || labels.size === 0 ? opts : { ...opts, noteLabels: labels };
 
   body.sections.forEach((section, index) => {
     flow.sectionIndex = index;
     startSection(flow, section.props, index);
 
-    const blocks = joinPreparedFrames(section.blocks.map((b) => prepare(b, section.props, opts)));
+    const blocks = joinPreparedFrames(section.blocks.map((b) => prepare(b, section.props, prepareOpts)));
     // keepNext 把相邻的块串成「接缝不许跨页」的链，接缝高度要在排**上一块**时就知道
     blocks.forEach((b, i) => {
       place(flow, b, joinHeight(blocks, i, flow.rules));
@@ -421,6 +503,7 @@ export function layoutDocument(body: ResolvedBody, opts: LayoutDocumentOptions):
   // 版心定下来（页眉长度会挤窄版心，见文件头）。反过来它不影响任何一行的位置，
   // 所以放在最后一趟是安全的
   for (const page of flow.pages) placeFloats(page);
+  if (flow.notes !== undefined) for (const page of flow.pages) placeFootnotes(flow, page);
   return { pages: flow.pages };
 }
 
@@ -555,6 +638,10 @@ function currentPage(flow: Flow): PageLayout {
   flow.pages.push(page);
   flow.page = page;
   flow.y = 0;
+  if (flow.notes !== undefined) {
+    flow.notes.onPage = [];
+    flow.notes.height = 0;
+  }
   return page;
 }
 
@@ -700,12 +787,16 @@ function pageHasContent(flow: Flow): boolean {
  * **问了「还剩多高」就说明真的要往里放东西了**。
  */
 function availHeight(flow: Flow): Twips {
-  return currentPage(flow).geometry.content.height - flow.y;
+  return currentPage(flow).geometry.content.height - flow.y - (flow.notes?.height ?? 0);
 }
 
 // ── 块的准备 ──────────────────────────────────────────────────────────────────
 
-function prepare(b: ResolvedBlock, section: SectionProps, opts: LayoutDocumentOptions): Prepared {
+function prepare(
+  b: ResolvedBlock,
+  section: SectionProps,
+  opts: LayoutDocumentOptions & { noteLabels?: ReadonlyMap<NodeId, string> },
+): Prepared {
   const shared = {
     ...(opts.paragraphCache === undefined ? {} : { paragraphCache: opts.paragraphCache }),
     measurer: opts.measurer,
@@ -713,6 +804,7 @@ function prepare(b: ResolvedBlock, section: SectionProps, opts: LayoutDocumentOp
     docGrid: section.docGrid,
     ...(opts.defaultFont === undefined ? {} : { defaultFont: opts.defaultFont }),
     ...(opts.fieldValues === undefined ? {} : { fieldValues: opts.fieldValues }),
+    ...(opts.noteLabels === undefined ? {} : { noteLabels: opts.noteLabels }),
     ...(opts.objectRules === undefined ? {} : { objectRules: { ...OBJECT_RULES, ...opts.objectRules } }),
     ...(opts.scriptRules === undefined ? {} : { scriptRules: { ...SCRIPT_RULES, ...opts.scriptRules } }),
     ...(opts.widthRules === undefined ? {} : { widthRules: { ...WIDTH_RULES, ...opts.widthRules } }),
@@ -833,7 +925,8 @@ function placeParagraph(flow: Flow, b: Extract<Prepared, { kind: 'paragraph' }>,
   let i = 0;
   while (i < total) {
     // 下边框跟着末行走：末行要连它一起放得下
-    const raw = fitLines(lines, i, availHeight(flow), join + insetBottom);
+    // 引到的脚注连同本行一起量（`noteMeter` 要在开页之后建，参数的求值顺序正好保证这一点）
+    const raw = fitLines(lines, i, availHeight(flow), join + insetBottom, noteMeter(flow));
     let count = adjust(raw, lines, i, b.props, flow.rules);
 
     if (count === 0) {
@@ -861,16 +954,27 @@ function placeParagraph(flow: Flow, b: Extract<Prepared, { kind: 'paragraph' }>,
   flow.y += b.layout.spaceAfter;
 }
 
-/** 从 `from` 起，`avail` 的高度里**老实**装得下几行（可能是 0）。末行要连接缝一起量 */
-function fitLines(lines: readonly LineLayout[], from: number, avail: Twips, join: Twips): number {
+/**
+ * 从 `from` 起，`avail` 的高度里**老实**装得下几行（可能是 0）。末行要连接缝一起量，
+ * 每一行还要连它引到的脚注一起量（`meter` 答「再收这几条要多高」）
+ */
+function fitLines(
+  lines: readonly LineLayout[],
+  from: number,
+  avail: Twips,
+  join: Twips,
+  meter: NoteMeter,
+): number {
   let used = 0;
   let count = 0;
   for (let k = from; k < lines.length; k++) {
     const line = lines[k];
     if (line === undefined) break;
-    const need = used + line.height + (k === lines.length - 1 ? join : 0);
+    const notes = meter.peek(line.notes);
+    const need = used + line.height + notes + (k === lines.length - 1 ? join : 0);
     if (need > avail) break;
-    used += line.height;
+    meter.take(line.notes);
+    used += line.height + notes;
     count += 1;
   }
   return count;
@@ -928,6 +1032,7 @@ function emitLines(
     if (line === undefined) break;
     placed.push({ index: k, y: flow.y, line });
     flow.y += line.height;
+    commitNotes(flow, page, line.notes);
   }
   page.blocks.push({
     kind: 'paragraph',
@@ -979,13 +1084,15 @@ function placeTable(flow: Flow, b: Extract<Prepared, { kind: 'table' }>, join: T
     const repeat =
       i >= headerCount && i > 0 && requestedHeight(b, i) + headerHeight <= page ? headerCount : 0;
     const avail = availHeight(flow) - (repeat > 0 ? headerHeight : 0);
-    let count = fitRows(rows, i, avail, join);
+    const meter = noteMeter(flow);
+    let count = fitRows(rows, i, avail, join, meter);
 
     // 整行放不下的那一行从内部切开（`w:cantSplit` 与表头行不许切）。
     // `place: 'inPlace'`（实测）连**本页还剩的那一块**也用上：整行放得下的先摆着，
     // 紧跟着的那一行切一片进剩下的地方。`nextPage` 是原来的写法，留给标定脚本排组合。
     const k = i + count;
-    const rest = avail - usedHeight(rows, i, count);
+    // 整行放下的那几行引到的脚注已经记在 `meter` 里，切片要让出它们
+    const rest = avail - usedHeight(rows, i, count) - meter.taken;
     const row = rows[k];
     // 每一片各要一份 `w:trHeight`（实测）：剩下的地方连一片的下限都够不着就别切 ——
     // 表乙那一行要 420pt，本页只剩 266pt，Word 把整行挪到了下一页。
@@ -1098,18 +1205,44 @@ function rowSplittable(b: Extract<Prepared, { kind: 'table' }>, i: number, heade
   return b.rows[i]?.props.cantSplit !== true;
 }
 
-function fitRows(rows: readonly RowLayout[], from: number, avail: Twips, join: Twips): number {
+function fitRows(
+  rows: readonly RowLayout[],
+  from: number,
+  avail: Twips,
+  join: Twips,
+  meter: NoteMeter,
+): number {
   let used = 0;
   let count = 0;
   for (let k = from; k < rows.length; k++) {
     const row = rows[k];
     if (row === undefined) break;
-    const need = used + row.height + (k === rows.length - 1 ? join : 0);
+    const keys = rowNotes(row);
+    const notes = meter.peek(keys);
+    const need = used + row.height + notes + (k === rows.length - 1 ? join : 0);
     if (need > avail) break;
-    used += row.height;
+    meter.take(keys);
+    used += row.height + notes;
     count += 1;
   }
   return count;
+}
+
+/** 一行表格里各格（含嵌套表格）引到的脚注，按格的先后 */
+function rowNotes(row: RowLayout): string[] {
+  const out: string[] = [];
+  const walk = (blocks: readonly BlockLayout[]): void => {
+    for (const b of blocks) {
+      if (b.kind === 'paragraph') {
+        for (const line of b.layout.lines)
+          for (const k of line.notes ?? []) if (!out.includes(k)) out.push(k);
+      } else {
+        for (const r of b.layout.rows) for (const c of r.cells) walk(c.blocks);
+      }
+    }
+  };
+  for (const c of row.cells) walk(c.blocks);
+  return out;
 }
 
 function emitRows(
@@ -1136,6 +1269,8 @@ function emitRows(
   for (let k = from; k < from + count; k++) {
     const row = rows[k];
     if (row === undefined) break;
+    // 重复的表头不算：它引到的脚注在表头第一次出现的那一页已经收过了
+    commitNotes(flow, page, rowNotes(row));
     placed.push({
       index: k,
       y: flow.y,
@@ -1370,4 +1505,166 @@ function axisPosition(box: AxisBox, pos: AnchorPos, size: Twips, pageNumber: num
       // left / top / 认不出的对齐值
       return box.start;
   }
+}
+
+// ── 脚注 ──────────────────────────────────────────────────────────────────────
+
+/**
+ * 「再收这几条脚注要多高」的量尺。`peek` 只问不记，`take` 记下（同一趟 fit 里后面的行
+ * 再引到同一条就不重复算），`taken` 是这一趟记下的总高。
+ *
+ * 只在一趟 fit 里活着：真正收进页里的是 `commitNotes` —— fit 算出来的行数还要过孤行寡行
+ * 那一关（`adjust` 可能少放几行），先记后退会把没放下的那几行的脚注也算进本页。
+ */
+interface NoteMeter {
+  peek(keys: readonly string[] | undefined): Twips;
+  take(keys: readonly string[] | undefined): void;
+  readonly taken: Twips;
+}
+
+const NO_NOTES: NoteMeter = { peek: () => 0, take: () => {}, taken: 0 };
+
+function noteMeter(flow: Flow): NoteMeter {
+  const n = flow.notes;
+  if (n === undefined) return NO_NOTES;
+  const seen = new Set(n.onPage);
+  let taken = 0;
+  const measure = (keys: readonly string[] | undefined, commit: boolean): Twips => {
+    if (keys === undefined) return 0;
+    let h: Twips = 0;
+    let first = seen.size === 0;
+    const local = commit ? seen : new Set(seen);
+    for (const k of keys) {
+      if (local.has(k)) continue;
+      const stacked = noteStack(flow, k);
+      if (stacked === undefined) continue;
+      local.add(k);
+      // 本页第一条脚注把分隔线那一段也带进来
+      if (first) h += separatorStack(flow)?.height ?? 0;
+      first = false;
+      h += stacked.height;
+    }
+    return h;
+  };
+  return {
+    peek: (keys) => measure(keys, false),
+    take(keys) {
+      taken += measure(keys, true);
+    },
+    get taken() {
+      return taken;
+    },
+  };
+}
+
+/** 把这几条脚注收进当前页：本页脚注区跟着长高，正文可用的高跟着变矮 */
+function commitNotes(flow: Flow, page: PageLayout, keys: readonly string[] | undefined): void {
+  const n = flow.notes;
+  if (n === undefined || keys === undefined) return;
+  for (const k of keys) {
+    if (n.onPage.includes(k)) continue;
+    const stacked = noteStack(flow, k);
+    if (stacked === undefined) continue;
+    if (n.onPage.length === 0) n.height += separatorStack(flow)?.height ?? 0;
+    n.onPage.push(k);
+    n.height += stacked.height;
+    const list = n.byPage.get(page);
+    if (list === undefined) n.byPage.set(page, [k]);
+    else list.push(k);
+  }
+  // 空页上硬塞的那一行（`count = max(1, raw)`）会走到这里：脚注比一整页还长。
+  // Word 会把后半截续排到下一页，那条路没做 —— 说一声，别让人以为是正文算错了
+  if (flow.y + n.height > page.geometry.content.height && !n.overflowReported) {
+    n.overflowReported = true;
+    flow.opts.diagnostics?.warn(
+      'footnote-overflow',
+      `第 ${page.index + 1} 页的脚注放不下，整条排在引用所在的页上（跨页续排还没做）`,
+    );
+  }
+}
+
+/** 排好的一条脚注（按本节的版心宽与网格）。键不是脚注、或内容缺失时是 undefined */
+function noteStack(flow: Flow, key: string, section = flow.sectionIndex): StackResult | undefined {
+  const n = flow.notes;
+  if (n === undefined) return undefined;
+  const sep = key.indexOf(':');
+  const id = key.slice(sep + 1);
+  const content = key.slice(0, sep) === 'footnote' ? n.source.footnotes.notes[id] : undefined;
+  if (content === undefined) return undefined;
+  return stackNote(flow, `${key}|${section}`, content.resolved, section);
+}
+
+function separatorStack(flow: Flow, section = flow.sectionIndex): StackResult | undefined {
+  const content = flow.notes?.source.footnotes.separator;
+  if (content === undefined) return undefined;
+  return stackNote(flow, `separator|${section}`, content.resolved, section);
+}
+
+/** 按**那一节**的版心宽与网格排（脚注区与正文同宽），同一条在同一节里只排一次 */
+function stackNote(
+  flow: Flow,
+  cacheKey: string,
+  blocks: readonly ResolvedBlock[],
+  section: number,
+): StackResult {
+  const n = flow.notes as NoteFlow;
+  let stacked = n.stacked.get(cacheKey);
+  if (stacked === undefined) {
+    const props = flow.sections[section] ?? FALLBACK_SECTION;
+    stacked = stackBlocks(blocks, {
+      measurer: flow.opts.measurer,
+      settings: flow.opts.settings,
+      docGrid: props.docGrid,
+      contentWidth: pageGeometry(props, flow.opts).content.width,
+      noteLabels: n.labels,
+      ...(flow.opts.paragraphCache === undefined ? {} : { paragraphCache: flow.opts.paragraphCache }),
+      ...(flow.opts.defaultFont === undefined ? {} : { defaultFont: flow.opts.defaultFont }),
+    });
+    n.stacked.set(cacheKey, stacked);
+  }
+  return stacked;
+}
+
+/**
+ * 造一页的脚注区。高度与分页时扣掉的那一份**同一个来源**（`noteStack` 的缓存），
+ * 于是「正文让出多少」与「脚注区画多高」不会各算各的对不上。
+ */
+function placeFootnotes(flow: Flow, page: PageLayout): void {
+  const n = flow.notes as NoteFlow;
+  const keys = n.byPage.get(page);
+  if (keys === undefined || keys.length === 0) return;
+  const sep = separatorStack(flow, page.sectionIndex);
+  const blocks: PlacedBlock[] = [];
+  let y: Twips = sep?.height ?? 0;
+  for (const k of keys) {
+    const stacked = noteStack(flow, k, page.sectionIndex);
+    if (stacked === undefined) continue;
+    for (const b of stacked.blocks) blocks.push(shiftBlock(b, y));
+    y += stacked.height;
+  }
+
+  const c = page.geometry.content;
+  page.footnotes = {
+    kind: 'footnotes',
+    x: c.x,
+    y: c.y + c.height - y,
+    width: c.width,
+    height: y,
+    separator: {
+      x: 0,
+      y: (sep?.height ?? 0) * FOOTNOTE_SEPARATOR_LINE_Y,
+      width: Math.min(FOOTNOTE_SEPARATOR_WIDTH, c.width),
+    },
+    notes: [...keys],
+    blocks,
+  };
+}
+
+/** 摞好的块整体往下挪 `dy`。缓存里的那一份是共享的，不能就地改 */
+function shiftBlock(b: PlacedBlock, dy: Twips): PlacedBlock {
+  if (dy === 0) return b;
+  if (b.kind === 'paragraph') {
+    return { ...b, y: b.y + dy, lines: b.lines.map((l) => ({ ...l, y: l.y + dy })) };
+  }
+  return { ...b, y: b.y + dy, rows: b.rows.map((r) => ({ ...r, y: r.y + dy })) };
 }

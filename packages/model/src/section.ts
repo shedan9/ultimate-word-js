@@ -8,6 +8,7 @@ import type { Twips } from '@uw/core';
 import type { XmlElement } from '@uw/ooxml';
 import { attr, child, children } from '@uw/ooxml';
 import type { DocGrid, HeaderFooterRef, SectionProps, SectionStart } from './nodes.ts';
+import { parseNoteNumbering } from './notes.ts';
 import { attrInt, attrOf, enumVal, onOff, put } from './xml-values.ts';
 
 const GRID_TYPES = ['default', 'lines', 'linesAndChars', 'snapToChars'] as const;
@@ -74,6 +75,8 @@ export function parseSectionProps(sectPr: XmlElement | undefined): SectionProps 
   const pgNumType = child(sectPr, 'w:pgNumType');
   put(out, 'pageNumStart', attrInt(pgNumType, 'w:start'));
   put(out, 'pageNumFormat', attrOf(pgNumType, 'w:fmt'));
+  put(out, 'footnotePr', parseNoteNumbering(child(sectPr, 'w:footnotePr')));
+  put(out, 'endnotePr', parseNoteNumbering(child(sectPr, 'w:endnotePr')));
   return out;
 }
 

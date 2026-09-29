@@ -77,3 +77,10 @@ export const LEADER_FALLBACK_SIZE = 240;
 // 与布局层的 `openFrame` 决定）。照「这是一个框的两截」的理解写的，没有样本 ——
 // 如果 Word 实际上在切口封口，布局那边还得给切口留出下边框的高度，改的就不只是画法。
 // 钉死办法：一段四周边框、长到跨页的段落，读真值 `pages[].rules[]` 里两页切口附近有没有横线。
+
+/**
+ * 脚注分隔线的粗细，pt。取 0.5：Word 界面里「脚注分隔符」那条线看着是细实线。
+ * 长度与画在哪一高度在布局那边（`FOOTNOTE_SEPARATOR_WIDTH` / `FOOTNOTE_SEPARATOR_LINE_Y`），
+ * 三个数用同一份样本钉死：带脚注的 docx 导 PDF，`truth.json` 的 `pages[].rules[]` 给出线宽。
+ */
+export const FOOTNOTE_SEPARATOR_STROKE_PT = 0.5;

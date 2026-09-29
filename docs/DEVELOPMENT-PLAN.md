@@ -870,6 +870,24 @@ await view.toPNG(2);     // 第 3 页（页序号从 0 起，与 scrollTo({ page
     跟不跟 `w:suff`，写在 toc.ts 文件头并附钉死办法
   - 未做：`\c` / `\a` 图表目录、`\f` / `\l` TC 域、`\b`、`\s` / `\d`、「只更新页码」（显示本来就是算好的，导出存的仍是旧值）、
     条目沿用标题的字符格式（Word 会带过去一部分）、F9 快捷键
+- ✅ **脚注**（2026-09-29）：原来 `w:footnoteReference` 在解析时整个跳过，正文里连上标号都没有、页底也没有脚注 ——
+  报告类文档最显眼的一处缺口。三层各做一段：
+  - `@uw/model`：引用进模型（`RunContent` 的 `noteReference`，带 `w:id` 与 `customMarkFollows`；脚注内容开头的号是 `noteMark`），
+    `footnotes.xml` / `endnotes.xml` 按 `w:id` 摊成 `LoadedDocument.notes`（id 前缀 `fn:` / `en:`，分隔线那几条按 `w:type` 认），
+    编号规则 `w:footnotePr` / `w:endnotePr` 文档级（settings.xml）+ 节级逐字段覆盖。注里的域只取超链接，不进页码求值
+  - `@uw/layout`：**号按文档序现数**（`notes.ts` 的 `noteLabels()`，与 SEQ 同理 —— 文件里没有号；隐藏的与自定义标记的不占号，
+    `eachSect` 按节归位），走外挂的「run id → 号」表进 item 流（段落缓存键跟着带上）；号与域结果同一套标记（`field`、位置 -1）。
+    分页时**连引到的脚注一起量**：`LineLayout.notes` 记这一行引出哪几条，`fitLines` / `fitRows` 放一行之前先问「再收这几条要多高」
+    （本页第一条把分隔线那一段也带上），放不下就连这一行一起去下一页；`availHeight` 减的是正文 + 已收脚注。
+    整份排完再造 `PageLayout.footnotes`：底边贴着版心底，高度与分页时扣掉的同一个缓存来源
+  - `@uw/render-dom`：脚注区走画页眉的 `paintFrame`，加一条分隔线；布局索引收进脚注区的行（`frame: 'footnotes'`，可复制可搜，不进上下导航）
+  - 回写：引用在 run 内容重写时按原元素写回（`customMarkFollows` 一并）；删除范围碰到引用照旧整次拒绝（同对象）
+  - 判据：解析 2 项 + 布局 12 项 + 回写 1 项 + 门面 2 项（真 docx：`w:id` 与出现顺序相反、settings 里设圈码 → 正文 ①②、页底「① 甲注」「② 乙注」；
+    编辑后导出重开布局一致、footnotes.xml 逐字节不动），浏览器回归八页不变全绿。**没有真值**：分隔线长 144pt、画在那一段正中、
+    0.5pt 粗都是看出来的，关在 layout / render-dom 的 `uncalibrated.ts`，附钉死办法（`truth.json` 的 `rules[]` 直接给线）
+  - 未做：**跨页续排**（一条脚注长过一页时整条硬塞在引用页并记 `footnote-overflow`）、`continuationSeparator`、
+    `w:numRestart="eachPage"`（号要进域求值那种迭代，现按连续编号并记诊断）、`w:pos="beneathText"`、**尾注内容**（号已显示，
+    文末那一摞没排，记 `endnotes-not-rendered`）、注里的编辑、keepNext 接缝不计脚注
 - DATE / TIME 与布局无关但要一套 Word 的日期格式串解析（✅ 见上）
 - ~~图片：inline 为主，浮动只做不参与文字流的那种，其余环绕类型退化为 inline~~ ✅（2026-08-22）
   三层各做各的一段，中间只传一个 id：

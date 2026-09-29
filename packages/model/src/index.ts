@@ -18,6 +18,7 @@ export * from './font-table.ts';
 export * from './images.ts';
 export * from './load.ts';
 export * from './nodes.ts';
+export * from './notes.ts';
 export * from './number-format.ts';
 export * from './numbering.ts';
 export * from './numbering-counter.ts';

@@ -41,6 +41,7 @@ export * from './items.ts';
 export * from './layout-index.ts';
 export * from './line-height.ts';
 export * from './linebreak.ts';
+export * from './notes.ts';
 export * from './page.ts';
 export * from './para-frame.ts';
 export * from './paragraph.ts';

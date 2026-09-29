@@ -712,3 +712,110 @@ describe('更新目录（TOC 重新生成）', () => {
     expect(figures.canUndo).toBe(false);
   });
 });
+
+describe('脚注', () => {
+  const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+  const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  const ref = (id: string) =>
+    `<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:footnoteReference w:id="${id}"/></w:r>`;
+  const note = (id: string, text: string) =>
+    `<w:footnote w:id="${id}"><w:p><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:footnoteRef/></w:r>` +
+    `<w:r><w:t xml:space="preserve"> ${text}</w:t></w:r></w:p></w:footnote>`;
+
+  /** 两段各引一条；`w:id` 与出现顺序相反（2 在前），号必须按先后数。格式在 settings.xml 里设成圈码 */
+  function footnoteDocx(): Uint8Array {
+    const enc = new TextEncoder();
+    const body = `<w:p><w:r><w:t>甲</w:t></w:r>${ref('2')}</w:p><w:p><w:r><w:t>乙</w:t></w:r>${ref('1')}</w:p>`;
+    const ct = (part: string, type: string) =>
+      `<Override PartName="/word/${part}" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.${type}+xml"/>`;
+    const rel = (id: string, type: string, target: string) =>
+      `<Relationship Id="${id}" Type="${R}/${type}" Target="${target}"/>`;
+    return zip(
+      new Map([
+        [
+          '[Content_Types].xml',
+          enc.encode(
+            '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+              '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+              '<Default Extension="xml" ContentType="application/xml"/>' +
+              ct('document.xml', 'document.main') +
+              ct('footnotes.xml', 'footnotes') +
+              ct('settings.xml', 'settings') +
+              '</Types>',
+          ),
+        ],
+        [
+          '_rels/.rels',
+          enc.encode(
+            `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rel('rId1', 'officeDocument', 'word/document.xml')}</Relationships>`,
+          ),
+        ],
+        [
+          'word/_rels/document.xml.rels',
+          enc.encode(
+            `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rel('rId1', 'footnotes', 'footnotes.xml')}${rel('rId2', 'settings', 'settings.xml')}</Relationships>`,
+          ),
+        ],
+        [
+          'word/settings.xml',
+          enc.encode(
+            `<w:settings xmlns:w="${W}"><w:footnotePr><w:numFmt w:val="decimalEnclosedCircleChinese"/><w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr></w:settings>`,
+          ),
+        ],
+        [
+          'word/footnotes.xml',
+          enc.encode(
+            `<w:footnotes xmlns:w="${W}">` +
+              '<w:footnote w:type="separator" w:id="-1"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:separator/></w:r></w:p></w:footnote>' +
+              '<w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>' +
+              `${note('1', '乙注')}${note('2', '甲注')}</w:footnotes>`,
+          ),
+        ],
+        [
+          'word/document.xml',
+          enc.encode(
+            `<w:document xmlns:w="${W}" xmlns:r="${R}"><w:body>${body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr></w:body></w:document>`,
+          ),
+        ],
+      ]),
+    );
+  }
+
+  /** 正文里每一段的号（域结果片段）与脚注区每一条的文字 */
+  function marks(d: UwDocument): { body: string[]; notes: string[] } {
+    const page = d.layout.pages[0];
+    const body: string[] = [];
+    for (const block of page?.blocks ?? []) {
+      if (block.kind !== 'paragraph') continue;
+      for (const placed of block.lines) for (const f of placed.line.fragments) if (f.field) body.push(f.text);
+    }
+    const notes: string[] = [];
+    for (const block of page?.footnotes?.blocks ?? []) {
+      if (block.kind !== 'paragraph') continue;
+      for (const placed of block.lines) notes.push(placed.line.fragments.map((f) => f.text).join(''));
+    }
+    return { body, notes };
+  }
+
+  it('号按引用先后数（不看 w:id）、用 settings 里的格式；页底按同一顺序排出内容，分隔线不报不认识的元素', async () => {
+    const d = await UltimateWord.load(footnoteDocx());
+    expect(marks(d)).toEqual({ body: ['①', '②'], notes: ['① 甲注', '② 乙注'] });
+    expect(d.layout.pages[0]?.footnotes?.notes).toEqual(['footnote:2', 'footnote:1']);
+    expect(d.diagnostics.filter((x) => x.code === 'unknown-element')).toEqual([]);
+  });
+
+  it('编辑后重排脚注仍在；导出重开布局一致，脚注部件原样', async () => {
+    const d = await UltimateWord.load(footnoteDocx());
+    const pos = d.find('乙')[0]?.start;
+    if (!pos) throw new Error('样本缺少乙');
+    d.tx((tx) => {
+      tx.insertText(pos, '丙');
+    });
+    expect(marks(d)).toEqual({ body: ['①', '②'], notes: ['① 甲注', '② 乙注'] });
+    const out = await d.toDocx();
+    const reloaded = await UltimateWord.load(out);
+    expect(reloaded.layout).toEqual(d.layout);
+    const parts = unzip(new Uint8Array(await out.arrayBuffer()));
+    expect(parts.get('word/footnotes.xml')).toEqual(unzip(footnoteDocx()).get('word/footnotes.xml'));
+  });
+});

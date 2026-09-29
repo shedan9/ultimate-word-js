@@ -116,8 +116,18 @@ export interface CharItem {
    * Ctrl+F 搜到的正文；但它同样**不是文件里那串字符**（文件里存的是上次算出来的旧值），
    * 所以 `contentIndex` / `offset` 一律 -1，拿去反查 `DocPosition` 只会指到别处。
    * 排版行为与普通文字完全相同 —— 两端对齐照样在它内部张开，Word 就是这么排的。
+   *
+   * 脚注 / 尾注的号（`noteReference` / `noteMark`）同属这一类：号是按文档序现数的，
+   * 文件里只有一个 `w:footnoteReference`，没有那串数字。它们的 `contentIndex` 仍指着那个片段
+   * （便于反查是哪一条），`offset` 是 -1。
    */
   field?: true;
+  /**
+   * 这个字带出一条**脚注**（`noteReference` 的键，见 `noteKey()`）：分页要把那条脚注的内容
+   * 排进同一页的页底。只标在号的第一个字上；自定义标记（`customMark`）没有自动号，
+   * 标在它后面紧跟的第一个字上。尾注不标 —— 它们排在文末，与引用落在哪页无关
+   */
+  note?: string;
 }
 
 export interface TabItem {
@@ -320,6 +330,11 @@ export interface LineLayout {
   isLast: boolean;
   /** 行尾的硬换行（`w:br`）。分页要看 page / column */
   breakAfter?: 'line' | 'page' | 'column';
+  /**
+   * 这一行引出的脚注（`noteKey()`），按出现顺序。分页放下这一行时，这几条脚注的内容
+   * 必须一起放进本页页底（page.ts）—— 所以「这一行放不放得下」要连它们的高一起量
+   */
+  notes?: string[];
 }
 
 export interface ParagraphLayout {

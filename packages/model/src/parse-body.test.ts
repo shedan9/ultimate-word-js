@@ -11,7 +11,7 @@ import { parseXml } from '@uw/ooxml';
 import { describe, expect, it } from 'vitest';
 import type { Block, Body, Paragraph, RunContent } from './nodes.ts';
 import { paragraphText, walkParagraphs } from './nodes.ts';
-import { parseBody } from './parse-body.ts';
+import { parseBody, parseNotes } from './parse-body.ts';
 
 /** 把正文片段包成一份 document.xml 再解析。命名空间不必声明 —— 这一层只按前缀名匹配 */
 function parse(bodyXml: string): { body: Body; sink: DiagnosticSink } {
@@ -324,5 +324,58 @@ describe('结构化克隆', () => {
     const ids = body.sections.map((s) => s.id);
     for (const p of walkParagraphs(body)) ids.push(p.id, ...p.runs.map((r) => r.id));
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe('脚注 / 尾注', () => {
+  it('引用成片段（带 id 与自定义标记），脚注内容开头的号也是片段；节上的编号规则收进 SectionProps', () => {
+    const { body, sink } = parse(
+      `<w:p><w:r><w:t>甲</w:t><w:footnoteReference w:id="3"/></w:r>` +
+        `<w:r><w:footnoteReference w:customMarkFollows="1" w:id="4"/><w:t>*</w:t></w:r>` +
+        `<w:r><w:endnoteReference w:id="1"/></w:r></w:p>` +
+        `<w:sectPr><w:footnotePr><w:numFmt w:val="chineseCounting"/><w:numRestart w:val="eachSect"/></w:footnotePr></w:sectPr>`,
+    );
+    const runs = (body.sections[0]?.blocks[0] as Paragraph | undefined)?.runs ?? [];
+    expect(runs.map((r) => r.content)).toEqual([
+      [
+        { kind: 'text', text: '甲' },
+        { kind: 'noteReference', noteType: 'footnote', noteId: '3' },
+      ],
+      [
+        { kind: 'noteReference', noteType: 'footnote', noteId: '4', customMark: true },
+        { kind: 'text', text: '*' },
+      ],
+      [{ kind: 'noteReference', noteType: 'endnote', noteId: '1' }],
+    ] satisfies RunContent[][]);
+    expect(body.sections[0]?.props.footnotePr).toEqual({ numFmt: 'chineseCounting', numRestart: 'eachSect' });
+    expect(body.sections[0]?.props.endnotePr).toBeUndefined();
+    expect(sink.list()).toEqual([]);
+  });
+
+  it('footnotes.xml：分隔线那几条按 w:type 认出来，分隔线元素不报不认识；节点 id 带部件前缀且各条不撞', () => {
+    const sink = createDiagnosticSink();
+    const doc = parseXml(
+      '<w:footnotes>' +
+        '<w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>' +
+        '<w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>' +
+        '<w:footnote w:id="1"><w:p><w:r><w:footnoteRef/></w:r><w:r><w:t>注一</w:t></w:r></w:p></w:footnote>' +
+        '<w:footnote w:id="2"><w:p><w:r><w:t>注二</w:t></w:r></w:p></w:footnote>' +
+        '</w:footnotes>',
+      'footnotes.xml',
+    );
+    const notes = parseNotes(doc, sink, 'footnotes.xml', 'fn:');
+    expect(notes.map((n) => [n.id, n.type, blockText(n.blocks[0])])).toEqual([
+      ['-1', 'separator', ''],
+      ['0', 'continuationSeparator', ''],
+      ['1', 'normal', '注一'],
+      ['2', 'normal', '注二'],
+    ]);
+    expect((notes[2]?.blocks[0] as Paragraph | undefined)?.runs[0]?.content).toEqual([
+      { kind: 'noteMark', noteType: 'footnote' },
+    ]);
+    const ids = notes.flatMap((n) => n.blocks.map((b) => b.id));
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.every((id) => id.startsWith('fn:'))).toBe(true);
+    expect(sink.list()).toEqual([]);
   });
 });

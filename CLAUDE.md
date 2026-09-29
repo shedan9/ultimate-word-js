@@ -171,6 +171,13 @@ SVG 当图片用时看不见宿主 `@font-face`，本页用到的族与外部图
 **查找替换 `doc.replaceAll` 已接入**（2026-09-28，api.md §7）：一个事务倒序换掉全部命中，新文字取**首字**格式
 （`tx.replaceText`：删首字之后 → 接着首字写 → 删首字；先删后插会继承左边 run）。正则展开 `$1` / `$<name>`
 （`findMatches` / `expandReplacement` 自己展开，前后断言要看段落上下文），字符串查找时替换串原样写；域里的命中跳过计数。
+**脚注已接入**（2026-09-29）：原来 `w:footnoteReference` 解析时整个跳过，正文连上标号都没有。
+`@uw/model` 的 `notes.ts` 把 `footnotes.xml` / `endnotes.xml` 按 `w:id` 摊成 `LoadedDocument.notes`（id 前缀 `fn:` / `en:`），
+引用是 run 里的 `noteReference` 片段；**号不在文件里**，`@uw/layout` 的 `notes.ts` 按文档序现数（与 SEQ 同理，
+`w:footnotePr` 文档级 + 节级），走「run id → 号」外挂表进 item 流、进段落缓存键。分页**连引到的脚注一起量**：
+`LineLayout.notes` 记这行引出哪几条，放不下就连这一行去下一页；整份排完造 `PageLayout.footnotes`（底边贴版心底，
+与页眉同一套坐标，渲染走 `paintFrame` + 分隔线，索引收为 `frame: 'footnotes'`）。分隔线几何没有真值（`uncalibrated.ts`）；
+跨页续排、`eachPage` 重新编号、尾注内容未做（各记诊断）。
 **Phase 8 已开始：回写 docx**（2026-09-23，新包 `@uw/serialize`，门面 `doc.toDocx()`，调试台「导出 docx」按钮）。
 补丁式：只重写改过的部件，没编辑的文档逐字节照搬；正文**走原文 XML 树**打补丁（见下）。Word 打开无修复提示只能人工验。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、
@@ -328,7 +335,7 @@ preview 报的「最大差 x pt」**不是保真度指标** —— 它按行序�
 每行的绝对基线 = `page.geometry.content.y + PlacedLine.y + LineLayout.baseline`，
 gongwen-01 的 18 行与 Word 真值最大差 **0.06pt**（L3 判据 0.5pt），断言在 `fixture.test.ts`。
 逐行累加**不需要**「每页重新对齐网格」的修正 —— 网格吸附已经吸在每一行的行高上了。
-未做：脚注不占位。
+脚注（2026-09-29）按引用所在页占位（见上面进度段）；未做：脚注跨页续排、尾注内容。
 
 **表格的几何已经标定完**（样本 `spike-table-01/02`，跑 `pnpm --filter @uw/fidelity spike:table`，
 落在 `table.ts` 的 `TABLE_RULES`）。这一层此前**一行都没跟 Word 比过** —— 列宽、格内边距、

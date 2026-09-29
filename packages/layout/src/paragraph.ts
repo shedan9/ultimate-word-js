@@ -48,6 +48,8 @@ export interface LayoutParagraphOptions {
   defaultFont?: string;
   /** 域求值的结果（run id → 显示的文字），见 `BuildItemsOptions.fieldValues` */
   fieldValues?: ReadonlyMap<NodeId, string>;
+  /** 脚注 / 尾注的号（run id → 显示的号），见 `BuildItemsOptions.noteLabels` */
+  noteLabels?: ReadonlyMap<NodeId, string>;
   /** 内嵌对象的行盒规则。**标定用的接缝**，正常调用不要传，见 `OBJECT_RULES` */
   objectRules?: ObjectRules;
   /** 脚本与合成规则。同上，标定用的接缝，见 `SCRIPT_RULES` */
@@ -71,6 +73,7 @@ function computeParagraph(p: ResolvedParagraph, opts: LayoutParagraphOptions): P
     compressPunctuation: opts.settings.characterSpacingControl !== 'doNotCompress',
     ...(opts.defaultFont === undefined ? {} : { defaultFont: opts.defaultFont }),
     ...(opts.fieldValues === undefined ? {} : { fieldValues: opts.fieldValues }),
+    ...(opts.noteLabels === undefined ? {} : { noteLabels: opts.noteLabels }),
     ...(opts.widthRules === undefined ? {} : { widthRules: opts.widthRules }),
   };
   const items = buildItems(p, itemOpts);
@@ -323,6 +326,18 @@ function assemble(
   if (objects.length > 0) out.objects = objects;
   if (floats.length > 0) out.floats = floats;
   if (line.breakAfter !== undefined) out.breakAfter = line.breakAfter;
+  const notes = notesOf(line, items);
+  if (notes.length > 0) out.notes = notes;
+  return out;
+}
+
+/** 这一行引出的脚注，按出现顺序去重（同一条脚注被引两次也只占一份地方） */
+function notesOf(line: BrokenLine, items: readonly LayoutItem[]): string[] {
+  const out: string[] = [];
+  for (let i = line.start; i < line.end; i++) {
+    const item = items[i];
+    if (item?.kind === 'char' && item.note !== undefined && !out.includes(item.note)) out.push(item.note);
+  }
   return out;
 }
 
@@ -423,7 +438,11 @@ function fragmentsOf(
       // 或者 `w:sym` 后面接一段文字，下标一换就不能再往下加了。
       // 编号与域结果的位置是 -1（在文件里根本没有位置），那条路不参与这个判断
       (item.offset >= 0 &&
-        (current.contentIndex !== item.contentIndex || current.offset + current.text.length !== item.offset))
+        (current.contentIndex !== item.contentIndex ||
+          current.offset + current.text.length !== item.offset)) ||
+      // 有位置的字与没位置的字（同一个 run 里的脚注号与正文）不能并成一片：
+      // 并进去之后片段首字的位置就说不清后面那几个字在哪了
+      current.offset < 0 !== item.offset < 0
     ) {
       current = {
         runId: item.runId,
