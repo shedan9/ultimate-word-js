@@ -67,6 +67,14 @@ export interface LineBreakContext {
    * Word 也可能是「紧跟一个空格」。样本：把编号写长到超过悬挂缩进，看正文起点。
    */
   numberingTabStop?: Twips;
+  /**
+   * 每收完一行就叫一次，**在问下一行的 `availWidth` 之前**。
+   *
+   * 给环绕用（`paragraph.ts` 的 `lineSlot`）：绕着浮动对象走的段落，第 n 行能用多宽
+   * 要看它落在页上的哪个 y，而那个 y 是前面各行的行高摞出来的 —— 行高要等一行断完才知道。
+   * 断行本身仍是逐行贪心、只看水平几何，这个钩子只是把「断完一行」的时刻递出去
+   */
+  onLine?(line: BrokenLine, lineIndex: number): void;
 }
 
 /** 一个被命中的制表位，前导符与对齐后处理都要它 */
@@ -118,6 +126,7 @@ export function breakLines(items: readonly LayoutItem[], ctx: LineBreakContext):
     if (breakAfter !== undefined) line.breakAfter = breakAfter;
     alignTabTargets(line, items, ctx.lineLeft(lineIndex));
     lines.push(line);
+    ctx.onLine?.(line, lineIndex);
     lineIndex++;
     start = end;
     x = 0;

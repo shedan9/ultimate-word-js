@@ -56,10 +56,25 @@ export interface LayoutParagraphOptions {
   scriptRules?: ScriptRules;
   /** 宽度规则（分桶与中西文间距）。同上，标定用的接缝，见 `WIDTH_RULES` */
   widthRules?: WidthRules;
+  /**
+   * 第 n 行摆在哪一段（环绕，`wrap.ts`）。在场时**不走缓存**：答案取决于段落落在页上的哪个 y。
+   *
+   * `base` 是缩进算出来的那一段（不绕排时的答案），`prev` 是前面已经断完的行（`isLast` 未定，
+   * 只拿来量行高 —— 第 n 行的 y 要前面各行摞出来），`unit` 是一个字宽（窄过它的空当不放字）。
+   * 同一个 n 只问一次
+   */
+  lineSlot?: (n: number, base: LineSlot, prev: readonly LineLayout[], unit: Twips) => LineSlot;
+}
+
+/** 一行摆在哪：左边缘（相对版心左边）、可用宽、行顶之上先空出多少（见 `LineLayout.skip`） */
+export interface LineSlot {
+  left: Twips;
+  avail: Twips;
+  skip: Twips;
 }
 
 export function layoutParagraph(p: ResolvedParagraph, opts: LayoutParagraphOptions): ParagraphLayout {
-  return opts.paragraphCache
+  return opts.paragraphCache && opts.lineSlot === undefined
     ? opts.paragraphCache.getOrCreate(p, opts, () => computeParagraph(p, opts))
     : computeParagraph(p, opts);
 }
@@ -79,9 +94,35 @@ function computeParagraph(p: ResolvedParagraph, opts: LayoutParagraphOptions): P
   const items = buildItems(p, itemOpts);
 
   const geom = indentGeometry(p, items, opts.contentWidth);
+  const base = (n: number): LineSlot =>
+    n === 0
+      ? { left: geom.firstLeft, avail: geom.firstAvail, skip: 0 }
+      : { left: geom.left, avail: geom.restAvail, skip: 0 };
+  const assembleOpts = {
+    measurer: opts.measurer,
+    docGrid: opts.docGrid,
+    ...(opts.defaultFont === undefined ? {} : { defaultFont: opts.defaultFont }),
+    ...(opts.objectRules === undefined ? {} : { objectRules: opts.objectRules }),
+    ...(opts.scriptRules === undefined ? {} : { scriptRules: opts.scriptRules }),
+  };
+  // 环绕：每一行问一次摆在哪，问之前把前面的行先装配出来量行高（`isLast` 这时还不知道，
+  // 它只影响对齐不影响行高，最后照常重新装配一遍）
+  const slotFn = opts.lineSlot;
+  const slots: LineSlot[] = [];
+  const prev: LineLayout[] = [];
+  const unit = slotFn === undefined ? 0 : charUnit(p, items);
+  const slotOf = (n: number): LineSlot => {
+    if (slotFn === undefined) return base(n);
+    let slot = slots[n];
+    if (slot === undefined) {
+      slot = slotFn(n, base(n), prev, unit);
+      slots[n] = slot;
+    }
+    return slot;
+  };
   const ctx: LineBreakContext = {
-    availWidth: (n) => (n === 0 ? geom.firstAvail : geom.restAvail),
-    lineLeft: (n) => (n === 0 ? geom.firstLeft : geom.left),
+    availWidth: (n) => slotOf(n).avail,
+    lineLeft: (n) => slotOf(n).left,
     tabs: p.props.tabs,
     defaultTabStop: opts.settings.defaultTabStop,
     compressPunctuation: opts.settings.characterSpacingControl !== 'doNotCompress',
@@ -91,20 +132,31 @@ function computeParagraph(p: ResolvedParagraph, opts: LayoutParagraphOptions): P
     // 编号后的制表位停在正文的左边缘（也就是悬挂缩进落脚处），见 linebreak.ts
     numberingTabStop: geom.left,
   };
+  if (slotFn !== undefined)
+    ctx.onLine = (line, n) => {
+      const slot = slotOf(n);
+      prev.push(
+        assemble(line, items, p.props, {
+          isLast: false,
+          left: slot.left,
+          avail: slot.avail,
+          ...assembleOpts,
+        }),
+      );
+    };
 
   const broken = breakLines(items, ctx);
-  const lines = broken.map((line, n) =>
-    assemble(line, items, p.props, {
+  const lines = broken.map((line, n) => {
+    const slot = slotOf(n);
+    const out = assemble(line, items, p.props, {
       isLast: n === broken.length - 1,
-      left: ctx.lineLeft(n),
-      avail: ctx.availWidth(n),
-      measurer: opts.measurer,
-      docGrid: opts.docGrid,
-      ...(opts.defaultFont === undefined ? {} : { defaultFont: opts.defaultFont }),
-      ...(opts.objectRules === undefined ? {} : { objectRules: opts.objectRules }),
-      ...(opts.scriptRules === undefined ? {} : { scriptRules: opts.scriptRules }),
-    }),
-  );
+      left: slot.left,
+      avail: slot.avail,
+      ...assembleOpts,
+    });
+    if (slot.skip > 0) out.skip = slot.skip;
+    return out;
+  });
 
   if (
     lines[0] !== undefined &&

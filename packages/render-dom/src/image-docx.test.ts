@@ -151,3 +151,83 @@ describe('带图的 docx 端到端', () => {
     expect(sink.list().filter((d) => d.code === 'image-missing')).toEqual([]);
   });
 });
+
+/**
+ * 四周型环绕：`wp:wrapSquare` 从 XML 一路走到「文字让开」。几何没有真值（见 `@uw/layout` 的 wrap.ts），
+ * 这里只证链没断 —— 解析出环绕方式、分页把它当禁区、画出来的字不压在图上。
+ */
+describe('四周型环绕的 docx 端到端', () => {
+  // 200 × 100pt，贴版心右边、段顶对齐，左边留 9pt（distL = 114300 EMU）
+  const anchored = `<w:r><w:drawing><wp:anchor distT="0" distB="0" distL="114300" distR="0" behindDoc="0" relativeHeight="2">
+    <wp:simplePos x="0" y="0"/>
+    <wp:positionH relativeFrom="margin"><wp:align>right</wp:align></wp:positionH>
+    <wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>
+    <wp:extent cx="2540000" cy="1270000"/>
+    <wp:wrapSquare wrapText="bothSides"/>
+    <wp:docPr id="2" name="图片 2"/>
+    <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+      <pic:pic><pic:blipFill><a:blip r:embed="rId1"/></pic:blipFill></pic:pic>
+    </a:graphicData></a:graphic>
+  </wp:anchor></w:drawing></w:r>`;
+  const files: Record<string, Uint8Array> = {
+    '[Content_Types].xml': encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+        <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+        <Default Extension="xml" ContentType="application/xml"/>
+        <Default Extension="png" ContentType="image/png"/>
+        <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+      </Types>`,
+    ),
+    '_rels/.rels': encoder.encode(
+      rels(`<Relationship Id="rId1" Type="${OFFICE_REL}/officeDocument" Target="word/document.xml"/>`),
+    ),
+    'word/document.xml': encoder.encode(`<w:document><w:body>
+      <w:p>${anchored}<w:r><w:t>${'甲'.repeat(300)}</w:t></w:r></w:p>
+      <w:sectPr>
+        <w:pgSz w:w="11906" w:h="16838"/>
+        <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>
+        <w:docGrid w:type="default"/>
+      </w:sectPr>
+    </w:body></w:document>`),
+    'word/_rels/document.xml.rels': encoder.encode(
+      rels(`<Relationship Id="rId1" Type="${OFFICE_REL}/image" Target="media/body.png"/>`),
+    ),
+    'word/media/body.png': PNG,
+  };
+  const doc = loadDocument(OpcPackage.open(zipSync(files)), createDiagnosticSink());
+  const registry = new FontRegistry();
+  for (const pack of loadBundledPacks()) registry.registerMetrics(pack);
+  const measurer = createTextMeasurer(registry, {
+    candidates: (family) => fontNameCandidates(doc.fonts, family),
+  });
+  const layout = layoutDocument(doc.resolved, { measurer, settings: doc.cascade.settings });
+  const page = layout.pages[0];
+  const float = page?.floats?.[0];
+  const lines = (page?.blocks ?? []).flatMap((b) => (b.kind === 'paragraph' ? b.lines : []));
+
+  it('图画在版心右上角，旁边的行都停在图左边再往左 9pt 处', () => {
+    const content = page?.geometry.content;
+    expect(float).toBeDefined();
+    expect(content).toBeDefined();
+    if (float === undefined || content === undefined) return;
+    expect(float.x + float.width).toBeCloseTo(content.x + content.width, 3);
+    const beside = lines.filter((l) => content.y + l.y < float.y + float.height);
+    expect(beside.length).toBeGreaterThan(1);
+    const limit = float.x - 180 - content.x;
+    for (const l of beside) expect(l.line.x + l.line.width).toBeLessThanOrEqual(limit + 0.01);
+    // 绕过去之后恢复整行
+    const below = lines.filter((l) => content.y + l.y >= float.y + float.height);
+    expect(Math.max(...below.map((l) => l.line.width))).toBeGreaterThan(limit);
+  });
+
+  it('画出来的第一行字不压在图上', () => {
+    const root = buildDocument(layout, { imageHref: imageHrefResolver(doc.images) });
+    const first = collect(root, 'text')[0];
+    const xs = String(first?.attrs.x ?? '')
+      .split(' ')
+      .map(Number);
+    // SVG 里的 x 是 pt、相对版心（见 paint.ts）
+    const imageLeftPt = ((float?.x ?? 0) - (page?.geometry.content.x ?? 0)) / 20;
+    expect(Math.max(...xs)).toBeLessThan(imageLeftPt);
+  });
+});

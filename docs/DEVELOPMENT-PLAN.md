@@ -946,7 +946,7 @@ await view.toPNG(2);     // 第 3 页（页序号从 0 起，与 scrollTo({ page
   - `@uw/layout`：内嵌图占宽占高（`ObjectItem` 进断行与行高，底边坐在基线上）；
     **带 `wp:anchor` 的图在文字流里占 0 宽**（印章、水印、衬在文字下的红头、页脚里的文本框，
     一个字都不许被它挤走），位置等整页排完再按 `wp:anchor` 的参照物换算成**纸坐标**
-    （`page.ts` 的 `placeFloats`）。**环绕方式不参与这个判断**，没做的是「文字让开」那一半
+    （`page.ts` 的 `placeFloats`）。**环绕方式不参与这个判断**，「文字让开」那一半 2026-09-29 补上（见下一条）
     （原先按 `wrap="none"` 判断、其余退化成内嵌，2026-08-25 被真实语料推翻，见 §7 的 12n）
   - `@uw/render-dom`：`<image>` + 裁剪的 `clipPath` + 旋转翻转的 `transform`；
     `href` 由宿主的 `imageHref(id)` 回调给（`imageHrefResolver(doc.images)` 是 data URI 版），
@@ -956,7 +956,22 @@ await view.toPNG(2);     // 第 3 页（页序号从 0 起，与 scrollTo({ page
     ✅（2026-08-25）两份样本 `spike-image-01/02` + `spike:image` 全部钉死，见下面的
     「图片的几何标定」。端到端另有一份**合成的**带图 docx 走完全链
     （`render-dom/src/image-docx.test.ts`，含正文与页眉的 `rId1` 撞车用例）
-  - 未做：方形 / 上下型环绕（真的绕排）、表格单元格里的浮动对象、图表 / SmartArt 的内容
+  - 未做：~~方形 / 上下型环绕（真的绕排）~~（✅ 见下一条）、表格单元格里的浮动对象、图表 / SmartArt 的内容
+- ✅ **环绕让开文字**（2026-09-29，`@uw/layout` 的 `wrap.ts`）：原来四周型 / 上下型的图位置对、大小对，却直接压在文字上。
+  - 模型：方形 / 上下型环绕的对象在本页上是一块**禁区**（外框按 `dist*` 外扩，版心坐标）；紧密型 / 穿越型按外接矩形退化成方形
+    （多边形绕排仍是非目标）。`@uw/model` 补读 `@wrapText`（`DrawingAnchor.wrapText`）
+  - `@uw/layout`：一行的行盒碰到禁区时，方形按 `wrapText` 在左右两段里挑（`left` / `right` 限侧、`largest` 挑宽的），
+    窄过一个字或上下型就推到禁区底下 —— 推下去的一截记在 `LineLayout.skip`（行盒外面，不改基线，分页与行高一起量）。
+    段落逐行问位置（`layoutParagraph` 的 `lineSlot`，碰到禁区才走这条、不进缓存），断行器每收一行回调一次
+    （`LineBreakContext.onLine`），因为第 n 行的 y 要前面各行摞出来；行高拿上一行的估
+  - `page.ts`：开页收页眉页脚里的环绕对象；排段落前把本段**估计落在本页**的那几行上的对象收进来（锚点段落自己也绕），
+    参照框与 `placeFloats` 同一个 `resolveFloat`。跨页时前面已排下的行按原来的段复现，断点接得上；换到没有禁区的页上照样重排
+  - 判据：解析 1 项 + 纯几何 7 项 + 分页 9 项（左 / 右 / dist / 上下型推锚点段自己 / 后面段落 / 跨页不丢字 / 两侧太窄 /
+    bothSides 退化 + 诊断 / 页眉对象）+ 端到端 2 项（真 docx 的 `wp:wrapSquare`，旁边的行停在图左 9pt 处、画出的字不压图）；
+    变异检验：关掉重排 9 项变红。**没有真值**：最窄放一个字（`WRAP_MIN_SEGMENT_EM`）、bothSides 两侧都能放时只排宽的一侧
+    （`WRAP_BOTH_SIDES_AS`，记 `wrap-both-sides-approximated`），段落缩进与禁区取交集、碰边不算碰，钉死办法在 `uncalibrated.ts`
+  - 未做：锚点之前已排下的行不回头让（定位在锚点上方的对象）、表格不绕、单元格 / 页眉页脚 / 脚注里的文字不绕、
+    bothSides 真的一行两段
 - ~~**图片的几何标定**~~ ✅（2026-08-25）两份新样本 + `pnpm --filter @uw/fidelity spike:image`。
   为它给真值管线加了一路新数据：`truth.json` 的 `pages[].images[]`（照着 PDF 算子表把
   `q` / `Q` / `cm` 演一遍 CTM 读出来 —— 图片在 PDF 里没有自己的坐标，位置与大小全在矩阵里）。

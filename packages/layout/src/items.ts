@@ -315,7 +315,7 @@ function appendRun(
         // 不是「它在不在文字流里」。按 `wrap === 'none'` 判断会把方形 / 上下型环绕的对象
         // 当成内嵌，于是它把整行撑高：真实语料里页脚的一个 144pt 文本框（`topAndBottom`）
         // 就这么把页脚撑到 145.9pt，再顺着「页边距是最小值」把版心挤掉 66pt，
-        // 每页少三行、19 页排成 28 页。让开文字那部分没做，理由写在 `ObjectItem.float` 上
+        // 每页少三行、19 页排成 28 页。让开文字那部分在分页时做（`wrap.ts`），与它占不占行无关
         const floating = c.anchor !== undefined;
         const item: ObjectItem = {
           kind: 'object',

@@ -96,6 +96,7 @@ import {
   samePages,
 } from './notes.ts';
 import { joinParagraphFrames } from './para-frame.ts';
+import type { LineSlot } from './paragraph.ts';
 import { layoutParagraph } from './paragraph.ts';
 import type { ParagraphLayoutCache } from './paragraph-cache.ts';
 import type { BlockLayout, RowLayout, TableLayout, TableRules } from './table.ts';
@@ -108,6 +109,8 @@ import {
   FOOTNOTE_SEPARATOR_WIDTH,
   FOOTNOTE_SPLIT_MIN_LINES,
 } from './uncalibrated.ts';
+import type { WrapExclusion } from './wrap.ts';
+import { slotAround, wrapExclusion } from './wrap.ts';
 
 // ── 输出的数据形状 ────────────────────────────────────────────────────────────
 
@@ -470,6 +473,16 @@ interface Flow {
   hfDynamic: Set<string>;
   /** 脚注的排版状态。文档没有脚注时缺席，分页的每一处因此一个判断就跳过 */
   notes: NoteFlow | undefined;
+  /** 当前页上的环绕禁区（`wrap.ts`），开页时清空、先收页眉页脚里的，正文的随锚点段落收进来 */
+  wrap: WrapFlow;
+}
+
+interface WrapFlow {
+  exclusions: WrapExclusion[];
+  /** 本页已经收过的浮动对象（`runId:contentIndex`）—— 一段拆成几次排时不重复收 */
+  seen: Set<string>;
+  /** `wrap-both-sides-approximated` 一趟只报一次 */
+  approxReported: boolean;
 }
 
 /**
@@ -507,7 +520,14 @@ interface NoteFlow {
 
 /** 排完行、还没分页的中间形态。分页只关心高度，所以两种块在这里被拉平成同一个层级 */
 type Prepared = (
-  | { kind: 'paragraph'; id: NodeId; layout: ParagraphLayout; props: ResolvedParaProps }
+  | {
+      kind: 'paragraph';
+      id: NodeId;
+      layout: ParagraphLayout;
+      props: ResolvedParaProps;
+      /** 按页上的环绕禁区重排（不走缓存）。只要行：段前段后与框仍用 `layout` 的（框已按邻居成组） */
+      relayout(lineSlot: NonNullable<Parameters<typeof layoutParagraph>[1]['lineSlot']>): LineLayout[];
+    }
   | {
       kind: 'table';
       id: NodeId;
@@ -577,6 +597,7 @@ function layoutPass(
     hf: new Map(),
     hfDynamic: dynamicParts(opts.headerFooters, opts.headerFields),
     notes: undefined,
+    wrap: { exclusions: [], seen: new Set(), approxReported: false },
   };
   // 自定义标记的尾注不占号（labels 里没有它），内容照样要排 —— 所以另数一遍引用
   const endnoteIds = opts.notes === undefined ? [] : endnoteIdsBySection(body);
@@ -773,6 +794,16 @@ function currentPage(flow: Flow): PageLayout {
   flow.pages.push(page);
   flow.page = page;
   flow.y = 0;
+  flow.wrap.exclusions = [];
+  flow.wrap.seen = new Set();
+  // 页眉页脚里的环绕对象也让开正文（Word 里页眉的四周型 logo 伸进版心时正文绕着它走）
+  for (const frame of [header, footer]) {
+    if (frame === undefined) continue;
+    eachFloat(frame.blocks, frame.x, frame.y, page, (f, placed) => {
+      const ex = wrapExclusion(f.anchor, placed, page.geometry.content);
+      if (ex !== undefined) flow.wrap.exclusions.push(ex);
+    });
+  }
   if (flow.notes !== undefined) {
     const n = flow.notes;
     n.onPage = [];
@@ -967,11 +998,13 @@ function prepare(
   };
   const width = pageGeometry(section, opts).content.width;
   if (b.kind === 'paragraph') {
+    const { paragraphCache: _uncached, ...fresh } = shared;
     return {
       kind: 'paragraph',
       id: b.id,
       layout: layoutParagraph(b, { ...shared, contentWidth: width }),
       props: b.props,
+      relayout: (lineSlot) => layoutParagraph(b, { ...fresh, contentWidth: width, lineSlot }).lines,
     };
   }
   return {
@@ -1059,9 +1092,9 @@ function place(flow: Flow, b: Prepared, join: Twips): void {
 // ── 段落 ──────────────────────────────────────────────────────────────────────
 
 function placeParagraph(flow: Flow, b: Extract<Prepared, { kind: 'paragraph' }>, join: Twips): void {
-  const lines = b.layout.lines;
-  const total = lines.length;
-  if (total === 0) return;
+  // 绕排时会换成按本页禁区重排过的那一份（见 `rewrap`），行数可能跟着变
+  let lines = b.layout.lines;
+  if (lines.length === 0) return;
 
   // 页首不再为它空跑一页：`w:pageBreakBefore` 说的是「本段从新的一页开始」，
   // 已经在新的一页上就已经满足了
@@ -1077,8 +1110,21 @@ function placeParagraph(flow: Flow, b: Extract<Prepared, { kind: 'paragraph' }>,
   currentPage(flow);
   flow.y += !atPageTop || flow.rules.spaceBeforeAtPageTop ? b.layout.spaceBefore : insetTop;
 
+  /** 已经排下去的行各摆在哪 —— 换页重排时前面这几行要原样复现，断点才接得上（缺席 = 没绕排） */
+  const committed: LineSlot[] = [];
+  let slots: LineSlot[] = [];
+  let rewrapped = false;
+
   let i = 0;
-  while (i < total) {
+  while (i < lines.length) {
+    // 本段锚着的环绕对象先收进本页的禁区，再看这一截碰不碰禁区：锚点段落自己也要绕着它走
+    registerFloats(flow, lines, i);
+    // 前面按禁区重排过的，换到没有禁区的页上也得重排（剩下的行是按窄的那一段断的）
+    if (rewrapped || touchesExclusion(flow, lines, i)) {
+      ({ lines, slots } = rewrap(flow, b, i, committed));
+      rewrapped = true;
+    }
+
     // 下边框跟着末行走：末行要连它一起放得下
     // 引到的脚注连同本行一起量（`noteMeter` 要在开页之后建，参数的求值顺序正好保证这一点）
     const meter = noteMeter(flow);
@@ -1101,13 +1147,93 @@ function placeParagraph(flow: Flow, b: Extract<Prepared, { kind: 'paragraph' }>,
     const hard = hardBreakAt(lines, i, count);
     if (hard >= 0) count = hard - i + 1;
 
-    emitLines(flow, b, i, count, total, meter);
+    emitLines(flow, b, lines, i, count, meter);
+    if (rewrapped) for (let k = i; k < i + count; k++) committed[k] = slots[k] as LineSlot;
     i += count;
 
-    if (i < total || hard >= 0) breakPage(flow);
+    if (i < lines.length || hard >= 0) breakPage(flow);
   }
 
   flow.y += b.layout.spaceAfter;
+}
+
+/**
+ * 把 `[from, …)` 这几行锚着的浮动对象收进本页的禁区 —— 只收**估计落在本页**的那几行上的
+ * （按现有行高往下摞，摞过本页剩下的高度就停）：锚点那一行排到下一页时，对象也跟着去下一页。
+ *
+ * 参照框与 `placeFloats` 同一套（`resolveFloat`），段顶 = 这一截的块顶（与 `emitLines` 记的 `y` 相同）。
+ * `line` / `character` 参照用的是重排之前的行位置，绕排把锚点那一行挪开时会差一点 ——
+ * 画的时候 `placeFloats` 按最终位置算，两者不一致只影响让开的那一截，不影响对象画在哪
+ */
+function registerFloats(flow: Flow, lines: readonly LineLayout[], from: number): void {
+  const page = currentPage(flow);
+  const content = page.geometry.content;
+  const room = availHeight(flow);
+  let y = flow.y;
+  for (let k = from; k < lines.length; k++) {
+    const line = lines[k];
+    if (line === undefined || y - flow.y > room) break;
+    y += line.skip ?? 0;
+    for (const f of line.floats ?? []) {
+      const key = `${f.runId}:${f.contentIndex}`;
+      if (flow.wrap.seen.has(key)) continue;
+      flow.wrap.seen.add(key);
+      const placed = resolveFloat(f, page, {
+        originX: content.x,
+        originY: content.y,
+        paraTop: content.y + flow.y,
+        lineTop: content.y + y,
+        lineHeight: line.height,
+      });
+      const ex = wrapExclusion(f.anchor, placed, content);
+      if (ex !== undefined) flow.wrap.exclusions.push(ex);
+    }
+    y += line.height;
+    if (line.breakAfter === 'page' || line.breakAfter === 'column') break;
+  }
+}
+
+/** 从 `from` 起这几行（按现有行高摞下去）会不会碰到本页的禁区。只比纵向，宁可多重排一次 */
+function touchesExclusion(flow: Flow, lines: readonly LineLayout[], from: number): boolean {
+  const ex = flow.wrap.exclusions;
+  if (ex.length === 0) return false;
+  let h = 0;
+  for (let k = from; k < lines.length; k++) h += (lines[k]?.skip ?? 0) + (lines[k]?.height ?? 0);
+  return ex.some((e) => e.bottom > flow.y && e.top < flow.y + h);
+}
+
+/**
+ * 按本页的禁区重排这一段，`from` 之前的行照已经排下去的样子复现（`committed`）。
+ * 第 n 行的行顶 = 这一截的起点 + 前面各行推下去的与行高（行是一行一行断出来的，见 `LineSlot`）。
+ * 行高拿上一行的当估计（首行拿不绕排时的），见 `wrap.ts` 文件头
+ */
+function rewrap(
+  flow: Flow,
+  b: Extract<Prepared, { kind: 'paragraph' }>,
+  from: number,
+  committed: readonly LineSlot[],
+): { lines: LineLayout[]; slots: LineSlot[] } {
+  const top = flow.y;
+  const ex = flow.wrap.exclusions;
+  const slots: LineSlot[] = [];
+  const first = b.layout.lines[0]?.height ?? 0;
+  const lines = b.relayout((n, base, prev, unit) => {
+    if (n < from) return committed[n] ?? base;
+    let y = top;
+    for (let k = from; k < n; k++) y += (slots[k]?.skip ?? 0) + (prev[k]?.height ?? 0);
+    const got = slotAround(base, ex, y, prev[n - 1]?.height ?? first, unit);
+    if (got.bothSidesApproximated && !flow.wrap.approxReported) {
+      flow.wrap.approxReported = true;
+      flow.opts.diagnostics?.info(
+        'wrap-both-sides-approximated',
+        '四周型环绕的对象两侧都放得下字，只排了宽的那一侧（Word 两侧都排）—— 这几行会比 Word 多',
+      );
+    }
+    const slot = { left: got.left, avail: got.avail, skip: got.skip };
+    slots[n] = slot;
+    return slot;
+  });
+  return { lines, slots };
 }
 
 /**
@@ -1129,16 +1255,18 @@ function fitLines(
     if (line === undefined) break;
     const tail = k === lines.length - 1 ? join : 0;
     const notes = meter.peek(line.notes);
-    if (used + line.height + notes + tail > avail) {
-      const cut = meter.split(line.notes, avail - used - line.height - tail);
+    // 绕排推下去的那一截（`LineLayout.skip`）与行高一起量
+    const h = (line.skip ?? 0) + line.height;
+    if (used + h + notes + tail > avail) {
+      const cut = meter.split(line.notes, avail - used - h - tail);
       if (cut === undefined) break;
       meter.takeSplit(line.notes, cut);
-      used += line.height + cut.height;
+      used += h + cut.height;
       count += 1;
       continue;
     }
     meter.take(line.notes);
-    used += line.height + notes;
+    used += h + notes;
     count += 1;
   }
   return count;
@@ -1184,17 +1312,19 @@ function hardBreakAt(lines: readonly LineLayout[], from: number, count: number):
 function emitLines(
   flow: Flow,
   b: Extract<Prepared, { kind: 'paragraph' }>,
+  lines: readonly LineLayout[],
   from: number,
   count: number,
-  total: number,
   meter: NoteMeter,
 ): void {
+  const total = lines.length;
   const page = currentPage(flow);
   const placed: PlacedLine[] = [];
   const top = flow.y;
   for (let k = from; k < from + count; k++) {
-    const line = b.layout.lines[k];
+    const line = lines[k];
     if (line === undefined) break;
+    flow.y += line.skip ?? 0;
     placed.push({ index: k, y: flow.y, line });
     flow.y += line.height;
     commitNotes(flow, page, line.notes, meter.planned);
@@ -1485,9 +1615,10 @@ function emitRows(
 /**
  * 把锚在各行上的浮动对象换算成**纸坐标**。
  *
- * 只处理 `wrap="none"`（items.ts 已经把别的环绕方式退化成内嵌了），也就是
- * 「衬于文字下方 / 浮于文字上方」这一类：印章、水印、红头的花纹。它们不参与文字流，
- * 所以整页排完再算，算错也只是它自己歪，一行文字都不会跟着动。
+ * 有 `wp:anchor` 的对象全在这里（环绕方式不影响它在不在文字流里，见 items.ts）。
+ * 画在哪整页排完再算；方形 / 上下型环绕要文字**让开**，那一半在排段落时就得知道禁区，
+ * 所以 `registerFloats` 在分页途中按同一个 `resolveFloat` 先算一遍（`wrap.ts`）——
+ * 两处用的是同一套参照框，这里算出来的才是画的位置。
  *
  * **表格单元格里的浮动对象没做**：格子的纸坐标要连着行高与合并区一起算，
  * 而公文里浮动对象几乎都锚在正文段落上。漏掉的那些不会消失得无声无息 ——
@@ -1542,13 +1673,25 @@ function collectFloats(
   page: PageLayout,
   out: PlacedFloat[],
 ): void {
+  eachFloat(blocks, originX, originY, page, (_, placed) => out.push(placed));
+}
+
+/** 摆好的块里每个浮动对象连同它的纸坐标。页眉页脚开页时就摆好了，环绕禁区也走这一条（`currentPage`） */
+function eachFloat(
+  blocks: readonly PlacedBlock[],
+  originX: Twips,
+  originY: Twips,
+  page: PageLayout,
+  visit: (f: LineFloat, placed: PlacedFloat) => void,
+): void {
   for (const block of blocks) {
     if (block.kind !== 'paragraph') continue;
     for (const placed of block.lines) {
       const floats = placed.line.floats;
       if (floats === undefined) continue;
       for (const f of floats) {
-        out.push(
+        visit(
+          f,
           resolveFloat(f, page, {
             originX,
             originY,

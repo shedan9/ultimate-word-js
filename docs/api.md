@@ -710,6 +710,7 @@ interface Diagnostic {
 | `field-not-converged` | 诊断 | 域求值 5 趟仍未自洽，已冻结在页数最多的那一趟 |
 | `header-footer-missing` | 诊断 | 页眉页脚的引用指不到部件，这一节按没有页眉页脚处理 |
 | `revision-deleted` | 诊断（info） | 修订痕迹里被删除的文字，不参与排版 |
+| `wrap-both-sides-approximated` | 诊断（info） | 四周型环绕的对象两侧都放得下字，只排了宽的那一侧（Word 两侧都排），这几行会比 Word 多 |
 
 **规则**：能画出**任何**有意义的东西，就不要抛。
 

@@ -154,6 +154,22 @@ describe('w:drawing', () => {
     expect(obj?.anchor?.v).toEqual({ relativeFrom: 'page', offset: 2000 });
     expect(obj?.anchor?.wrap).toBe('square');
     expect(obj?.anchor?.dist.top).toBe(20); // 12700 EMU = 1pt
+    expect(obj?.anchor?.wrapText).toBeUndefined();
+  });
+
+  it('wrapText 只从方形 / 紧密型 / 穿越型上读，写错的值当没写', () => {
+    const anchorWith = (wrap: string) =>
+      objects(
+        `<w:p><w:r><w:drawing><wp:anchor>
+          <wp:extent cx="635" cy="635"/>${wrap}
+        </wp:anchor></w:drawing></w:r></w:p>`,
+      )[0]?.anchor;
+    expect(anchorWith('<wp:wrapSquare wrapText="largest"/>')?.wrapText).toBe('largest');
+    expect(anchorWith('<wp:wrapTight wrapText="left"><wp:wrapPolygon/></wp:wrapTight>')?.wrapText).toBe(
+      'left',
+    );
+    expect(anchorWith('<wp:wrapSquare wrapText="nonsense"/>')?.wrapText).toBeUndefined();
+    expect(anchorWith('<wp:wrapTopAndBottom/>')?.wrapText).toBeUndefined();
   });
 });
 

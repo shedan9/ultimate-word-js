@@ -173,18 +173,24 @@ export interface ImageRef {
  * 浮动对象的定位与环绕（`wp:anchor`）。
  *
  * **有 anchor 就不参与文字流**，位置一律按下面的 `h` / `v` 算 —— 环绕方式回答的是
- * 「文字怎么让开」，不是「它在不在文字流里」。没做的是「让开」那一半：方形与上下型
- * 环绕的对象位置对、大小对，但文字不绕着它走（紧密型 / 穿越型是开发计划 §5 写死的非目标）。
+ * 「文字怎么让开」，不是「它在不在文字流里」。让开由分页那一步做（`@uw/layout` 的 `wrap.ts`）：
+ * 方形与上下型按外框加 `dist` 让；紧密型 / 穿越型按外接矩形退化成方形（多边形绕排是开发计划 §5
+ * 写死的非目标）。
  */
 export interface DrawingAnchor {
   wrap: 'none' | 'square' | 'tight' | 'through' | 'topAndBottom';
+  /**
+   * 方形 / 紧密型 / 穿越型环绕时文字走哪一侧（`@wrapText`）。缺席 = 规范默认的 `bothSides`。
+   * `largest` 是「只走宽的那一侧」，`left` / `right` 是「只走对象的左 / 右边」
+   */
+  wrapText?: 'bothSides' | 'left' | 'right' | 'largest';
   /** 衬于文字下方（`behindDoc="1"`）。false = 浮于文字上方 */
   behindDoc: boolean;
   /** z 序（`relativeHeight`）。同一页上几个浮动对象的叠放顺序 */
   z: number;
   h: AnchorPos;
   v: AnchorPos;
-  /** 与正文的间距（EMU 已换算成 twips）。`wrap: 'none'` 用不上，方形环绕做进来时要 */
+  /** 与正文的间距（EMU 已换算成 twips）。`wrap: 'none'` 用不上；方形 / 上下型环绕让开文字时把外框按它往外扩 */
   dist: { top: Twips; bottom: Twips; left: Twips; right: Twips };
 }
 

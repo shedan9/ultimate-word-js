@@ -172,6 +172,8 @@ function anchorOf(anchor: XmlElement): DrawingAnchor {
     v: positionOf(anchor, 'wp:positionV'),
     dist: { top: dist('distT'), bottom: dist('distB'), left: dist('distL'), right: dist('distR') },
   };
+  const side = wrapTextOf(anchor);
+  if (side !== undefined) out.wrapText = side;
   // simplePos="1" 时规范说忽略 positionH / V，改用这一对绝对坐标（相对纸左上角）
   if (attrOnOff(anchor, 'simplePos') === true) {
     const simple = child(anchor, 'wp:simplePos');
@@ -190,6 +192,18 @@ function wrapOf(anchor: XmlElement): DrawingAnchor['wrap'] {
     if (wrap !== undefined) return wrap;
   }
   return 'none';
+}
+
+const WRAP_TEXT = new Set(['bothSides', 'left', 'right', 'largest']);
+
+/** 只有方形 / 紧密型 / 穿越型带 `@wrapText`；写错的值当没写（按规范默认的 bothSides） */
+function wrapTextOf(anchor: XmlElement): DrawingAnchor['wrapText'] {
+  for (const el of children(anchor)) {
+    if (el.name !== 'wp:wrapSquare' && el.name !== 'wp:wrapTight' && el.name !== 'wp:wrapThrough') continue;
+    const v = attr(el, 'wrapText');
+    return v !== undefined && WRAP_TEXT.has(v) ? (v as DrawingAnchor['wrapText']) : undefined;
+  }
+  return undefined;
 }
 
 function positionOf(anchor: XmlElement, name: string): AnchorPos {
