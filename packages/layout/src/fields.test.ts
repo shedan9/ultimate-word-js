@@ -347,6 +347,139 @@ describe('PAGEREF（目录页码）', () => {
   });
 });
 
+describe('SEQ（题注编号）', () => {
+  /** 一段「图 N」题注：`{ SEQ 图 … }` 的结果 run 存着旧值 9 */
+  function caption(instr = 'SEQ 图 \\* ARABIC'): {
+    block: ResolvedBlock;
+    region: FieldRegion;
+    run: ResolvedRun;
+  } {
+    const r = run('9');
+    const block = para([run('图'), r]);
+    return { block, region: field(instr, [r.id]), run: r };
+  }
+  const heading = (level: number): ResolvedBlock => para([run('标题')], { outlineLevel: level });
+
+  it('按文档序数同名序列，不同名的各数各的；不进迭代', () => {
+    const a = caption();
+    const b = caption('SEQ 表');
+    const c = caption();
+    const res = layoutDocumentWithFields(
+      body([a.block, b.block, c.block]),
+      [a.region, b.region, c.region],
+      opts(),
+    );
+    expect([a, b, c].map((x) => res.values.get(x.run.id))).toEqual(['1', '1', '2']);
+    expect(pageText(res.layout, 0)).toBe('图1图1图2');
+    expect(res.passes).toBe(1);
+  });
+
+  it('序列名不分大小写', () => {
+    const a = caption('SEQ Figure');
+    const b = caption('SEQ figure');
+    const res = layoutDocumentWithFields(body([a.block, b.block]), [a.region, b.region], opts());
+    expect(res.values.get(b.run.id)).toBe('2');
+  });
+
+  it('\\c 重复上一个号、\\r 重置、\\h 照数不显示', () => {
+    const xs = [
+      caption(),
+      caption('SEQ 图 \\c'),
+      caption('SEQ 图 \\h'),
+      caption(),
+      caption('SEQ 图 \\r 7'),
+      caption(),
+    ];
+    const res = layoutDocumentWithFields(
+      body(xs.map((x) => x.block)),
+      xs.map((x) => x.region),
+      opts(),
+    );
+    expect(xs.map((x) => res.values.get(x.run.id))).toEqual(['1', '1', '', '3', '7', '8']);
+  });
+
+  it('\\s N 遇到第 N 级（及更高）标题归零，只影响带它的那个域', () => {
+    const [a, b, c, d] = [
+      caption('SEQ 图 \\s 1'),
+      caption('SEQ 图 \\s 1'),
+      caption('SEQ 图 \\s 2'),
+      caption('SEQ 图'),
+    ];
+    const xs = [a, b, c, d];
+    const res = layoutDocumentWithFields(
+      body([
+        heading(0),
+        a.block,
+        b.block,
+        heading(1),
+        c.block, // 标题 2 → 从 1 数
+        heading(0),
+        d.block, // 不带 \s：接着数
+      ]),
+      xs.map((x) => x.region),
+      opts(),
+    );
+    expect(xs.map((x) => res.values.get(x.run.id))).toEqual(['1', '2', '1', '2']);
+  });
+
+  it('\\s 2 遇到标题 1 也归零（更高级的标题开新一章）', () => {
+    const a = caption('SEQ 图 \\s 2');
+    const b = caption('SEQ 图 \\s 2');
+    const res = layoutDocumentWithFields(body([a.block, heading(0), b.block]), [a.region, b.region], opts());
+    expect(res.values.get(b.run.id)).toBe('1');
+  });
+
+  it('格式开关：\\* ROMAN / alphabetic', () => {
+    const a = caption('SEQ 图 \\* ROMAN');
+    const b = caption('SEQ 图 \\* alphabetic');
+    const res = layoutDocumentWithFields(body([a.block, b.block]), [a.region, b.region], opts());
+    expect([res.values.get(a.run.id), res.values.get(b.run.id)]).toEqual(['I', 'b']);
+  });
+
+  it('结果区拆成几个 run 时，只留第一个、其余清空', () => {
+    const r1 = run('1');
+    const r2 = run('0');
+    const res = layoutDocumentWithFields(
+      body([para([run('图'), r1, r2])]),
+      [field('SEQ 图', [r1.id, r2.id])],
+      opts(),
+    );
+    expect(pageText(res.layout, 0)).toBe('图1');
+  });
+
+  it('没有结果区的照样计数；带书签参数的不求值也不计数', () => {
+    const sink = createDiagnosticSink();
+    const empty = para([run('图')]);
+    const bm = caption('SEQ 图 _Ref1');
+    const last = caption();
+    const noResult: FieldRegion = {
+      ...field('SEQ 图', []),
+      begin: { paragraphId: empty.id, runId: 'x', contentIndex: 0 },
+    };
+    const res = layoutDocumentWithFields(
+      body([empty, bm.block, last.block]),
+      [noResult, bm.region, last.region],
+      opts({ diagnostics: sink }),
+    );
+    expect(res.values.get(last.run.id)).toBe('2');
+    expect(res.values.has(bm.run.id)).toBe(false);
+    expect(sink.list().some((d) => d.code === 'field-seq-bookmark')).toBe(true);
+  });
+
+  it('与 PAGE 一起迭代时，每一趟都带着 SEQ 的结果', () => {
+    const a = caption();
+    const p = run('9');
+    const res = layoutDocumentWithFields(
+      body([a.block, para([p])]),
+      [a.region, field('PAGE', [p.id])],
+      opts(),
+    );
+    expect(res.values.get(a.run.id)).toBe('1');
+    expect(res.values.get(p.id)).toBe('1');
+    expect(res.converged).toBe(true);
+  });
+});
+
 /** 合成度量器下 ASCII 是半角：这几个测试里「一个数字 = 半个汉字」的前提就靠它 */
 it('前提自检：一行 10 个汉字正好排满版心', () => {
   const res = layoutDocumentWithFields(body([para([run(TEN)])]), [], opts());

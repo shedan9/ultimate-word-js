@@ -469,3 +469,84 @@ describe('目录页码（PAGEREF）与书签跳转', () => {
     expect(d.rangeOfBookmark('_Toc404')).toBeUndefined();
   });
 });
+
+describe('题注编号（SEQ）', () => {
+  const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+  const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  const fld = (type: 'begin' | 'separate' | 'end') => `<w:r><w:fldChar w:fldCharType="${type}"/></w:r>`;
+  /** Word「插入题注 → 包含章节号」写出来的是 `SEQ 图 \* ARABIC \s 1`。存着的号故意全写成 9 */
+  const caption = `<w:p><w:r><w:t xml:space="preserve">图 </w:t></w:r>${fld('begin')}<w:r><w:instrText xml:space="preserve"> SEQ 图 \\* ARABIC \\s 1 </w:instrText></w:r>${fld('separate')}<w:r><w:t>9</w:t></w:r>${fld('end')}</w:p>`;
+  const para = (text: string, style?: string) =>
+    `<w:p>${style === undefined ? '' : `<w:pPr><w:pStyle w:val="${style}"/></w:pPr>`}<w:r><w:t>${text}</w:t></w:r></w:p>`;
+
+  /** 标题样式的 id 是 `1`（中文版 Word 就这么写），大纲级别只写在样式里 —— 段落自己一个字都不提 */
+  function seqDocx(): Uint8Array {
+    const enc = new TextEncoder();
+    const body = `${para('第一章', '1')}${caption}${caption}${para('第二章')}${caption}`;
+    return zip(
+      new Map([
+        [
+          '[Content_Types].xml',
+          enc.encode(
+            '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+              '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+              '<Default Extension="xml" ContentType="application/xml"/>' +
+              '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
+              '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>',
+          ),
+        ],
+        [
+          '_rels/.rels',
+          enc.encode(
+            `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${R}/officeDocument" Target="word/document.xml"/></Relationships>`,
+          ),
+        ],
+        [
+          'word/_rels/document.xml.rels',
+          enc.encode(
+            `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${R}/styles" Target="styles.xml"/></Relationships>`,
+          ),
+        ],
+        [
+          'word/styles.xml',
+          enc.encode(
+            `<w:styles xmlns:w="${W}"><w:style w:type="paragraph" w:styleId="1"><w:name w:val="heading 1"/><w:pPr><w:outlineLvl w:val="0"/></w:pPr></w:style></w:styles>`,
+          ),
+        ],
+        [
+          'word/document.xml',
+          enc.encode(
+            `<w:document xmlns:w="${W}" xmlns:r="${R}"><w:body>${body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr></w:body></w:document>`,
+          ),
+        ],
+      ]),
+    );
+  }
+
+  /** 第一页所有以「图」开头的行 */
+  function captions(d: UwDocument): string[] {
+    const out: string[] = [];
+    for (const block of d.layout.pages[0]?.blocks ?? []) {
+      if (block.kind !== 'paragraph') continue;
+      for (const placed of block.lines) {
+        const text = placed.line.fragments.map((f) => f.text).join('');
+        if (text.startsWith('图')) out.push(text);
+      }
+    }
+    return out;
+  }
+
+  it('打开时就按文档序重数；把「第二章」设成标题 1 后从 1 数起，撤销变回来', async () => {
+    const d = await UltimateWord.load(seqDocx());
+    expect(captions(d)).toEqual(['图 1', '图 2', '图 3']);
+
+    const chapter = d.find('第二章')[0];
+    if (chapter === undefined) throw new Error('找不到「第二章」');
+    d.tx((t) => {
+      t.setParagraphProps(chapter, { styleId: '1' });
+    });
+    expect(captions(d)).toEqual(['图 1', '图 2', '图 1']);
+    d.undo();
+    expect(captions(d)).toEqual(['图 1', '图 2', '图 3']);
+  });
+});

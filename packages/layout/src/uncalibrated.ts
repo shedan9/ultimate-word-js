@@ -199,3 +199,19 @@ export const FIELD_CHINESE_NUM_FORMATS: Readonly<Record<string, string>> = {
  * 跨页时框封不封口是画法的事，见 render-dom 的 `uncalibrated.ts`。
  */
 export const PARA_FRAME_GROUP_KEYS = ['borders', 'shading', 'x', 'width'] as const;
+
+/**
+ * `SEQ … \s N`（「遇到第 N 级标题就从头数」，中文报告的「图 2-1」就是 `STYLEREF 1` + `SEQ 图 \s 1`）
+ * 认哪些标题 —— **只认第 N 级**，还是**第 N 级及更高**（大纲级别数值更小）的都算。
+ *
+ * 取「及更高」：`\s 2` 的题注遇到新的一章（标题 1）却接着上一章的号往下数，
+ * 章节号已经换了、序号却没归零，与「按节编号」的本意相悖。Word 域参考只说
+ * 「resets the sequence number to the heading level following the s」，没说更高级的标题算不算。
+ * 标题认的是**级联后的大纲级别**（`outlineLevel` 0–8，样式里的 `w:outlineLvl` 也算），
+ * 不是样式名 —— 中文版 Word 的「标题 1」样式 id 是 `1`，按名字认会漏。
+ *
+ * 钉死办法：一份 docx，标题 1 → 标题 2 → 两个 `{ SEQ 图 \s 2 }` → 标题 1（中间**没有**标题 2）
+ * → 一个 `{ SEQ 图 \s 2 }`，全选 F9 更新后看最后那个是 1 还是 3。不改坐标，只改显示的数字
+ * （数字位数变了才会连带改断行）。
+ */
+export const SEQ_RESET_ON_HIGHER_HEADINGS = true;

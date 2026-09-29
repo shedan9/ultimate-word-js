@@ -18,7 +18,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Phase 5 的**列表编号**已经从 `numbering.xml` 一路通到首行几何，
 同阶段的**域**结构还原（界桩配对 + 指令解析 + HYPERLINK）与**求值**（PAGE / NUMPAGES /
 SECTIONPAGES 迭代到自洽）都做完了；**目录页码**（PAGEREF 按 `_Toc` 书签所在页求值）与目录跳转
-（`doc.rangeOfBookmark`）2026-09-29 接上，TOC 自己的求值（重新生成条目）与 SEQ 还没写。
+（`doc.rangeOfBookmark`）2026-09-29 接上；**题注编号 SEQ** 同日接上（按文档序计数、`\c` / `\r` / `\h` / `\s` 遇标题归零，
+不进页码迭代）。TOC 自己的求值（重新生成条目）还没写。
 **图片**也通了（解析 → 收字节 → 占位 → 画，四层各一段，见下），**几何也用真值标定完了**。Phase 4 的**表格**：属性 + 级联（含 `w:tblStylePr` 条件格式）在 model 层，
 列宽 + 每格的 x 与可用宽 + 格内段落 + **边框冲突解析**在 layout 层，跨页按**行**拆，
 一行放不下时还会从**行间**切开（**拆行**，见下）。**表格这一层全部标定完了** ——
@@ -604,7 +605,9 @@ L2 剩下那 2 行（真值第 10 / 11 行）是**唯一一个解释不了的反
 
 **域求值**在 layout 那一侧（`packages/layout/src/fields.ts`），不在 model —— 求值要页码，
 页码是分页的产物。入口 `layoutDocumentWithFields(resolved, fields, opts)`，认
-**PAGE / NUMPAGES / SECTIONPAGES / PAGEREF**（TOC / SEQ 没做，照旧显示文件里存的旧结果）。四处要点：
+**PAGE / NUMPAGES / SECTIONPAGES / PAGEREF / SEQ**（TOC / STYLEREF 没做，照旧显示文件里存的旧结果）。
+**SEQ 不进迭代**：它只看文档序不看页码，算一次并进每一趟的表；`\s N` 认**级联后的大纲级别**（中文版「标题 1」的 id 是 `1`，
+按样式名认会漏），更高级标题也归零是猜的（`SEQ_RESET_ON_HIGHER_HEADINGS`）；带书签参数的与页眉里的不求值也不计数。四处要点：
 ① 结果**不写回模型**，而是外挂一张「run id → 显示的文字」的表当排版入参
 （`LayoutDocumentOptions.fieldValues`）—— 写回去要每趟迭代克隆一棵树，模型里还会有两份真相；
 ② **收敛判据是那张表不再变**，不是「页数没变」：页数一样、某个 PAGE 从 3 变 4（内容在页之间挪位）

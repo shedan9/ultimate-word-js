@@ -1,5 +1,5 @@
 /**
- * 域求值 —— 目前是 PAGE / NUMPAGES / SECTIONPAGES / PAGEREF，以及它们与分页之间的那个**循环**。
+ * 域求值 —— 目前是 PAGE / NUMPAGES / SECTIONPAGES / PAGEREF / SEQ，以及前四个与分页之间的那个**循环**。
  *
  * 结构还原（界桩配对、指令解析）早在 `@uw/model` 的 fields.ts 做完了，这里只做「算成几」。
  * 分成两个包不是洁癖：配对只需要 run 序列，求值需要**页码**，而页码是分页的产物，
@@ -37,6 +37,17 @@
  * 书签找不到时 Word 显示「错误！未定义书签。」—— 两种都**不求值**，照旧显示文件里存的结果，
  * 前者记 info、后者记 warn。
  *
+ * ## SEQ：题注编号，不进迭代
+ *
+ * 「图 1」「表 2」的数字是 `{ SEQ 图 }`：按**文档序**数同名的 SEQ，与页码毫无关系，
+ * 所以只在迭代开始前算一次（`sequenceValues`），结果并进每一趟的那张表 —— 它的宽度会改断行，
+ * 但断行改不了它。文件里存的旧值常常是错的：插一张图而没全选 F9，后面每个编号都差一。
+ * 认 `\c`（重复上一个号）、`\r n`（重置成 n）、`\h`（照数不显示）、`\s N`（遇到第 N 级标题归零，
+ * 看级联后的大纲级别，更高级的标题算不算见 `uncalibrated.ts` 的 `SEQ_RESET_ON_HIGHER_HEADINGS`）。
+ * 带书签参数的（`SEQ 图 书签`，显示书签处的号）与页眉里的不求值、也**不计数** ——
+ * 前者本来就不递增，后者不在正文的文档序里。没有结果区的 SEQ 照样计数（Word 更新后它就有号了），
+ * 只是没地方显示。
+ *
  * ## 页眉页脚里的域走的是另一条路
  *
  * 同一个 `{ PAGE }` 在每一页显示的**不是同一串字**，所以一张全局的「run id → 文字」表
@@ -65,7 +76,7 @@ import type {
   ResolvedBlock,
   ResolvedBody,
 } from '@uw/model';
-import { formatNumber, walkBlocks, walkParagraphs } from '@uw/model';
+import { fieldSwitch, formatNumber, walkBlocks, walkParagraphs } from '@uw/model';
 import type { HeaderFooterSource } from './header-footer.ts';
 import type {
   DocumentLayout,
@@ -77,7 +88,7 @@ import type {
 import { layoutDocument } from './page.ts';
 import type { BlockLayout } from './table.ts';
 import type { LineLayout, ParagraphLayout } from './types.ts';
-import { FIELD_CHINESE_NUM_FORMATS } from './uncalibrated.ts';
+import { FIELD_CHINESE_NUM_FORMATS, SEQ_RESET_ON_HIGHER_HEADINGS } from './uncalibrated.ts';
 
 /** 求值结果：**run id → 这个 run 显示的文字**，盖掉它 content 里存着的旧值 */
 export type FieldValues = ReadonlyMap<NodeId, string>;
@@ -126,9 +137,15 @@ export function layoutDocumentWithFields(
   fields: readonly FieldRegion[],
   opts: LayoutDocumentWithFieldsOptions,
 ): FieldLayoutResult {
-  const { anchors, plan } = fieldAnchors(body, fields, opts.headerFooters, opts.bookmarks, opts.diagnostics);
+  const { anchors, plan, sequences } = fieldAnchors(
+    body,
+    fields,
+    opts.headerFooters,
+    opts.bookmarks,
+    opts.diagnostics,
+  );
 
-  let values: FieldValues = opts.fieldValues ?? new Map();
+  let values: FieldValues = withSequences(opts.fieldValues ?? new Map(), sequences);
   let totals: Totals = {};
   // 「一共几页」只有 NUMPAGES / SECTIONPAGES 用得上。全篇只有 PAGE 时不把它算进收敛判据，
   // 否则每份带页码的文档都要白排一趟（PAGE 在开页那一刻就是准的）
@@ -146,7 +163,7 @@ export function layoutDocumentWithFields(
   ];
 
   for (let passes = 1; ; passes++) {
-    const next = evaluate(anchors, body, layout);
+    const next = withSequences(evaluate(anchors, body, layout), sequences);
     const nextTotals: Totals = needsTotals
       ? { totalPages: layout.pages.length, sectionPages: countBySection(layout) }
       : {};
@@ -225,9 +242,11 @@ function fieldAnchors(
   headerFooters: HeaderFooterSource | undefined,
   bookmarks: BookmarkTargets | undefined,
   diagnostics?: DiagnosticSink,
-): { anchors: FieldAnchor[]; plan: HeaderFieldPlan } {
+): { anchors: FieldAnchor[]; plan: HeaderFieldPlan; sequences: FieldValues } {
   const runPara = new Map<NodeId, NodeId>();
+  const paraOrder = new Map<NodeId, number>();
   for (const p of walkParagraphs(body)) {
+    paraOrder.set(p.id, paraOrder.size);
     for (const run of p.runs) runPara.set(run.id, p.id);
   }
   const inHeader = headerRunIds(headerFooters);
@@ -235,9 +254,17 @@ function fieldAnchors(
   const anchors: FieldAnchor[] = [];
   const planned = new Map<NodeId, HeaderFieldSpec>();
   const claimed = new Set<NodeId>();
+  const seqs: SeqField[] = [];
 
   for (const region of fields) {
     const type = region.instruction.type;
+    if (type === 'SEQ') {
+      const seq = seqField(region, runPara, paraOrder, claimed, diagnostics);
+      if (seq === undefined) continue;
+      for (const id of region.resultRuns) claimed.add(id);
+      seqs.push(seq);
+      continue;
+    }
     if (!EVALUABLE.has(type)) continue;
 
     const runId = region.resultRuns[0];
@@ -289,7 +316,7 @@ function fieldAnchors(
       clear: region.resultRuns.slice(1),
     });
   }
-  return { anchors, plan: { fields: planned } };
+  return { anchors, plan: { fields: planned }, sequences: sequenceValues(seqs, body) };
 }
 
 /** PAGEREF 能不能求值、目标是哪一段。不能的记诊断并答 undefined（照旧显示存着的结果） */
@@ -322,6 +349,123 @@ function pageRefTarget(
     );
   }
   return target;
+}
+
+// ── SEQ ───────────────────────────────────────────────────────────────────────
+
+/** 一个要计数的 SEQ：`fields` 本身按 begin 排序，即文档序，所以不必另存先后 */
+interface SeqField {
+  instruction: FieldInstruction;
+  /** 所在段落的文档序 —— 与标题比先后用 */
+  order: number;
+  /** 结果区的 run，空 = 没有结果区（照数，不显示） */
+  resultRuns: readonly NodeId[];
+}
+
+/** 这个 SEQ 能不能计数。不能的（页眉里、带书签参数、缺标识符）记诊断并答 undefined */
+function seqField(
+  region: FieldRegion,
+  runPara: ReadonlyMap<NodeId, NodeId>,
+  paraOrder: ReadonlyMap<NodeId, number>,
+  claimed: ReadonlySet<NodeId>,
+  diagnostics: DiagnosticSink | undefined,
+): SeqField | undefined {
+  const first = region.resultRuns[0];
+  const paragraphId = region.begin?.paragraphId ?? (first === undefined ? undefined : runPara.get(first));
+  const order = paragraphId === undefined ? undefined : paraOrder.get(paragraphId);
+  // 不在正文的段落里：页眉页脚（每页一份，没有「文档序」可数）或还没解析的部件
+  if (order === undefined) {
+    diagnostics?.info('field-seq-outside-body', 'SEQ 不在正文里（页眉页脚等），不求值，显示文件里存的结果');
+    return undefined;
+  }
+  const [name, bookmark] = region.instruction.args;
+  if (name === undefined) {
+    diagnostics?.warn(
+      'field-seq-no-name',
+      'SEQ 缺少序列名，Word 更新后会显示错误信息，这里显示文件里存的结果',
+    );
+    return undefined;
+  }
+  if (bookmark !== undefined) {
+    diagnostics?.info(
+      'field-seq-bookmark',
+      `SEQ ${name} ${bookmark}（书签处的编号）不求值，显示文件里存的结果`,
+    );
+    return undefined;
+  }
+  if (region.resultRuns.some((id) => claimed.has(id))) {
+    diagnostics?.warn('field-nested-eval', `域 SEQ 的结果区与外层域重叠，已跳过 —— 嵌套域的求值本阶段没做`);
+    return undefined;
+  }
+  return { instruction: region.instruction, order, resultRuns: region.resultRuns };
+}
+
+/**
+ * 按文档序数一遍，得出每个 SEQ 显示的文字（run id → 文字，结果区其余 run 清空）。
+ *
+ * `\s N` 不是在遇到标题的那一刻把计数器清零，而是**每个域自己问**「上一个同名 SEQ 之后
+ * 有没有过够格的标题」—— 同一个序列里的域可以带不同的 `\s`（或者有的带有的不带），
+ * 全局清零会让不带 `\s` 的那些也跟着归零。
+ */
+function sequenceValues(seqs: readonly SeqField[], body: ResolvedBody): FieldValues {
+  const out = new Map<NodeId, string>();
+  if (seqs.length === 0) return out;
+
+  // 标题：文档序 + 大纲级别（0–8；9 是正文）
+  const headings: { order: number; level: number }[] = [];
+  let order = 0;
+  for (const p of walkParagraphs(body)) {
+    if (p.props.outlineLevel < 9) headings.push({ order, level: p.props.outlineLevel });
+    order++;
+  }
+
+  /** 每一级大纲**最近一次**出现在哪一段（文档序），-1 = 还没出现 */
+  const lastHeading: number[] = new Array(9).fill(-1);
+  let h = 0;
+  const counters = new Map<string, { value: number; order: number }>();
+
+  for (const seq of seqs) {
+    // 把排在这个域所在段落（含）之前的标题都过一遍：标题段落里自己带 SEQ 时，标题在前
+    for (let next = headings[h]; next !== undefined && next.order <= seq.order; next = headings[++h]) {
+      lastHeading[next.level] = next.order;
+    }
+
+    const instr = seq.instruction;
+    // 序列名不分大小写 —— Word 里 `SEQ Figure` 与 `SEQ figure` 数的是同一串
+    const key = (instr.args[0] ?? '').toLowerCase();
+    const counter = counters.get(key) ?? { value: 0, order: -1 };
+
+    const resetLevel = Number.parseInt(fieldSwitch(instr, 's')?.value ?? '', 10);
+    if (resetLevel >= 1 && resetLevel <= 9) {
+      const levels = SEQ_RESET_ON_HIGHER_HEADINGS
+        ? lastHeading.slice(0, resetLevel)
+        : [lastHeading[resetLevel - 1]];
+      // 严格大于：上一个同名 SEQ 就坐在标题段落里时，那个标题已经算过它了
+      if (levels.some((at) => at !== undefined && at > counter.order)) counter.value = 0;
+    }
+
+    const reset = fieldSwitch(instr, 'r')?.value;
+    const resetTo = reset === undefined ? Number.NaN : Number.parseInt(reset, 10);
+    if (Number.isFinite(resetTo)) counter.value = resetTo;
+    else if (fieldSwitch(instr, 'c') === undefined) counter.value++;
+    counter.order = seq.order;
+    counters.set(key, counter);
+
+    const [runId, ...rest] = seq.resultRuns;
+    if (runId === undefined) continue;
+    const hidden = fieldSwitch(instr, 'h') !== undefined;
+    out.set(runId, hidden ? '' : formatNumber(counter.value, switchFormat(instr) ?? 'decimal'));
+    for (const id of rest) out.set(id, '');
+  }
+  return out;
+}
+
+/** SEQ 的结果盖在（每一趟的）求值表上。两边的 run 不会重叠：认领时已经分开了 */
+function withSequences(values: FieldValues, sequences: FieldValues): FieldValues {
+  if (sequences.size === 0) return values;
+  const out = new Map(values);
+  for (const [id, text] of sequences) out.set(id, text);
+  return out;
 }
 
 // ── 一趟求值 ──────────────────────────────────────────────────────────────────
