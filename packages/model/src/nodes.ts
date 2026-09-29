@@ -231,6 +231,15 @@ export interface ParagraphNode<S extends PropSet> {
   runs: RunNode<S>[];
   /** 罩着这一段的最内层**块级**内容控件（隔着表格也算），见 content-control.ts */
   contentControl?: NodeId;
+  /**
+   * 起点落在这一段的书签名（`w:bookmarkStart w:name`），按出现顺序；段落之间的起点归下一段。
+   *
+   * 只记**起点在哪一段**，不记段内偏移与终点：唯一的消费者是 PAGEREF（目录页码），
+   * 它要的是「书签从第几页开始」；目录书签罩的都是一整段标题。
+   * 是节点上的标记而不是「名字 → 位置」的表，理由同内容控件：内容会被编辑，标记跟着段落走，
+   * 前面插了几页字、目录页码照样找得到它。只挂在可编辑的那棵树上，级联树不带（见 bookmarks.ts）。
+   */
+  bookmarks?: string[];
 }
 
 export interface TableNode<S extends PropSet> {

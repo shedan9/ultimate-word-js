@@ -763,8 +763,10 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             const tail = [right, ...paragraph.runs.slice(runIndex + 1)];
             // 后段一个字都没有（只剩拆出来的空 text）时，不继承就是没有 run 的空段落
             const empty = tail.every((r) => r.content.every((c) => c.kind === 'text' && c.text === ''));
+            // 书签起点留在前段：它指的是「从这段开始」，拆出来的后段是新内容的开头
+            const { bookmarks: _stays, ...rest } = paragraph;
             const next: Paragraph = {
-              ...paragraph,
+              ...rest,
               id: newId(),
               ...(inherit ? {} : { props: {} }),
               runs: inherit || !empty ? tail : [],
@@ -814,7 +816,11 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
               });
             if (!next.runs.length)
               moves.push({ from: { nodeId: next.id, contentIndex: 0, offset: 0 }, to: boundary, length: 0 });
-            replaceParagraphs(paragraph.id, 2, [{ ...paragraph, runs: [...paragraph.runs, ...next.runs] }]);
+            const joined: Paragraph = { ...paragraph, runs: [...paragraph.runs, ...next.runs] };
+            // 后段的书签跟着它的字并进来，否则指着它的目录页码就找不到目标了
+            if (next.bookmarks?.length)
+              joined.bookmarks = [...(paragraph.bookmarks ?? []), ...next.bookmarks];
+            replaceParagraphs(paragraph.id, 2, [joined]);
             // 合并边界的原位置仍有效，撤销不应把它挪到被恢复的空段落。
             structural([paragraph.id, next.id], moves, []);
             return boundary;

@@ -1,5 +1,5 @@
 /**
- * 域求值 —— 目前是 PAGE / NUMPAGES / SECTIONPAGES，以及它们与分页之间的那个**循环**。
+ * 域求值 —— 目前是 PAGE / NUMPAGES / SECTIONPAGES / PAGEREF，以及它们与分页之间的那个**循环**。
  *
  * 结构还原（界桩配对、指令解析）早在 `@uw/model` 的 fields.ts 做完了，这里只做「算成几」。
  * 分成两个包不是洁癖：配对只需要 run 序列，求值需要**页码**，而页码是分页的产物，
@@ -16,14 +16,26 @@
  * 与它自己的页码自洽了。拿「页数不变」当判据是不够的 —— 页数一样、某个 PAGE 域从 3 变 4
  * 的情形完全可能（内容在页之间挪了位置）。
  *
- * ## 为什么没有单独的「振荡检测」
+ * ## 振荡检测（PAGEREF 进来之后才需要）
  *
- * 开发计划 §2.4 要求 A→B→A 的检测。就目前这三个域而言它**触发不了**：域文字只会变宽
- * 不会变窄地推着内容往后走，而分页的每条规则（孤行寡行、keepNext 的接缝）都只会把内容
- * **往后**推，于是页数对域文字宽度**单调不减**，页码也随之单调不减 —— 不可能回头。
- * 真正的防线是 `MAX_FIELD_PASSES` 这个上限，撞上限时按计划说的「取页数较大者冻结」。
- * 等 TOC / SEQ 进来（它们能让目录**变短**，单调性就没了），再把 A→B→A 的检测补上，
- * 那时也才有样本能验证它 —— 现在写了也是永远跑不到的死代码。
+ * 开发计划 §2.4 要求 A→B→A 的检测。只有 PAGE / NUMPAGES / SECTIONPAGES 时它**触发不了**：
+ * 第一趟之后域文字只会变宽，分页规则只会把内容往后推，页码单调不减、回不了头。
+ * **PAGEREF 打破了这一条**：目录里存的旧页码可以比实际的**大**（文档删短了、目录没更新），
+ * 第一趟算出来的页码就会变窄，目录可能少一行、正文往前挪一页，页码又变 —— 两个解来回跳
+ * 完全可能。所以每趟都比一遍「算出来的这份以前出现过没有」，出现过就是进了环，
+ * 不必等撞上限，直接按计划说的「取页数较大者冻结」。
+ * `MAX_FIELD_PASSES` 仍是最后一道保险丝。
+ *
+ * ## PAGEREF：书签落在第几页
+ *
+ * 目录（TOC）的页码不是 TOC 自己算的：Word 生成目录时给每条标题包一个 `_Toc…` 书签，
+ * 条目里的页码是一个嵌套的 `PAGEREF _Toc… \h` 域。所以「目录页码正确」= 把 PAGEREF 算对，
+ * 用不着重新生成整个目录（那是 TOC 求值，要大纲级别与样式，没做）。
+ * 书签起点所在的段落从 `bookmarks`（`@uw/model` 的 `bookmarkTargets()`）查，页从布局查；
+ * 显示的是**目标那一页**的显示页码、按**目标那一节**的页码格式 —— 前言用罗马数字的文档，
+ * 目录里前言那几条就是 i、ii。`\p`（「见上方 / 见下方」）要一套本地化的措辞表，
+ * 书签找不到时 Word 显示「错误！未定义书签。」—— 两种都**不求值**，照旧显示文件里存的结果，
+ * 前者记 info、后者记 warn。
  *
  * ## 页眉页脚里的域走的是另一条路
  *
@@ -45,7 +57,14 @@
  *    `w:pgNumType w:start` 会让某一节的页码重新起算，两者从那以后就对不上了
  */
 import type { DiagnosticSink } from '@uw/core';
-import type { FieldInstruction, FieldRegion, NodeId, ResolvedBlock, ResolvedBody } from '@uw/model';
+import type {
+  BookmarkTargets,
+  FieldInstruction,
+  FieldRegion,
+  NodeId,
+  ResolvedBlock,
+  ResolvedBody,
+} from '@uw/model';
 import { formatNumber, walkBlocks, walkParagraphs } from '@uw/model';
 import type { HeaderFooterSource } from './header-footer.ts';
 import type {
@@ -68,7 +87,7 @@ export type FieldValues = ReadonlyMap<NodeId, string>;
  * 写在 separate 与 end 之间，直接显示就是「打开即所见」，这也是本阶段之前不做求值
  * 也能正确渲染的原因。
  */
-const EVALUABLE = new Set(['PAGE', 'NUMPAGES', 'SECTIONPAGES']);
+const EVALUABLE = new Set(['PAGE', 'NUMPAGES', 'SECTIONPAGES', 'PAGEREF']);
 
 /**
  * 迭代上限。Word 自己 2–3 趟就收敛，5 是留够余量后的硬闸 ——
@@ -79,6 +98,11 @@ export const MAX_FIELD_PASSES = 5;
 export interface LayoutDocumentWithFieldsOptions extends LayoutDocumentOptions {
   /** 最多排几趟，缺省 `MAX_FIELD_PASSES`。调它只有测试与调试用得上 */
   maxPasses?: number;
+  /**
+   * 书签名 → 起点所在段落（`@uw/model` 的 `bookmarkTargets(body)`）。PAGEREF 靠它找目标；
+   * 缺席时 PAGEREF 一律不求值（显示文件里存的旧页码）
+   */
+  bookmarks?: BookmarkTargets;
 }
 
 export interface FieldLayoutResult {
@@ -102,7 +126,7 @@ export function layoutDocumentWithFields(
   fields: readonly FieldRegion[],
   opts: LayoutDocumentWithFieldsOptions,
 ): FieldLayoutResult {
-  const { anchors, plan } = fieldAnchors(body, fields, opts.headerFooters, opts.diagnostics);
+  const { anchors, plan } = fieldAnchors(body, fields, opts.headerFooters, opts.bookmarks, opts.diagnostics);
 
   let values: FieldValues = opts.fieldValues ?? new Map();
   let totals: Totals = {};
@@ -117,7 +141,9 @@ export function layoutDocumentWithFields(
 
   const { diagnostics: _quieted, ...quiet } = opts;
   const max = Math.max(1, opts.maxPasses ?? MAX_FIELD_PASSES);
-  const tried: { values: FieldValues; layout: DocumentLayout }[] = [{ values, layout }];
+  const tried: { values: FieldValues; totals: Totals; layout: DocumentLayout }[] = [
+    { values, totals, layout },
+  ];
 
   for (let passes = 1; ; passes++) {
     const next = evaluate(anchors, body, layout);
@@ -128,10 +154,17 @@ export function layoutDocumentWithFields(
       return { layout, values, passes, converged: true };
     }
 
-    if (passes >= max) {
+    // 算出来的这份早先排过：再排只会绕回去（A→B→A），见文件头「振荡检测」
+    // 最后一趟就是手上这份，与它相同已经在上面按收敛返回了，只比更早的
+    const cycled = tried
+      .slice(0, -1)
+      .some((t) => sameValues(t.values, next) && sameTotals(t.totals, nextTotals));
+    if (cycled || passes >= max) {
       opts.diagnostics?.warn(
         'field-not-converged',
-        `域求值 ${max} 趟仍未收敛，冻结在页数最多的那一趟 —— 页码可能与 Word 差一页`,
+        cycled
+          ? `域求值在两个解之间来回跳（第 ${passes} 趟），冻结在页数最多的那一趟 —— 目录页码可能与 Word 差一页`
+          : `域求值 ${max} 趟仍未收敛，冻结在页数最多的那一趟 —— 页码可能与 Word 差一页`,
       );
       // 计划 §2.4 的「取页数较大者冻结」：宁可多算一页也不要少算，
       // 少算的那一页会让最后一段内容整个消失，多算最多是末页留白
@@ -142,7 +175,7 @@ export function layoutDocumentWithFields(
     values = next;
     totals = nextTotals;
     layout = layoutDocument(body, { ...quiet, fieldValues: values, headerFields: { ...plan, ...totals } });
-    tried.push({ values, layout });
+    tried.push({ values, totals, layout });
   }
 }
 
@@ -164,6 +197,8 @@ function sameTotals(a: Totals, b: Totals): boolean {
 /** 一个待求值的域被压扁成的样子：算完往哪儿放、还要清掉谁 */
 interface FieldAnchor {
   instruction: FieldInstruction;
+  /** PAGEREF 的目标：书签起点所在的段落 */
+  target?: NodeId;
   /** 结果文字写到这个 run 上 */
   runId: NodeId;
   /** 它所在的段落 —— 旧结果是空串时这个 run 排不出任何片段，只能靠段落定位 */
@@ -188,6 +223,7 @@ function fieldAnchors(
   body: ResolvedBody,
   fields: readonly FieldRegion[],
   headerFooters: HeaderFooterSource | undefined,
+  bookmarks: BookmarkTargets | undefined,
   diagnostics?: DiagnosticSink,
 ): { anchors: FieldAnchor[]; plan: HeaderFieldPlan } {
   const runPara = new Map<NodeId, NodeId>();
@@ -223,6 +259,12 @@ function fieldAnchors(
     }
     const format = switchFormat(region.instruction);
 
+    let target: NodeId | undefined;
+    if (type === 'PAGEREF') {
+      target = pageRefTarget(region.instruction, bookmarks, inHeader.has(runId), diagnostics);
+      if (target === undefined) continue;
+    }
+
     // 页眉页脚里的域走 plan 那条路：它每一页显示的不是同一串字，装不进一张全局表
     if (inHeader.has(runId)) {
       for (const id of region.resultRuns) claimed.add(id);
@@ -241,12 +283,45 @@ function fieldAnchors(
     for (const id of region.resultRuns) claimed.add(id);
     anchors.push({
       instruction: region.instruction,
+      ...(target === undefined ? {} : { target }),
       runId,
       paragraphId,
       clear: region.resultRuns.slice(1),
     });
   }
   return { anchors, plan: { fields: planned } };
+}
+
+/** PAGEREF 能不能求值、目标是哪一段。不能的记诊断并答 undefined（照旧显示存着的结果） */
+function pageRefTarget(
+  instr: FieldInstruction,
+  bookmarks: BookmarkTargets | undefined,
+  inHeader: boolean,
+  diagnostics: DiagnosticSink | undefined,
+): NodeId | undefined {
+  const name = instr.args[0];
+  if (bookmarks === undefined || name === undefined) return undefined;
+  if (inHeader) {
+    // 页眉里的 PAGEREF 每页算出来都一样，走 plan 那条路的「开页时算」反而说不清目标在哪一页 ——
+    // 它在公文与报告里没见过，留洞
+    diagnostics?.info('field-pageref-header', `页眉页脚里的 PAGEREF ${name} 不求值，显示文件里存的结果`);
+    return undefined;
+  }
+  if (instr.switches.some((sw) => sw.name === 'p')) {
+    diagnostics?.info(
+      'field-pageref-relative',
+      `PAGEREF ${name} \\p（见上方 / 见下方）不求值，显示文件里存的结果`,
+    );
+    return undefined;
+  }
+  const target = bookmarks.get(name);
+  if (target === undefined) {
+    diagnostics?.warn(
+      'field-bookmark-missing',
+      `PAGEREF 引用的书签「${name}」不存在（Word 更新域后会显示「错误！未定义书签。」），显示文件里存的结果`,
+    );
+  }
+  return target;
 }
 
 // ── 一趟求值 ──────────────────────────────────────────────────────────────────
@@ -262,7 +337,10 @@ function evaluate(anchors: readonly FieldAnchor[], body: ResolvedBody, layout: D
     // 只有「域在一个跨页长段落的后半截」才看得出，公文里的页码都在独立的短段落里
     const pageIndex = index.runs.get(a.runId) ?? index.paragraphs.get(a.paragraphId);
     if (pageIndex === undefined) continue;
-    const page = layout.pages[pageIndex];
+    // PAGEREF 显示的是**目标**那一页，不是域自己所在的那一页
+    const shown = a.target === undefined ? pageIndex : index.paragraphs.get(a.target);
+    if (shown === undefined) continue;
+    const page = layout.pages[shown];
     if (page === undefined) continue;
 
     out.set(a.runId, fieldText(a.instruction, page, layout, sectionPages, body));
@@ -280,9 +358,11 @@ function fieldText(
 ): string {
   const explicit = switchFormat(instr);
   switch (instr.type) {
-    case 'PAGE': {
+    case 'PAGE':
+    case 'PAGEREF': {
       // 没写 `\*` 时跟着**本节**的 `w:pgNumType w:fmt` —— 「前言用罗马数字、正文用阿拉伯
-      // 数字」就是靠分节 + 那个属性实现的，忽略它整份前言的页码都会变成阿拉伯数字
+      // 数字」就是靠分节 + 那个属性实现的，忽略它整份前言的页码都会变成阿拉伯数字。
+      // PAGEREF 的 page 是目标那一页，所以这里取的是**目标那一节**的格式
       const fmt = explicit ?? body.sections[page.sectionIndex]?.props.pageNumFormat ?? 'decimal';
       return formatNumber(page.number, fmt);
     }

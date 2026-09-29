@@ -385,3 +385,87 @@ describe('doc.replaceAll', () => {
     expect(editing.find('[知]')).toHaveLength(count);
   });
 });
+
+describe('目录页码（PAGEREF）与书签跳转', () => {
+  const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+  const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  const fld = (type: 'begin' | 'separate' | 'end') => `<w:r><w:fldChar w:fldCharType="${type}"/></w:r>`;
+  const instr = (text: string) => `<w:r><w:instrText xml:space="preserve"> ${text} </w:instrText></w:r>`;
+  /** Word 生成的目录条目长这样：HYPERLINK 包着标题文字 + 制表位 + 嵌套的 PAGEREF。存着的页码故意写错成 9 */
+  const entry = (name: string, title: string) =>
+    `${fld('begin')}${instr(`HYPERLINK \\l "${name}"`)}${fld('separate')}<w:r><w:t>${title}</w:t></w:r><w:r><w:tab/></w:r>` +
+    `${fld('begin')}${instr(`PAGEREF ${name} \\h`)}${fld('separate')}<w:r><w:t>9</w:t></w:r>${fld('end')}${fld('end')}`;
+  const heading = (name: string, title: string) =>
+    `<w:p><w:r><w:br w:type="page"/></w:r></w:p><w:p><w:bookmarkStart w:id="0" w:name="${name}"/><w:r><w:t>${title}</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>`;
+
+  /** 第 1 页目录两条，第一章在第 2 页、第二章在第 3 页 */
+  function tocDocx(): Uint8Array {
+    const enc = new TextEncoder();
+    const body =
+      `<w:p>${fld('begin')}${instr('TOC \\o "1-3" \\h \\z \\u')}${fld('separate')}${entry('_Toc1', '第一章')}</w:p>` +
+      `<w:p>${entry('_Toc2', '第二章')}${fld('end')}</w:p>` +
+      `<w:p><w:r><w:t>前言</w:t></w:r></w:p>${heading('_Toc1', '第一章')}${heading('_Toc2', '第二章')}`;
+    return zip(
+      new Map([
+        [
+          '[Content_Types].xml',
+          enc.encode(
+            '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+              '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+              '<Default Extension="xml" ContentType="application/xml"/>' +
+              '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>',
+          ),
+        ],
+        [
+          '_rels/.rels',
+          enc.encode(
+            `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${R}/officeDocument" Target="word/document.xml"/></Relationships>`,
+          ),
+        ],
+        [
+          'word/document.xml',
+          enc.encode(
+            `<w:document xmlns:w="${W}" xmlns:r="${R}"><w:body>${body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr></w:body></w:document>`,
+          ),
+        ],
+      ]),
+    );
+  }
+
+  /** 第一页每一行的文字 —— 目录条目「标题 + 页码」 */
+  function tocLines(d: UwDocument): string[] {
+    const out: string[] = [];
+    for (const block of d.layout.pages[0]?.blocks ?? []) {
+      if (block.kind !== 'paragraph') continue;
+      for (const placed of block.lines) out.push(placed.line.fragments.map((f) => f.text).join(''));
+    }
+    return out;
+  }
+
+  it('打开时就把存着的错页码算对，编辑把标题挤到后一页时跟着变，撤销变回来', async () => {
+    const d = await UltimateWord.load(tocDocx());
+    expect(d.pageCount).toBe(3);
+    expect(tocLines(d).slice(0, 2)).toEqual(['第一章2', '第二章3']);
+
+    const preface = d.find('前言')[0];
+    if (preface === undefined) throw new Error('找不到「前言」');
+    d.tx((t) => {
+      t.insertInline(preface.start, 'pageBreak');
+    });
+    expect(d.pageCount).toBe(4);
+    expect(tocLines(d).slice(0, 2)).toEqual(['第一章3', '第二章4']);
+    d.undo();
+    expect(tocLines(d).slice(0, 2)).toEqual(['第一章2', '第二章3']);
+  });
+
+  it('rangeOfBookmark 给出标题段落的 range（目录跳转的落点），不存在答 undefined', async () => {
+    const d = await UltimateWord.load(tocDocx());
+    const range = d.rangeOfBookmark('_Toc2');
+    const title = d.find('第二章').at(-1);
+    expect(range).toBeDefined();
+    expect(title).toBeDefined();
+    if (range === undefined || title === undefined) return;
+    expect(d.compare(range.start, title.start)).toBe(0);
+    expect(d.rangeOfBookmark('_Toc404')).toBeUndefined();
+  });
+});

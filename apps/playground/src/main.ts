@@ -66,6 +66,19 @@ function remount(): void {
     virtualize: virtualizeInput.checked,
     mode: editInput.checked ? 'edit' : 'preview',
   });
+  // 目录条目是 `HYPERLINK \l "_Toc…"`：视图不替宿主跳转（api.md §11），跳到书签是这里的决定；
+  // 外部链接照浏览器习惯开新标签页。编辑态点链接是放光标，不跳
+  const current = view;
+  const opened = doc;
+  current.on('click:element', ({ href }) => {
+    if (href === undefined || editInput.checked) return;
+    if (!href.startsWith('#')) {
+      window.open(href, '_blank', 'noopener');
+      return;
+    }
+    const target = opened.rangeOfBookmark(href.slice(1));
+    if (target !== undefined) current.scrollTo(target, { align: 'start', behavior: 'smooth' });
+  });
   search.rerun();
 }
 

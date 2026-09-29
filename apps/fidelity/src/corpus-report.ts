@@ -27,7 +27,7 @@ import { createDiagnosticSink } from '@uw/core';
 import { createTextMeasurer, FontRegistry } from '@uw/fonts';
 import { loadBundledPacks } from '@uw/fonts/node';
 import { layoutDocumentWithFields } from '@uw/layout';
-import { fontNameCandidates, loadDocument } from '@uw/model';
+import { bookmarkTargets, fontNameCandidates, loadDocument } from '@uw/model';
 import { OpcPackage } from '@uw/ooxml';
 import type { Piece } from './flatten.ts';
 import { piecesOf } from './flatten.ts';
@@ -102,6 +102,7 @@ for (const name of names()) {
     settings: doc.cascade.settings,
     diagnostics: sink,
     headerFooters: doc.headerFooters,
+    bookmarks: bookmarkTargets(doc.body),
   });
 
   const truth = JSON.parse(readFileSync(path.join(FIXTURES, `${name}.truth.json`), 'utf8')) as TruthFile;

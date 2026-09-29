@@ -37,12 +37,12 @@ import { parseSectionProps } from './section.ts';
 import { attrOf, enumVal } from './xml-values.ts';
 
 /**
- * 排版上完全无关、见到就跳过的元素 —— 书签、拼写检查标记、批注范围、编辑权限范围。
+ * 排版上完全无关、见到就跳过的元素 —— 书签终点、拼写检查标记、批注范围、编辑权限范围。
+ * 书签**起点**不在这里：PAGEREF 要知道书签落在第几页，起点记到段落上（`ParagraphNode.bookmarks`）。
  *
  * 它们**不该**进诊断：每份 Word 文档都有一堆，报出来只会淹掉真正的未知元素。
  */
 const IGNORED = new Set([
-  'w:bookmarkStart',
   'w:bookmarkEnd',
   'w:commentRangeStart',
   'w:commentRangeEnd',
@@ -62,6 +62,8 @@ const IGNORED = new Set([
 /** run 内部同样跳过的：脚注/尾注/批注的引用标记（Phase 3 之后才接），以及 Word 缓存的分页提示 */
 const IGNORED_IN_RUN = new Set([
   'w:rPr',
+  // 规范不许它进 `w:r`，第三方生成器偶尔这么写；位置已经说不清是哪个字，不收也不报
+  'w:bookmarkStart',
   'w:footnoteReference',
   'w:endnoteReference',
   'w:commentReference',
@@ -99,6 +101,10 @@ interface Ctx {
   controls: Record<NodeId, ContentControl>;
   /** 当前所在的最内层块级控件，新建的段落 / 表格记上它 */
   blockControl: NodeId | undefined;
+  /** 落在段落**之外**（`w:body` / `w:tc` 直下）的书签起点，归给文档序里的下一个段落 */
+  bookmarks: string[];
+  /** 最近建的段落：文末还剩没归属的书签起点时归给它 */
+  lastParagraph: Paragraph | undefined;
 }
 
 /**
@@ -159,6 +165,8 @@ export function parseBody(
     sources,
     controls: {},
     blockControl: undefined,
+    bookmarks: [],
+    lastParagraph: undefined,
   };
   const body = child(doc.root, 'w:body');
   if (body === undefined) {
@@ -200,10 +208,14 @@ export function parseBody(
         pending = [];
         break;
       }
+      case 'w:bookmarkStart':
+        pendBookmark(ctx, el);
+        break;
       default:
         if (!IGNORED.has(el.name)) unknown(ctx, el, 'w:body');
     }
   }
+  flushBookmarks(ctx);
 
   // 没有 body 级 sectPr（不合规，但见过）：剩下的块也得有节可归
   if (pending.length > 0 || sections.length === 0) {
@@ -239,6 +251,8 @@ export function parseHeaderFooter(
     // 页眉页脚里的控件照样标在节点上，但不收进正文的控件表 —— 填值只填正文（api.md §9）
     controls: {},
     blockControl: undefined,
+    bookmarks: [],
+    lastParagraph: undefined,
   };
   const out: Block[] = [];
   for (const el of children(doc.root)) {
@@ -252,10 +266,14 @@ export function parseHeaderFooter(
       case 'w:sdt':
         out.push(...sdtBlocks(ctx, el));
         break;
+      case 'w:bookmarkStart':
+        pendBookmark(ctx, el);
+        break;
       default:
         if (!IGNORED.has(el.name)) unknown(ctx, el, doc.root.name);
     }
   }
+  flushBookmarks(ctx);
   return out;
 }
 
@@ -279,6 +297,7 @@ function sdtBlocks(ctx: Ctx, sdt: XmlElement): Block[] {
     if (el.name === 'w:p') out.push(parseParagraph(ctx, el, parseParaProps(child(el, 'w:pPr'))));
     else if (el.name === 'w:tbl') out.push(parseTable(ctx, el));
     else if (el.name === 'w:sdt') out.push(...sdtBlocks(ctx, el));
+    else if (el.name === 'w:bookmarkStart') pendBookmark(ctx, el);
     else if (!IGNORED.has(el.name)) unknown(ctx, el, 'w:sdtContent');
   }
   ctx.blockControl = outer;
@@ -301,12 +320,40 @@ function openControl(
 
 function parseParagraph(ctx: Ctx, p: XmlElement, props: ParaProps): Paragraph {
   const runs: Run[] = [];
-  collectRuns(ctx, p, runs, {});
+  // 段落之前悬着的书签起点先认领，段内的按出现顺序接在后面
+  const bookmarks = ctx.bookmarks;
+  ctx.bookmarks = [];
+  collectRuns(ctx, p, runs, {}, bookmarks);
   const id = nextId(ctx, 'p');
   record(ctx, id, p);
   const paragraph: Paragraph = { kind: 'paragraph', id, props, runs };
   if (ctx.blockControl !== undefined) paragraph.contentControl = ctx.blockControl;
+  if (bookmarks.length) paragraph.bookmarks = bookmarks;
+  ctx.lastParagraph = paragraph;
   return paragraph;
+}
+
+/**
+ * Word 自己维护的隐藏书签，不是用户或目录建的：`_GoBack`（Shift+F5「上次编辑位置」）
+ * 几乎每份存过的文档都有一个，收进来只会让每份文档多一段带标记的段落，没有域会引用它。
+ */
+const IGNORED_BOOKMARKS = new Set(['_GoBack']);
+
+function bookmarkName(el: XmlElement): string | undefined {
+  const name = attr(el, 'w:name');
+  return name === undefined || name === '' || IGNORED_BOOKMARKS.has(name) ? undefined : name;
+}
+
+function pendBookmark(ctx: Ctx, el: XmlElement): void {
+  const name = bookmarkName(el);
+  if (name !== undefined) ctx.bookmarks.push(name);
+}
+
+/** 文末（或单元格末尾之后再没有段落）还悬着的书签起点：归给最后一个段落 */
+function flushBookmarks(ctx: Ctx): void {
+  if (!ctx.bookmarks.length || ctx.lastParagraph === undefined) return;
+  ctx.lastParagraph.bookmarks = [...(ctx.lastParagraph.bookmarks ?? []), ...ctx.bookmarks];
+  ctx.bookmarks = [];
 }
 
 /**
@@ -328,9 +375,12 @@ interface RunMarks {
  * `marks` 是从外层容器带下来的，会盖到每个 run 上 —— 嵌套超链接在 Word 里不合法，
  * 所以内层直接覆盖外层，不必合并。
  */
-function collectRuns(ctx: Ctx, parent: XmlElement, out: Run[], marks: RunMarks): void {
+function collectRuns(ctx: Ctx, parent: XmlElement, out: Run[], marks: RunMarks, bookmarks: string[]): void {
   for (const el of children(parent)) {
-    if (el.name === 'w:r') {
+    if (el.name === 'w:bookmarkStart') {
+      const name = bookmarkName(el);
+      if (name !== undefined) bookmarks.push(name);
+    } else if (el.name === 'w:r') {
       out.push(parseRun(ctx, el, marks));
     } else if (el.name === 'w:hyperlink') {
       const next: NonNullable<Run['hyperlink']> = {};
@@ -338,21 +388,21 @@ function collectRuns(ctx: Ctx, parent: XmlElement, out: Run[], marks: RunMarks):
       const anchor = attr(el, 'w:anchor');
       if (relId !== undefined) next.relId = relId;
       if (anchor !== undefined) next.anchor = anchor;
-      collectRuns(ctx, el, out, { ...marks, link: next });
+      collectRuns(ctx, el, out, { ...marks, link: next }, bookmarks);
     } else if (el.name === 'w:fldSimple') {
       // 简单域：整个域压缩成一个元素，域代码在 `w:instr` 属性里、结果就是它的子 run。
       // 内容照旧压平（结果文字与普通文字排版上毫无区别），域代码挂在 run 上给 fields.ts 收。
       // **必须给个 id**：相邻两个 `w:fldSimple w:instr="PAGE"` 是两个域，只比指令文字会并成一个
       const field = { id: nextId(ctx, 'fld'), instr: attr(el, 'w:instr') ?? '' };
       record(ctx, field.id, el);
-      collectRuns(ctx, el, out, { ...marks, field });
+      collectRuns(ctx, el, out, { ...marks, field }, bookmarks);
     } else if (TRANSPARENT.has(el.name)) {
-      collectRuns(ctx, el, out, marks);
+      collectRuns(ctx, el, out, marks, bookmarks);
     } else if (el.name === 'w:sdt') {
       const content = child(el, 'w:sdtContent');
       if (content !== undefined) {
         const control = openControl(ctx, el, 'inline', marks.control ?? ctx.blockControl);
-        collectRuns(ctx, content, out, { ...marks, control });
+        collectRuns(ctx, content, out, { ...marks, control }, bookmarks);
       }
     } else if (DELETED.has(el.name)) {
       // 修订只做显示、不做编辑（非目标），显示的是**接受后**的版式：删掉的字不占位。
@@ -484,6 +534,8 @@ function parseTable(ctx: Ctx, tbl: XmlElement): Table {
       if (content !== undefined) {
         for (const tr of children(content, 'w:tr')) rows.push(parseRow(ctx, tr));
       }
+    } else if (el.name === 'w:bookmarkStart') {
+      pendBookmark(ctx, el);
     } else if (el.name !== 'w:tblPr' && el.name !== 'w:tblGrid' && !IGNORED.has(el.name)) {
       unknown(ctx, el, 'w:tbl');
     }
@@ -508,6 +560,8 @@ function parseRow(ctx: Ctx, tr: XmlElement): TableRow {
     else if (el.name === 'w:sdt') {
       const content = child(el, 'w:sdtContent');
       if (content !== undefined) for (const tc of children(content, 'w:tc')) cells.push(parseCell(ctx, tc));
+    } else if (el.name === 'w:bookmarkStart') {
+      pendBookmark(ctx, el);
     } else if (el.name !== 'w:trPr' && el.name !== 'w:tblPrEx' && !IGNORED.has(el.name)) {
       unknown(ctx, el, 'w:tr');
     }
@@ -535,6 +589,7 @@ function parseCell(ctx: Ctx, tc: XmlElement): TableCell {
     if (el.name === 'w:p') blocks.push(parseParagraph(ctx, el, parseParaProps(child(el, 'w:pPr'))));
     else if (el.name === 'w:tbl') blocks.push(parseTable(ctx, el));
     else if (el.name === 'w:sdt') blocks.push(...sdtBlocks(ctx, el));
+    else if (el.name === 'w:bookmarkStart') pendBookmark(ctx, el);
     else if (el.name !== 'w:tcPr' && !IGNORED.has(el.name)) unknown(ctx, el, 'w:tc');
   }
 

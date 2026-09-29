@@ -261,6 +261,92 @@ describe('不求值的情形', () => {
   });
 });
 
+describe('PAGEREF（目录页码）', () => {
+  /** 目录条目在第 1 页，标题（书签 `_Toc1` 所在段落）排在第 3 页 */
+  function toc(instr: string, bookmarks?: ReadonlyMap<string, NodeId>, sink = createDiagnosticSink()) {
+    const r = run('9');
+    const heading = para([run('标题')]);
+    const res = layoutDocumentWithFields(
+      body([para([r]), para([run(TEN.repeat(5))]), heading]),
+      [field(instr, [r.id])],
+      opts({ bookmarks: bookmarks ?? new Map([['_Toc1', heading.id]]), diagnostics: sink }),
+    );
+    return { res, sink, entry: pageText(res.layout, 0).charAt(0) };
+  }
+
+  it('显示书签起点所在那一页的页码，不是域自己所在的页', () => {
+    const { res, entry } = toc('PAGEREF _Toc1 \\h');
+    expect(res.layout.pages).toHaveLength(3);
+    expect(entry).toBe('3');
+    expect(res.converged).toBe(true);
+  });
+
+  it('没写 \\* 时跟着**目标那一节**的页码格式', () => {
+    const r = run('9');
+    const heading = para([run('正文')]);
+    const res = layoutDocumentWithFields(
+      {
+        sections: [
+          { id: 's0', props: sect(), blocks: [para([r])] },
+          {
+            id: 's1',
+            props: sect({ type: 'nextPage', pageNumFormat: 'lowerRoman', pageNumStart: 1 }),
+            blocks: [heading],
+          },
+        ],
+      },
+      [field('PAGEREF _Toc1 \\h', [r.id])],
+      opts({ bookmarks: new Map([['_Toc1', heading.id]]) }),
+    );
+    // 条目自己在第一节（阿拉伯数字），目标在第二节（罗马数字、从 1 起）
+    expect(pageText(res.layout, 0)).toBe('i');
+  });
+
+  it('书签不存在时照旧显示存着的结果，并记 warn', () => {
+    const { entry, sink } = toc('PAGEREF _Toc404 \\h');
+    expect(entry).toBe('9');
+    expect(sink.list().find((d) => d.code === 'field-bookmark-missing')?.severity).toBe('warn');
+  });
+
+  it('\\p（见上方 / 见下方）不求值', () => {
+    const { entry, sink } = toc('PAGEREF _Toc1 \\p');
+    expect(entry).toBe('9');
+    expect(sink.list().map((d) => d.code)).toContain('field-pageref-relative');
+  });
+
+  it('没给书签表时一律不求值', () => {
+    const r = run('9');
+    const res = layoutDocumentWithFields(
+      body([para([r]), para([run(TEN.repeat(5))]), para([run('标题')])]),
+      [field('PAGEREF _Toc1', [r.id])],
+      opts(),
+    );
+    expect(res.passes).toBe(1);
+    expect(pageText(res.layout, 0).charAt(0)).toBe('9');
+  });
+
+  it('页码在两个解之间来回跳时认出环，不等撞上限就冻结在页数多的那一趟', () => {
+    // 条目 = 8 个汉字 + 「x」+ 罗马数字页码，汉字与 x 之间有 1/4 字的中西文间距：
+    // 页码「III」（1.5 字）共 10.25 字放不下、整个拉丁词换到下一行，「IV」（1 字）共 9.75 字一行放得下。
+    // 条目一行时标题是第 9 行（第 3 页 → III → 条目变两行），两行时标题被挤到第 4 页
+    // （→ IV → 条目变回一行）—— 两个解互相否定，没有不动点
+    const sink = createDiagnosticSink();
+    const r = run('IV');
+    const heading = para([run('标题')]);
+    const filler = Array.from({ length: 7 }, () => para([run(TEN)]));
+    const res = layoutDocumentWithFields(
+      body([para([run(`${TEN.slice(0, 8)}x`), r]), ...filler, heading]),
+      [field('PAGEREF _Toc1 \\* ROMAN', [r.id])],
+      opts({ bookmarks: new Map([['_Toc1', heading.id]]), diagnostics: sink }),
+    );
+    expect(res.converged).toBe(false);
+    expect(res.passes).toBeLessThan(5);
+    expect(res.layout.pages).toHaveLength(4);
+    expect(res.values.get(r.id)).toBe('III');
+    expect(sink.list().find((d) => d.code === 'field-not-converged')?.message).toContain('来回跳');
+  });
+});
+
 /** 合成度量器下 ASCII 是半角：这几个测试里「一个数字 = 半个汉字」的前提就靠它 */
 it('前提自检：一行 10 个汉字正好排满版心', () => {
   const res = layoutDocumentWithFields(body([para([run(TEN)])]), [], opts());

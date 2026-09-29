@@ -17,7 +17,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **卡口没有了**：横向（断行）与纵向（基线 y）现在都能与真值逐行比。
 Phase 5 的**列表编号**已经从 `numbering.xml` 一路通到首行几何，
 同阶段的**域**结构还原（界桩配对 + 指令解析 + HYPERLINK）与**求值**（PAGE / NUMPAGES /
-SECTIONPAGES 迭代到自洽）都做完了，TOC / SEQ 的求值还没写。
+SECTIONPAGES 迭代到自洽）都做完了；**目录页码**（PAGEREF 按 `_Toc` 书签所在页求值）与目录跳转
+（`doc.rangeOfBookmark`）2026-09-29 接上，TOC 自己的求值（重新生成条目）与 SEQ 还没写。
 **图片**也通了（解析 → 收字节 → 占位 → 画，四层各一段，见下），**几何也用真值标定完了**。Phase 4 的**表格**：属性 + 级联（含 `w:tblStylePr` 条件格式）在 model 层，
 列宽 + 每格的 x 与可用宽 + 格内段落 + **边框冲突解析**在 layout 层，跨页按**行**拆，
 一行放不下时还会从**行间**切开（**拆行**，见下）。**表格这一层全部标定完了** ——
@@ -603,17 +604,20 @@ L2 剩下那 2 行（真值第 10 / 11 行）是**唯一一个解释不了的反
 
 **域求值**在 layout 那一侧（`packages/layout/src/fields.ts`），不在 model —— 求值要页码，
 页码是分页的产物。入口 `layoutDocumentWithFields(resolved, fields, opts)`，认
-**PAGE / NUMPAGES / SECTIONPAGES**（TOC / SEQ 没做，照旧显示文件里存的旧结果）。四处要点：
+**PAGE / NUMPAGES / SECTIONPAGES / PAGEREF**（TOC / SEQ 没做，照旧显示文件里存的旧结果）。四处要点：
 ① 结果**不写回模型**，而是外挂一张「run id → 显示的文字」的表当排版入参
 （`LayoutDocumentOptions.fieldValues`）—— 写回去要每趟迭代克隆一棵树，模型里还会有两份真相；
 ② **收敛判据是那张表不再变**，不是「页数没变」：页数一样、某个 PAGE 从 3 变 4（内容在页之间挪位）
 完全可能，架构 §6 原来写的判据是错的；
-③ **没写 A→B→A 振荡检测**，开发计划 §2.4 说它「是必需品」，就这三个域而言说反了 ——
-域文字只会变宽、分页规则只会把内容往后推，页数**单调不减**，回不了头。防线是
-`MAX_FIELD_PASSES = 5`，撞上去按「取页数较大者冻结」退出 + 诊断。TOC（目录能变短）进来再补；
+③ **A→B→A 振荡检测是 PAGEREF 进来才补的** —— 只有 PAGE 那三个时域文字只会变宽、页数单调不减，
+写了也跑不到；目录里存的旧页码却可以比实际的大，算出来变窄、内容往前挪，两个解能来回跳。
+每趟比「这张表以前排过没有」，排过（或撞上 `MAX_FIELD_PASSES = 5`）就取页数较大者冻结 + 诊断；
 ④ 没写 `\*` 的 PAGE 跟着**本节**的 `w:pgNumType w:fmt`（`SectionProps.pageNumFormat`，
 顺手补进 model）—— 「前言罗马数字、正文阿拉伯数字」就是靠它。`\* CHINESENUM1|2|3`
 的映射没有 Word 样本，关在 `uncalibrated.ts` 的 `FIELD_CHINESE_NUM_FORMATS`。
+**PAGEREF 要书签**：`w:bookmarkStart` 的起点记在段落上（`ParagraphNode.bookmarks`，只在可编辑树上，
+段落之间的归下一段，`_GoBack` 不收），`bookmarkTargets(body)` 摊成表经 `opts.bookmarks` 传进来 ——
+**不传就一律不求值**（离线工具忘了传只会显示旧页码，不会错）。显示目标那一页、按目标那一节的页码格式。
 渲染出来的域结果带 `data-field="1"`：与编号相反，它**要**能被复制与 Ctrl+F 搜到，
 但它不在 document.xml 里，反查不到 `DocPosition`。
 

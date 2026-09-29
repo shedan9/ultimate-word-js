@@ -64,6 +64,21 @@ describe('文字事务', () => {
     expect(structuredClone(editor.body)).toEqual(editor.body);
   });
 
+  it('书签起点跟着段落走：拆段留在前段，合段并进前段（目录页码还找得到标题）', () => {
+    const editor = createTextEditor(
+      parse(
+        '<w:p><w:bookmarkStart w:id="0" w:name="甲"/><w:r><w:t>第一章</w:t></w:r></w:p>' +
+          '<w:p><w:bookmarkStart w:id="1" w:name="乙"/><w:r><w:t>第二章</w:t></w:r></w:p>',
+      ),
+    );
+    editor.tx((t) => void t.splitParagraph(pos(editor.body, 1)));
+    expect([...walkParagraphs(editor.body)].map((p) => p.bookmarks)).toEqual([['甲'], undefined, ['乙']]);
+    editor.tx((t) => void t.joinParagraph(para(editor.body, 1).id));
+    expect([...walkParagraphs(editor.body)].map((p) => p.bookmarks)).toEqual([['甲'], ['乙']]);
+    editor.tx((t) => void t.joinParagraph(para(editor.body).id));
+    expect(para(editor.body).bookmarks).toEqual(['甲', '乙']);
+  });
+
   it('调用方改源树或修改返回的变更集，不会污染快照与撤销记录', () => {
     const source = parse();
     const editor = createTextEditor(source);

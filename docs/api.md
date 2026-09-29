@@ -115,7 +115,12 @@ interface DocRange {
 
 doc.compare(a: DocPosition, b: DocPosition): -1 | 0 | 1;   // 🟢 不属于这份文档的位置抛错
 doc.rangeOf(node: NodeId | DocNode): DocRange | undefined; // 🟢 空段落 / 不存在的 id 答 undefined
+doc.rangeOfBookmark(name: string): DocRange | undefined;    // 🟢 2026-09-29 书签起点所在段落，没有答 undefined
 ```
+
+> `rangeOfBookmark` 只精确到**段落**：书签只记了「起点在哪一段」（`ParagraphNode.bookmarks`），
+> 它唯二的用途 —— 目录页码（PAGEREF 求值，架构 §6）与目录跳转 —— 要的都是标题那一段。
+> 书签不是节点，所以没有选择器；Word 自己的 `_GoBack` 不收。
 
 > ⚠️ **`DocRange` 是纯数据，原先写的 `text()` / `contains()` 两个方法没有了**（2026-09-12）：
 > range 是批注、书签、查找结果的存储形态，要能 `JSON.stringify`、要能过 Worker 边界
@@ -815,6 +820,19 @@ for (const h of doc.query('paragraph[styleId=Heading1]')) {
   view.overlay(doc.rangeOf(h.id).start, el, { placement: 'right-of-line' });
 }
 ```
+
+### 点目录条目跳到标题
+
+```ts
+view.on('click:element', ({ href }) => {
+  if (!href?.startsWith('#')) return;                 // 外部链接交给宿主自己的策略
+  const target = doc.rangeOfBookmark(href.slice(1));  // 目录条目是 HYPERLINK \l "_Toc…"
+  if (target) view.scrollTo(target, { align: 'start', behavior: 'smooth' });
+});
+```
+
+目录里的页码打开时就是算好的（PAGEREF 按书签所在页求值，编辑把标题挤到下一页也跟着变），
+视图**不替宿主跳转**，所以跳这一步写在宿主里。调试台就是这一段。
 
 ### 填模板并导出
 

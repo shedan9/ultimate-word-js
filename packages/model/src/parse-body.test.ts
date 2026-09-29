@@ -32,6 +32,33 @@ function blockText(b: Block | undefined): string {
   return b !== undefined && b.kind === 'paragraph' ? paragraphText(b) : '';
 }
 
+describe('书签起点（PAGEREF 的目标）', () => {
+  it('段内的起点记在本段上，按出现顺序；隔着超链接也算', () => {
+    const { list, sink } = paras(
+      `<w:p><w:bookmarkStart w:id="0" w:name="_Toc1"/><w:r><w:t>一</w:t></w:r><w:bookmarkEnd w:id="0"/>` +
+        `<w:hyperlink w:anchor="x"><w:bookmarkStart w:id="1" w:name="甲"/><w:r><w:t>二</w:t></w:r></w:hyperlink></w:p>` +
+        `<w:p><w:r><w:t>三</w:t></w:r></w:p>${SECT}`,
+    );
+    expect(list[0]?.bookmarks).toEqual(['_Toc1', '甲']);
+    expect(list[1]?.bookmarks).toBeUndefined();
+    expect(sink.list()).toEqual([]);
+  });
+
+  it('段落之间（body / 单元格直下）的起点归文档序里的下一段，文末剩下的归最后一段', () => {
+    const { list } = paras(
+      `<w:p/><w:bookmarkStart w:id="0" w:name="甲"/>` +
+        `<w:tbl><w:tr><w:tc><w:bookmarkStart w:id="1" w:name="乙"/><w:p/></w:tc></w:tr></w:tbl>` +
+        `<w:p/><w:bookmarkStart w:id="2" w:name="丙"/>${SECT}`,
+    );
+    expect(list.map((p) => p.bookmarks)).toEqual([undefined, ['甲', '乙'], ['丙']]);
+  });
+
+  it('Word 自己的 _GoBack 不收', () => {
+    const { list } = paras(`<w:p><w:bookmarkStart w:id="0" w:name="_GoBack"/></w:p>${SECT}`);
+    expect(list[0]?.bookmarks).toBeUndefined();
+  });
+});
+
 describe('段落与 run', () => {
   it('run 里的片段按出现顺序保留，制表位不会被并进文字', () => {
     const { list } = paras(`<w:p><w:r><w:t>a</w:t><w:tab/><w:t>b</w:t></w:r></w:p>${SECT}`);

@@ -7,6 +7,7 @@
  * 表格的属性与级联（含条件格式）也已完成，**列宽算法在 `@uw/layout`**；
  * 域已经从界桩还原成「指令 + 结果」（`fields.ts`），**求值**要等分页。
  */
+export * from './bookmarks.ts';
 export * from './cascade.ts';
 export * from './cascade-table.ts';
 export * from './clear-format.ts';

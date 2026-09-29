@@ -34,6 +34,7 @@ import type {
   TextTransactionOptions,
 } from '@uw/model';
 import {
+  bookmarkTargets,
   buildRunOrder,
   compareDocPositions,
   createTextEditor,
@@ -302,6 +303,16 @@ export class UwDocument {
   rangeOf(node: NodeId | DocNode): DocRange | undefined {
     const target = typeof node === 'string' ? this.#nodeById(node) : node;
     return target === undefined ? undefined : rangeOfNode(target);
+  }
+
+  /**
+   * 书签起点所在段落的 range —— 目录条目「跳转」的落点：`click:element` 给的 `href` 是
+   * `#_Toc…`，去掉 `#` 交给它，再把结果交给 `view.scrollTo()`（视图不替宿主跳转，api.md §11）。
+   * 只精确到**段落**（书签只记了起点在哪一段，见 `ParagraphNode.bookmarks`）；没有这个书签答 undefined
+   */
+  rangeOfBookmark(name: string): DocRange | undefined {
+    const target = bookmarkTargets(this.#loaded.body).get(name);
+    return target === undefined ? undefined : this.rangeOf(target);
   }
 
   /** 挂到一个容器上（选择器或元素），**先清空容器**。一份文档可以挂多个视图 */
