@@ -1,5 +1,5 @@
 import { twipsToPt } from '@uw/core';
-import type { IndexedLine, PageLayout } from '@uw/layout';
+import type { IndexedLine, LineLayout, PageLayout, PlacedTextBox } from '@uw/layout';
 import type { RElement, RenderOptions } from '@uw/render-dom';
 import { buildTextFragment, el, fmt, fmtList } from '@uw/render-dom';
 
@@ -14,6 +14,54 @@ function imageAlternative(x: number, y: number, width: number, height: number, l
     height: fmt(twipsToPt(height)),
     'pointer-events': 'none',
   });
+}
+
+/** 一行的透明文字（编号跳过）。没有可见文字的行返回 undefined */
+function lineText(
+  line: LineLayout,
+  originX: number,
+  baseline: number,
+  options: RenderOptions,
+): RElement | undefined {
+  const fragments = line.fragments.filter((fragment) => !fragment.numbering && fragment.text !== '');
+  if (fragments.length === 0) return undefined;
+  return el(
+    'text',
+    { 'data-copy-line': '', 'xml:space': 'preserve' },
+    fragments.map((fragment) => {
+      const text = buildTextFragment(fragment, originX, baseline, options);
+      text.tag = 'tspan';
+      // tspan 的 transform 在浏览器中不能可靠参与文字布局；用原始字形位置与
+      // textLength 表达横向压缩，保持同一行是一棵可跨样式搜索的 text 子树。
+      if (fragment.style.scale !== 100 && fragment.style.scale !== 0) {
+        delete text.attrs.transform;
+        text.attrs.x = fmtList(fragment.glyphX.map((x) => twipsToPt(originX + x)));
+        text.attrs.textLength = fmt(twipsToPt(fragment.width));
+        text.attrs.lengthAdjust = 'spacingAndGlyphs';
+      }
+      text.attrs.fill = 'transparent';
+      text.attrs.style = 'user-select:text;-webkit-user-select:text;pointer-events:all;cursor:text';
+      text.attrs['data-content-index'] = String(fragment.contentIndex);
+      text.attrs['data-offset'] = String(fragment.offset);
+      return text;
+    }),
+  );
+}
+
+/**
+ * 文本框里的行。它们不在布局索引里（不可编辑、没有 `DocPosition` 能指过去），
+ * 所以不走索引那条路，直接照摞好的块现摊；表格里的字没收（文本框里放表格罕见）
+ */
+function textBoxLines(box: PlacedTextBox, options: RenderOptions): RElement[] {
+  const out: RElement[] = [];
+  for (const block of box.blocks) {
+    if (block.kind !== 'paragraph') continue;
+    for (const placed of block.lines) {
+      const text = lineText(placed.line, box.x, box.y + placed.y + placed.line.baseline, options);
+      if (text !== undefined) out.push(text);
+    }
+  }
+  return out;
 }
 
 /**
@@ -31,33 +79,12 @@ export function buildTextLayer(
   if (enabled) {
     for (const line of lines) {
       if (line.page !== page.index || line.repeated) continue;
-      const fragments = line.line.fragments.filter((fragment) => !fragment.numbering && fragment.text !== '');
-      if (fragments.length > 0)
-        children.push(
-          el(
-            'text',
-            { 'data-copy-line': '', 'xml:space': 'preserve' },
-            fragments.map((fragment) => {
-              const text = buildTextFragment(fragment, line.originX, line.top + line.line.baseline, options);
-              text.tag = 'tspan';
-              // tspan 的 transform 在浏览器中不能可靠参与文字布局；用原始字形位置与
-              // textLength 表达横向压缩，保持同一行是一棵可跨样式搜索的 text 子树。
-              if (fragment.style.scale !== 100 && fragment.style.scale !== 0) {
-                delete text.attrs.transform;
-                text.attrs.x = fmtList(fragment.glyphX.map((x) => twipsToPt(line.originX + x)));
-                text.attrs.textLength = fmt(twipsToPt(fragment.width));
-                text.attrs.lengthAdjust = 'spacingAndGlyphs';
-              }
-              text.attrs.fill = 'transparent';
-              text.attrs.style = 'user-select:text;-webkit-user-select:text;pointer-events:all;cursor:text';
-              text.attrs['data-content-index'] = String(fragment.contentIndex);
-              text.attrs['data-offset'] = String(fragment.offset);
-              return text;
-            }),
-          ),
-        );
+      const text = lineText(line.line, line.originX, line.top + line.line.baseline, options);
+      if (text !== undefined) children.push(text);
       // 绘制层是 inert，图片的替代说明必须在常驻层保留；不用文本节点，避免混入复制。
       for (const object of line.line.objects ?? []) {
+        // 内嵌文本框的字在下面随 `page.floats` 收，不是图片
+        if (object.textBox !== undefined) continue;
         children.push(
           imageAlternative(
             line.originX + object.x,
@@ -70,6 +97,11 @@ export function buildTextLayer(
       }
     }
     for (const object of page.floats ?? []) {
+      // 文本框的字进常驻层（查找、复制、读屏都要它），框本身不再补「图片」的替代说明
+      if (object.textBox !== undefined) {
+        children.push(...textBoxLines(object.textBox, options));
+        continue;
+      }
       children.push(
         imageAlternative(
           object.x,

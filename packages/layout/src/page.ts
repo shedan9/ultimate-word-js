@@ -68,7 +68,9 @@ import type {
   ResolvedParaProps,
   ResolvedTableRow,
   SectionProps,
+  ShapeStyle,
   TableBorders,
+  TextBoxRef,
 } from '@uw/model';
 import { formatNumber, walkBlocks } from '@uw/model';
 import type { HeaderFooterSource, HeaderRules, PlacedHeaderFooter, StackResult } from './header-footer.ts';
@@ -108,6 +110,7 @@ import {
   FOOTNOTE_SEPARATOR_LINE_Y,
   FOOTNOTE_SEPARATOR_WIDTH,
   FOOTNOTE_SPLIT_MIN_LINES,
+  TEXT_BOX_SNAPS_TO_GRID,
 } from './uncalibrated.ts';
 import type { WrapExclusion } from './wrap.ts';
 import { slotAround, wrapExclusion } from './wrap.ts';
@@ -294,6 +297,32 @@ export interface PlacedFloat {
   behindDoc: boolean;
   /** z 序（`wp:anchor@relativeHeight`），同一页内已按它升序排好 */
   z: number;
+  /** 形状的填充与轮廓（文本框） */
+  shape?: ShapeStyle;
+  /** 文本框的内容，已经摞好（`attachTextBox`） */
+  textBox?: PlacedTextBox;
+  /**
+   * **内嵌**文本框借住在这里：外框（填充与轮廓）照旧由它所在的行画，这一份只带内容 ——
+   * 行的绘制是按段落缓存复用的，内容却要等分页后才摞（要知道纸坐标才能裁剪）。
+   * 渲染层据此不再画外框、可选文本层不再给它补替代说明
+   */
+  inline?: true;
+}
+
+/**
+ * 摞好的文本框内容。坐标：`x` / `y` 是内容区左上角**相对纸**（外框 + 内边距 + 纵向对齐的偏移），
+ * `blocks` 相对内容区左上角 —— 与页眉页脚同一套，渲染层拿画页眉的那条路画它。
+ *
+ * 装不下的部分 Word **不画**（文本框不会自己长高，`spAutoFit` 的高度存盘时已经算好写进外框了），
+ * 所以渲染层按外框（`PlacedFloat` 的 x / y / width / height）裁剪。
+ */
+export interface PlacedTextBox {
+  x: Twips;
+  y: Twips;
+  width: Twips;
+  /** 内容摞出来的总高（可能大过外框，见上） */
+  height: Twips;
+  blocks: PlacedBlock[];
 }
 
 export interface DocumentLayout {
@@ -389,7 +418,15 @@ export interface LayoutDocumentOptions {
    * 与不传页眉页脚同理，离线工具少传一项不会错位到别的地方去
    */
   notes?: NoteSource;
+  /**
+   * 文本框的内容（直接传 `LoadedDocument.textBoxes`）。不传 = 文本框只画外框、里面空着 ——
+   * 它不参与分页，少传不会让正文错位
+   */
+  textBoxes?: TextBoxSource;
 }
+
+/** 文本框 id → 级联完的块。形状与 `LoadedDocument.textBoxes` 对得上 */
+export type TextBoxSource = Readonly<Record<string, { resolved: readonly ResolvedBlock[] }>>;
 
 export interface PaginationRules {
   /** 孤行寡行的保底行数 */
@@ -475,6 +512,11 @@ interface Flow {
   notes: NoteFlow | undefined;
   /** 当前页上的环绕禁区（`wrap.ts`），开页时清空、先收页眉页脚里的，正文的随锚点段落收进来 */
   wrap: WrapFlow;
+  /**
+   * 摞好的文本框内容，按「id + 内容宽」缓存。页眉里的文本框每页都出现一次，内容却一个字不变
+   * （文本框里的域不求值）—— 与 `hf` 同理只摞一次、各页共用
+   */
+  textBoxes: Map<string, StackResult>;
 }
 
 interface WrapFlow {
@@ -598,6 +640,7 @@ function layoutPass(
     hfDynamic: dynamicParts(opts.headerFooters, opts.headerFields),
     notes: undefined,
     wrap: { exclusions: [], seen: new Set(), approxReported: false },
+    textBoxes: new Map(),
   };
   // 自定义标记的尾注不占号（labels 里没有它），内容照样要排 —— 所以另数一遍引用
   const endnoteIds = opts.notes === undefined ? [] : endnoteIdsBySection(body);
@@ -658,7 +701,7 @@ function layoutPass(
   // 浮动对象等**整页排完**再算：它的参照物可以是「纸」「页边距」，那两样要等这一页的
   // 版心定下来（页眉长度会挤窄版心，见文件头）。反过来它不影响任何一行的位置，
   // 所以放在最后一趟是安全的
-  for (const page of flow.pages) placeFloats(page);
+  for (const page of flow.pages) placeFloats(flow, page);
   if (flow.notes !== undefined) for (const page of flow.pages) placeFootnotes(flow, page);
   return { pages: flow.pages };
 }
@@ -1653,27 +1696,102 @@ function emitRows(
  * 没有样本的只剩「同一根轴上 align（left/center/right）与 offset 并存时谁赢」——
  * 规范里那是个 choice，Word 也只写一个，所以造不出样本。
  */
-function placeFloats(page: PageLayout): void {
+function placeFloats(flow: Flow, page: PageLayout): void {
   const out: PlacedFloat[] = [];
   const g = page.geometry;
-  collectFloats(page.blocks, g.content.x, g.content.y, page, out);
+  const frames: [readonly PlacedBlock[], Twips, Twips][] = [[page.blocks, g.content.x, g.content.y]];
   // 页眉页脚里的浮动对象锚在**框**上（框自己的坐标已经是纸坐标了）
-  if (page.header !== undefined) collectFloats(page.header.blocks, page.header.x, page.header.y, page, out);
-  if (page.footer !== undefined) collectFloats(page.footer.blocks, page.footer.x, page.footer.y, page, out);
-  if (out.length === 0) return;
+  if (page.header !== undefined) frames.push([page.header.blocks, page.header.x, page.header.y]);
+  if (page.footer !== undefined) frames.push([page.footer.blocks, page.footer.x, page.footer.y]);
+  for (const [blocks, x, y] of frames) {
+    eachFloat(blocks, x, y, page, (f, placed) => {
+      if (f.textBox !== undefined) attachTextBox(flow, page, placed, f.textBox);
+      out.push(placed);
+    });
+  }
+  // 内嵌文本框在正文的层里（z 最低），浮于文字上方的对象该盖住它，所以排在最前
+  const inline: PlacedFloat[] = [];
+  for (const [blocks, x, y] of frames) collectInlineTextBoxes(flow, page, blocks, x, y, inline);
+  if (out.length === 0 && inline.length === 0) return;
   // 稳定排序：z 相同的按文档顺序，与 Word 「后插入的盖在上面」一致
   out.sort((a, b) => a.z - b.z);
-  page.floats = out;
+  page.floats = [...inline, ...out];
 }
 
-function collectFloats(
+/**
+ * 文本框的内容：浮动的在 `placeFloats` 算好外框时接上，内嵌的先按行算出外框、借住进
+ * `page.floats`（带 `inline`）。内容区 = 外框减内边距，块从内容区顶往下摞，
+ * 摞完按 `vAlign` 整体下移（装不下时不上移 —— 顶着上边往下溢出，溢出的那截被裁掉）。
+ *
+ * 不分页、不参与正文的任何一处几何，所以放在整份排完之后。内嵌文本框在表格单元格里的
+ * 没收（格子的纸坐标要连着行高算，与格里的浮动对象同一个洞，见 `placeFloats`）——
+ * 那些只剩外框。
+ */
+function attachTextBox(flow: Flow, page: PageLayout, f: PlacedFloat, ref: TextBoxRef): void {
+  const content = flow.opts.textBoxes?.[ref.id];
+  if (content === undefined) return;
+  const width = Math.max(0, f.width - ref.inset.left - ref.inset.right);
+  const key = `${ref.id}|${width}`;
+  let stacked = flow.textBoxes.get(key);
+  if (stacked === undefined) {
+    stacked = stackBlocks(content.resolved, {
+      ...(flow.opts.paragraphCache === undefined ? {} : { paragraphCache: flow.opts.paragraphCache }),
+      measurer: flow.opts.measurer,
+      settings: flow.opts.settings,
+      docGrid: TEXT_BOX_SNAPS_TO_GRID ? (flow.sections[page.sectionIndex]?.docGrid ?? NO_GRID) : NO_GRID,
+      contentWidth: width,
+      ...(flow.opts.defaultFont === undefined ? {} : { defaultFont: flow.opts.defaultFont }),
+    });
+    flow.textBoxes.set(key, stacked);
+  }
+  const room = f.height - ref.inset.top - ref.inset.bottom;
+  const slack = Math.max(0, room - stacked.height);
+  const shift = ref.vAlign === 'center' ? slack / 2 : ref.vAlign === 'bottom' ? slack : 0;
+  f.textBox = {
+    x: f.x + ref.inset.left,
+    y: f.y + ref.inset.top + shift,
+    width,
+    height: stacked.height,
+    blocks: stacked.blocks,
+  };
+}
+
+/** 文本框的内容不吸行网格时用的「没有网格」 */
+const NO_GRID: SectionProps['docGrid'] = { type: 'default', linePitch: 0, charSpace: 0 };
+
+/** 内嵌文本框：外框按行算（与渲染层画内嵌对象同一个式子），内容接上后借住进 `out` */
+function collectInlineTextBoxes(
+  flow: Flow,
+  page: PageLayout,
   blocks: readonly PlacedBlock[],
   originX: Twips,
   originY: Twips,
-  page: PageLayout,
   out: PlacedFloat[],
 ): void {
-  eachFloat(blocks, originX, originY, page, (_, placed) => out.push(placed));
+  if (flow.opts.textBoxes === undefined) return;
+  for (const block of blocks) {
+    if (block.kind !== 'paragraph') continue;
+    for (const placed of block.lines) {
+      for (const o of placed.line.objects ?? []) {
+        if (o.textBox === undefined) continue;
+        const f: PlacedFloat = {
+          runId: o.runId,
+          contentIndex: o.contentIndex,
+          x: originX + o.x,
+          // 基线 − 高 − raise，与 render-dom 画内嵌对象一致
+          y: originY + placed.y + placed.line.baseline - o.height - (o.raise ?? 0),
+          width: o.width,
+          height: o.height,
+          objectKind: o.objectKind,
+          behindDoc: false,
+          z: 0,
+          inline: true,
+        };
+        attachTextBox(flow, page, f, o.textBox);
+        if (f.textBox !== undefined) out.push(f);
+      }
+    }
+  }
 }
 
 /** 摆好的块里每个浮动对象连同它的纸坐标。页眉页脚开页时就摆好了，环绕禁区也走这一条（`currentPage`） */
@@ -1729,6 +1847,7 @@ function resolveFloat(f: LineFloat, page: PageLayout, ctx: FloatContext): Placed
   if (f.image !== undefined) out.image = f.image;
   if (f.alt !== undefined) out.alt = f.alt;
   if (f.graphic !== undefined) out.graphic = f.graphic;
+  if (f.shape !== undefined) out.shape = f.shape;
   return out;
 }
 

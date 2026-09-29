@@ -140,8 +140,38 @@ export interface ObjectContent {
   /** `a:graphicData@uri` 的短名（`picture` / `chart` / `diagram` / `wordprocessingShape`…）。
    *  画不出来时靠它说清楚「这是张图表」，而不是笼统的「有个对象」 */
   graphic?: string;
-  /** 浮动对象（`wp:anchor`）的定位与环绕。内嵌（`wp:inline`）时缺席 */
+  /**
+   * 浮动对象（`wp:anchor`）的定位与环绕。内嵌（`wp:inline`）时缺席。
+   * VML 的 `position:absolute` 形状也折成这一份（parse-drawing.ts 的 `vmlAnchor`）
+   */
   anchor?: DrawingAnchor;
+  /**
+   * 文本框（`wps:txbx` / `v:textbox`）。只有引用与版式 —— 内容是一列块，在
+   * `LoadedDocument.textBoxes` 里按 `id` 摊着，理由与脚注相同：挂在 run 上的话，
+   * 段落缓存的键、级联、查找、事务的每一处遍历都得学会往 run 里钻
+   */
+  textBox?: TextBoxRef;
+  /**
+   * 形状自己的底色与边框。**只有文本框解析它**：纯形状（线、矩形、箭头）的几何
+   * 还是非目标，照旧画占位框；文本框是矩形，填充与轮廓就是它的全部外观
+   */
+  shape?: ShapeStyle;
+}
+
+/** 文本框的引用与版式。内边距与纵向对齐改的是**内容**摆在框里的哪儿，外框不动 */
+export interface TextBoxRef {
+  /** `LoadedDocument.textBoxes` 的 key。同时是内容里全部节点 id 的前缀（加一个 `:`） */
+  id: NodeId;
+  /** 文字与框边的距离（`wps:bodyPr` 的 `lIns` 等 / `v:textbox@inset`） */
+  inset: { left: Twips; top: Twips; right: Twips; bottom: Twips };
+  /** 内容在框里靠上 / 居中 / 靠下（`wps:bodyPr@anchor` / `v-text-anchor`） */
+  vAlign: 'top' | 'center' | 'bottom';
+}
+
+/** 形状的填充与轮廓。颜色是 RRGGBB（主题色已在解析时换算）；缺席 = 不填 / 不画线 */
+export interface ShapeStyle {
+  fill?: string;
+  stroke?: { color: string; width: Twips };
 }
 
 /**

@@ -22,6 +22,13 @@ export interface FontScheme {
 export interface Theme {
   major: FontScheme;
   minor: FontScheme;
+  /**
+   * 配色（`a:clrScheme`）：`dk1` / `lt1` / `accent1` … → RRGGBB。只有形状的填充与轮廓用它
+   * （文本框的底色、边框写的多是 `a:schemeClr`，见 parse-drawing.ts）；文字颜色的 `w:themeColor`
+   * 仍按「有 `w:val` 就用它」处理 —— Word 存盘时总把算好的 RGB 写在 `w:val` 里。
+   * 缺席 = 没有主题或主题里没配色
+   */
+  colors?: Record<string, string>;
 }
 
 const EMPTY_SCHEME: FontScheme = { latin: '', eastAsia: '', cs: '', byScript: {} };
@@ -32,11 +39,30 @@ export const EMPTY_THEME: Theme = { major: EMPTY_SCHEME, minor: EMPTY_SCHEME };
 export function parseTheme(doc: XmlDocument): Theme {
   const elements = child(doc.root, 'a:themeElements');
   const scheme = elements && child(elements, 'a:fontScheme');
-  if (!scheme) return EMPTY_THEME;
-  return {
-    major: parseScheme(child(scheme, 'a:majorFont')),
-    minor: parseScheme(child(scheme, 'a:minorFont')),
-  };
+  const colors = parseColors(elements && child(elements, 'a:clrScheme'));
+  const out: Theme = scheme
+    ? { major: parseScheme(child(scheme, 'a:majorFont')), minor: parseScheme(child(scheme, 'a:minorFont')) }
+    : { ...EMPTY_THEME };
+  if (colors !== undefined) out.colors = colors;
+  return out;
+}
+
+/**
+ * `a:clrScheme` 的十二个槽。每个槽里是 `a:srgbClr@val`，或 `a:sysClr`（系统色，取 Office
+ * 存盘时写下的 `@lastClr` —— 按系统名去猜「窗口背景」是什么色没有意义）
+ */
+function parseColors(el: XmlElement | undefined): Record<string, string> | undefined {
+  if (el === undefined) return undefined;
+  const out: Record<string, string> = {};
+  for (const slot of children(el)) {
+    const name = slot.name.startsWith('a:') ? slot.name.slice(2) : slot.name;
+    const srgb = child(slot, 'a:srgbClr');
+    const sys = child(slot, 'a:sysClr');
+    const value =
+      srgb !== undefined ? attr(srgb, 'val') : sys !== undefined ? attr(sys, 'lastClr') : undefined;
+    if (value !== undefined && /^[0-9A-Fa-f]{6}$/.test(value)) out[name] = value.toUpperCase();
+  }
+  return Object.keys(out).length === 0 ? undefined : out;
 }
 
 function parseScheme(el: XmlElement | undefined): FontScheme {

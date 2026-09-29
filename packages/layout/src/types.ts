@@ -22,6 +22,8 @@ import type {
   ObjectContent,
   ParagraphBorders,
   Shading,
+  ShapeStyle,
+  TextBoxRef,
   VerticalAlign,
 } from '@uw/model';
 
@@ -183,6 +185,10 @@ export interface ObjectItem {
   image?: ImageRef;
   alt?: string;
   graphic?: string;
+  /** 文本框（内容在 `LayoutDocumentOptions.textBoxes`，分页排完才摞，见 page.ts 的 `attachTextBox`） */
+  textBox?: TextBoxRef;
+  /** 形状的填充与轮廓（目前只有文本框带） */
+  shape?: ShapeStyle;
   /**
    * **浮动且不参与文字流**（有 `wp:anchor` 就算：印章、水印、衬于文字下方的红头、
    * 页脚里的文本框）。
@@ -221,6 +227,9 @@ export interface LineObject {
   image?: ImageRef;
   alt?: string;
   graphic?: string;
+  /** 同 `ObjectItem.textBox`。内嵌文本框的**内容**不画在这里，在 `PageLayout.floats`（带 `inline`） */
+  textBox?: TextBoxRef;
+  shape?: ShapeStyle;
 }
 
 /**

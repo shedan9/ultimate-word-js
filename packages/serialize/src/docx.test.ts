@@ -827,3 +827,30 @@ describe('目录（更新目录的回写）', () => {
     expect(again.fields.filter((f) => f.instruction.type === 'PAGEREF')).toHaveLength(2);
   });
 });
+
+describe('文本框', () => {
+  /** 一段里：字 + 一个浮动文本框（框里两段）+ 字；后面再跟一段 */
+  const BOX =
+    '<w:p><w:r><w:t>框前</w:t></w:r><w:r><w:drawing><wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" behindDoc="0" relativeHeight="1">' +
+    '<wp:positionH relativeFrom="page"><wp:posOffset>0</wp:posOffset></wp:positionH>' +
+    '<wp:positionV relativeFrom="page"><wp:posOffset>0</wp:posOffset></wp:positionV>' +
+    '<wp:extent cx="1270000" cy="635000"/><wp:wrapNone/>' +
+    '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">' +
+    '<wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:txbx><w:txbxContent>' +
+    '<w:p><w:r><w:t>框里一</w:t></w:r></w:p><w:p><w:r><w:t>框里二</w:t></w:r></w:p>' +
+    '</w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic>' +
+    '</wp:anchor></w:drawing></w:r><w:r><w:t>框后</w:t></w:r></w:p>' +
+    '<w:p><w:r><w:t>后一段</w:t></w:r></w:p>';
+
+  it('框所在的段落与后面的段落改了字，框与框里的内容原样回写（id 不因框里的段落挪位）', () => {
+    const { out, again } = roundTrip(docx(BOX), (t, body) => {
+      t.insertText(textPosition(body, 0, 1) as DocPosition, '甲');
+      t.insertText(textPosition(body, 2, 1) as DocPosition, '乙');
+    });
+    const xml = decoder.decode(unzip(out).get('word/document.xml'));
+    expect(xml).toContain('<w:t>框里一</w:t></w:r></w:p><w:p><w:r><w:t>框里二</w:t>');
+    expect(xml.match(/<w:txbxContent>/g)).toHaveLength(1);
+    expect(paragraphs(again.body).map(paragraphText)).toEqual(['框甲前框后', '后乙一段']);
+    expect(Object.values(again.textBoxes).map((t) => t.blocks.length)).toEqual([2]);
+  });
+});

@@ -5,7 +5,7 @@
  * 翻译成 pt」以及那几处**画错了才看得出来**的地方 —— 裁剪要放大后再切、
  * 旋转 90° 要横竖对调、画不出来的要留一个尺寸正确的框。
  */
-import type { LineLayout, LineObject, PageLayout, PlacedFloat } from '@uw/layout';
+import type { LineLayout, LineObject, PageLayout, PlacedFloat, PlacedTextBox } from '@uw/layout';
 import { describe, expect, it } from 'vitest';
 import { imageHrefOf, imageHrefResolver } from './image.ts';
 import { buildPage } from './paint.ts';
@@ -222,5 +222,120 @@ describe('浮动对象', () => {
     const floats = kinds.flatMap((k, i) => (k === 'uw-float' ? [i] : []));
     expect(floats[0]).toBeLessThan(content);
     expect(floats[1]).toBeGreaterThan(content);
+  });
+});
+
+describe('文本框', () => {
+  const tb = { id: 'tb0', inset: { left: 0, top: 0, right: 0, bottom: 0 }, vAlign: 'top' as const };
+  /** 框里一行字「框内」，行顶在内容区顶、基线 200 twips 处 */
+  const content: PlacedTextBox = {
+    x: 1540,
+    y: 2980,
+    width: 1240,
+    height: 300,
+    blocks: [
+      {
+        kind: 'paragraph' as const,
+        id: 'tb0:p0',
+        y: 0,
+        first: true,
+        last: true,
+        lines: [
+          {
+            index: 0,
+            y: 0,
+            line: {
+              ...line([]),
+              height: 300,
+              baseline: 200,
+              fragments: [
+                {
+                  runId: 'tb0:r0',
+                  contentIndex: 0,
+                  offset: 0,
+                  font: '宋体',
+                  fontSize: 200,
+                  script: 'eastAsia' as const,
+                  style: {
+                    bold: false,
+                    italic: false,
+                    color: '000000',
+                    underline: 'none',
+                    strike: false,
+                    doubleStrike: false,
+                    vertAlign: 'baseline' as const,
+                    position: 0,
+                    scale: 100,
+                  },
+                  text: '框内',
+                  x: 0,
+                  width: 400,
+                  glyphX: [0, 200],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  };
+  const boxFloat = (over: Partial<PlacedFloat> = {}): PlacedFloat => ({
+    runId: 'r3',
+    contentIndex: 0,
+    x: 1440,
+    y: 2880,
+    width: 1440,
+    height: 720,
+    objectKind: 'drawing',
+    behindDoc: false,
+    z: 0,
+    textBox: content,
+    ...over,
+  });
+
+  it('画填充与轮廓，不画虚线占位框；内容按外框裁剪、平移到内容区', () => {
+    const svg = buildPage(
+      pageWith([], [boxFloat({ shape: { fill: 'FFEEAA', stroke: { color: '000000', width: 20 } } })]),
+    );
+    const rects = collect(svg, 'rect');
+    expect(rects.some((r) => r.attrs.class?.includes('object-placeholder'))).toBe(false);
+    const shape = rects.find((r) => r.attrs.class?.includes('uw-shape'));
+    expect(shape?.attrs).toMatchObject({
+      x: '72',
+      y: '144',
+      width: '72',
+      height: '36',
+      fill: '#ffeeaa',
+      stroke: '#000000',
+      'stroke-width': '1',
+    });
+
+    const [group] = collect(svg, 'g').filter((g) => g.attrs.class === 'uw-text-box');
+    const [clip] = collect(group as RElement, 'clipPath');
+    expect(clip?.children[0]?.attrs).toMatchObject({ x: '72', y: '144', width: '72', height: '36' });
+    expect(group?.attrs['clip-path']).toBe(`url(#${clip?.attrs.id})`);
+    expect(group?.children[1]?.attrs.transform).toBe('translate(77 149)');
+    const texts = collect(group as RElement, 'text');
+    expect(texts.map((t) => t.children.map((c) => c.text ?? '').join('') || t.text)).toContain('框内');
+  });
+
+  it('没有填充也没有轮廓的框（页脚里的一小段字）外框什么都不画', () => {
+    const svg = buildPage(pageWith([], [boxFloat()]));
+    expect(collect(svg, 'rect').filter((r) => r.attrs.class?.includes('uw-float'))).toHaveLength(0);
+    expect(collect(svg, 'g').some((g) => g.attrs.class === 'uw-text-box')).toBe(true);
+  });
+
+  it('内嵌文本框：外框由行画（形状代替占位框），借住在 floats 里的那一份只画内容', () => {
+    const svg = buildPage(
+      pageWith(
+        [object({ image: null, textBox: tb, shape: { stroke: { color: '000000', width: 20 } } })],
+        [boxFloat({ inline: true, shape: { fill: 'FF0000' } })],
+      ),
+    );
+    const shapes = collect(svg, 'rect').filter((r) => r.attrs.class?.includes('uw-shape'));
+    expect(shapes).toHaveLength(1);
+    expect(shapes[0]?.attrs.class).toContain('uw-object');
+    expect(collect(svg, 'rect').some((r) => r.attrs.class?.includes('object-placeholder'))).toBe(false);
+    expect(collect(svg, 'g').filter((g) => g.attrs.class === 'uw-text-box')).toHaveLength(1);
   });
 });

@@ -333,6 +333,8 @@ function appendRun(
         if (c.image !== undefined) item.image = c.image;
         if (c.alt !== undefined) item.alt = c.alt;
         if (c.graphic !== undefined) item.graphic = c.graphic;
+        if (c.textBox !== undefined) item.textBox = c.textBox;
+        if (c.shape !== undefined) item.shape = c.shape;
         // 真实尺寸不能丢：浮动对象照样要画出来，只是不占文字的地方
         if (floating) item.float = { anchor: c.anchor as DrawingAnchor, width: c.width, height: c.height };
         out.push(item);

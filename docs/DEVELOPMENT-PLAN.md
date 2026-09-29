@@ -972,6 +972,30 @@ await view.toPNG(2);     // 第 3 页（页序号从 0 起，与 scrollTo({ page
     （`WRAP_BOTH_SIDES_AS`，记 `wrap-both-sides-approximated`），段落缩进与禁区取交集、碰边不算碰，钉死办法在 `uncalibrated.ts`
   - 未做：锚点之前已排下的行不回头让（定位在锚点上方的对象）、表格不绕、单元格 / 页眉页脚 / 脚注里的文字不绕、
     bothSides 真的一行两段
+- ✅ **文本框**（2026-09-29）：原来文本框只画一个虚线占位框，框里的字**整块不见** —— 真实语料（12n 那两份）
+  「第一页页眉少了两行」多半就是它：页眉里「体系名称 / 编码」「版本 / 发布范围」那种写法全装在文本框里
+  （桌面上同一套制度文件的 AM-01-02 照出来的正是这两处）。
+  - `@uw/model`：`wps:txbx` / `v:textbox` 的 `w:txbxContent` 解析成一列块，按 id 摊进 `LoadedDocument.textBoxes`
+    （与脚注同理：挂在 run 上的话段落缓存键、级联、查找、事务每一处遍历都得学会往 run 里钻）；对象上只留 `TextBoxRef`
+    （id + 内边距 + `vAlign`）与 `ShapeStyle`（矩形的填充与轮廓，`a:schemeClr` 按新解析的主题配色 `Theme.colors`
+    换算、认 `lumMod` / `lumOff`，spPr 没写退到 `wps:style` 的 fillRef / lnRef）。框里节点的 id 带 `tb0:` 前缀、
+    计数器另起 —— **不另起的话多一个框就让后面正文的每个 id 挪一位**，回写靠的正是两次解析 id 一致；
+    回写那趟重新解析不要内容，只分配 id。`mc:AlternateContent` 只收 Choice，一个框只摊一份
+  - **VML 的 `position:absolute` 折成浮动锚点**（`vmlAnchor`：偏移 = `left` + `margin-left`、参照物换成 DrawingML 的名字、
+    `w10:wrap` 给环绕、负 `z-index` 是衬于文字下方）。原来 VML 一律当内嵌：WPS 从 PDF 转出来的文件把页脚里每一小段字
+    都放进绝对定位的 VML 文本框，当内嵌就是一串框挤在页脚那一行里（AM-01-02 因此 48 页 → 42 页；Word 26 页，
+    剩下的差大头是「SimSun」这类英文字体名查不到度量包，另一件事）
+  - 顺带修掉一个真错：`a:blip` 深搜会**钻进文本框的内容**，把框里插的第一张图当成整个框的填充，画成一张盖满框的图
+  - `@uw/layout`：整份排完后（`placeFloats`）按外框减内边距 `stackBlocks`、按 `vAlign` 整体下移（装不下时顶着上边），
+    挂到 `PlacedFloat.textBox`；内嵌文本框按行算外框、借住进 `page.floats`（`inline`）。页眉里的框每页都出现，
+    内容按「id + 宽」只摞一次。框里的段落**不吸行网格**，没有真值（`TEXT_BOX_SNAPS_TO_GRID`，钉死办法在 `uncalibrated.ts`）
+  - `@uw/render-dom`：矩形的填充与轮廓代替占位框（两样都没有就什么都不画），内容按外框 `clipPath` 裁剪；
+    `@uw/view` 的常驻文字层收框里的字（查找 / 复制 / 读屏），不再给它补「图片」的替代说明
+  - 判据：model 13 项 + layout 6 项 + render-dom 3 项 + 端到端 3 项（真 docx：正文 DrawingML 框里带图 + 页脚 VML 框）
+    + 回写 1 项（框所在段落与后一段改字，框原样回写、重新加载内容还在）；浏览器回归全过
+  - 未做：框里的域不求值（显示存着的结果）、框里的编辑与命中测试（字不在布局索引里）、竖排文字（`vert`）、
+    `spAutoFit` 不重算高度（存盘时已算好）、组合（`wpg:wgp` / `v:group`）与画布里的框、表格单元格里的内嵌框只剩外框、
+    链接的文本框（`wps:linkedTxbx`）、线条等纯形状的几何（仍是占位框）
 - ~~**图片的几何标定**~~ ✅（2026-08-25）两份新样本 + `pnpm --filter @uw/fidelity spike:image`。
   为它给真值管线加了一路新数据：`truth.json` 的 `pages[].images[]`（照着 PDF 算子表把
   `q` / `Q` / `cm` 演一遍 CTM 读出来 —— 图片在 PDF 里没有自己的坐标，位置与大小全在矩阵里）。
@@ -1375,7 +1399,8 @@ await view.toPNG(2);     // 第 3 页（页序号从 0 起，与 scrollTo({ page
 - 多栏排版（`w:cols` 多栏）—— Phase 9 之后再议
 - 修订痕迹（track changes）的编辑，只做**显示**
 - 数学公式 OMML 的排版 —— 转 MathML 交给浏览器
-- VML / 旧版图形、SmartArt、图表（`c:chart`）—— 降级为占位图
+- VML / 旧版图形、SmartArt、图表（`c:chart`）—— 降级为占位图（**文本框除外**：框里是正文级的字，
+  2026-09-29 起 DrawingML 与 VML 的文本框都画内容，VML 的绝对定位也认）
 - .doc（二进制）格式
 - 完整 autofit 表格算法
 - RTL / 复杂文字（阿拉伯、天城文）
@@ -1557,7 +1582,8 @@ CI 上无 Word，所以真值 PDF 与抽取结果**提交进仓库**（`fixtures
     改完 LM-01-04 28 → 21 页、XX-01-02 42 → 41 页（Word 19 / 29），诊断只剩一条
     「Wingdings 2 没有度量包」（真缺，行为正确）。**两份语料没有入库** ——
     真实公司文件进 git 是永久的，脚本按 `fixtures/*.docx` 自动发现，放回去就能跑。
-    剩下的差还没查：两份文档的**第一页页眉**都少了两行，XX-01-02 中段有一串
+    剩下的差还没查：两份文档的**第一页页眉**都少了两行（2026-09-29：多半是文本框，见 Phase 5 的「文本框」条目 ——
+    同一套制度文件的 AM-01-02 页眉里正是两个装着「体系名称 / 编码」的文本框），XX-01-02 中段有一串
     「4 行 / 2 行」的近空页
 
 12o. ~~**图片 × 行网格 / 倍数行距**~~ ✅（2026-08-26）第三份样本 `spike-image-03`

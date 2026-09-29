@@ -25,7 +25,12 @@ STYLEREF 正文里往前找、页眉里**先找本页**再往前，后者进页�
 `@uw/model` 的 `toc.ts` 在事务外从级联树挑标题拼草稿（事务看不到大纲级别），事务 `replaceFieldResult` 换结果区、
 `addBookmark` 给标题补 `_Toc` 书签（回写成罩住整段的 `w:bookmarkStart/End`，id 接着原文编），缺 `toc N` 样式补定义；
 页码初值取当前布局（`paragraphPageNumbers`），显示时仍由 PAGEREF 重算。`\c` / `\f` / `\b` / `\s` 不支持，跳过不动。
-**图片**也通了（解析 → 收字节 → 占位 → 画，四层各一段，见下），**几何也用真值标定完了**；**方形 / 上下型环绕让开文字**2026-09-29 接上（`wrap.ts`，没有真值，见下）。Phase 4 的**表格**：属性 + 级联（含 `w:tblStylePr` 条件格式）在 model 层，
+**图片**也通了（解析 → 收字节 → 占位 → 画，四层各一段，见下），**几何也用真值标定完了**；**方形 / 上下型环绕让开文字**2026-09-29 接上（`wrap.ts`，没有真值，见下）。**文本框**同日接上：`wps:txbx` / `v:textbox` 的内容按 id 摊进 `LoadedDocument.textBoxes`（框里节点 id 带 `tb0:` 前缀、
+计数器另起，否则多一个框就让后面正文的 id 全挪一位、回写对不上），对象上只留 `TextBoxRef` + `ShapeStyle`（矩形填充 / 轮廓，
+主题色走新解析的 `Theme.colors`）；**VML 的 `position:absolute` 折成浮动锚点**（原来一律当内嵌，WPS 转出来的页脚里一串框挤在一行）；
+`a:blip` 深搜**不钻进** `w:txbxContent`（钻进去会把框里的图当成整个框的填充）。布局在 `placeFloats` 里按外框减内边距
+`stackBlocks`、挂到 `PlacedFloat.textBox`（内嵌的借住进 `page.floats`，带 `inline`），框里段落不吸网格（未标定）；
+渲染按外框 `clipPath` 裁剪，常驻文字层收框里的字。框里的域不求值、不可编辑。Phase 4 的**表格**：属性 + 级联（含 `w:tblStylePr` 条件格式）在 model 层，
 列宽 + 每格的 x 与可用宽 + 格内段落 + **边框冲突解析**在 layout 层，跨页按**行**拆，
 一行放不下时还会从**行间**切开（**拆行**，见下）。**表格这一层全部标定完了** ——
 几何、条件格式、格线冲突、拆行四问都有了真值。造样本的工具从此会造表
@@ -455,7 +460,7 @@ keepNext 的接缝要留出下一块**「最少能放多少」**（不是它的�
 不是图片的像素尺寸）；`a:blip` 要**深搜**（规范路径 / `mc:AlternateContent` 的 Choice /
 形状的填充三种写法），而图表与 SmartArt 里根本没有 blip，「找不到就是画不出来」正好是
 画占位框的判据；裁剪 `a:srcRect` **不改外框**（裁剩的那块被拉伸回去）。VML（`w:pict`）
-只取「图片引用 + `style` 里的外框」，其中不带单位的数字按 **px** 算（CSS 的默认单位，
+只取「图片引用 + `style` 里的外框与绝对定位 + 文本框」，其中不带单位的数字按 **px** 算（CSS 的默认单位，
 不是 pt）—— 公文的红头与印章大量走 VML 这条路。
 ② `@uw/model` 的 `images.ts` —— 字节按**引用**收（包里常留着没人引用的 `media/image3.png`，
 按类型全捞会把几 MB 的废弃扫描件读进内存），摊平成 `LoadedDocument.images`，

@@ -23,6 +23,7 @@ import type { LoadedNotes } from './notes.ts';
 import { allNoteContents, parseNoteParts } from './notes.ts';
 import type { Numbering } from './numbering.ts';
 import { parseNumbering } from './numbering.ts';
+import type { ParseExtras } from './parse-body.ts';
 import { parseBody, parseHeaderFooter } from './parse-body.ts';
 import { resolveBlocks, resolveBody } from './resolve-body.ts';
 import { DEFAULT_SECTION_PROPS } from './section.ts';
@@ -108,6 +109,20 @@ export interface LoadedDocument {
    * 所以重排时照旧用加载时级联好的这一份
    */
   notes: LoadedNotes;
+  /**
+   * 文本框的内容（`wps:txbx` / `v:textbox`），按 `TextBoxRef.id` 索引。与脚注同理摊成表：
+   * 对象上只有引用，内容在这里。**不可编辑**（文本框里的编辑没做），重排时照旧用加载时级联好的这一份
+   */
+  textBoxes: Record<string, TextBoxContent>;
+}
+
+/** 一个文本框的内容。两棵树的分工与页眉页脚一致 */
+export interface TextBoxContent {
+  id: string;
+  /** 所在部件：文本框里的图按这个部件的关系表解引用 */
+  part: string;
+  blocks: Block[];
+  resolved: ResolvedBlock[];
 }
 
 /** 一个 header / footer 部件解析完的样子。两棵树的分工与 `LoadedDocument` 一致 */
@@ -123,15 +138,27 @@ export interface HeaderFooterContent {
 export function loadDocument(pkg: OpcPackage, diagnostics: DiagnosticSink): LoadedDocument {
   const cascade = loadCascadeContext(pkg, diagnostics);
   const partName = pkg.mainDocumentPartName();
+  // 文本框内容按部件分开收：里面的图要按各自部件的关系表解引用
+  const boxSinks: { part: string; sink: Record<string, Block[]> }[] = [];
+  const extrasFor = (part: string): ParseExtras => {
+    const sink: Record<string, Block[]> = {};
+    boxSinks.push({ part, sink });
+    return cascade.theme.colors === undefined
+      ? { textBoxes: sink }
+      : { textBoxes: sink, themeColors: cascade.theme.colors };
+  };
   // 编号定义跟着可编辑的树走（见 `Body.numbering`），与级联上下文共享同一份解析结果
-  const body: Body = { ...parseBody(pkg.xml(partName), diagnostics, partName), numbering: cascade.numbering };
+  const body: Body = {
+    ...parseBody(pkg.xml(partName), diagnostics, partName, undefined, extrasFor(partName)),
+    numbering: cascade.numbering,
+  };
   // 域要在级联**之前**扫：级联是按段落递归的，跨段落的配对在那儿看不见
   const fields = scanFields(body, diagnostics);
 
   // 页眉页脚要在算 hyperlinks **之前**解析完：它们里面的 HYPERLINK 域同样要铺到 run 上，
   // 而铺这件事发生在下面那一趟级联里
-  const headerFooters = parseHeaderFooters(pkg, partName, body, fields, diagnostics);
-  const notes = parseNoteParts(pkg, diagnostics);
+  const headerFooters = parseHeaderFooters(pkg, partName, body, fields, diagnostics, extrasFor);
+  const notes = parseNoteParts(pkg, diagnostics, extrasFor);
   const noteContents = allNoteContents(notes);
   // 注里的域**只取超链接**，不进 `fields`：那张表是给页码求值的，注里的 PAGE 求值没做，
   // 放进去会让求值那边去找一个不在正文里的 run
@@ -151,6 +178,13 @@ export function loadDocument(pkg: OpcPackage, diagnostics: DiagnosticSink): Load
     hf.resolved = resolveBlocks(cascade, hf.blocks, { hyperlinks });
   }
   for (const n of noteContents) n.resolved = resolveBlocks(cascade, n.blocks, { hyperlinks });
+  // 文本框里的域不扫（求值没做，显示文件里存着的结果）；超链接照全文那张表铺
+  const textBoxes: Record<string, TextBoxContent> = {};
+  for (const { part, sink } of boxSinks) {
+    for (const [id, blocks] of Object.entries(sink)) {
+      textBoxes[id] = { id, part, blocks, resolved: resolveBlocks(cascade, blocks, { hyperlinks }) };
+    }
+  }
 
   return {
     cascade,
@@ -175,6 +209,8 @@ export function loadDocument(pkg: OpcPackage, diagnostics: DiagnosticSink): Load
           idPrefix: n.part === notes.footnotes.part ? 'fn:' : 'en:',
           blocks: n.blocks,
         })),
+        // 文本框里的图：id 带着文本框自己的前缀（`tb0:rId5`），按所在部件的关系表解引用
+        ...Object.values(textBoxes).map((t) => ({ part: t.part, idPrefix: `${t.id}:`, blocks: t.blocks })),
       ],
       diagnostics,
     ),
@@ -182,6 +218,7 @@ export function loadDocument(pkg: OpcPackage, diagnostics: DiagnosticSink): Load
     // 不重新解析一遍：同一份定义解析两次会让 numbering.xml 的诊断也报两次
     numbering: cascade.numbering,
     notes,
+    textBoxes,
   };
 }
 
@@ -201,6 +238,7 @@ function parseHeaderFooters(
   body: Body,
   fields: FieldRegion[],
   diagnostics: DiagnosticSink,
+  extrasFor: (part: string) => ParseExtras,
 ): Record<string, HeaderFooterContent> {
   const out: Record<string, HeaderFooterContent> = {};
   for (const section of body.sections) {
@@ -216,7 +254,7 @@ function parseHeaderFooters(
         );
         continue;
       }
-      const blocks = parseHeaderFooter(pkg.xml(part), diagnostics, part, `${ref}:`);
+      const blocks = parseHeaderFooter(pkg.xml(part), diagnostics, part, `${ref}:`, extrasFor(part));
       // 域**不跨部件**：页眉里的 begin 不可能与正文里的 end 配对，所以一个部件扫一趟。
       // 扫出来的区间与正文的合成一份，求值那边只认 run id，不关心它来自哪个部件
       fields.push(

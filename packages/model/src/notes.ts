@@ -16,6 +16,7 @@ import type { DiagnosticSink } from '@uw/core';
 import type { OpcPackage, XmlElement } from '@uw/ooxml';
 import { child, RelType } from '@uw/ooxml';
 import type { Block, NoteNumbering, ResolvedBlock } from './nodes.ts';
+import type { ParseExtras } from './parse-body.ts';
 import { parseNotes } from './parse-body.ts';
 import { attrInt, attrOf, enumVal, put } from './xml-values.ts';
 
@@ -74,14 +75,18 @@ export function emptyNotes(): LoadedNotes {
  *
  * id 前缀 `fn:` / `en:`：注里的节点 id 不能与正文、页眉页脚撞车（域求值、命中测试都按 id 认 run）。
  */
-export function parseNoteParts(pkg: OpcPackage, diagnostics: DiagnosticSink): LoadedNotes {
+export function parseNoteParts(
+  pkg: OpcPackage,
+  diagnostics: DiagnosticSink,
+  extrasFor: (part: string) => ParseExtras = () => ({}),
+): LoadedNotes {
   const settingsName = pkg.partNameByRelType(RelType.SETTINGS);
   const settings = settingsName === undefined ? undefined : pkg.xml(settingsName).root;
   const out = emptyNotes();
   out.footnotes.numbering = parseNoteNumbering(settings && child(settings, 'w:footnotePr')) ?? {};
   out.endnotes.numbering = parseNoteNumbering(settings && child(settings, 'w:endnotePr')) ?? {};
-  collect(pkg, RelType.FOOTNOTES, 'fn:', out.footnotes, diagnostics);
-  collect(pkg, RelType.ENDNOTES, 'en:', out.endnotes, diagnostics);
+  collect(pkg, RelType.FOOTNOTES, 'fn:', out.footnotes, diagnostics, extrasFor);
+  collect(pkg, RelType.ENDNOTES, 'en:', out.endnotes, diagnostics, extrasFor);
   return out;
 }
 
@@ -91,11 +96,12 @@ function collect(
   idPrefix: string,
   into: NotePart,
   diagnostics: DiagnosticSink,
+  extrasFor: (part: string) => ParseExtras,
 ): void {
   const part = pkg.partNameByRelType(relType);
   if (part === undefined) return;
   into.part = part;
-  for (const note of parseNotes(pkg.xml(part), diagnostics, part, idPrefix)) {
+  for (const note of parseNotes(pkg.xml(part), diagnostics, part, idPrefix, extrasFor(part))) {
     const content: NoteContent = { id: note.id, part, blocks: note.blocks, resolved: [] };
     if (note.type === 'separator') into.separator = content;
     else if (note.type === 'continuationSeparator') into.continuationSeparator = content;

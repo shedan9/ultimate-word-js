@@ -51,6 +51,7 @@ import type {
   PlacedHeaderFooter,
   PlacedParagraph,
   PlacedTable,
+  PlacedTextBox,
   RowLayout,
   TabLeader,
 } from '@uw/layout';
@@ -176,7 +177,7 @@ function buildPageWith(page: PageLayout, ctx: Ctx): RElement {
   // 衬于文字下方的浮动对象在页眉与正文**之前**画（水印、印章的底、红头的花纹）
   for (const f of page.floats ?? []) {
     if (!f.behindDoc) continue;
-    const painted = paintObject(f, f.x, f.y, ctx, true);
+    const painted = paintFloat(f, ctx);
     if (painted !== undefined) children.push(painted);
   }
 
@@ -209,7 +210,7 @@ function buildPageWith(page: PageLayout, ctx: Ctx): RElement {
   // 「衬于 / 浮于」在 SVG 里就是**画的先后**，没有 z-index 这回事
   for (const f of page.floats ?? []) {
     if (f.behindDoc) continue;
-    const painted = paintObject(f, f.x, f.y, ctx, true);
+    const painted = paintFloat(f, ctx);
     if (painted !== undefined) children.push(painted);
   }
 
@@ -985,6 +986,11 @@ function paintObject(
   const box = { x: pt(x), y: pt(y), width: pt(obj.width), height: pt(obj.height) };
   const href = obj.image === undefined ? undefined : ctx.imageHref(obj.image.id);
   const cls = floating ? ctx.cls('float') : ctx.cls('object');
+  // 文本框画不出来的不是它，是它的外观：矩形的填充与轮廓就是全部。两样都没有的是透明的框，
+  // 什么都不画 —— 画成虚线占位框会让每个无框文本框（页脚里的一小段字）都套着一圈虚线
+  if (href === undefined && (obj.textBox !== undefined || obj.shape !== undefined)) {
+    return paintShape(box, obj, ctx, cls);
+  }
   if (href === undefined) return placeholder(box, obj, ctx, cls);
 
   const crop = obj.image?.crop;
@@ -1071,6 +1077,65 @@ function objectTransform(
   if (image.flipH === true) parts.push(`translate(${fmt(2 * cx)} 0) scale(-1 1)`);
   if (image.flipV === true) parts.push(`translate(0 ${fmt(2 * cy)}) scale(1 -1)`);
   return parts.length === 0 ? undefined : parts.join(' ');
+}
+
+/**
+ * 浮动对象：外框（图 / 形状 / 占位）+ 文本框的内容。内嵌文本框借住在 `page.floats` 里的那一份
+ * （`inline`）只画内容 —— 它的外框由所在的行画过了
+ */
+function paintFloat(f: PlacedFloat, ctx: Ctx): RElement | undefined {
+  const frame = f.inline === true ? undefined : paintObject(f, f.x, f.y, ctx, true);
+  if (f.textBox === undefined) return frame;
+  const content = paintTextBox(f, f.textBox, ctx);
+  return el('g', { class: ctx.cls('text-box-float') }, frame === undefined ? [content] : [frame, content]);
+}
+
+/**
+ * 文本框的内容：与页眉同一条画法（块相对内容区左上角），外面按**外框**裁剪 ——
+ * 装不下的那截 Word 不画（见 `PlacedTextBox`）。clipPath 挂在不带 transform 的那一层上，
+ * 坐标才是纸坐标
+ */
+function paintTextBox(f: PlacedFloat, box: PlacedTextBox, ctx: Ctx): RElement {
+  const inner: RElement[] = [];
+  for (const [i, block] of box.blocks.entries()) paintBlock(block, box.blocks[i + 1], ctx, inner);
+  ctx.clip.n += 1;
+  const id = `${ctx.cls('clip')}-${ctx.clip.n}`;
+  return el('g', { class: ctx.cls('text-box'), 'data-run': f.runId, 'clip-path': `url(#${id})` }, [
+    el('clipPath', { id }, [
+      el('rect', { x: fmt(pt(f.x)), y: fmt(pt(f.y)), width: fmt(pt(f.width)), height: fmt(pt(f.height)) }),
+    ]),
+    el('g', { transform: `translate(${fmt(pt(box.x))} ${fmt(pt(box.y))})` }, inner),
+  ]);
+}
+
+/**
+ * 形状（目前只有文本框）的填充与轮廓。轮廓骑在外框边上（一半在里一半在外），
+ * 与 SVG 的 stroke 一样 —— DrawingML 的线缺省也是居中对齐的
+ */
+function paintShape(
+  box: { x: number; y: number; width: number; height: number },
+  obj: LineObject | PlacedFloat,
+  ctx: Ctx,
+  cls: string,
+): RElement | undefined {
+  const shape = obj.shape;
+  if (shape === undefined) return undefined;
+  return el(
+    'rect',
+    {
+      class: `${cls} ${ctx.cls('shape')}`,
+      'data-run': obj.runId,
+      x: fmt(box.x),
+      y: fmt(box.y),
+      width: fmt(box.width),
+      height: fmt(box.height),
+      fill: shape.fill === undefined ? 'none' : cssColor(shape.fill),
+      ...(shape.stroke === undefined
+        ? {}
+        : { stroke: cssColor(shape.stroke.color), 'stroke-width': fmt(pt(shape.stroke.width)) }),
+    },
+    titleOf(obj),
+  );
 }
 
 /**

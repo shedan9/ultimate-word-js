@@ -29,6 +29,7 @@ import type {
   TableCell,
   TableRow,
 } from './nodes.ts';
+import type { DrawingParseOptions } from './parse-drawing.ts';
 import { parseDrawing, parsePict } from './parse-drawing.ts';
 import { parseParaProps, parseRunProps } from './parse-props.ts';
 import { parseCellProps, parseRowProps, parseTableGrid, parseTableProps } from './parse-table-props.ts';
@@ -109,6 +110,23 @@ interface Ctx {
   bookmarks: string[];
   /** 最近建的段落：文末还剩没归属的书签起点时归给它 */
   lastParagraph: Paragraph | undefined;
+  /** 文本框内容往哪儿摊、形状颜色按哪套主题换算，见 `ParseExtras` */
+  extras: ParseExtras;
+}
+
+/**
+ * 解析时要从外面借的东西。两样都可缺：回写（`@uw/serialize`）重新解析正文时不要文本框内容 ——
+ * 它只要「节点 id → 原元素」，文本框的 id 照样分配（计数器与加载时一致），内容不解析
+ */
+export interface ParseExtras {
+  /**
+   * 文本框 id → 内容块（`LoadedDocument.textBoxes` 的来源）。文本框的节点 id 各带一个
+   * `tb3:` 式的前缀、计数器另起 —— 不另起的话，多一个文本框就会让它后面正文里的每个节点 id
+   * 都挪一位，而回写靠的正是「两次解析 id 一字不差」
+   */
+  textBoxes?: Record<NodeId, Block[]>;
+  /** 主题配色，见 `Theme.colors` */
+  themeColors?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -159,6 +177,7 @@ export function parseBody(
   diagnostics: DiagnosticSink,
   part = 'document.xml',
   sources?: BodySources,
+  extras: ParseExtras = {},
 ): Body {
   const ctx: Ctx = {
     diagnostics,
@@ -171,6 +190,7 @@ export function parseBody(
     blockControl: undefined,
     bookmarks: [],
     lastParagraph: undefined,
+    extras,
   };
   const body = child(doc.root, 'w:body');
   if (body === undefined) {
@@ -244,8 +264,9 @@ export function parseHeaderFooter(
   diagnostics: DiagnosticSink,
   part: string,
   idPrefix: string,
+  extras: ParseExtras = {},
 ): Block[] {
-  const ctx = partCtx(diagnostics, part, idPrefix);
+  const ctx = partCtx(diagnostics, part, idPrefix, extras);
   const out = blockList(ctx, doc.root);
   flushBookmarks(ctx);
   return out;
@@ -272,8 +293,9 @@ export function parseNotes(
   diagnostics: DiagnosticSink,
   part: string,
   idPrefix: string,
+  extras: ParseExtras = {},
 ): ParsedNote[] {
-  const ctx = partCtx(diagnostics, part, idPrefix);
+  const ctx = partCtx(diagnostics, part, idPrefix, extras);
   const out: ParsedNote[] = [];
   for (const el of children(doc.root)) {
     if (el.name !== 'w:footnote' && el.name !== 'w:endnote') continue;
@@ -287,7 +309,7 @@ export function parseNotes(
 }
 
 /** 正文以外的部件（页眉页脚、脚注）共用的解析上下文 */
-function partCtx(diagnostics: DiagnosticSink, part: string, idPrefix: string): Ctx {
+function partCtx(diagnostics: DiagnosticSink, part: string, idPrefix: string, extras: ParseExtras): Ctx {
   return {
     diagnostics,
     part,
@@ -300,6 +322,31 @@ function partCtx(diagnostics: DiagnosticSink, part: string, idPrefix: string): C
     blockControl: undefined,
     bookmarks: [],
     lastParagraph: undefined,
+    extras,
+  };
+}
+
+/**
+ * 文本框内容（`w:txbxContent`）→ 摊进 `ParseExtras.textBoxes`，返回它的 id。
+ *
+ * 另起一个上下文：计数器与 id 前缀各自一套（见 `ParseExtras.textBoxes`），书签与内容控件
+ * 也不往正文的表里记 —— 文本框里的书签不是 PAGEREF 能指到的地方（它不在正文的流里）。
+ * 没要内容时（回写）只分配 id，不解析
+ */
+function textBoxContent(ctx: Ctx, content: XmlElement): NodeId {
+  const id = nextId(ctx, 'tb');
+  const sink = ctx.extras.textBoxes;
+  if (sink === undefined) return id;
+  const inner = partCtx(ctx.diagnostics, ctx.part, `${id}:`, ctx.extras);
+  inner.reported = ctx.reported;
+  sink[id] = blockList(inner, content);
+  return id;
+}
+
+function drawingOptions(ctx: Ctx): DrawingParseOptions {
+  return {
+    textBox: (content) => textBoxContent(ctx, content),
+    ...(ctx.extras.themeColors === undefined ? {} : { themeColors: ctx.extras.themeColors }),
   };
 }
 
@@ -548,10 +595,10 @@ function collectContentItem(ctx: Ctx, el: XmlElement, out: RunContent[]): void {
       break;
     }
     case 'w:drawing':
-      out.push(parseDrawing(el, ctx.idPrefix));
+      out.push(parseDrawing(el, ctx.idPrefix, drawingOptions(ctx)));
       break;
     case 'w:pict':
-      out.push(parsePict(el, ctx.idPrefix));
+      out.push(parsePict(el, ctx.idPrefix, drawingOptions(ctx)));
       break;
     case 'w:object':
       // OLE 对象（嵌入的 Excel 表、公式编辑器）在文件里也是一个 VML 形状加一张预览图，
