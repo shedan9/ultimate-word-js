@@ -116,11 +116,18 @@ interface DocRange {
 doc.compare(a: DocPosition, b: DocPosition): -1 | 0 | 1;   // 🟢 不属于这份文档的位置抛错
 doc.rangeOf(node: NodeId | DocNode): DocRange | undefined; // 🟢 空段落 / 不存在的 id 答 undefined
 doc.rangeOfBookmark(name: string): DocRange | undefined;    // 🟢 2026-09-29 书签起点所在段落，没有答 undefined
+doc.updateTableOfContents(): { updated: number; skipped: { reason: string }[] };  // 🟢 2026-09-29 更新整个目录
 ```
 
 > `rangeOfBookmark` 只精确到**段落**：书签只记了「起点在哪一段」（`ParagraphNode.bookmarks`），
 > 它唯二的用途 —— 目录页码（PAGEREF 求值，架构 §6）与目录跳转 —— 要的都是标题那一段。
 > 书签不是节点，所以没有选择器；Word 自己的 `_GoBack` 不收。
+
+> **`updateTableOfContents()`** 是 Word 的「更新目录 → 更新整个目录」：按现在的标题重新生成每个 TOC 域的条目，
+> 一个事务、一个撤销单元（会派发 `document:change`）。标题没有 `_Toc` 书签的补一个、缺 `toc N` 样式的补定义，
+> 条目照 Word 的样子写（`\h` 时整条是跳到书签的超链接、右对齐点前导制表位 + 嵌套 PAGEREF）。**不会自动发生** ——
+> Word 打开、编辑都不动目录；宿主想「保存前刷新」就在 `toDocx()` 之前调它。图表目录（`\c`）、TC 域目录（`\f`）、
+> `\b` / `\s` 不支持，跳过并在 `skipped` 里说原因，那个目录照旧显示。
 
 > ⚠️ **`DocRange` 是纯数据，原先写的 `text()` / `contains()` 两个方法没有了**（2026-09-12）：
 > range 是批注、书签、查找结果的存储形态，要能 `JSON.stringify`、要能过 Worker 边界
@@ -833,6 +840,7 @@ view.on('click:element', ({ href }) => {
 
 目录里的页码打开时就是算好的（PAGEREF 按书签所在页求值，编辑把标题挤到下一页也跟着变），
 视图**不替宿主跳转**，所以跳这一步写在宿主里。调试台就是这一段。
+标题增删改之后条目本身要 `doc.updateTableOfContents()` 才跟着变（调试台的「更新目录」按钮）。
 
 ### 填模板并导出
 

@@ -30,7 +30,7 @@
  *
  * 目录（TOC）的页码不是 TOC 自己算的：Word 生成目录时给每条标题包一个 `_Toc…` 书签，
  * 条目里的页码是一个嵌套的 `PAGEREF _Toc… \h` 域。所以「目录页码正确」= 把 PAGEREF 算对，
- * 用不着重新生成整个目录（那是 TOC 求值，要大纲级别与样式，没做）。
+ * 用不着重新生成整个目录。重新生成（标题增删后条目跟着变）是**模型编辑**，不在这里：`@uw/model` 的 toc.ts。
  * 书签起点所在的段落从 `bookmarks`（`@uw/model` 的 `bookmarkTargets()`）查，页从布局查；
  * 显示的是**目标那一页**的显示页码、按**目标那一节**的页码格式 —— 前言用罗马数字的文档，
  * 目录里前言那几条就是 i、ii。`\p`（「见上方 / 见下方」）要一套本地化的措辞表，
@@ -879,6 +879,22 @@ function switchFormat(instr: FieldInstruction): string | undefined {
 }
 
 // ── 从布局里查「谁在第几页」 ──────────────────────────────────────────────────
+
+/**
+ * 每个段落**第一次**出现的那一页显示的页码（按那一节的页码格式）—— 与 PAGEREF 求值同一条规则。
+ * 「更新目录」拿它给新条目写页码初值（`@uw/model` 的 `planTableOfContents`）：显示时 PAGEREF 照样重算，
+ * 这个初值只决定**导出的 docx** 里存着什么，Word 打开就看见它
+ */
+export function paragraphPageNumbers(layout: DocumentLayout, body: ResolvedBody): Map<NodeId, string> {
+  const out = new Map<NodeId, string>();
+  for (const [id, i] of indexLayout(layout).paragraphs) {
+    const page = layout.pages[i];
+    if (page === undefined) continue;
+    const fmt = body.sections[page.sectionIndex]?.props.pageNumFormat ?? 'decimal';
+    out.set(id, formatNumber(page.number, fmt));
+  }
+  return out;
+}
 
 interface LayoutIndex {
   /** run id → 它**第一次**出现在第几页（物理页序，0 起） */

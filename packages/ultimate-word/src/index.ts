@@ -43,7 +43,14 @@ export type {
   ScrollTarget,
 } from '@uw/view/dom';
 export type { BindingInfo, Bindings } from './bindings.ts';
-export type { DocNode, DocumentEvents, FindOptions, ReplaceResult, TextMatch } from './document.ts';
+export type {
+  DocNode,
+  DocumentEvents,
+  FindOptions,
+  ReplaceResult,
+  TextMatch,
+  TocUpdateResult,
+} from './document.ts';
 export { DOCX_MIME, UwDocument } from './document.ts';
 export type { FontsApi } from './fonts.ts';
 export type { LoadOptions, LoadSource } from './load.ts';

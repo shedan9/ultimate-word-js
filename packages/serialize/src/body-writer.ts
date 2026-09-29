@@ -119,6 +119,10 @@ class BodyWriter {
   /** 图片 / 符号 / 域界桩的源元素池：拆 run 之后它们搬进了新 run，得凭内容找回原元素 */
   #pool: Map<string, XmlElement[]> | undefined;
   readonly #used = new Set<XmlElement>();
+  /** 原文里已有的书签名 —— 模型里多出来的（「更新目录」补给标题的 `_Toc…`）才要写 */
+  #knownBookmarks: Set<string> | undefined;
+  /** 下一个可用的 `w:bookmarkStart w:id`（全文唯一，接着原文最大的往下编） */
+  #bookmarkId: number | undefined;
 
   constructor(input: BodyWriteInput) {
     this.#in = input;
@@ -236,8 +240,47 @@ class BodyWriter {
     // 新段落的第一个 run 是从模板段落的末 run 拆出来的（拆段时右半截取新 id，text-transaction.ts）
     const runTemplate = runs.items[runs.i - 1] ?? (src === undefined ? template?.runs.at(-1) : undefined);
     children.push(...inner, ...this.#looseRuns(runs.items.slice(runs.i), NO_MARKS, runTemplate));
+    this.#addBookmarks(p, children, pPr !== undefined);
     // 新段落不抄模板的属性：`w14:paraId` 要求全文唯一，抄过去就是两段同一个 id
     return el('w:p', src?.attrs ?? {}, children);
+  }
+
+  /**
+   * 模型里新加的书签（原文哪儿都没有这个名字）罩住整段：起点紧跟 `w:pPr`、终点在段末。
+   * 原文里已有的名字不管 —— 它的元素还在原处照抄（合段搬进来的也在别的段落里吐过一次），再写就重名了
+   */
+  #addBookmarks(p: Paragraph, children: XmlNode[], hasPPr: boolean): void {
+    if (p.bookmarks === undefined) return;
+    if (this.#knownBookmarks === undefined) {
+      const known = new Set<string>();
+      let max = -1;
+      const walk = (node: XmlElement) => {
+        if (node.name === 'w:bookmarkStart') {
+          const name = node.attrs['w:name'];
+          if (name !== undefined) known.add(name);
+          const id = Number(node.attrs['w:id']);
+          if (Number.isInteger(id)) max = Math.max(max, id);
+        }
+        for (const c of node.children) if (c.kind === 'element') walk(c);
+      };
+      walk(this.#in.original.root);
+      this.#knownBookmarks = known;
+      this.#bookmarkId = max + 1;
+    }
+    const known = this.#knownBookmarks;
+    const fresh = p.bookmarks.filter((name) => !known.has(name));
+    if (fresh.length === 0) return;
+    const starts: XmlElement[] = [];
+    const ends: XmlElement[] = [];
+    for (const name of fresh) {
+      const id = String(this.#bookmarkId ?? 0);
+      this.#bookmarkId = (this.#bookmarkId ?? 0) + 1;
+      known.add(name);
+      starts.push(el('w:bookmarkStart', { 'w:id': id, 'w:name': name }));
+      ends.push(el('w:bookmarkEnd', { 'w:id': id }));
+    }
+    children.splice(hasPPr ? 1 : 0, 0, ...starts);
+    children.push(...ends);
   }
 
   /**

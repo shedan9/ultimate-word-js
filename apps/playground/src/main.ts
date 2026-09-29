@@ -28,6 +28,7 @@ app.innerHTML = `
     <label><input type="checkbox" class="text-layer" checked> 原生选区</label>
     <label><input type="checkbox" class="edit-mode"> 编辑</label>
     <label><input type="checkbox" class="virtualize" checked> 按需绘制</label>
+    <button type="button" class="toc" disabled>更新目录</button>
     <button type="button" class="export" disabled>导出 docx</button>
     <label class="find">查找 <input type="search" placeholder="回车到下一处" disabled><span class="hits"></span></label>
     <span class="status">把一份 .docx 拖进来</span>
@@ -47,6 +48,7 @@ const fileInput = app.querySelector<HTMLInputElement>('input[type=file]') as HTM
 const findInput = app.querySelector<HTMLInputElement>('input[type=search]') as HTMLInputElement;
 const hitsLabel = app.querySelector<HTMLElement>('.hits') as HTMLElement;
 const exportButton = app.querySelector<HTMLButtonElement>('.export') as HTMLButtonElement;
+const tocButton = app.querySelector<HTMLButtonElement>('.toc') as HTMLButtonElement;
 
 let doc: UwDocument | undefined;
 let view: UwView | undefined;
@@ -130,6 +132,7 @@ async function openFile(file: File): Promise<void> {
     fileName = file.name;
     findInput.disabled = false;
     exportButton.disabled = false;
+    tocButton.disabled = false;
 
     const first = doc.layout.pages[0]?.geometry;
     const size =
@@ -169,6 +172,13 @@ exportButton.addEventListener('click', async () => {
   a.download = `${fileName.replace(/\.docx$/i, '')}-uw.docx`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 0);
+});
+/** Word 的「更新目录 → 更新整个目录」：标题增删改之后按一下，一个撤销单元 */
+tocButton.addEventListener('click', () => {
+  if (doc === undefined) return;
+  const { updated, skipped } = doc.updateTableOfContents();
+  const why = skipped.map((s) => s.reason).join('；');
+  status.textContent = `更新了 ${updated} 个目录${skipped.length ? `，跳过 ${skipped.length} 个（${why}）` : ''}`;
 });
 debugInput.addEventListener('change', remount);
 textLayerInput.addEventListener('change', remount);

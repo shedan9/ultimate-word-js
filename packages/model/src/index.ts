@@ -43,4 +43,5 @@ export * from './table-props.ts';
 export * from './text-change.ts';
 export * from './text-transaction.ts';
 export * from './theme.ts';
+export * from './toc.ts';
 export * from './xml-values.ts';

@@ -6,8 +6,10 @@
  * 已存的批注 / 选区就得跟着映射，而多几个 run 对排版和回写都没有影响。
  */
 
+import { bookmarkTargets } from './bookmarks.ts';
 import { CLEAR_RUN_PROPS } from './clear-format.ts';
 import { contentControlSpans, rangeOfContentControl, withinContentControl } from './content-control.ts';
+import { scanFields } from './fields.ts';
 import type { Block, Body, NodeId, Paragraph, Run, RunContent, TableCell, TableRow } from './nodes.ts';
 import { walkBlocks, walkParagraphs } from './nodes.ts';
 import { EMPTY_NUMBERING } from './numbering.ts';
@@ -37,6 +39,7 @@ import {
 } from './table-edit.ts';
 import type { PositionMove, TextChange, TextChangeSet } from './text-change.ts';
 import { invertTextChanges, mapTextRange } from './text-change.ts';
+import type { ParagraphDraft, RunDraft } from './toc.ts';
 
 /** 直接字符格式的修改：给值即写入，`null` 删除这一项直接格式、回到样式的值。 */
 export type RunPropsPatch = { [K in keyof RunProps]?: RunProps[K] | null };
@@ -152,6 +155,19 @@ export interface TextTransaction {
    * 复选框 / 图片 / 文档部件（目录）/ 锁了内容的控件拒绝。
    */
   fillContentControl(id: NodeId, text: string): DocRange;
+  /**
+   * 把一个域（`field` = begin 界桩所在的 run）的结果区整个换成这几段，返回新结果的范围 ——
+   * 「更新目录」靠它（草稿出自 toc.ts 的 `planTableOfContents`）。界桩与指令原样留着（id 不变，
+   * 回写吐回原元素），separate 之后、end 之前的一律换掉；首段沿用 separate 那一段、末段沿用 end 那一段
+   * （end 前面有结果文字时它就是最后一条），中间的是新段落，带着首段的块级内容控件标记。
+   * 草稿里的域界桩必须配平。结果区跨出一个块容器（从表格外开到格子里）时拒绝。
+   */
+  replaceFieldResult(field: NodeId, paragraphs: readonly ParagraphDraft[]): DocRange;
+  /**
+   * 在段落上加一个书签起点（回写成罩住整段的 `w:bookmarkStart` / `w:bookmarkEnd`）。
+   * 名字已在别的段落上时拒绝（Word 不许重名），已在这一段上时不修改。
+   */
+  addBookmark(paragraphId: NodeId, name: string): void;
 }
 
 /**
@@ -1359,6 +1375,138 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
               structural([host.id], []);
             }
             return filled;
+          });
+        },
+        replaceFieldResult(field, drafts) {
+          return command(() => {
+            if (!Array.isArray(drafts) || drafts.length === 0) throw new TypeError('结果区至少要一段');
+            let depth = 0;
+            for (const d of drafts)
+              for (const r of d.runs)
+                for (const c of r.content) {
+                  if (c.kind !== 'fieldChar') continue;
+                  depth += c.charType === 'begin' ? 1 : c.charType === 'end' ? -1 : 0;
+                  if (depth < 0) throw new Error('草稿里的域界桩没有配平');
+                }
+            if (depth !== 0) throw new Error('草稿里的域界桩没有配平');
+            flush();
+            const region = scanFields(draft).find((f) => f.kind === 'complex' && f.begin?.runId === field);
+            const sep = region?.separate;
+            const end = region?.end;
+            if (sep === undefined || end === undefined) throw new RangeError(`没有完整的域：${field}`);
+            const a = paragraphAt(sep.paragraphId);
+            const b = paragraphAt(end.paragraphId);
+            if (a.blocks !== b.blocks || b.index < a.index)
+              throw new Error('域的结果区跨出了块容器，暂不支持');
+            const between = a.blocks.slice(a.index + 1, b.index);
+            if (between.some((x) => x.kind !== 'paragraph')) throw new Error('域的结果区里有表格，暂不支持');
+            const ia = a.paragraph.runs.findIndex((r) => r.id === sep.runId);
+            const ib = b.paragraph.runs.findIndex((r) => r.id === end.runId);
+            const sepRun = a.paragraph.runs[ia] as Run;
+            const endRun = b.paragraph.runs[ib] as Run;
+
+            // 界桩在真实文件里独占一个 run；万一与结果文字挤在一个 run 里，只切掉结果那半
+            const head =
+              sep.contentIndex === sepRun.content.length - 1
+                ? sepRun
+                : { ...sepRun, content: sepRun.content.slice(0, sep.contentIndex + 1) };
+            let tail =
+              end.contentIndex === 0
+                ? endRun
+                : { ...endRun, content: endRun.content.slice(end.contentIndex) };
+            if (tail.id === head.id) tail = { ...tail, id: newId() };
+            const prefix = [...a.paragraph.runs.slice(0, ia), head];
+            const suffix = [tail, ...b.paragraph.runs.slice(ib + 1)];
+            // 被换掉的结果：首段 separate 之后、末段 end 之前的 run，加上夹在中间的整段
+            const same = a.paragraph === b.paragraph;
+            const removed: Paragraph[] = [...(between as Paragraph[])];
+            const headRuns = a.paragraph.runs.slice(ia + 1, same ? ib : undefined);
+            if (headRuns.length) removed.unshift({ ...a.paragraph, runs: headRuns });
+            if (!same && ib > 0) removed.push({ ...b.paragraph, runs: b.paragraph.runs.slice(0, ib) });
+
+            const make = (d: RunDraft): Run => ({
+              kind: 'run',
+              id: newId(),
+              props: structuredClone(d.props ?? {}),
+              content: structuredClone(d.content),
+              ...(d.hyperlink === undefined ? {} : { hyperlink: { anchor: d.hyperlink.anchor } }),
+            });
+            const fresh = drafts.map((d) => d.runs.map(make));
+            const control = a.paragraph.contentControl;
+            const build = (i: number, base: Paragraph | undefined, runs: Run[]): Paragraph => {
+              const props = structuredClone((drafts[i] as ParagraphDraft).props);
+              return base === undefined
+                ? {
+                    kind: 'paragraph',
+                    id: newId(),
+                    props,
+                    runs,
+                    ...(control === undefined ? {} : { contentControl: control }),
+                  }
+                : { ...base, props, runs };
+            };
+            const n = drafts.length;
+            const last = n - 1;
+            const out: Paragraph[] = [build(0, a.paragraph, [...prefix, ...(fresh[0] as Run[])])];
+            // end 前面有结果文字：end 那一段本身就是最后一条，沿用它；否则它只装着 end，原样留在最后
+            const endIsEntry = !same && (ib > 0 || end.contentIndex > 0);
+            for (let i = 1; i < n; i++) {
+              if (i === last && endIsEntry)
+                out.push(build(i, b.paragraph, [...(fresh[i] as Run[]), ...suffix]));
+              else out.push(build(i, undefined, fresh[i] as Run[]));
+            }
+            if (same || (endIsEntry && n === 1)) {
+              const at = out.length - 1;
+              const host = out[at] as Paragraph;
+              if (same) out[at] = { ...host, runs: [...host.runs, ...suffix] };
+              else out.push({ ...b.paragraph, runs: suffix });
+            } else if (!endIsEntry)
+              out.push(tail === endRun ? b.paragraph : { ...b.paragraph, runs: suffix });
+            replaceParagraphs(a.paragraph.id, b.index - a.index + 1, out);
+
+            const first = fresh[0]?.[0] as Run;
+            const lastRun = fresh[last]?.at(-1) as Run;
+            const start: DocPosition = { nodeId: first.id, contentIndex: 0, offset: 0 };
+            const lastIndex = Math.max(0, lastRun.content.length - 1);
+            const lastItem = lastRun.content[lastIndex];
+            const stop: DocPosition = {
+              nodeId: lastRun.id,
+              contentIndex: lastIndex,
+              offset: lastItem === undefined ? 0 : contentLength(lastItem),
+            };
+            const back = removed[0]?.runs[0];
+            const backPos: DocPosition =
+              back === undefined
+                ? { nodeId: sepRun.id, contentIndex: sep.contentIndex, offset: 0 }
+                : { nodeId: back.id, contentIndex: 0, offset: 0 };
+            structural(
+              [...new Set([...out.map((p) => p.id), a.paragraph.id, b.paragraph.id])],
+              collapseInto(removed, start),
+              fresh.flat().map((r) => ({
+                from: { nodeId: r.id, contentIndex: 0, offset: 0 },
+                to: backPos,
+                length: 0,
+                collapse: true,
+              })),
+            );
+            return { start, end: stop };
+          });
+        },
+        addBookmark(paragraphId, name) {
+          return command(() => {
+            // Word 的书签名：字母或下划线开头（下划线开头的是隐藏书签，目录用的 `_Toc` 就是），至多 40 个字
+            if (typeof name !== 'string' || name.length > 40 || !/^[\p{L}_][\p{L}\p{N}_]*$/u.test(name))
+              throw new TypeError(`不合法的书签名：${String(name)}`);
+            flush();
+            const at = bookmarkTargets(draft).get(name);
+            if (at === paragraphId) return;
+            if (at !== undefined) throw new Error(`书签已存在：${name}`);
+            paragraphAt(paragraphId);
+            draft = mapParagraphs(draft, (p) =>
+              p.id === paragraphId ? { ...p, bookmarks: [...(p.bookmarks ?? []), name] } : p,
+            );
+            entries = indexRuns(draft);
+            structural([paragraphId], []);
           });
         },
         addStyle(definition) {

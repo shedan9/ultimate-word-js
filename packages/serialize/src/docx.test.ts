@@ -759,3 +759,49 @@ describe('合并 / 拆分单元格', () => {
     expect(xmlOf(out)).not.toContain('w:gridSpan');
   });
 });
+
+describe('目录（更新目录的回写）', () => {
+  const fld = (type: string) => `<w:r><w:fldChar w:fldCharType="${type}"/></w:r>`;
+  const instr = (text: string) => `<w:r><w:instrText xml:space="preserve"> ${text} </w:instrText></w:r>`;
+
+  it('新条目写进控件、整条包 w:hyperlink；补给标题的书签罩住整段、id 接着原文往下编', () => {
+    const bytes = docx(
+      '<w:sdt><w:sdtPr><w:docPartObj><w:docPartGallery w:val="Table of Contents"/></w:docPartObj></w:sdtPr><w:sdtContent>' +
+        `<w:p><w:pPr><w:pStyle w:val="11"/></w:pPr>${fld('begin')}${instr('TOC \\o "1-3" \\h')}${fld('separate')}` +
+        '<w:hyperlink w:anchor="_Toc1"><w:r><w:t>旧条目</w:t></w:r></w:hyperlink></w:p>' +
+        `<w:p>${fld('end')}</w:p></w:sdtContent></w:sdt>` +
+        '<w:p><w:bookmarkStart w:id="5" w:name="_Toc1"/><w:r><w:t>第一章</w:t></w:r><w:bookmarkEnd w:id="5"/></w:p>' +
+        '<w:p><w:r><w:t>第二章</w:t></w:r></w:p>',
+    );
+    const entry = (anchor: string, title: string) => ({
+      props: { styleId: '11', tabs: [{ pos: 8306, alignment: 'right' as const, leader: 'dot' as const }] },
+      runs: [
+        { content: [{ kind: 'text' as const, text: title }, { kind: 'tab' as const }] },
+        { content: [{ kind: 'fieldChar' as const, charType: 'begin' as const }] },
+        { content: [{ kind: 'fieldInstruction' as const, text: ` PAGEREF ${anchor} \\h ` }] },
+        { content: [{ kind: 'fieldChar' as const, charType: 'separate' as const }] },
+        { content: [{ kind: 'text' as const, text: '2' }] },
+        { content: [{ kind: 'fieldChar' as const, charType: 'end' as const }] },
+      ].map((r) => ({ ...r, hyperlink: { anchor } })),
+    });
+    const { edited, out, again } = roundTrip(bytes, (t, body) => {
+      const [toc, , , second] = paragraphs(body);
+      if (toc === undefined || second === undefined) throw new Error('样本段落不够');
+      t.addBookmark(second.id, '_Toc2');
+      t.replaceFieldResult(toc.runs[0]?.id ?? '', [entry('_Toc1', '第一章'), entry('_Toc2', '第二章')]);
+    });
+    const xml = decoder.decode(unzip(out).get('word/document.xml'));
+    expect(xml).not.toContain('旧条目');
+    expect(xml).toMatch(
+      /<w:sdtContent><w:p>.*TOC.*<w:hyperlink w:anchor="_Toc1">.*第一章.*PAGEREF _Toc1.*<\/w:hyperlink><\/w:p><w:p><w:pPr>.*<w:hyperlink w:anchor="_Toc2">.*<\/w:hyperlink><\/w:p><w:p><w:r><w:fldChar w:fldCharType="end"\/><\/w:r><\/w:p><\/w:sdtContent>/,
+    );
+    expect(xml).toContain('<w:tab w:val="right" w:leader="dot" w:pos="8306"/>');
+    expect(xml).toMatch(
+      /<w:p><w:bookmarkStart w:id="6" w:name="_Toc2"\/><w:r><w:t>第二章<\/w:t><\/w:r><w:bookmarkEnd w:id="6"\/><\/w:p>/,
+    );
+    // 原有书签原样一份，没被当成新的再写一遍
+    expect(xml.match(/w:name="_Toc1"/g)).toHaveLength(1);
+    expect(shape(again.body)).toEqual(shape(edited));
+    expect(again.fields.filter((f) => f.instruction.type === 'PAGEREF')).toHaveLength(2);
+  });
+});

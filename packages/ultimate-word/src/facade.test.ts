@@ -585,3 +585,130 @@ describe('题注编号（SEQ）与章节引用（STYLEREF）', () => {
     expect(texts[1]).toBe('1999');
   });
 });
+
+describe('更新目录（TOC 重新生成）', () => {
+  const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+  const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  const fld = (type: 'begin' | 'separate' | 'end') => `<w:r><w:fldChar w:fldCharType="${type}"/></w:r>`;
+  const para = (text: string, style?: string) =>
+    `<w:p>${style === undefined ? '' : `<w:pPr><w:pStyle w:val="${style}"/></w:pPr>`}<w:r><w:t>${text}</w:t></w:r></w:p>`;
+  const pageBreak = '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
+
+  /** 一份陈旧的目录（只有一条早就删掉的「旧条目」），后面第 2 页第一章、第 3 页第二章，标题都没有书签 */
+  function tocDocx(): Uint8Array {
+    const enc = new TextEncoder();
+    const body =
+      `<w:p>${fld('begin')}<w:r><w:instrText xml:space="preserve"> TOC \\o "1-3" \\h \\z \\u </w:instrText></w:r>${fld('separate')}` +
+      `<w:r><w:t>旧条目</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>9</w:t></w:r></w:p><w:p>${fld('end')}</w:p>` +
+      `${para('前言')}${pageBreak}${para('第一章', '1')}${pageBreak}${para('第二章', '1')}`;
+    return zip(
+      new Map([
+        [
+          '[Content_Types].xml',
+          enc.encode(
+            '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+              '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+              '<Default Extension="xml" ContentType="application/xml"/>' +
+              '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
+              '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>',
+          ),
+        ],
+        [
+          '_rels/.rels',
+          enc.encode(
+            `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${R}/officeDocument" Target="word/document.xml"/></Relationships>`,
+          ),
+        ],
+        [
+          'word/_rels/document.xml.rels',
+          enc.encode(
+            `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${R}/styles" Target="styles.xml"/></Relationships>`,
+          ),
+        ],
+        [
+          'word/styles.xml',
+          enc.encode(
+            `<w:styles xmlns:w="${W}"><w:style w:type="paragraph" w:default="1" w:styleId="a"><w:name w:val="Normal"/></w:style>` +
+              '<w:style w:type="paragraph" w:styleId="1"><w:name w:val="heading 1"/><w:pPr><w:outlineLvl w:val="0"/></w:pPr></w:style></w:styles>',
+          ),
+        ],
+        [
+          'word/document.xml',
+          enc.encode(
+            `<w:document xmlns:w="${W}" xmlns:r="${R}"><w:body>${body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr></w:body></w:document>`,
+          ),
+        ],
+      ]),
+    );
+  }
+
+  /** 第一页上目录那几行（到「前言」为止） */
+  function tocLines(d: UwDocument): string[] {
+    const out: string[] = [];
+    for (const block of d.layout.pages[0]?.blocks ?? []) {
+      if (block.kind !== 'paragraph') continue;
+      for (const placed of block.lines) out.push(placed.line.fragments.map((f) => f.text).join(''));
+    }
+    return out.slice(0, out.indexOf('前言'));
+  }
+
+  it('按现在的标题重新生成条目、补书签，页码按标题所在页；加标题再更新多一条，撤销退回', async () => {
+    const d = await UltimateWord.load(tocDocx());
+    expect(tocLines(d)).toEqual(['旧条目9', '']);
+
+    expect(d.updateTableOfContents()).toEqual({ updated: 1, skipped: [] });
+    expect(tocLines(d)).toEqual(['第一章2', '第二章3', '']);
+    // 条目是跳到标题的超链接，书签是新补的
+    const target = d.rangeOfBookmark('_Toc100000001');
+    const second = d.find('第二章').at(-1);
+    if (target === undefined || second === undefined) throw new Error('第二章的书签没补上');
+    expect(d.compare(target.start, second.start)).toBe(0);
+
+    // 把「前言」也设成标题：目录不自己变（Word 也不），更新之后才多一条
+    const preface = d.find('前言')[0];
+    if (preface === undefined) throw new Error('找不到「前言」');
+    d.tx((t) => {
+      t.setParagraphProps(preface, { styleId: '1' });
+    });
+    expect(tocLines(d)).toEqual(['第一章2', '第二章3', '']);
+    d.updateTableOfContents();
+    expect(tocLines(d)).toEqual(['前言1', '第一章2', '第二章3', '']);
+    d.undo();
+    expect(tocLines(d)).toEqual(['第一章2', '第二章3', '']);
+  });
+
+  it('导出的 docx 里存着新条目与页码，重新打开一样；图表目录跳过不动', async () => {
+    const d = await UltimateWord.load(tocDocx());
+    d.updateTableOfContents();
+    const again = await UltimateWord.load(await d.toDocx());
+    expect(tocLines(again)).toEqual(['第一章2', '第二章3', '']);
+    expect(again.rangeOfBookmark('_Toc100000000')).toBeDefined();
+    const xml = new TextDecoder().decode(
+      unzip(new Uint8Array(await (await d.toDocx()).arrayBuffer())).get('word/document.xml'),
+    );
+    expect(xml).toContain('<w:tab w:val="right" w:leader="dot" w:pos="8306"/>');
+    expect(xml).toMatch(
+      /PAGEREF _Toc100000001 \\h <\/w:instrText><\/w:r><w:r><w:fldChar w:fldCharType="separate"\/><\/w:r><w:r><w:t>3<\/w:t>/,
+    );
+
+    const figures = await UltimateWord.load(
+      new Uint8Array(
+        zip(
+          new Map(
+            [...unzip(tocDocx())].map(([k, v]) => [
+              k,
+              k === 'word/document.xml'
+                ? new TextEncoder().encode(new TextDecoder().decode(v).replace('\\o "1-3"', '\\c "图"'))
+                : v,
+            ]),
+          ),
+        ),
+      ),
+    );
+    expect(figures.updateTableOfContents()).toEqual({
+      updated: 0,
+      skipped: [{ reason: expect.stringContaining('图表目录') }],
+    });
+    expect(figures.canUndo).toBe(false);
+  });
+});

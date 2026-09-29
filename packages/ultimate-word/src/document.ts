@@ -16,7 +16,7 @@
  */
 import type { Diagnostic } from '@uw/core';
 import type { DocumentLayout } from '@uw/layout';
-import { indentCharUnit } from '@uw/layout';
+import { indentCharUnit, paragraphPageNumbers } from '@uw/layout';
 import type {
   DirectProps,
   DocPosition,
@@ -32,6 +32,7 @@ import type {
   TextMatch,
   TextTransaction,
   TextTransactionOptions,
+  TocPlan,
 } from '@uw/model';
 import {
   bookmarkTargets,
@@ -42,14 +43,18 @@ import {
   findMatches,
   findText,
   fragmentOfRange,
+  paragraphStyleNames,
   paragraphsOfRange,
+  planTableOfContents,
   queryNodes,
   rangeEditable,
   rangeOfNode,
   runPropsAtInsertion,
   runPropsOfRange,
   textOfRange,
+  tocFields,
   walkBlocks,
+  walkParagraphs,
 } from '@uw/model';
 import type { OpcPackage } from '@uw/ooxml';
 import { imageHrefResolver } from '@uw/render-dom';
@@ -68,6 +73,12 @@ export type { FindOptions, TextMatch };
 export interface ReplaceResult {
   replaced: number;
   skipped: number;
+}
+
+/** `updateTableOfContents` 的结果。跳过的目录照旧显示（原因如「不支持图表目录（\c）」） */
+export interface TocUpdateResult {
+  updated: number;
+  skipped: { reason: string }[];
 }
 
 /** docx 的 MIME，`toDocx()` 的 Blob 带着它，下载时浏览器才知道扩展名 */
@@ -281,6 +292,55 @@ export class UwDocument {
       });
     }
     return { replaced: planned.length, skipped: matches.length - usable.length };
+  }
+
+  /**
+   * 更新目录 —— Word 的「更新目录 → 更新整个目录」：按现在的标题重新生成每个 TOC 域的条目
+   * （标题增删改之后目录跟着变），一个事务、一个撤销单元。条目的页码只是初值（导出的 docx 里存它），
+   * 显示时 PAGEREF 仍按书签所在页重算。标题没有 `_Toc` 书签的顺手补一个，缺 `toc N` 样式的补定义。
+   *
+   * **不会自动发生**：Word 打开、编辑都不动目录，要用户点。宿主想「保存前刷新」就在保存前调它。
+   * 图表目录（`\c`）等不支持的写法跳过、照旧显示，原因在 `skipped` 里
+   */
+  updateTableOfContents(): TocUpdateResult {
+    const loaded = this.#loaded;
+    const body = this.#editor.body;
+    const inBody = new Set<NodeId>();
+    for (const p of walkParagraphs(body)) inBody.add(p.id);
+    const styleNames = paragraphStyleNames(loaded.cascade.styles, body.styles);
+    const normalStyleId =
+      loaded.cascade.styles.all().find((s) => s.type === 'paragraph' && s.isDefault)?.id ?? '';
+    const pages = paragraphPageNumbers(this.#layout, loaded.resolved);
+    const assigned = new Map<NodeId, string>();
+    const plans: TocPlan[] = [];
+    const skipped: TocUpdateResult['skipped'] = [];
+    for (const region of tocFields(loaded.fields)) {
+      if (!inBody.has(region.begin?.paragraphId ?? '')) continue;
+      const result = planTableOfContents(loaded.resolved, body, loaded.fields, region, {
+        styleNames,
+        normalStyleId,
+        pageText: (id) => pages.get(id),
+        assigned,
+      });
+      if (!result.ok) {
+        skipped.push({ reason: result.reason });
+        continue;
+      }
+      // 后面的目录看得见前面补的书签与样式，不重名、不重复补
+      for (const b of result.plan.bookmarks) assigned.set(b.paragraphId, b.name);
+      for (const s of result.plan.styles) styleNames.set(s.id, s.name);
+      plans.push(result.plan);
+    }
+    if (plans.length) {
+      this.tx((t) => {
+        for (const plan of plans) {
+          for (const s of plan.styles) t.addStyle(s);
+          for (const b of plan.bookmarks) t.addBookmark(b.paragraphId, b.name);
+          t.replaceFieldResult(plan.field, plan.paragraphs);
+        }
+      });
+    }
+    return { updated: plans.length, skipped };
   }
 
   /** 按结构找：`paragraph[styleId=Heading1]`、`table > row:first-child cell`。支持的语法见 api.md §7 */
