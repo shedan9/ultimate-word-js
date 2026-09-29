@@ -728,7 +728,7 @@ describe('脚注', () => {
    * 两段各引一条；`w:id` 与出现顺序相反（2 在前），号必须按先后数。格式在 settings.xml 里设成圈码。
    * `more` 给甲注（id 2）再续这么多段，用来造长过一页的脚注
    */
-  function footnoteDocx(more = 0): Uint8Array {
+  function footnoteDocx(more = 0, restart = ''): Uint8Array {
     const enc = new TextEncoder();
     const body = `<w:p><w:r><w:t>甲</w:t></w:r>${ref('2')}</w:p><w:p><w:r><w:t>乙</w:t></w:r>${ref('1')}</w:p>`;
     const ct = (part: string, type: string) =>
@@ -764,7 +764,7 @@ describe('脚注', () => {
         [
           'word/settings.xml',
           enc.encode(
-            `<w:settings xmlns:w="${W}"><w:footnotePr><w:numFmt w:val="decimalEnclosedCircleChinese"/><w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr></w:settings>`,
+            `<w:settings xmlns:w="${W}"><w:footnotePr><w:numFmt w:val="decimalEnclosedCircleChinese"/>${restart === '' ? '' : `<w:numRestart w:val="${restart}"/>`}<w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr></w:settings>`,
           ),
         ],
         [
@@ -855,6 +855,25 @@ describe('脚注', () => {
       if (p.footnotes !== undefined) expect(p.footnotes.y).toBeGreaterThanOrEqual(c.y);
     }
     expect(d.diagnostics.filter((x) => x.code === 'footnote-overflow')).toEqual([]);
+  });
+
+  it('settings 里设了每页重新编号：续页上后引的那条从 ① 起，正文与页底一致', async () => {
+    const d = await UltimateWord.load(footnoteDocx(70, 'eachPage'));
+    const pages = d.layout.pages;
+    expect(pages).toHaveLength(2);
+    const bodyMarks = (i: number) =>
+      (pages[i]?.blocks ?? []).flatMap((x) =>
+        x.kind === 'paragraph'
+          ? x.lines.flatMap((l) => l.line.fragments.filter((f) => f.field).map((f) => f.text))
+          : [],
+      );
+    expect(bodyMarks(0)).toEqual(['①']);
+    expect(bodyMarks(1)).toEqual(['①']);
+    const lastNote = pages[1]?.footnotes?.blocks.at(-1);
+    const text =
+      lastNote?.kind === 'paragraph' ? lastNote.lines[0]?.line.fragments.map((f) => f.text).join('') : '';
+    expect(text).toBe('① 乙注');
+    expect(d.diagnostics.map((x) => x.code)).not.toContain('note-restart-not-converged');
   });
 });
 

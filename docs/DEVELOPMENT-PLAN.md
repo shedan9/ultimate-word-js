@@ -886,7 +886,7 @@ await view.toPNG(2);     // 第 3 页（页序号从 0 起，与 scrollTo({ page
     编辑后导出重开布局一致、footnotes.xml 逐字节不动），浏览器回归八页不变全绿。**没有真值**：分隔线长 144pt、画在那一段正中、
     0.5pt 粗都是看出来的，关在 layout / render-dom 的 `uncalibrated.ts`，附钉死办法（`truth.json` 的 `rules[]` 直接给线）
   - 未做：~~**跨页续排**、`continuationSeparator`~~（✅ 见下一条）、
-    `w:numRestart="eachPage"`（号要进域求值那种迭代，现按连续编号并记诊断）、`w:pos="beneathText"`、
+    ~~`w:numRestart="eachPage"`~~（✅ 见「脚注每页重新编号」）、`w:pos="beneathText"`、
     ~~尾注内容~~（✅ 见下）、注里的编辑、keepNext 接缝不计脚注
 - ✅ **脚注跨页续排**（2026-09-29）：原来带引用的行连同脚注放不下就整行挪走，一条脚注长过一页时只能整条硬塞在引用页、
   溢出版心并记 `footnote-overflow`。现在按**行**切开：
@@ -904,6 +904,16 @@ await view.toPNG(2);     // 第 3 页（页序号从 0 起，与 scrollTo({ page
     + 门面 1 项（真 docx：71 段的脚注切成两页、后引的乙注连同引用行到续页、每段恰好一次、无溢出），浏览器回归八页不变全绿。
     **没有真值**：引用页至少留几行、切口看不看脚注内的孤行寡行、续排线通栏，钉死办法写在 `uncalibrated.ts`
   - 未做：`continuationNotice`（「接下页」提示）、脚注内的孤行寡行、续到页面设置不同的下一节时仍按原节的版心宽排
+- ✅ **脚注每页重新编号**（2026-09-29，`w:numRestart="eachPage"`）：原来按连续编号数并记 `note-restart-each-page`。
+  中文出版物「每页从 ① 起」很常见。号要等分页才知道、号的宽度又会改分页（⑩ 换成 ① 可能让一行多收一个字），
+  所以与域求值同一套办法迭代，放在 `layoutDocument` 里：第一趟连续编号（号只宽不窄，第一趟只会多占地方，往回收稳当），
+  `referencePages()` 读出每个引用 run 的号排在哪一页（认 `field` 片段 + `runId`，表格下钻、重复表头跳过），
+  `noteLabels(…, pages)` 换页归 `numStart` 重数再排，**直到每个引用所在的页不再变** —— 判据不是号的文字：
+  两页各只有一条时号都是 ①，内容却可能来回挪。来回跳或 `MAX_NOTE_PASSES = 5` 趟不收敛就取页数最多那趟并记
+  `note-restart-not-converged`。不接进 `layoutDocumentWithFields` 的循环：两个判据互不相干，拼成一个要处理交叉情形；
+  代价是同时有页码域的文档每趟域求值多排一两趟。只对脚注（规范不许尾注 eachPage）。
+  判据：编号 1 项 + 迭代 3 项（每页从 ① 起且正文与页底一致、节上没设不迭代、表格格内的引用）+ 门面 1 项（真 docx，
+  settings.xml 设 eachPage，与跨页续排叠加：续页上的乙注从 ① 起）。**没有真值**：`numStart` 在每页归位时是否生效没对过
 - ✅ **尾注内容**（2026-09-29）：号早就数了，文末那一摞一直没排（记 `endnotes-not-rendered`）。与脚注不同，尾注**走正文的流** ——
   它就是「正文后面多出来的几段」，能跨页、能拆，孤行寡行 / keepNext 照常，所以直接交给分页的 `place()`，不另造区域：
   - `@uw/layout`：`notes.ts` 的 `endnoteIdsBySection()` 按引用先后收每节引到的尾注（隐藏的不收、自定义标记的收 —— 不占号但内容要排），

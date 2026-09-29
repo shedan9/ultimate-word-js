@@ -130,10 +130,87 @@ describe('脚注编号（noteLabels）', () => {
     expect([labels.get(a.id), labels.get(b.id), labels.get(c.id)]).toEqual(['5', '6', '⑤']);
   });
 
-  it('每页重新编号还没做：按连续编号数并记诊断', () => {
+  it('给了引用所在的页：eachPage 换页归 numStart，别的规则照连续数；不在表里的当与前一个同页', () => {
+    const a = runOf([ref('1')]);
+    const b = runOf([ref('2')]);
+    const lost = runOf([ref('3')]);
+    const c = runOf([ref('4')]);
+    const doc = body([para([a, b, lost]), para([c])]);
+    const pages = new Map([
+      [a.id, 0],
+      [b.id, 0],
+      [c.id, 1],
+    ]);
+    const notes = { '1': note(), '2': note(), '3': note(), '4': note() };
+    const each = noteLabels(doc, source(notes, { numbering: { numRestart: 'eachPage' } }), undefined, pages);
+    expect([a, b, lost, c].map((r) => each.get(r.id))).toEqual(['1', '2', '3', '1']);
+    const cont = noteLabels(doc, source(notes), undefined, pages);
+    expect([a, b, lost, c].map((r) => cont.get(r.id))).toEqual(['1', '2', '3', '4']);
+    // 尾注不许每页重新编号（规范只给脚注这个值）
+    const e = runOf([{ kind: 'noteReference', noteType: 'endnote', noteId: '1' }]);
+    const endnotes = noteLabels(body([para([e])]), source({}), undefined, new Map([[e.id, 3]]));
+    expect(endnotes.get(e.id)).toBe('i');
+  });
+});
+
+/** 每一页正文里号的文字 + 脚注区每一条开头的号 */
+function pageMarks(doc: DocumentLayout): { body: string[]; notes: string[] }[] {
+  const fieldTexts = (lines: readonly { line: { fragments: readonly { text: string; field?: true }[] } }[]) =>
+    lines.flatMap((l) => l.line.fragments.filter((f) => f.field === true).map((f) => f.text));
+  return doc.pages.map((p) => ({
+    body: p.blocks.flatMap((b) =>
+      b.kind === 'paragraph'
+        ? fieldTexts(b.lines)
+        : b.rows.flatMap((r) =>
+            r.row.cells.flatMap((c) =>
+              c.blocks.flatMap((x) =>
+                x.kind === 'paragraph' ? fieldTexts(x.layout.lines.map((line) => ({ line }))) : [],
+              ),
+            ),
+          ),
+    ),
+    notes: (p.footnotes?.blocks ?? []).flatMap((b) =>
+      b.kind === 'paragraph' ? (b.lines[0]?.line.fragments.slice(0, 1).map((f) => f.text) ?? []) : [],
+    ),
+  }));
+}
+
+describe('脚注每页重新编号（迭代）', () => {
+  const tall = sect({
+    page: { width: 3300, height: 1200 + 5 * EA_LINE, orientation: 'portrait' },
+    footnotePr: { numRestart: 'eachPage', numFmt: 'decimalEnclosedCircle' },
+  });
+
+  it('每页第一条从 ① 起；正文里的号与页底那一条的号一致；收敛了不报诊断', () => {
     const sink = createDiagnosticSink();
-    noteLabels(body([line('1')]), source({ '1': note() }, { numbering: { numRestart: 'eachPage' } }), sink);
-    expect(sink.list().map((d) => d.code)).toEqual(['note-restart-each-page']);
+    const doc = layoutDocument(
+      body([line('1'), line('2'), line(), line('3')], tall),
+      opts({ notes: source({ '1': note(), '2': note(), '3': note() }), diagnostics: sink }),
+    );
+    expect(shape(doc)).toEqual([3, 1]);
+    expect(pageMarks(doc)).toEqual([
+      { body: ['①', '②'], notes: ['①', '②'] },
+      { body: ['①'], notes: ['①'] },
+    ]);
+    expect(sink.list().map((d) => d.code)).toEqual([]);
+  });
+
+  it('节上没设就不迭代：连续编号', () => {
+    const plain = sect({ page: tall.page, footnotePr: { numFmt: 'decimalEnclosedCircle' } });
+    const doc = layoutDocument(
+      body([line('1'), line('2'), line(), line('3')], plain),
+      opts({ notes: source({ '1': note(), '2': note(), '3': note() }) }),
+    );
+    expect(pageMarks(doc).map((p) => p.body)).toEqual([['①', '②'], ['③']]);
+  });
+
+  it('表格格内的引用同样按所在页数', () => {
+    const doc = layoutDocument(
+      body([line('1'), line('2'), line(), table([2100], [row([cell([line('3')])])])], tall),
+      opts({ notes: source({ '1': note(), '2': note(), '3': note() }) }),
+    );
+    expect(doc.pages).toHaveLength(2);
+    expect(pageMarks(doc)[1]).toEqual({ body: ['①'], notes: ['①'] });
   });
 });
 

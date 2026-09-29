@@ -177,7 +177,7 @@ SVG 当图片用时看不见宿主 `@font-face`，本页用到的族与外部图
 `w:footnotePr` 文档级 + 节级），走「run id → 号」外挂表进 item 流、进段落缓存键。分页**连引到的脚注一起量**：
 `LineLayout.notes` 记这行引出哪几条，放不下就连这一行去下一页；整份排完造 `PageLayout.footnotes`（底边贴版心底，
 与页眉同一套坐标，渲染走 `paintFrame` + 分隔线，索引收为 `frame: 'footnotes'`）。分隔线几何没有真值（`uncalibrated.ts`）；
-跨页续排见下，`eachPage` 重新编号未做（记诊断）。
+跨页续排与每页重新编号见下。
 **尾注内容已接入**（2026-09-29）：尾注**走正文的流**（能跨页、能拆），不另造区域 —— 最后一节（`w:pos="sectEnd"` 时每一节）排完，
 `placeEndnotes()` 先画短分隔线（粘着第一条尾注最少能放的那一截）再逐条交给 `place()`；排尾注期间开的新页顶上先画通栏续排线
 （占高从版心扣、不进 `blocks`）。块带 `endnote` 标记、线在 `PageLayout.noteSeparators`（相对版心），索引记成 `frame: 'endnotes'`。
@@ -186,6 +186,10 @@ SVG 当图片用时看不见宿主 `@font-face`，本页用到的族与外部图
 `[top, bottom)`，不重排），引用页收得下头 `FOOTNOTE_SPLIT_MIN_LINES` 行就切、剩下的续到下一页脚注区最上面，那一页换通栏续排线
 （`PlacedFootnotes.continued`）。容易搞反的两处：切口由 fit 定、commit 照用（fit 连 keepNext 接缝量）；**切过的一页不再收新脚注**，
 否则后引的会插到续排那截前面。顶着续排的页正文放不下让到下一页（`canDefer`），不硬塞。至少留几行、脚注内孤行寡行都没有真值。
+**脚注每页重新编号已接入**（2026-09-29，`w:numRestart="eachPage"`，只对脚注）：号要等分页才知道、号的宽度又改分页，
+所以 `layoutDocument` 里自己迭代 —— 第一趟连续编号，读出每个引用 run 落在哪一页（`referencePages`，认号的 `field` 片段），
+按页重数再排，**判据是「引用所在的页不再变」**不是号的文字；来回跳或 `MAX_NOTE_PASSES` 趟仍不收敛就取页数最多那趟 + 诊断。
+不接进域求值的循环：两个判据互不相干，拼起来要处理交叉情形。
 **Phase 8 已开始：回写 docx**（2026-09-23，新包 `@uw/serialize`，门面 `doc.toDocx()`，调试台「导出 docx」按钮）。
 补丁式：只重写改过的部件，没编辑的文档逐字节照搬；正文**走原文 XML 树**打补丁（见下）。Word 打开无修复提示只能人工验。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、

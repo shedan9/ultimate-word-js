@@ -85,7 +85,16 @@ import { OBJECT_RULES, SCRIPT_RULES } from './line-height.ts';
 import type { NotePiece } from './note-split.ts';
 import { fitPiece, nextPieceTop, slicePiece } from './note-split.ts';
 import type { NoteSource } from './notes.ts';
-import { endnoteIdsBySection, endnotePosition, noteLabels } from './notes.ts';
+import {
+  endnoteIdsBySection,
+  endnotePosition,
+  footnoteReferenceRuns,
+  MAX_NOTE_PASSES,
+  noteLabels,
+  referencePages,
+  restartsEachPage,
+  samePages,
+} from './notes.ts';
 import { joinParagraphFrames } from './para-frame.ts';
 import { layoutParagraph } from './paragraph.ts';
 import type { ParagraphLayoutCache } from './paragraph-cache.ts';
@@ -513,6 +522,44 @@ type Prepared = (
 };
 
 export function layoutDocument(body: ResolvedBody, opts: LayoutDocumentOptions): DocumentLayout {
+  const notes = opts.notes;
+  // 号要在排段落之前数好：号的宽度参与断行
+  const labels = notes === undefined ? undefined : noteLabels(body, notes, opts.diagnostics);
+  const layout = layoutPass(body, opts, labels);
+  if (notes === undefined || !restartsEachPage(body, notes)) return layout;
+
+  // 脚注每页重新编号：号要等分页才知道，号的宽度又改分页 —— 迭代到每个引用所在的页不再变。
+  // 判据与取舍见 notes.ts 文件头；诊断只在第一趟收（同 `layoutDocumentWithFields`）
+  const runs = footnoteReferenceRuns(body);
+  const { diagnostics: _quieted, ...quiet } = opts;
+  let pages = referencePages(layout, runs);
+  const tried: { pages: Map<NodeId, number>; layout: DocumentLayout }[] = [{ pages, layout }];
+  for (let passes = 2; ; passes++) {
+    const next = layoutPass(body, quiet, noteLabels(body, notes, undefined, pages));
+    const now = referencePages(next, runs);
+    if (samePages(now, pages)) return next;
+    const cycled = tried.some((t) => samePages(t.pages, now));
+    tried.push({ pages: now, layout: next });
+    if (cycled || passes >= MAX_NOTE_PASSES) {
+      opts.diagnostics?.warn(
+        'note-restart-not-converged',
+        cycled
+          ? '脚注每页重新编号在两种分页之间来回跳，冻结在页数最多的那一趟 —— 个别脚注的号可能与 Word 不同'
+          : `脚注每页重新编号 ${MAX_NOTE_PASSES} 趟仍未收敛，冻结在页数最多的那一趟`,
+      );
+      // 与域求值同一条取舍：宁可多一页，少算的那一页会让末尾的内容整个消失
+      return tried.reduce((a, b) => (b.layout.pages.length > a.layout.pages.length ? b : a)).layout;
+    }
+    pages = now;
+  }
+}
+
+/** 排一趟：号已经数好（`labels`，没有脚注数据时缺席） */
+function layoutPass(
+  body: ResolvedBody,
+  opts: LayoutDocumentOptions,
+  labels: Map<NodeId, string> | undefined,
+): DocumentLayout {
   const first = body.sections[0];
   const flow: Flow = {
     opts,
@@ -531,8 +578,6 @@ export function layoutDocument(body: ResolvedBody, opts: LayoutDocumentOptions):
     hfDynamic: dynamicParts(opts.headerFooters, opts.headerFields),
     notes: undefined,
   };
-  // 号要在排段落之前数好：号的宽度参与断行
-  const labels = opts.notes === undefined ? undefined : noteLabels(body, opts.notes, opts.diagnostics);
   // 自定义标记的尾注不占号（labels 里没有它），内容照样要排 —— 所以另数一遍引用
   const endnoteIds = opts.notes === undefined ? [] : endnoteIdsBySection(body);
   if (
