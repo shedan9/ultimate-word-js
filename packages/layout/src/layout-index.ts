@@ -70,7 +70,7 @@ export interface IndexedLine {
    */
   repeated: boolean;
   /**
-   * 页眉 / 页脚 / 脚注区里的行。正文的行没有这个字段。
+   * 页眉 / 页脚 / 脚注区 / 文末尾注里的行。正文的行没有这个字段。
    * 脚注区的行**进索引**（可选文本层要能复制、Ctrl+F 要能搜到脚注），
    * 但与页眉一样不在正文的上下导航里（它们的 run 不在正文的树上）
    */
@@ -113,7 +113,9 @@ export function buildLayoutIndex(doc: DocumentLayout): LayoutIndex {
     const g = page.geometry;
     if (page.header !== undefined) collectFrame(page.header, page.index, lines);
     for (const block of page.blocks) {
-      collectBlock(block, g.content.x, g.content.y, page.index, false, undefined, lines);
+      // 文末的尾注住在正文的流里，但 run 不在正文的树上 —— 与脚注区同样对待
+      const frame = block.endnote === undefined ? undefined : 'endnotes';
+      collectBlock(block, g.content.x, g.content.y, page.index, false, frame, lines);
     }
     if (page.footnotes !== undefined) collectFrame(page.footnotes, page.index, lines);
     if (page.footer !== undefined) collectFrame(page.footer, page.index, lines);
@@ -279,7 +281,7 @@ export function buildLayoutIndex(doc: DocumentLayout): LayoutIndex {
 // 而摊平这件事布局层自己就该会做 —— 命中测试不该逼着调用方先渲染一遍。
 
 /** 正文之外的三种行容器 */
-export type FrameKind = 'header' | 'footer' | 'footnotes';
+export type FrameKind = 'header' | 'footer' | 'footnotes' | 'endnotes';
 
 function collectFrame(frame: PlacedHeaderFooter | PlacedFootnotes, page: number, out: IndexedLine[]): void {
   for (const block of frame.blocks) {

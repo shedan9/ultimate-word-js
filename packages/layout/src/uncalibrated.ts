@@ -234,6 +234,9 @@ export const STYLEREF_NUMERIC_CHARS = /[0-9〇零一二三四五六七八九十�
  *
  * 钉死办法：一份带两条脚注的 docx（A4 与 Letter 各一节）导 PDF，`truth.json` 的
  * `pages[].rules[]` 直接给出那条线的起止 x 与 y；顺带把下一条 `FOOTNOTE_SEPARATOR_LINE_Y` 一起钉死。
+ *
+ * 尾注开头那条短线也用它（与下一条）；尾注跨页时续页顶上那条按**通栏**画，同样没量过 ——
+ * 同一份样本再加一段长过一页的尾注就能一起钉死。
  */
 export const FOOTNOTE_SEPARATOR_WIDTH = 2880;
 

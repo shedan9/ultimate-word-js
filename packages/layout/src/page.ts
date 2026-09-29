@@ -39,11 +39,16 @@
  * 脚注区**底边贴着版心底**（`w:pos="pageBottom"`，默认值），分隔线那一段的高度来自
  * `footnotes.xml` 里那条 `separator` 的段落。整层没有真值，常数在 `uncalibrated.ts`。
  *
+ * ## 尾注
+ *
+ * 尾注**走正文的流**：最后一节（`w:pos="sectEnd"` 时是每一节）排完，接着排一条短分隔线
+ * 和引到的尾注（`placeEndnotes`），跨页时续页顶上画一条通栏的续排分隔线。
+ * 尾注的块住在 `blocks` 里、带着 `endnote` 标记。同样没有真值。
+ *
  * ## 几件**没做**的（写下来免得以为已经做了）
  *
  * - **脚注跨页续排**：一条脚注长过一整页时 Word 会把后半截挪到下一页（续页上画通栏的
  *   `continuationSeparator`），这里整条硬塞在引用所在的那一页并记诊断
- * - **尾注**的内容：号数了（`notes.ts`），文末那一摞还没排，记诊断
  * - 浮动对象的**文字让开**：方形 / 上下型环绕的位置对，文字不绕着走
  */
 import type { DiagnosticSink, Twips } from '@uw/core';
@@ -68,11 +73,11 @@ import {
   pickHeaderFooter,
   stackBlocks,
 } from './header-footer.ts';
-import { WIDTH_RULES, type WidthRules } from './items.ts';
+import { noteKey, WIDTH_RULES, type WidthRules } from './items.ts';
 import type { ObjectRules, ScriptRules } from './line-height.ts';
 import { OBJECT_RULES, SCRIPT_RULES } from './line-height.ts';
 import type { NoteSource } from './notes.ts';
-import { noteLabels } from './notes.ts';
+import { endnoteIdsBySection, endnotePosition, noteLabels } from './notes.ts';
 import { joinParagraphFrames } from './para-frame.ts';
 import { layoutParagraph } from './paragraph.ts';
 import type { ParagraphLayoutCache } from './paragraph-cache.ts';
@@ -120,6 +125,12 @@ export interface PlacedParagraph {
    * 跨页的段落在切口那一侧不封口
    */
   frame?: ParagraphFrame;
+  /**
+   * 文末尾注里的块：这一块属于哪一条尾注（`noteKey()`）。尾注接在正文后面**走正文的流**
+   * （能跨页、能拆），所以住在 `blocks` 里而不是另开一个区；标出来是给命中测试与上下导航 ——
+   * 它的 run 不在正文的树上，与页眉脚注同样对待（索引记成 `frame: 'endnotes'`）
+   */
+  endnote?: string;
 }
 
 export interface PlacedRow {
@@ -158,6 +169,8 @@ export interface PlacedTable {
   rows: PlacedRow[];
   first: boolean;
   last: boolean;
+  /** 同 `PlacedParagraph.endnote` */
+  endnote?: string;
 }
 
 export type PlacedBlock = PlacedParagraph | PlacedTable;
@@ -185,6 +198,8 @@ export interface PageLayout {
   floats?: PlacedFloat[];
   /** 这一页的脚注区。本页没有引用脚注时缺席 */
   footnotes?: PlacedFootnotes;
+  /** 尾注的分隔线（文末那条短线 / 续页顶上那条通栏线）。本页没有时缺席 */
+  noteSeparators?: PlacedNoteSeparator[];
   /** `evenPage` / `oddPage` 为了凑奇偶补出来的空页 */
   filler?: true;
 }
@@ -211,6 +226,20 @@ export interface PlacedFootnotes {
   notes: string[];
   /** 分隔线那一段不在这里（它只有一个空段落，收进来会给命中测试多一个假的插入点） */
   blocks: PlacedBlock[];
+}
+
+/**
+ * 尾注的分隔线。与脚注的那条不同，它**画在正文流里**（尾注接在正文后面），
+ * 所以坐标与 `blocks` 同一套：相对**版心左上角**，`y` 是线的中心。
+ *
+ * - `separator`：尾注开头那条短线（`endnotes.xml` 里 `w:type="separator"` 那条的段落定它占多高）
+ * - `continuationSeparator`：尾注排到下一页时，续页顶上那条**通栏**线
+ */
+export interface PlacedNoteSeparator {
+  kind: 'separator' | 'continuationSeparator';
+  x: Twips;
+  y: Twips;
+  width: Twips;
 }
 
 /**
@@ -432,10 +461,15 @@ interface NoteFlow {
   /** 每一页收的脚注，整份排完再造脚注区（区域的 y 要这一页的版心，那时才定） */
   byPage: Map<PageLayout, string[]>;
   overflowReported: boolean;
+  /**
+   * 正在排尾注：这时开出来的新页是尾注的**续页**，顶上先画续排分隔线（`currentPage` 看它）。
+   * 排尾注那一段之外恒为 false —— 下一节的第一页不是续页
+   */
+  endnotesRunning: boolean;
 }
 
 /** 排完行、还没分页的中间形态。分页只关心高度，所以两种块在这里被拉平成同一个层级 */
-type Prepared =
+type Prepared = (
   | { kind: 'paragraph'; id: NodeId; layout: ParagraphLayout; props: ResolvedParaProps }
   | {
       kind: 'table';
@@ -444,7 +478,11 @@ type Prepared =
       rows: ResolvedTableRow[];
       /** 表级 `w:tblBorders`：拆行时接缝上那两条线取的是它的上下边（`table-split.ts` 实测） */
       borders: TableBorders | undefined;
-    };
+    }
+) & {
+  /** 尾注内容里的块：属于哪一条（`noteKey()`），原样带到 `PlacedBlock.endnote` */
+  endnote?: string;
+};
 
 export function layoutDocument(body: ResolvedBody, opts: LayoutDocumentOptions): DocumentLayout {
   const first = body.sections[0];
@@ -467,7 +505,13 @@ export function layoutDocument(body: ResolvedBody, opts: LayoutDocumentOptions):
   };
   // 号要在排段落之前数好：号的宽度参与断行
   const labels = opts.notes === undefined ? undefined : noteLabels(body, opts.notes, opts.diagnostics);
-  if (opts.notes !== undefined && labels !== undefined && labels.size > 0) {
+  // 自定义标记的尾注不占号（labels 里没有它），内容照样要排 —— 所以另数一遍引用
+  const endnoteIds = opts.notes === undefined ? [] : endnoteIdsBySection(body);
+  if (
+    opts.notes !== undefined &&
+    labels !== undefined &&
+    (labels.size > 0 || endnoteIds.some((ids) => ids.length > 0))
+  ) {
     flow.notes = {
       source: opts.notes,
       labels,
@@ -476,12 +520,12 @@ export function layoutDocument(body: ResolvedBody, opts: LayoutDocumentOptions):
       height: 0,
       byPage: new Map(),
       overflowReported: false,
+      endnotesRunning: false,
     };
-    if (Object.keys(opts.notes.endnotes.notes).length > 0) {
-      opts.diagnostics?.warn('endnotes-not-rendered', '文档有尾注：号已显示，文末的尾注内容还没有排出来');
-    }
   }
   const prepareOpts = labels === undefined || labels.size === 0 ? opts : { ...opts, noteLabels: labels };
+  // 排到文末的尾注（`docEnd`，默认）攒到最后一节排完再一起排
+  const deferred: string[] = [];
 
   body.sections.forEach((section, index) => {
     flow.sectionIndex = index;
@@ -493,9 +537,18 @@ export function layoutDocument(body: ResolvedBody, opts: LayoutDocumentOptions):
       place(flow, b, joinHeight(blocks, i, flow.rules));
     });
 
+    const ids = endnoteIds[index] ?? [];
+    if (opts.notes !== undefined && endnotePosition(opts.notes, section.props) === 'sectEnd') {
+      placeEndnotes(flow, ids, section.props, prepareOpts);
+    } else {
+      for (const id of ids) if (!deferred.includes(id)) deferred.push(id);
+    }
+
     // 空节也要占一页：Word 里一个分节符至少产生一页，否则页码序列就断了
     if (section.blocks.length === 0) currentPage(flow);
   });
+  const lastSection = body.sections[body.sections.length - 1];
+  if (lastSection !== undefined) placeEndnotes(flow, deferred, lastSection.props, prepareOpts);
 
   // 空文档也得有一页 —— 渲染层拿到 pages: [] 只能画白屏，那与「文档是空的」不是一回事
   if (flow.pages.length === 0) currentPage(flow);
@@ -641,6 +694,10 @@ function currentPage(flow: Flow): PageLayout {
   if (flow.notes !== undefined) {
     flow.notes.onPage = [];
     flow.notes.height = 0;
+    // 尾注排到这一页来了：顶上先画续排分隔线，它占的高度从版心里扣。
+    // 不进 `blocks`（那一段只有一个空段落），`pageHasContent()` 因此仍说这页是空的 ——
+    // 「页首丢段前间距」「空页上放不下只好硬塞」两条判断照旧成立，不会换页换不完
+    if (flow.notes.endnotesRunning) flow.y += drawNoteSeparator(flow, page, 'continuationSeparator');
   }
   return page;
 }
@@ -1042,6 +1099,7 @@ function emitLines(
     first: from === 0,
     last: from + count >= total,
     ...(b.layout.frame === undefined ? {} : { frame: b.layout.frame }),
+    ...(b.endnote === undefined ? {} : { endnote: b.endnote }),
   });
 }
 
@@ -1301,6 +1359,7 @@ function emitRows(
     rows: placed,
     first: from === 0 && !continued,
     last,
+    ...(b.endnote === undefined ? {} : { endnote: b.endnote }),
   });
 }
 
@@ -1594,10 +1653,15 @@ function noteStack(flow: Flow, key: string, section = flow.sectionIndex): StackR
   return stackNote(flow, `${key}|${section}`, content.resolved, section);
 }
 
-function separatorStack(flow: Flow, section = flow.sectionIndex): StackResult | undefined {
-  const content = flow.notes?.source.footnotes.separator;
+function separatorStack(
+  flow: Flow,
+  section = flow.sectionIndex,
+  part: 'footnotes' | 'endnotes' = 'footnotes',
+  kind: PlacedNoteSeparator['kind'] = 'separator',
+): StackResult | undefined {
+  const content = flow.notes?.source[part][kind];
   if (content === undefined) return undefined;
-  return stackNote(flow, `separator|${section}`, content.resolved, section);
+  return stackNote(flow, `${part}|${kind}|${section}`, content.resolved, section);
 }
 
 /** 按**那一节**的版心宽与网格排（脚注区与正文同宽），同一条在同一节里只排一次 */
@@ -1658,6 +1722,79 @@ function placeFootnotes(flow: Flow, page: PageLayout): void {
     notes: [...keys],
     blocks,
   };
+}
+
+// ── 尾注 ──────────────────────────────────────────────────────────────────────
+
+/**
+ * 把尾注接在正文后面排：先一条短分隔线，再按引用的先后一条条排下去。
+ *
+ * 与脚注不同，尾注**走正文的流** —— 它就是「正文后面多出来的几段」，能跨页、能拆、
+ * 孤行寡行与 keepNext 照常起作用，所以直接交给 `place()`，不另造一个区。
+ * 跨到下一页时续页顶上画通栏的续排分隔线（`currentPage` 看 `endnotesRunning`）。
+ *
+ * 分隔线**粘着第一条尾注最少能放的那一截**：本页剩下的地方只够画线、放不下第一条的开头时，
+ * 线跟着去下一页（把线孤零零留在页底毫无意义，与表头粘着下一行同理）。
+ * 这一条没有真值，是照 keepNext 的「最少能放多少」类推的；分隔线的长度与画在哪一高度
+ * 沿用脚注那两个未标定的常数（`uncalibrated.ts`）。
+ */
+function placeEndnotes(
+  flow: Flow,
+  ids: readonly string[],
+  section: SectionProps,
+  opts: LayoutDocumentOptions & { noteLabels?: ReadonlyMap<NodeId, string> },
+): void {
+  const n = flow.notes;
+  if (n === undefined || ids.length === 0) return;
+  const prepared: Prepared[] = [];
+  for (const id of ids) {
+    const content = n.source.endnotes.notes[id];
+    if (content === undefined) continue;
+    const endnote = noteKey('endnote', id);
+    for (const b of content.resolved) prepared.push({ ...prepare(b, section, opts), endnote });
+  }
+  const blocks = joinPreparedFrames(prepared);
+  const first = blocks[0];
+  if (first === undefined) return;
+
+  const sep = separatorStack(flow, flow.sectionIndex, 'endnotes')?.height ?? 0;
+  if (pageHasContent(flow) && availHeight(flow) < sep + leadHeight(first, flow.rules)) breakPage(flow);
+  flow.y += drawNoteSeparator(flow, currentPage(flow), 'separator');
+
+  n.endnotesRunning = true;
+  blocks.forEach((b, i) => {
+    place(flow, b, joinHeight(blocks, i, flow.rules));
+  });
+  n.endnotesRunning = false;
+}
+
+/** 一块开始排了就至少要占的高：段落是段前间距 + 孤行寡行保底的那几行，表格是第一行 */
+function leadHeight(b: Prepared, rules: PaginationRules): Twips {
+  if (b.kind === 'table') return b.layout.rows[0]?.height ?? 0;
+  const lines = b.layout.lines;
+  let h = b.layout.spaceBefore;
+  const min = minChunkLines(b.props, lines.length, rules);
+  for (let k = 0; k < Math.min(min, lines.length); k++) h += lines[k]?.height ?? 0;
+  return h;
+}
+
+/**
+ * 在当前游标处画一条尾注分隔线，返回它那一段占的高。文档里没有那一条（第三方生成器常省掉
+ * `endnotes.xml` 里的分隔线）时照样画、占高 0 —— 与脚注区同一个处理。
+ * 短线的长度沿用脚注的 `FOOTNOTE_SEPARATOR_WIDTH`；续排那条**通栏**（Word 默认的
+ * `w:continuationSeparator` 就是一条贯穿栏宽的线），同样没有量过
+ */
+function drawNoteSeparator(flow: Flow, page: PageLayout, kind: PlacedNoteSeparator['kind']): Twips {
+  const h = separatorStack(flow, page.sectionIndex, 'endnotes', kind)?.height ?? 0;
+  const width = page.geometry.content.width;
+  page.noteSeparators ??= [];
+  page.noteSeparators.push({
+    kind,
+    x: 0,
+    y: flow.y + h * FOOTNOTE_SEPARATOR_LINE_Y,
+    width: kind === 'separator' ? Math.min(FOOTNOTE_SEPARATOR_WIDTH, width) : width,
+  });
+  return h;
 }
 
 /** 摞好的块整体往下挪 `dy`。缓存里的那一份是共享的，不能就地改 */

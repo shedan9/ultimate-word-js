@@ -122,3 +122,37 @@ function numberingOf(type: NoteType, source: NoteSource, section: SectionProps):
   const own = type === 'footnote' ? section.footnotePr : section.endnotePr;
   return { ...doc, ...own };
 }
+
+/**
+ * 每一节引到了哪几条**尾注**（`w:id`，按引用的先后、一条只收一次）—— 文末那一摞就按这个顺序排。
+ *
+ * 与数号同一套取舍：隐藏的引用不算（它不打印，尾注跟着不出现）；自定义标记的**算** ——
+ * 它不占号，内容照样要排出来（号是用户自己打在 `customMarkFollows` 后面那个字）。
+ * 表格里的引用也算：`walkBlocks` 会下钻到单元格。
+ */
+export function endnoteIdsBySection(body: ResolvedBody): string[][] {
+  return body.sections.map((section) => {
+    const out: string[] = [];
+    for (const block of walkBlocks(section.blocks)) {
+      if (block.kind !== 'paragraph') continue;
+      for (const run of block.runs) {
+        if (run.props.hidden) continue;
+        for (const c of run.content) {
+          if (c.kind === 'noteReference' && c.noteType === 'endnote' && !out.includes(c.noteId)) {
+            out.push(c.noteId);
+          }
+        }
+      }
+    }
+    return out;
+  });
+}
+
+/**
+ * 尾注排在哪儿：`docEnd`（默认，全文最后）还是 `sectEnd`（每节末尾）。
+ * 与编号规则一样文档级打底、节上的盖上去 —— Word 的界面只给文档级的一个开关，
+ * 节上写 `w:pos` 的只有手改的 XML
+ */
+export function endnotePosition(source: NoteSource, section: SectionProps): 'docEnd' | 'sectEnd' {
+  return numberingOf('endnote', source, section).pos === 'sectEnd' ? 'sectEnd' : 'docEnd';
+}

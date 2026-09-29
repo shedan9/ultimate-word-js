@@ -13,6 +13,7 @@ import { createDiagnosticSink } from '@uw/core';
 import type { NoteNumbering, ResolvedBlock, ResolvedBody, RunContent, SectionProps } from '@uw/model';
 import { DEFAULT_SECTION_PROPS, DEFAULT_SETTINGS } from '@uw/model';
 import { describe, expect, it } from 'vitest';
+import { buildLayoutIndex } from './layout-index.ts';
 import type { NoteSource } from './notes.ts';
 import { noteLabels } from './notes.ts';
 import type { DocumentLayout, LayoutDocumentOptions, PlacedParagraph } from './page.ts';
@@ -233,5 +234,147 @@ describe('脚注占位（分页）', () => {
       ['1', 1, -1, true],
     ]);
     expect(placed?.lines[0]?.line.notes).toEqual(['footnote:1']);
+  });
+});
+
+describe('尾注（文末排出）', () => {
+  const eref = (noteId: string, extra: Partial<Extract<RunContent, { kind: 'noteReference' }>> = {}) =>
+    ref(noteId, { noteType: 'endnote', ...extra });
+  const emark: RunContent = { kind: 'noteMark', noteType: 'endnote' };
+  const endnote = (text = '尾', lines = 1): { resolved: ResolvedBlock[] } => {
+    const blocks: ResolvedBlock[] = [para([runOf([emark]), run(text)], { widowControl: false })];
+    for (let i = 1; i < lines; i++) blocks.push(para([run(text)], { widowControl: false }));
+    return { resolved: blocks };
+  };
+  const eline = (noteId: string) => para([run('一二三四五'), runOf([eref(noteId)])], { widowControl: false });
+  const sepPara = () => ({ resolved: [para([run('')], { widowControl: false })] as ResolvedBlock[] });
+  const esource = (
+    notes: Record<string, { resolved: ResolvedBlock[] }>,
+    over: {
+      numbering?: NoteNumbering;
+      separator?: { resolved: ResolvedBlock[] };
+      continuationSeparator?: { resolved: ResolvedBlock[] };
+    } = {},
+  ): NoteSource => ({
+    footnotes: { notes: {}, numbering: {} },
+    endnotes: {
+      notes,
+      numbering: over.numbering ?? {},
+      ...(over.separator === undefined ? {} : { separator: over.separator }),
+      ...(over.continuationSeparator === undefined
+        ? {}
+        : { continuationSeparator: over.continuationSeparator }),
+    },
+  });
+  const endnoteBlocks = (doc: DocumentLayout, page: number) =>
+    (doc.pages[page]?.blocks ?? []).filter((b) => b.endnote !== undefined).map((b) => b.endnote);
+  const firstText = (b: unknown) => (b as PlacedParagraph).lines[0]?.line.fragments[0]?.text;
+
+  it('接在正文后面：短分隔线 + 按引用先后排，号用尾注的格式，没被引的不排', () => {
+    const sink = createDiagnosticSink();
+    const doc = layoutDocument(
+      body([para([run('一二'), runOf([eref('5')]), run('三'), runOf([eref('2')])])]),
+      opts({
+        notes: esource({ '2': endnote('乙'), '5': endnote('甲'), '9': endnote('废') }),
+        diagnostics: sink,
+      }),
+    );
+    expect(doc.pages).toHaveLength(1);
+    const page = doc.pages[0];
+    expect(endnoteBlocks(doc, 0)).toEqual(['endnote:5', 'endnote:2']);
+    const notes = page?.blocks.filter((b) => b.endnote !== undefined) ?? [];
+    // 默认 lowerRoman：第一条引用（w:id 5）是 i
+    expect(notes.map(firstText)).toEqual(['i', 'ii']);
+    expect(notes.map((b) => b.y)).toEqual([EA_LINE, 2 * EA_LINE]);
+    // 文档里没给分隔线那一段：照样画、占高 0，线在正文末行下面
+    expect(page?.noteSeparators).toEqual([{ kind: 'separator', x: 0, y: EA_LINE, width: 2100 }]);
+    expect(sink.list().map((d) => d.code)).not.toContain('endnotes-not-rendered');
+  });
+
+  it('分隔线那一段的高度让出来，线画在那一段中间', () => {
+    const doc = layoutDocument(
+      body([eline('1')]),
+      opts({ notes: esource({ '1': endnote() }, { separator: sepPara() }) }),
+    );
+    const page = doc.pages[0];
+    const n = page?.blocks[1];
+    const sepHeight = (n?.y ?? 0) - EA_LINE;
+    expect(sepHeight).toBeGreaterThan(0);
+    expect(page?.noteSeparators?.[0]?.y).toBeCloseTo(EA_LINE + sepHeight / 2);
+  });
+
+  it('尾注排到下一页：续页顶上先画通栏的续排分隔线，它占的高从版心里扣', () => {
+    const cont = sepPara();
+    const doc = layoutDocument(
+      body([eline('1')]),
+      opts({ notes: esource({ '1': endnote('尾', 4) }, { continuationSeparator: cont }) }),
+    );
+    // 第一页：正文一行 + 尾注两行；第二页：续排线那一段 + 尾注剩下的两行
+    expect(shape(doc)).toEqual([3, 2]);
+    const page2 = doc.pages[1];
+    const seps = page2?.noteSeparators ?? [];
+    expect(seps.map((s) => s.kind)).toEqual(['continuationSeparator']);
+    expect(seps[0]?.width).toBe(page2?.geometry.content.width);
+    const contHeight = page2?.blocks[0]?.y ?? 0;
+    expect(contHeight).toBeGreaterThan(0);
+    expect(seps[0]?.y).toBeCloseTo(contHeight / 2);
+    expect(endnoteBlocks(doc, 1)).toEqual(['endnote:1', 'endnote:1']);
+  });
+
+  it('本页只剩画线的地方时，分隔线跟着第一条尾注去下一页（不画续排线）', () => {
+    const doc = layoutDocument(
+      body([line(), line(), eline('1')]),
+      opts({
+        notes: esource({ '1': endnote() }, { separator: sepPara(), continuationSeparator: sepPara() }),
+      }),
+    );
+    expect(shape(doc)).toEqual([3, 1]);
+    expect(doc.pages[0]?.noteSeparators).toBeUndefined();
+    expect(doc.pages[1]?.noteSeparators?.map((s) => s.kind)).toEqual(['separator']);
+  });
+
+  it('sectEnd：每一节排完就排这一节引到的尾注', () => {
+    const doc: ResolvedBody = {
+      sections: [
+        { id: 's0', props: sect(), blocks: [eline('1')] },
+        { id: 's1', props: sect(), blocks: [eline('2')] },
+      ],
+    };
+    const laid = layoutDocument(
+      doc,
+      opts({ notes: esource({ '1': endnote(), '2': endnote() }, { numbering: { pos: 'sectEnd' } }) }),
+    );
+    expect(laid.pages).toHaveLength(2);
+    expect(endnoteBlocks(laid, 0)).toEqual(['endnote:1']);
+    expect(endnoteBlocks(laid, 1)).toEqual(['endnote:2']);
+  });
+
+  it('docEnd（默认）：各节的尾注攒到全文最后', () => {
+    const doc: ResolvedBody = {
+      sections: [
+        { id: 's0', props: sect(), blocks: [eline('1')] },
+        { id: 's1', props: sect(), blocks: [eline('2')] },
+      ],
+    };
+    const laid = layoutDocument(doc, opts({ notes: esource({ '1': endnote(), '2': endnote() }) }));
+    expect(endnoteBlocks(laid, 0)).toEqual([]);
+    expect(endnoteBlocks(laid, 1)).toEqual(['endnote:1', 'endnote:2']);
+  });
+
+  it('自定义标记的尾注不占号，内容照样排；隐藏的引用不排', () => {
+    const doc = layoutDocument(
+      body([
+        para([run('甲'), runOf([eref('1', { customMark: true })]), run('*')]),
+        para([run('乙'), runOf([eref('2')], { hidden: true })]),
+      ]),
+      opts({ notes: esource({ '1': { resolved: [para([run('*自定')])] }, '2': endnote() }) }),
+    );
+    expect(endnoteBlocks(doc, 0)).toEqual(['endnote:1']);
+  });
+
+  it('命中测试把尾注的行记成 endnotes 帧（不进正文的上下导航）', () => {
+    const doc = layoutDocument(body([eline('1')]), opts({ notes: esource({ '1': endnote() }) }));
+    const index = buildLayoutIndex(doc);
+    expect(index.lines.map((l) => l.frame)).toEqual([undefined, 'endnotes']);
   });
 });

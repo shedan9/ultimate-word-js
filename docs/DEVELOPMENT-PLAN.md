@@ -886,8 +886,22 @@ await view.toPNG(2);     // 第 3 页（页序号从 0 起，与 scrollTo({ page
     编辑后导出重开布局一致、footnotes.xml 逐字节不动），浏览器回归八页不变全绿。**没有真值**：分隔线长 144pt、画在那一段正中、
     0.5pt 粗都是看出来的，关在 layout / render-dom 的 `uncalibrated.ts`，附钉死办法（`truth.json` 的 `rules[]` 直接给线）
   - 未做：**跨页续排**（一条脚注长过一页时整条硬塞在引用页并记 `footnote-overflow`）、`continuationSeparator`、
-    `w:numRestart="eachPage"`（号要进域求值那种迭代，现按连续编号并记诊断）、`w:pos="beneathText"`、**尾注内容**（号已显示，
-    文末那一摞没排，记 `endnotes-not-rendered`）、注里的编辑、keepNext 接缝不计脚注
+    `w:numRestart="eachPage"`（号要进域求值那种迭代，现按连续编号并记诊断）、`w:pos="beneathText"`、
+    ~~尾注内容~~（✅ 见下）、注里的编辑、keepNext 接缝不计脚注
+- ✅ **尾注内容**（2026-09-29）：号早就数了，文末那一摞一直没排（记 `endnotes-not-rendered`）。与脚注不同，尾注**走正文的流** ——
+  它就是「正文后面多出来的几段」，能跨页、能拆，孤行寡行 / keepNext 照常，所以直接交给分页的 `place()`，不另造区域：
+  - `@uw/layout`：`notes.ts` 的 `endnoteIdsBySection()` 按引用先后收每节引到的尾注（隐藏的不收、自定义标记的收 —— 不占号但内容要排），
+    `endnotePosition()` 读 `w:pos`（文档级打底、节上盖）；`page.ts` 的 `placeEndnotes()` 在最后一节（`sectEnd` 时每一节）排完后
+    画一条短分隔线（高度来自 `endnotes.xml` 的 `separator` 段落，线**粘着**第一条尾注最少能放的那一截），再逐条 `place()`。
+    排尾注期间开出来的新页顶上先画通栏的**续排分隔线**（`continuationSeparator` 那一段的高度从版心里扣；不进 `blocks`，
+    所以页首丢段前间距、空页硬塞两条判断照旧）。尾注的块带 `endnote` 标记，线在 `PageLayout.noteSeparators`（相对版心）
+  - 布局索引：尾注的行记成 `frame: 'endnotes'`（可复制可搜，不进正文的上下导航 —— run 不在正文的树上）
+  - `@uw/render-dom`：分隔线画在版心那个 `<g>` 里，与脚注那条同一种画法（`uw-endnote-separator` / `uw-endnote-continuation`）
+  - 判据：布局 8 项（先后、罗马数字、没人引的不排、分隔线占高、续排线、线跟着第一条去下一页、`sectEnd` / `docEnd`、
+    自定义标记与隐藏、索引帧）+ 画法 1 项 + 门面 2 项（真 docx：`w:id` 与出现顺序相反 → 「i 甲尾」「ii 乙尾」；
+    编辑后导出重开布局一致、endnotes.xml 逐字节不动），浏览器回归八页不变全绿。**没有真值**：分隔线沿用脚注那两个未标定常数，
+    续排线通栏、线粘着第一条尾注、续页顶上丢不丢段前间距都是推的
+  - 未做：`w:numRestart`（尾注的 `eachSect` 号已按节归位，内容仍按全文一摞排）、`continuationNotice`、尾注里的编辑
 - DATE / TIME 与布局无关但要一套 Word 的日期格式串解析（✅ 见上）
 - ~~图片：inline 为主，浮动只做不参与文字流的那种，其余环绕类型退化为 inline~~ ✅（2026-08-22）
   三层各做各的一段，中间只传一个 id：

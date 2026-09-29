@@ -184,6 +184,15 @@ function buildPageWith(page: PageLayout, ctx: Ctx): RElement {
 
   const inner: RElement[] = [];
   for (const [i, block] of page.blocks.entries()) paintBlock(block, page.blocks[i + 1], ctx, inner);
+  // 尾注的分隔线在正文流里（坐标相对版心），与脚注区那条同一种画法
+  for (const sep of page.noteSeparators ?? []) {
+    inner.push(
+      noteSeparatorLine(
+        sep,
+        ctx.cls(sep.kind === 'separator' ? 'endnote-separator' : 'endnote-continuation'),
+      ),
+    );
+  }
   children.push(
     el(
       'g',
@@ -217,6 +226,19 @@ function buildPageWith(page: PageLayout, ctx: Ctx): RElement {
   return el('svg', attrs, children);
 }
 
+/** 脚注 / 尾注的分隔线。`y` 是线的中心，粗细没有真值（`FOOTNOTE_SEPARATOR_STROKE_PT`） */
+function noteSeparatorLine(sep: { x: Twips; y: Twips; width: Twips }, cls: string): RElement {
+  return el('line', {
+    class: cls,
+    x1: fmt(pt(sep.x)),
+    y1: fmt(pt(sep.y)),
+    x2: fmt(pt(sep.x + sep.width)),
+    y2: fmt(pt(sep.y)),
+    stroke: '#000000',
+    'stroke-width': fmt(FOOTNOTE_SEPARATOR_STROKE_PT),
+  });
+}
+
 /**
  * 页眉 / 页脚。**坐标相对纸左上角**，与版心那个 `<g>` 平级 ——
  * 它不在版心里（版心是被它挤出来的），套进去会平白多偏一个上边距。
@@ -224,18 +246,7 @@ function buildPageWith(page: PageLayout, ctx: Ctx): RElement {
 function paintFrame(frame: PlacedHeaderFooter | PlacedFootnotes, ctx: Ctx): RElement {
   const inner: RElement[] = [];
   if (frame.kind === 'footnotes') {
-    const sep = frame.separator;
-    inner.push(
-      el('line', {
-        class: ctx.cls('footnote-separator'),
-        x1: fmt(pt(sep.x)),
-        y1: fmt(pt(sep.y)),
-        x2: fmt(pt(sep.x + sep.width)),
-        y2: fmt(pt(sep.y)),
-        stroke: '#000000',
-        'stroke-width': fmt(FOOTNOTE_SEPARATOR_STROKE_PT),
-      }),
-    );
+    inner.push(noteSeparatorLine(frame.separator, ctx.cls('footnote-separator')));
   }
   for (const [i, block] of frame.blocks.entries()) paintBlock(block, frame.blocks[i + 1], ctx, inner);
   if (ctx.debug) {

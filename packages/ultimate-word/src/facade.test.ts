@@ -819,3 +819,99 @@ describe('脚注', () => {
     expect(parts.get('word/footnotes.xml')).toEqual(unzip(footnoteDocx()).get('word/footnotes.xml'));
   });
 });
+
+describe('尾注', () => {
+  const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+  const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  const ref = (id: string) =>
+    `<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:endnoteReference w:id="${id}"/></w:r>`;
+  const note = (id: string, text: string) =>
+    `<w:endnote w:id="${id}"><w:p><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:endnoteRef/></w:r>` +
+    `<w:r><w:t xml:space="preserve"> ${text}</w:t></w:r></w:p></w:endnote>`;
+
+  /** 两段各引一条（`w:id` 与出现顺序相反），外加一条没人引的。格式没设 → 尾注默认小写罗马数字 */
+  function endnoteDocx(): Uint8Array {
+    const enc = new TextEncoder();
+    const body = `<w:p><w:r><w:t>甲</w:t></w:r>${ref('2')}</w:p><w:p><w:r><w:t>乙</w:t></w:r>${ref('1')}</w:p>`;
+    const ct = (part: string, type: string) =>
+      `<Override PartName="/word/${part}" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.${type}+xml"/>`;
+    const rel = (id: string, type: string, target: string) =>
+      `<Relationship Id="${id}" Type="${R}/${type}" Target="${target}"/>`;
+    return zip(
+      new Map([
+        [
+          '[Content_Types].xml',
+          enc.encode(
+            '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+              '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+              '<Default Extension="xml" ContentType="application/xml"/>' +
+              ct('document.xml', 'document.main') +
+              ct('endnotes.xml', 'endnotes') +
+              '</Types>',
+          ),
+        ],
+        [
+          '_rels/.rels',
+          enc.encode(
+            `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rel('rId1', 'officeDocument', 'word/document.xml')}</Relationships>`,
+          ),
+        ],
+        [
+          'word/_rels/document.xml.rels',
+          enc.encode(
+            `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rel('rId1', 'endnotes', 'endnotes.xml')}</Relationships>`,
+          ),
+        ],
+        [
+          'word/endnotes.xml',
+          enc.encode(
+            `<w:endnotes xmlns:w="${W}">` +
+              '<w:endnote w:type="separator" w:id="-1"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:separator/></w:r></w:p></w:endnote>' +
+              '<w:endnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:endnote>' +
+              `${note('1', '乙尾')}${note('2', '甲尾')}${note('3', '没人引')}</w:endnotes>`,
+          ),
+        ],
+        [
+          'word/document.xml',
+          enc.encode(
+            `<w:document xmlns:w="${W}" xmlns:r="${R}"><w:body>${body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr></w:body></w:document>`,
+          ),
+        ],
+      ]),
+    );
+  }
+
+  /** 页上每一块的文字，尾注块前面标一个「尾:」 */
+  function texts(d: UwDocument): string[] {
+    const out: string[] = [];
+    for (const block of d.layout.pages[0]?.blocks ?? []) {
+      if (block.kind !== 'paragraph') continue;
+      const text = block.lines.map((l) => l.line.fragments.map((f) => f.text).join('')).join('');
+      out.push(block.endnote === undefined ? text : `尾:${text}`);
+    }
+    return out;
+  }
+
+  it('正文后面画分隔线、按引用先后排出尾注，号是小写罗马数字；没人引的不排、不再报「没排」', async () => {
+    const d = await UltimateWord.load(endnoteDocx());
+    expect(texts(d)).toEqual(['甲i', '乙ii', '尾:i 甲尾', '尾:ii 乙尾']);
+    expect(d.layout.pages[0]?.noteSeparators?.map((s) => s.kind)).toEqual(['separator']);
+    expect(d.diagnostics.map((x) => x.code)).not.toContain('endnotes-not-rendered');
+    expect(d.diagnostics.filter((x) => x.code === 'unknown-element')).toEqual([]);
+  });
+
+  it('编辑后重排尾注仍在；导出重开布局一致，尾注部件原样', async () => {
+    const d = await UltimateWord.load(endnoteDocx());
+    const pos = d.find('乙')[0]?.start;
+    if (!pos) throw new Error('样本缺少乙');
+    d.tx((tx) => {
+      tx.insertText(pos, '丙');
+    });
+    expect(texts(d)).toEqual(['甲i', '丙乙ii', '尾:i 甲尾', '尾:ii 乙尾']);
+    const out = await d.toDocx();
+    const reloaded = await UltimateWord.load(out);
+    expect(reloaded.layout).toEqual(d.layout);
+    const parts = unzip(new Uint8Array(await out.arrayBuffer()));
+    expect(parts.get('word/endnotes.xml')).toEqual(unzip(endnoteDocx()).get('word/endnotes.xml'));
+  });
+});

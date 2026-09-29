@@ -113,6 +113,24 @@ describe('页', () => {
   });
 });
 
+describe('尾注分隔线', () => {
+  it('画在版心那个 g 里（坐标相对版心），短线与续排通栏线各带各的 class', () => {
+    const svg = buildPage({
+      ...paragraphPage(),
+      noteSeparators: [
+        { kind: 'continuationSeparator', x: 0, y: 100, width: 9026 },
+        { kind: 'separator', x: 0, y: 600, width: 2880 },
+      ],
+    });
+    const content = collect(svg, 'g').find((n) => n.attrs.class === 'uw-content');
+    const lines = collect(content as RElement, 'line');
+    expect(lines.map((l) => [l.attrs.class, l.attrs.y1, l.attrs.x2])).toEqual([
+      ['uw-endnote-continuation', '5', '451.3'],
+      ['uw-endnote-separator', '30', '144'],
+    ]);
+  });
+});
+
 describe('页眉页脚', () => {
   const frame = (kind: 'header' | 'footer', y: number) => ({
     kind,
