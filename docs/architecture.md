@@ -704,7 +704,7 @@ CSS 2.1 §17.6.2 的 collapsing borders 类比写成「线宽 → 样式权重 �
 页码依赖布局 → 目录长度依赖页码 → 目录变长又改变布局。这是个不动点问题。
 
 已实现：`layoutDocumentWithFields(resolved, fields, opts)`（`layout/src/fields.ts`），
-认 **PAGE / NUMPAGES / SECTIONPAGES / PAGEREF / SEQ / STYLEREF**；TOC 还没做，它照旧显示
+认 **PAGE / NUMPAGES / SECTIONPAGES / PAGEREF / SEQ / STYLEREF / DATE / TIME**；TOC 还没做，它照旧显示
 文件里存着的旧结果（那正是 Word 打开时的样子）。
 
 **SEQ（题注编号）不进这个循环**（2026-09-29）：「图 3」的 3 是按文档序数同名 SEQ 数出来的，
@@ -716,6 +716,9 @@ CSS 2.1 §17.6.2 的 collapsing borders 类比写成「线宽 → 样式权重 �
 与页码无关，同 SEQ 一次算完；**页眉里的**先在本页找（一章从页中间开始时这一页已经是新的一章），
 要知道每页排了哪些段落，于是与 NUMPAGES 一样拿上一趟的结果（`HeaderFieldPlan.styleRefs`，按物理页序），
 收敛判据把它一起比。
+
+**DATE / TIME 打开即刷新**（2026-09-29）：Word 打开文档时把它们更新成当天，显示存着的旧日期反而不是「打开即所见」。
+「现在」由调用方注入（`now`，本地时间的纯数据分量），门面在加载时取一次、编辑重排沿用；缺席不求值，离线工具因此可复现。
 
 **目录页码不必等 TOC 求值**（2026-09-29）：Word 生成目录时给每条标题包一个 `_Toc…` 书签，
 条目里的页码是嵌套的 `PAGEREF _Toc… \h`。所以「目录页码正确」= PAGEREF 算对 ——

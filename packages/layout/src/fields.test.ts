@@ -607,6 +607,62 @@ describe('STYLEREF（章节号 / 页眉里的当前章）', () => {
   });
 });
 
+describe('DATE / TIME（打开即刷新）', () => {
+  const now = { year: 2026, month: 9, day: 29, hour: 14, minute: 5, second: 0, weekday: 2 };
+  function dated(instr: string): { block: ResolvedBlock; region: FieldRegion; run: ResolvedRun } {
+    const r = run('2020年1月1日');
+    return { block: para([r]), region: field(instr, [r.id]), run: r };
+  }
+
+  it('按 \\@ 格式串显示「现在」，不进迭代', () => {
+    const d = dated('DATE \\@ "yyyy年M月d日"');
+    const t = dated('TIME \\@ "HH:mm"');
+    const res = layoutDocumentWithFields(body([d.block, t.block]), [d.region, t.region], opts({ now }));
+    expect(res.values.get(d.run.id)).toBe('2026年9月29日');
+    expect(res.values.get(t.run.id)).toBe('14:05');
+    expect(res.passes).toBe(1);
+  });
+
+  it('不求值：没给 now、没写 \\@（默认格式看操作系统）、回历', () => {
+    const sink = createDiagnosticSink();
+    const a = dated('DATE \\@ "yyyy"');
+    const b = dated('DATE');
+    const c = dated('DATE \\@ "yyyy" \\h');
+    const bare = layoutDocumentWithFields(body([a.block]), [a.region], opts());
+    expect(bare.values.has(a.run.id)).toBe(false);
+    const res = layoutDocumentWithFields(
+      body([b.block, c.block]),
+      [b.region, c.region],
+      opts({ now, diagnostics: sink }),
+    );
+    expect(res.values.size).toBe(0);
+    expect(sink.list().filter((x) => x.code === 'field-date-format')).toHaveLength(2);
+  });
+
+  it('CREATEDATE / SAVEDATE 不刷新', () => {
+    const d = dated('CREATEDATE \\@ "yyyy"');
+    const res = layoutDocumentWithFields(body([d.block]), [d.region], opts({ now }));
+    expect(res.values.has(d.run.id)).toBe(false);
+  });
+
+  it('页眉里的每页都显示同一个日期，也不为它多排一趟', () => {
+    const r = run('旧');
+    const res = layoutDocumentWithFields(
+      body([para([run(TEN.repeat(4))])], sect({ headers: [{ type: 'default', relId: 'h' }] })),
+      [field('DATE \\@ "M/d"', [r.id])],
+      opts({ now, headerFooters: { h: { resolved: [para([r])] } } }),
+    );
+    expect(res.layout.pages).toHaveLength(2);
+    for (const page of res.layout.pages) {
+      const block = page.header?.blocks[0];
+      const text =
+        block?.kind === 'paragraph' ? block.lines[0]?.line.fragments.map((f) => f.text).join('') : '';
+      expect(text).toBe('9/29');
+    }
+    expect(res.passes).toBe(1);
+  });
+});
+
 /** 合成度量器下 ASCII 是半角：这几个测试里「一个数字 = 半个汉字」的前提就靠它 */
 it('前提自检：一行 10 个汉字正好排满版心', () => {
   const res = layoutDocumentWithFields(body([para([run(TEN)])]), [], opts());

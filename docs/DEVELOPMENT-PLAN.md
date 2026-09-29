@@ -844,7 +844,15 @@ await view.toPNG(2);     // 第 3 页（页序号从 0 起，与 scrollTo({ page
   判据：布局 6 项 + 门面 1 项（真 docx：`"标题 1"` 认出 `w:name="heading 1"`，套样式后跟着变、撤销变回来），
   页眉「本页优先」做过变异检验；语料体检前后一致。没有真值样本
   - 未做：字符样式的 STYLEREF、`\p`、多级编号的 `\r` / `\w` 上下文差别、页眉里 STYLEREF 的首趟（显示存着的值，第二趟才准）
-- 域的**求值**：TOC、DATE ⏸ TOC 要大纲级别与目录样式（TOC 1–9），
+- ✅ **DATE / TIME**（2026-09-29）：Word 打开文档时把它们刷新成当天（「信件每次打开日期都变」正是这条），
+  所以显示存着的旧日期不是「打开即所见」。「现在」经 `LayoutDocumentWithFieldsOptions.now` 注入（本地时间分量，
+  `@uw/model` 的 `localDateTimeParts()`），门面在加载时取一次、编辑重排沿用；缺席不求值。只认写了 `\@` 格式串的 ——
+  没写时用操作系统的默认格式，宿主是哪种系统不知道；`\h` / `\s` / `\l` 同理。CREATEDATE / SAVEDATE / PRINTDATE
+  不刷新，不碰。页眉里的走 plan 的 `fixed`（每页同一串）。格式串（`date-format.ts` 的 `formatDateTime()`）区分大小写
+  （`M` 月 `m` 分），中文版的 `EEEE年O月A日`（年份逐位念、月日中文计数）与 `MMMM` / `dddd` 的语言（按格式串里有没有汉字猜）
+  没有样本，写在文件头并附钉死办法 —— 结果存在 document.xml 里，不必导 PDF。
+  判据：格式化 6 项 + 布局 4 项 + 门面 1 项
+- 域的**求值**：TOC ⏸ TOC 要大纲级别与目录样式（TOC 1–9），
   DATE / TIME 与布局无关但要一套 Word 的日期格式串解析
 - ~~图片：inline 为主，浮动只做不参与文字流的那种，其余环绕类型退化为 inline~~ ✅（2026-08-22）
   三层各做各的一段，中间只传一个 id：

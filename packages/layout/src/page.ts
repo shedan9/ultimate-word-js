@@ -207,9 +207,11 @@ export interface DocumentLayout {
  * Word 常把一个数字切成好几个 `w:t`，不清掉旧的会留在页面上（与正文域同理）。
  */
 export interface HeaderFieldSpec {
-  type: 'PAGE' | 'NUMPAGES' | 'SECTIONPAGES' | 'STYLEREF' | 'clear';
+  type: 'PAGE' | 'NUMPAGES' | 'SECTIONPAGES' | 'STYLEREF' | 'fixed' | 'clear';
   /** `\*` 开关解析出来的数字格式。缺席时 PAGE 跟着本节的 `w:pgNumType w:fmt` */
   format?: string;
+  /** `fixed`：每页都一样、早已算好的文字（页眉里的 DATE） */
+  text?: string;
 }
 
 export interface HeaderFieldPlan {
@@ -652,6 +654,9 @@ function headerFieldValues(
     switch (spec.type) {
       case 'clear':
         out.set(id, '');
+        break;
+      case 'fixed':
+        out.set(id, spec.text ?? '');
         break;
       case 'PAGE':
         out.set(id, formatNumber(number, spec.format ?? props.pageNumFormat ?? 'decimal'));

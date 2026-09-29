@@ -59,6 +59,13 @@
  * 数字 `1` 是「内建标题 1」的简写（`canonicalStyleName`）。编号开关 `\s` / `\t` 留下哪些字符没有样本
  * （`uncalibrated.ts` 的 `STYLEREF_NUMERIC_CHARS`）；字符样式、`\p`、要编号而段落没编号的一律不求值。
  *
+ * ## DATE / TIME：打开即刷新
+ *
+ * Word 打开文档时会把 DATE / TIME 更新成当天（「信件每次打开日期都变」正是这条），所以显示文件里
+ * 存的旧日期反而不是「打开即所见」。「现在」由调用方注入（`now`），缺席就不求值；只认写了 `\@`
+ * 格式串的，格式串的读法在 `@uw/model` 的 date-format.ts。CREATEDATE / SAVEDATE / PRINTDATE
+ * **不刷新**（F9 才变），文件里存的就是 Word 显示的，一律不碰。
+ *
  * ## 页眉页脚里的域走的是另一条路
  *
  * 同一个 `{ PAGE }` 在每一页显示的**不是同一串字**，所以一张全局的「run id → 文字」表
@@ -81,6 +88,7 @@
 import type { DiagnosticSink } from '@uw/core';
 import type {
   BookmarkTargets,
+  DateTimeParts,
   FieldInstruction,
   FieldRegion,
   NodeId,
@@ -88,7 +96,7 @@ import type {
   ResolvedBody,
   ResolvedParagraph,
 } from '@uw/model';
-import { fieldSwitch, formatNumber, walkBlocks, walkParagraphs } from '@uw/model';
+import { fieldSwitch, formatDateTime, formatNumber, walkBlocks, walkParagraphs } from '@uw/model';
 import type { HeaderFooterSource } from './header-footer.ts';
 import type {
   DocumentLayout,
@@ -135,6 +143,12 @@ export interface LayoutDocumentWithFieldsOptions extends LayoutDocumentOptions {
    * 认成 id；缺席时 STYLEREF 一律不求值（显示文件里存的旧结果）
    */
   styleNames?: ReadonlyMap<string, string>;
+  /**
+   * 「现在」—— DATE / TIME 显示它（Word 打开文档时会刷新这两种域）。本地时间的分量，
+   * 门面用 `localDateTimeParts(new Date())` 在加载时取一次；缺席时 DATE / TIME 不求值，
+   * 离线工具因此排出来的永远是同一份
+   */
+  now?: DateTimeParts;
 }
 
 export interface FieldLayoutResult {
@@ -164,7 +178,9 @@ export function layoutDocumentWithFields(
   let totals: Totals = {};
   // 「一共几页」只有 NUMPAGES / SECTIONPAGES 用得上。全篇只有 PAGE 时不把它算进收敛判据，
   // 否则每份带页码的文档都要白排一趟（PAGE 在开页那一刻就是准的）
-  const needsTotals = [...plan.fields.values()].some((f) => f.type !== 'PAGE' && f.type !== 'clear');
+  const needsTotals = [...plan.fields.values()].some(
+    (f) => f.type !== 'PAGE' && f.type !== 'clear' && f.type !== 'fixed',
+  );
   const totalsOf = (l: DocumentLayout): Totals =>
     needsTotals
       ? {
@@ -304,6 +320,23 @@ function fieldAnchors(
       if (seq === undefined) continue;
       for (const id of region.resultRuns) claimed.add(id);
       seqs.push(seq);
+      continue;
+    }
+    if (type === 'DATE' || type === 'TIME') {
+      const first = region.resultRuns[0];
+      const text = first === undefined ? undefined : dateText(region.instruction, opts.now, diagnostics);
+      if (first === undefined || text === undefined || region.resultRuns.some((id) => claimed.has(id)))
+        continue;
+      for (const id of region.resultRuns) claimed.add(id);
+      const rest = region.resultRuns.slice(1);
+      if (inHeader.has(first)) {
+        // 每页一样，但页眉的 run 不吃正文那张表，得走 plan
+        planned.set(first, { type: 'fixed', text });
+        for (const id of rest) planned.set(id, { type: 'clear' });
+      } else {
+        statics.set(first, text);
+        for (const id of rest) statics.set(id, '');
+      }
       continue;
     }
     if (type === 'STYLEREF') {
@@ -620,6 +653,30 @@ function headerStyleRefs(
     );
   }
   return out;
+}
+
+// ── DATE / TIME ───────────────────────────────────────────────────────────────
+
+/**
+ * DATE / TIME 显示的文字。只在写了 `\@` 格式串时求值：没写时 Word 用**操作系统**的默认格式
+ * （中文 Windows 是「2026/9/29」，英文是「9/29/2026」），宿主是哪种系统我们不知道 —— 留洞不猜。
+ * `\h`（回历）/ `\s`（萨卡历）/ `\l`（「上次插入日期用的格式」）同理不求值
+ */
+function dateText(
+  instr: FieldInstruction,
+  now: DateTimeParts | undefined,
+  diagnostics: DiagnosticSink | undefined,
+): string | undefined {
+  if (now === undefined) return undefined;
+  const picture = fieldSwitch(instr, '@')?.value;
+  if (picture === undefined || ['h', 's', 'l'].some((name) => fieldSwitch(instr, name) !== undefined)) {
+    diagnostics?.info(
+      'field-date-format',
+      `${instr.type} 没写 \\@ 格式串（或用了回历 / 萨卡历），默认格式取决于操作系统，显示文件里存的结果`,
+    );
+    return undefined;
+  }
+  return formatDateTime(now, picture);
 }
 
 // ── SEQ ───────────────────────────────────────────────────────────────────────

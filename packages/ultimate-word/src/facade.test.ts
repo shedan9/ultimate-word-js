@@ -571,4 +571,17 @@ describe('题注编号（SEQ）与章节引用（STYLEREF）', () => {
     d.undo();
     expect(text()).toBe('见第一章');
   });
+
+  it('DATE 打开即显示当天（按 \\@ 格式串），没写格式串的照旧', async () => {
+    const date = (picture: string) =>
+      `<w:p>${fld('begin')}<w:r><w:instrText xml:space="preserve"> DATE ${picture} </w:instrText></w:r>${fld('separate')}<w:r><w:t>1999</w:t></w:r>${fld('end')}</w:p>`;
+    const before = new Date().getFullYear();
+    const d = await UltimateWord.load(seqDocx(`${date('\\@ "yyyy"')}${date('')}`));
+    const after = new Date().getFullYear();
+    const texts = (d.layout.pages[0]?.blocks ?? []).map((b) =>
+      b.kind === 'paragraph' ? b.lines.map((l) => l.line.fragments.map((f) => f.text).join('')).join('') : '',
+    );
+    expect([String(before), String(after)]).toContain(texts[0]);
+    expect(texts[1]).toBe('1999');
+  });
 });

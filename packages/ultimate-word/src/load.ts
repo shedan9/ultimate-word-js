@@ -20,6 +20,7 @@ import {
   fieldHyperlinks,
   fontNameCandidates,
   loadDocument,
+  localDateTimeParts,
   paragraphStyleNames,
   resolveBody,
   scanFields,
@@ -77,6 +78,8 @@ export async function load(
   const settings = deepFreeze(structuredClone(loaded.cascade.settings));
   // 没改的段落跨事务复用同一个冻结的级联结果，段落缓存才能按身份认出它（见 ResolveCache）
   const resolveCache = createResolveCache();
+  // DATE / TIME 显示「打开那一刻」—— Word 也只在打开（与打印）时刷新它们，编辑重排不该让日期跳
+  const now = localDateTimeParts(new Date());
   const result = layoutDocumentWithFields(loaded.resolved, loaded.fields, {
     paragraphCache,
     measurer,
@@ -85,6 +88,7 @@ export async function load(
     // 目录页码（PAGEREF）靠它找标题；编辑会挪段落，所以每趟从当前的树现摊
     bookmarks: bookmarkTargets(loaded.body),
     styleNames: paragraphStyleNames(loaded.cascade.styles, loaded.body.styles),
+    now,
     diagnostics: sink,
   });
   // 诊断表是追加式的，每趟重排只把这之后新记的交出去（`diagnostic` 事件报的就是它们）
@@ -120,6 +124,7 @@ export async function load(
         headerFooters: loaded.headerFooters,
         bookmarks: bookmarkTargets(body),
         styleNames: paragraphStyleNames(loaded.cascade.styles, body.styles),
+        now,
         diagnostics: sink,
       });
       // 编号定义随树走（新建列表会加定义），`loaded.numbering` 跟着换成同一份

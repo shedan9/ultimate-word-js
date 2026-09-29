@@ -19,7 +19,8 @@ Phase 5 的**列表编号**已经从 `numbering.xml` 一路通到首行几何，
 同阶段的**域**结构还原（界桩配对 + 指令解析 + HYPERLINK）与**求值**（PAGE / NUMPAGES /
 SECTIONPAGES 迭代到自洽）都做完了；**目录页码**（PAGEREF 按 `_Toc` 书签所在页求值）与目录跳转
 （`doc.rangeOfBookmark`）2026-09-29 接上；**题注编号 SEQ** 与**章节引用 STYLEREF** 同日接上（SEQ 按文档序计数、`\s` 遇标题归零；
-STYLEREF 正文里往前找、页眉里**先找本页**再往前，后者进页码迭代）。TOC 自己的求值（重新生成条目）还没写。
+STYLEREF 正文里往前找、页眉里**先找本页**再往前，后者进页码迭代）；**DATE / TIME** 同日接上（打开即刷新成当天，
+只认写了 `\@` 的，门面加载时取一次「现在」）。TOC 自己的求值（重新生成条目）还没写。
 **图片**也通了（解析 → 收字节 → 占位 → 画，四层各一段，见下），**几何也用真值标定完了**。Phase 4 的**表格**：属性 + 级联（含 `w:tblStylePr` 条件格式）在 model 层，
 列宽 + 每格的 x 与可用宽 + 格内段落 + **边框冲突解析**在 layout 层，跨页按**行**拆，
 一行放不下时还会从**行间**切开（**拆行**，见下）。**表格这一层全部标定完了** ——
@@ -605,7 +606,10 @@ L2 剩下那 2 行（真值第 10 / 11 行）是**唯一一个解释不了的反
 
 **域求值**在 layout 那一侧（`packages/layout/src/fields.ts`），不在 model —— 求值要页码，
 页码是分页的产物。入口 `layoutDocumentWithFields(resolved, fields, opts)`，认
-**PAGE / NUMPAGES / SECTIONPAGES / PAGEREF / SEQ / STYLEREF**（TOC 没做，照旧显示文件里存的旧结果）。
+**PAGE / NUMPAGES / SECTIONPAGES / PAGEREF / SEQ / STYLEREF / DATE / TIME**（TOC 没做，照旧显示文件里存的旧结果）。
+**DATE / TIME 打开即刷新**（Word 的行为），「现在」经 `opts.now`（本地时间分量，`localDateTimeParts()`）注入，缺席不求值；
+没写 `\@` 的不求值（默认格式看操作系统）；CREATEDATE / SAVEDATE 不刷新、不碰。格式串在 `@uw/model` 的 `date-format.ts`，
+中文版的 `EEEE年O月A日` 与月名 / 星期的语言没有样本。
 **SEQ 不进迭代**：它只看文档序不看页码，算一次并进每一趟的表；`\s N` 认**级联后的大纲级别**（中文版「标题 1」的 id 是 `1`，
 按样式名认会漏），更高级标题也归零是猜的（`SEQ_RESET_ON_HIGHER_HEADINGS`）；带书签参数的与页眉里的不求值也不计数。
 **STYLEREF 两套规则**：正文里往前找最近的一段（与页码无关，同 SEQ 一次算完）；页眉里**先在本页**从上往下找
