@@ -9,6 +9,7 @@ build/
 
 # task/test caches
 .turbo/
+**/.vitepress/cache/
 coverage/
 .vitest/
 

@@ -1,0 +1,4 @@
+/* docs/*.md 按 GitHub 渲染写的：章节之间有 `---`，而 VitePress 的 h2 自带上边线，两条叠在一起 */
+.vp-doc hr:has(+ h2) {
+  display: none;
+}

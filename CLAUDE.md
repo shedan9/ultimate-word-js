@@ -330,6 +330,11 @@ Word 的目录条目是「标题 → 右对齐制表位 → 页码」，那个�
 只有一个制表位的那一行（目录、签发人栏）行高全靠它，缺了就拿空字体名去问度量器、
 退到等宽近似，顺带每份文档报一条 `font-missing 字体「」`。
 
+**文档站**（`apps/docs`，VitePress）：`docs/*.md` 用 `<!--@include-->` 原样引进来（站点页面与原文件同名同层，
+所以关掉了 include 的相对链接改写；标题锚点按 GitHub 规则生成，原文手写的锚点才对得上），
+`/demo` 是只走门面包的在线预览，样本取 `apps/fidelity/fixtures`。页面依赖 Vue，biome 看不见模板里的用法，
+`*.vue` 关了未使用变量检查。
+
 **两个「看得见」的出口**（改完布局或画法值得跑一眼）：
 `pnpm --filter @uw/fidelity preview [name] -- --truth --debug` 把 fixture 画成
 `apps/fidelity/out/*.html`（真值基线红虚线、我们的蓝实线，重合即对；产物不入库）；
@@ -715,6 +720,7 @@ pnpm turbo run typecheck test        # 全量检查（跨平台，应当全绿�
 pnpm lint                            # biome check .
 pnpm lint:fix
 pnpm --filter @uw/playground dev     # 调试台，:5273（拖一份 docx 进去就画）
+pnpm --filter @uw/docs dev           # 文档站，:5274（docs/*.md + 在线预览 /demo，VitePress）
 node apps/playground/tests/run.mjs [print react …]   # 浏览器回归（七个页面，headless Chrome + CDP，要先起调试台）
 
 # 单个包 / 单个测试文件 / 单个用例

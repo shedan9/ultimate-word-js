@@ -26,6 +26,7 @@ pnpm turbo run typecheck test    # 全量检查
 pnpm truth                       # 重新生成保真度真值（需要 Word）
 pnpm --filter @uw/fidelity spike # 跑 Phase 0 行高穿刺
 pnpm --filter @uw/playground dev # 调试台
+pnpm --filter @uw/docs dev       # 文档站 + 在线预览（http://localhost:5274）
 ```
 
 ## 目录
@@ -41,6 +42,7 @@ packages/
   view/          @uw/view        屏幕坐标、虚拟化、原生选区与缩放     ← Phase 6
 apps/
   playground/    调试台（Vite 8）
+  docs/          文档站（VitePress）：docs/*.md + 在线预览 demo
   fidelity/      保真度真值流水线 + Phase 0 穿刺（见 apps/fidelity/README.md）
 ```
 

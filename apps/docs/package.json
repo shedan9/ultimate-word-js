@@ -1,0 +1,20 @@
+{
+  "name": "@uw/docs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "文档站：docs/*.md 原样引入 + 在线预览 demo（VitePress）",
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview"
+  },
+  "dependencies": {
+    "ultimate-word": "workspace:*"
+  },
+  "devDependencies": {
+    "mermaid": "^12.0.0",
+    "vitepress": "2.0.0-alpha.20",
+    "vue": "^3.5.43"
+  }
+}
