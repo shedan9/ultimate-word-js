@@ -885,9 +885,25 @@ await view.toPNG(2);     // 第 3 页（页序号从 0 起，与 scrollTo({ page
   - 判据：解析 2 项 + 布局 12 项 + 回写 1 项 + 门面 2 项（真 docx：`w:id` 与出现顺序相反、settings 里设圈码 → 正文 ①②、页底「① 甲注」「② 乙注」；
     编辑后导出重开布局一致、footnotes.xml 逐字节不动），浏览器回归八页不变全绿。**没有真值**：分隔线长 144pt、画在那一段正中、
     0.5pt 粗都是看出来的，关在 layout / render-dom 的 `uncalibrated.ts`，附钉死办法（`truth.json` 的 `rules[]` 直接给线）
-  - 未做：**跨页续排**（一条脚注长过一页时整条硬塞在引用页并记 `footnote-overflow`）、`continuationSeparator`、
+  - 未做：~~**跨页续排**、`continuationSeparator`~~（✅ 见下一条）、
     `w:numRestart="eachPage"`（号要进域求值那种迭代，现按连续编号并记诊断）、`w:pos="beneathText"`、
     ~~尾注内容~~（✅ 见下）、注里的编辑、keepNext 接缝不计脚注
+- ✅ **脚注跨页续排**（2026-09-29）：原来带引用的行连同脚注放不下就整行挪走，一条脚注长过一页时只能整条硬塞在引用页、
+  溢出版心并记 `footnote-overflow`。现在按**行**切开：
+  - `@uw/layout` 的 `note-split.ts`（纯函数）：一截就是摞好的那条脚注里的 `[top, bottom)`，切口只落在行与行之间
+    （段落的行、表格的整行），不重新排版；两截之间那段空白两边都不要（本页到切口那行的行底、续页从下一行的行顶起）
+  - `page.ts`：量尺多了 `split` —— 整条放不下时，引用页收得下它头 `FOOTNOTE_SPLIT_MIN_LINES`（= 1，未标定）行就切开、
+    这一行照收；切口由 fit 定、commit 照用（fit 时末行连着 keepNext 接缝量，commit 不知道接缝）。只切一行引到的**最后一条**。
+    切过的一页**不再收新脚注**（续排那截要在下一页排第一，后引的排在它后面才对得上先后），于是后面带引用的行跟着去下一页。
+    新页开出来先收续排队列（`takeCarry`），分隔线换成通栏的 `continuationSeparator`（占高按 `footnotes.xml` 里那一条），
+    长过这一页的接着切；每页至少续一行，一行比整页还高才溢出并记 `footnote-overflow`。
+    顶着续排的页上正文放不下时让到下一页而不是硬塞（`canDefer`）；正文排完还没续完就接着开只有脚注的页。
+    表格行里的引用走同一条路；表格拆行的头片与空页硬塞的那一行 fit 时没量脚注，commit 时就地能切则切、否则整条挪到下一页
+  - 数据：`PlacedFootnotes.continued`；`@uw/render-dom` 续页那条线的 class 是 `uw-footnote-continuation`
+  - 判据：布局 7 项（长过一页 / 两页、能切就不挪行、切过不收新注、续排线占高、表格行、索引收得到续页的行）+ 画法 1 项
+    + 门面 1 项（真 docx：71 段的脚注切成两页、后引的乙注连同引用行到续页、每段恰好一次、无溢出），浏览器回归八页不变全绿。
+    **没有真值**：引用页至少留几行、切口看不看脚注内的孤行寡行、续排线通栏，钉死办法写在 `uncalibrated.ts`
+  - 未做：`continuationNotice`（「接下页」提示）、脚注内的孤行寡行、续到页面设置不同的下一节时仍按原节的版心宽排
 - ✅ **尾注内容**（2026-09-29）：号早就数了，文末那一摞一直没排（记 `endnotes-not-rendered`）。与脚注不同，尾注**走正文的流** ——
   它就是「正文后面多出来的几段」，能跨页、能拆，孤行寡行 / keepNext 照常，所以直接交给分页的 `place()`，不另造区域：
   - `@uw/layout`：`notes.ts` 的 `endnoteIdsBySection()` 按引用先后收每节引到的尾注（隐藏的不收、自定义标记的收 —— 不占号但内容要排），

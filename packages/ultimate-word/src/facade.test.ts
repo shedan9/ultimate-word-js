@@ -718,12 +718,17 @@ describe('脚注', () => {
   const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
   const ref = (id: string) =>
     `<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:footnoteReference w:id="${id}"/></w:r>`;
-  const note = (id: string, text: string) =>
+  const note = (id: string, text: string, more = 0) =>
     `<w:footnote w:id="${id}"><w:p><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:footnoteRef/></w:r>` +
-    `<w:r><w:t xml:space="preserve"> ${text}</w:t></w:r></w:p></w:footnote>`;
+    `<w:r><w:t xml:space="preserve"> ${text}</w:t></w:r></w:p>` +
+    Array.from({ length: more }, (_, i) => `<w:p><w:r><w:t>续${i + 1}</w:t></w:r></w:p>`).join('') +
+    '</w:footnote>';
 
-  /** 两段各引一条；`w:id` 与出现顺序相反（2 在前），号必须按先后数。格式在 settings.xml 里设成圈码 */
-  function footnoteDocx(): Uint8Array {
+  /**
+   * 两段各引一条；`w:id` 与出现顺序相反（2 在前），号必须按先后数。格式在 settings.xml 里设成圈码。
+   * `more` 给甲注（id 2）再续这么多段，用来造长过一页的脚注
+   */
+  function footnoteDocx(more = 0): Uint8Array {
     const enc = new TextEncoder();
     const body = `<w:p><w:r><w:t>甲</w:t></w:r>${ref('2')}</w:p><w:p><w:r><w:t>乙</w:t></w:r>${ref('1')}</w:p>`;
     const ct = (part: string, type: string) =>
@@ -768,7 +773,7 @@ describe('脚注', () => {
             `<w:footnotes xmlns:w="${W}">` +
               '<w:footnote w:type="separator" w:id="-1"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:separator/></w:r></w:p></w:footnote>' +
               '<w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>' +
-              `${note('1', '乙注')}${note('2', '甲注')}</w:footnotes>`,
+              `${note('1', '乙注')}${note('2', '甲注', more)}</w:footnotes>`,
           ),
         ],
         [
@@ -817,6 +822,39 @@ describe('脚注', () => {
     expect(reloaded.layout).toEqual(d.layout);
     const parts = unzip(new Uint8Array(await out.arrayBuffer()));
     expect(parts.get('word/footnotes.xml')).toEqual(unzip(footnoteDocx()).get('word/footnotes.xml'));
+  });
+
+  it('长过一页的脚注切开续排：续页先排剩下的那一截，后引的那条连同引用行跟到续页', async () => {
+    const d = await UltimateWord.load(footnoteDocx(70));
+    const pages = d.layout.pages;
+    expect(pages).toHaveLength(2);
+    const [a, b] = [pages[0]?.footnotes, pages[1]?.footnotes];
+    expect(a?.notes).toEqual(['footnote:2']);
+    expect(a?.continued).toBeUndefined();
+    expect(b?.continued).toBe(true);
+    // 续页：甲注剩下的那一截在前，乙注在后；引乙的那一行也在续页上
+    expect(b?.notes.at(-1)).toBe('footnote:1');
+    const texts = pages.flatMap((p) =>
+      (p.footnotes?.blocks ?? []).flatMap((x) =>
+        x.kind === 'paragraph'
+          ? [x.lines.map((l) => l.line.fragments.map((f) => f.text).join('')).join('')]
+          : [],
+      ),
+    );
+    // 甲注 71 段（一页放不下）+ 乙注 1 段，每段恰好出现一次、先后不乱
+    expect(texts).toEqual(['① 甲注', ...Array.from({ length: 70 }, (_, i) => `续${i + 1}`), '② 乙注']);
+    const bodyText = (i: number) =>
+      (pages[i]?.blocks ?? []).flatMap((x) =>
+        x.kind === 'paragraph' ? x.lines.flatMap((l) => l.line.fragments.map((f) => f.text)) : [],
+      );
+    expect(bodyText(0)).toEqual(['甲', '①']);
+    expect(bodyText(1)).toEqual(['乙', '②']);
+    // 每一页的脚注区都在版心里，没有溢出
+    for (const p of pages) {
+      const c = p.geometry.content;
+      if (p.footnotes !== undefined) expect(p.footnotes.y).toBeGreaterThanOrEqual(c.y);
+    }
+    expect(d.diagnostics.filter((x) => x.code === 'footnote-overflow')).toEqual([]);
   });
 });
 

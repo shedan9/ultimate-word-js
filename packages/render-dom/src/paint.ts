@@ -246,7 +246,9 @@ function noteSeparatorLine(sep: { x: Twips; y: Twips; width: Twips }, cls: strin
 function paintFrame(frame: PlacedHeaderFooter | PlacedFootnotes, ctx: Ctx): RElement {
   const inner: RElement[] = [];
   if (frame.kind === 'footnotes') {
-    inner.push(noteSeparatorLine(frame.separator, ctx.cls('footnote-separator')));
+    // 开头是上一页续过来的：画的是通栏的续排线，class 与尾注那条同一套命名
+    const kind = frame.continued === true ? 'footnote-continuation' : 'footnote-separator';
+    inner.push(noteSeparatorLine(frame.separator, ctx.cls(kind)));
   }
   for (const [i, block] of frame.blocks.entries()) paintBlock(block, frame.blocks[i + 1], ctx, inner);
   if (ctx.debug) {

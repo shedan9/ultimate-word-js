@@ -39,6 +39,13 @@
  * 脚注区**底边贴着版心底**（`w:pos="pageBottom"`，默认值），分隔线那一段的高度来自
  * `footnotes.xml` 里那条 `separator` 的段落。整层没有真值，常数在 `uncalibrated.ts`。
  *
+ * 放不下时不一定整行挪走：引用页收得下这条脚注的头几行（`FOOTNOTE_SPLIT_MIN_LINES`）就**切开**，
+ * 剩下的续到下一页脚注区的最上面，那一页的分隔线换成通栏的 `continuationSeparator`
+ * （切法见 `note-split.ts`）。一页切出过续排，这一页就**不再收新的脚注** —— 续排那条
+ * 在下一页排第一，后引的脚注排在它后面才对得上先后，于是后面带引用的行也跟着去下一页。
+ * 续过来的脚注顶在页底，正文照样从页顶排；正文放不下时让到下一页，不硬塞
+ * （`canDefer`：续排总会续完，硬塞才是真的溢出）。
+ *
  * ## 尾注
  *
  * 尾注**走正文的流**：最后一节（`w:pos="sectEnd"` 时是每一节）排完，接着排一条短分隔线
@@ -47,8 +54,7 @@
  *
  * ## 几件**没做**的（写下来免得以为已经做了）
  *
- * - **脚注跨页续排**：一条脚注长过一整页时 Word 会把后半截挪到下一页（续页上画通栏的
- *   `continuationSeparator`），这里整条硬塞在引用所在的那一页并记诊断
+ * - 脚注的 `continuationNotice`（切开的那一页页底「接下页」那种提示）
  * - 浮动对象的**文字让开**：方形 / 上下型环绕的位置对，文字不绕着走
  */
 import type { DiagnosticSink, Twips } from '@uw/core';
@@ -76,6 +82,8 @@ import {
 import { noteKey, WIDTH_RULES, type WidthRules } from './items.ts';
 import type { ObjectRules, ScriptRules } from './line-height.ts';
 import { OBJECT_RULES, SCRIPT_RULES } from './line-height.ts';
+import type { NotePiece } from './note-split.ts';
+import { fitPiece, nextPieceTop, slicePiece } from './note-split.ts';
 import type { NoteSource } from './notes.ts';
 import { endnoteIdsBySection, endnotePosition, noteLabels } from './notes.ts';
 import { joinParagraphFrames } from './para-frame.ts';
@@ -86,7 +94,11 @@ import { layoutTable, TABLE_RULES } from './table.ts';
 import type { SplitRowOptions, TableSplitRules } from './table-split.ts';
 import { splitRow, TABLE_SPLIT_RULES } from './table-split.ts';
 import type { LineFloat, LineLayout, LineObject, ParagraphFrame, ParagraphLayout } from './types.ts';
-import { FOOTNOTE_SEPARATOR_LINE_Y, FOOTNOTE_SEPARATOR_WIDTH } from './uncalibrated.ts';
+import {
+  FOOTNOTE_SEPARATOR_LINE_Y,
+  FOOTNOTE_SEPARATOR_WIDTH,
+  FOOTNOTE_SPLIT_MIN_LINES,
+} from './uncalibrated.ts';
 
 // ── 输出的数据形状 ────────────────────────────────────────────────────────────
 
@@ -222,8 +234,13 @@ export interface PlacedFootnotes {
    * 见 render-dom 的 uncalibrated.ts）。文档里没有 `separator` 那条时也画，占高 0
    */
   separator: { x: Twips; y: Twips; width: Twips };
-  /** 本页的脚注（`noteKey()`），按引用的先后 */
+  /** 本页的脚注（`noteKey()`），按引用的先后；续过来的那条排第一 */
   notes: string[];
+  /**
+   * 区域开头是上一页切剩下的那一截脚注。这时分隔线是通栏的续排线（`continuationSeparator`），
+   * 占高按 `footnotes.xml` 里那一条的段落算
+   */
+  continued?: true;
   /** 分隔线那一段不在这里（它只有一个空段落，收进来会给命中测试多一个假的插入点） */
   blocks: PlacedBlock[];
 }
@@ -454,12 +471,23 @@ interface NoteFlow {
   source: NoteSource;
   labels: ReadonlyMap<NodeId, string>;
   stacked: Map<string, StackResult>;
-  /** 当前页已收的脚注 */
+  /** 当前页已收的脚注（含整条挪到下一页去的那些 —— 本页再引到它们也不再算） */
   onPage: string[];
+  /** 当前页脚注区里的各截，按先后 */
+  pieces: NotePiece[];
   /** 当前页脚注区的总高（含分隔线那一段），没有脚注时是 0 */
   height: Twips;
-  /** 每一页收的脚注，整份排完再造脚注区（区域的 y 要这一页的版心，那时才定） */
-  byPage: Map<PageLayout, string[]>;
+  /**
+   * 当前页切出过续排（或者顶着一截还没续完的），不再收新的脚注：新引到的只能排进下一页，
+   * 否则会插到续排那一截前面，先后就乱了
+   */
+  closed: boolean;
+  /** 本页顶着上一页续过来的脚注（`canDefer` 看它） */
+  carriedIn: boolean;
+  /** 要续到下一页去的：切剩下的那一截（`top > 0`）、或者整条挪过去的（`top = 0`），按先后 */
+  carry: NotePiece[];
+  /** 每一页的脚注区，整份排完再造（区域的 y 要这一页的版心，那时才定） */
+  byPage: Map<PageLayout, NotePiece[]>;
   overflowReported: boolean;
   /**
    * 正在排尾注：这时开出来的新页是尾注的**续页**，顶上先画续排分隔线（`currentPage` 看它）。
@@ -517,7 +545,11 @@ export function layoutDocument(body: ResolvedBody, opts: LayoutDocumentOptions):
       labels,
       stacked: new Map(),
       onPage: [],
+      pieces: [],
       height: 0,
+      closed: false,
+      carriedIn: false,
+      carry: [],
       byPage: new Map(),
       overflowReported: false,
       endnotesRunning: false,
@@ -549,6 +581,11 @@ export function layoutDocument(body: ResolvedBody, opts: LayoutDocumentOptions):
   });
   const lastSection = body.sections[body.sections.length - 1];
   if (lastSection !== undefined) placeEndnotes(flow, deferred, lastSection.props, prepareOpts);
+  // 正文排完了脚注还没续完：接着开页把它续完（这些页上只有脚注）
+  while (flow.notes !== undefined && flow.notes.carry.length > 0) {
+    breakPage(flow);
+    currentPage(flow);
+  }
 
   // 空文档也得有一页 —— 渲染层拿到 pages: [] 只能画白屏，那与「文档是空的」不是一回事
   if (flow.pages.length === 0) currentPage(flow);
@@ -692,12 +729,19 @@ function currentPage(flow: Flow): PageLayout {
   flow.page = page;
   flow.y = 0;
   if (flow.notes !== undefined) {
-    flow.notes.onPage = [];
-    flow.notes.height = 0;
+    const n = flow.notes;
+    n.onPage = [];
+    n.pieces = [];
+    n.byPage.set(page, n.pieces);
+    n.height = 0;
+    n.closed = false;
+    n.carriedIn = false;
     // 尾注排到这一页来了：顶上先画续排分隔线，它占的高度从版心里扣。
     // 不进 `blocks`（那一段只有一个空段落），`pageHasContent()` 因此仍说这页是空的 ——
     // 「页首丢段前间距」「空页上放不下只好硬塞」两条判断照旧成立，不会换页换不完
-    if (flow.notes.endnotesRunning) flow.y += drawNoteSeparator(flow, page, 'continuationSeparator');
+    if (n.endnotesRunning) flow.y += drawNoteSeparator(flow, page, 'continuationSeparator');
+    // 上一页续过来的脚注先占住页底
+    if (n.carry.length > 0) takeCarry(flow, page);
   }
   return page;
 }
@@ -831,6 +875,15 @@ function breakPage(flow: Flow): void {
 /** 当前页上已经放过东西了吗 —— 「挪到下一页」只有这时候才有意义，否则会空转出一串空页 */
 function pageHasContent(flow: Flow): boolean {
   return flow.page !== undefined && flow.page.blocks.length > 0;
+}
+
+/**
+ * 放不下时还能不能让到下一页，而不是硬塞。比 `pageHasContent` 多一种情形：本页顶着上一页
+ * 续过来的脚注 —— 正文让出去不会空转（续排每页至少续一行，总会续完），硬塞却是真的溢出。
+ * 只用在「放不下」那几处；「页首丢段前间距」仍看 `pageHasContent`：正文照样从页顶排。
+ */
+function canDefer(flow: Flow): boolean {
+  return pageHasContent(flow) || (flow.page !== undefined && flow.notes?.carriedIn === true);
 }
 
 /**
@@ -983,12 +1036,13 @@ function placeParagraph(flow: Flow, b: Extract<Prepared, { kind: 'paragraph' }>,
   while (i < total) {
     // 下边框跟着末行走：末行要连它一起放得下
     // 引到的脚注连同本行一起量（`noteMeter` 要在开页之后建，参数的求值顺序正好保证这一点）
-    const raw = fitLines(lines, i, availHeight(flow), join + insetBottom, noteMeter(flow));
+    const meter = noteMeter(flow);
+    const raw = fitLines(lines, i, availHeight(flow), join + insetBottom, meter);
     let count = adjust(raw, lines, i, b.props, flow.rules);
 
     if (count === 0) {
       // 空页上都放不下就只能硬塞（溢出版心），否则这个循环永远换页换不完
-      if (pageHasContent(flow)) {
+      if (canDefer(flow)) {
         breakPage(flow);
         currentPage(flow);
         // 整段挪到新页：上边框跟着首行过去（段前间距在页首不算，已随换页清零）
@@ -1002,7 +1056,7 @@ function placeParagraph(flow: Flow, b: Extract<Prepared, { kind: 'paragraph' }>,
     const hard = hardBreakAt(lines, i, count);
     if (hard >= 0) count = hard - i + 1;
 
-    emitLines(flow, b, i, count, total);
+    emitLines(flow, b, i, count, total, meter);
     i += count;
 
     if (i < total || hard >= 0) breakPage(flow);
@@ -1013,7 +1067,8 @@ function placeParagraph(flow: Flow, b: Extract<Prepared, { kind: 'paragraph' }>,
 
 /**
  * 从 `from` 起，`avail` 的高度里**老实**装得下几行（可能是 0）。末行要连接缝一起量，
- * 每一行还要连它引到的脚注一起量（`meter` 答「再收这几条要多高」）
+ * 每一行还要连它引到的脚注一起量（`meter` 答「再收这几条要多高」）；
+ * 整条放不下时问一声能不能切开（`meter.split`），能切就收下这一行、脚注续到下一页
  */
 function fitLines(
   lines: readonly LineLayout[],
@@ -1027,9 +1082,16 @@ function fitLines(
   for (let k = from; k < lines.length; k++) {
     const line = lines[k];
     if (line === undefined) break;
+    const tail = k === lines.length - 1 ? join : 0;
     const notes = meter.peek(line.notes);
-    const need = used + line.height + notes + (k === lines.length - 1 ? join : 0);
-    if (need > avail) break;
+    if (used + line.height + notes + tail > avail) {
+      const cut = meter.split(line.notes, avail - used - line.height - tail);
+      if (cut === undefined) break;
+      meter.takeSplit(line.notes, cut);
+      used += line.height + cut.height;
+      count += 1;
+      continue;
+    }
     meter.take(line.notes);
     used += line.height + notes;
     count += 1;
@@ -1080,6 +1142,7 @@ function emitLines(
   from: number,
   count: number,
   total: number,
+  meter: NoteMeter,
 ): void {
   const page = currentPage(flow);
   const placed: PlacedLine[] = [];
@@ -1089,7 +1152,7 @@ function emitLines(
     if (line === undefined) break;
     placed.push({ index: k, y: flow.y, line });
     flow.y += line.height;
-    commitNotes(flow, page, line.notes);
+    commitNotes(flow, page, line.notes, meter.planned);
   }
   page.blocks.push({
     kind: 'paragraph',
@@ -1163,14 +1226,14 @@ function placeTable(flow: Flow, b: Extract<Prepared, { kind: 'table' }>, join: T
       k < rows.length &&
       row !== undefined &&
       rowSplittable(b, k, headerCount) &&
-      (rest >= need || (count === 0 && !pageHasContent(flow)))
+      (rest >= need || (count === 0 && !canDefer(flow)))
         ? splitRow(row, rest, splitOptions(b, k, splitRules))
         : undefined;
     if (split !== undefined) {
       // 先把头片换进 `rows` 再摆上去 —— `emitRows` 读的就是 `rows[k]`，
       // 顺序反了本页画的就成了尾片，头片那几行凭空消失
       rows[k] = split.head;
-      emitRows(flow, b, rows, i, count + 1, repeat, carried, true);
+      emitRows(flow, b, rows, i, count + 1, repeat, carried, true, meter.planned);
       rows[k] = split.tail;
       i = k;
       breakPage(flow);
@@ -1179,7 +1242,7 @@ function placeTable(flow: Flow, b: Extract<Prepared, { kind: 'table' }>, join: T
     }
 
     if (count === 0) {
-      if (pageHasContent(flow)) {
+      if (canDefer(flow)) {
         breakPage(flow);
         currentPage(flow);
         continue;
@@ -1205,7 +1268,7 @@ function placeTable(flow: Flow, b: Extract<Prepared, { kind: 'table' }>, join: T
       continue;
     }
 
-    emitRows(flow, b, rows, i, count, repeat, carried, false);
+    emitRows(flow, b, rows, i, count, repeat, carried, false, meter.planned);
     i += count;
     carried = false;
     if (i < rows.length) breakPage(flow);
@@ -1276,9 +1339,17 @@ function fitRows(
     const row = rows[k];
     if (row === undefined) break;
     const keys = rowNotes(row);
+    const tail = k === rows.length - 1 ? join : 0;
     const notes = meter.peek(keys);
-    const need = used + row.height + notes + (k === rows.length - 1 ? join : 0);
-    if (need > avail) break;
+    if (used + row.height + notes + tail > avail) {
+      // 与 `fitLines` 同一条路：整条放不下就问能不能切开
+      const cut = meter.split(keys, avail - used - row.height - tail);
+      if (cut === undefined) break;
+      meter.takeSplit(keys, cut);
+      used += row.height + cut.height;
+      count += 1;
+      continue;
+    }
     meter.take(keys);
     used += row.height + notes;
     count += 1;
@@ -1312,6 +1383,7 @@ function emitRows(
   repeat: number,
   continued: boolean,
   splitAfter: boolean,
+  planned: NoteSplit | undefined,
 ): void {
   const page = currentPage(flow);
   const placed: PlacedRow[] = [];
@@ -1328,7 +1400,7 @@ function emitRows(
     const row = rows[k];
     if (row === undefined) break;
     // 重复的表头不算：它引到的脚注在表头第一次出现的那一页已经收过了
-    commitNotes(flow, page, rowNotes(row));
+    commitNotes(flow, page, rowNotes(row), planned);
     placed.push({
       index: k,
       y: flow.y,
@@ -1570,75 +1642,198 @@ function axisPosition(box: AxisBox, pos: AnchorPos, size: Twips, pageNumber: num
 
 /**
  * 「再收这几条脚注要多高」的量尺。`peek` 只问不记，`take` 记下（同一趟 fit 里后面的行
- * 再引到同一条就不重复算），`taken` 是这一趟记下的总高。
+ * 再引到同一条就不重复算），`taken` 是这一趟记下的总高。整条放不下时 `split` 答
+ * 「切开的话本页收多少」，`takeSplit` 记下这一刀（`planned`），之后本页就不再收新的脚注。
  *
  * 只在一趟 fit 里活着：真正收进页里的是 `commitNotes` —— fit 算出来的行数还要过孤行寡行
  * 那一关（`adjust` 可能少放几行），先记后退会把没放下的那几行的脚注也算进本页。
+ * 切口也是 fit 定、commit 照用：fit 时末行还要连 keepNext 的接缝一起量，commit 那一刻
+ * 已经不知道接缝了，各算各的会切在不同的行上。
  */
 interface NoteMeter {
   peek(keys: readonly string[] | undefined): Twips;
   take(keys: readonly string[] | undefined): void;
+  split(keys: readonly string[] | undefined, room: Twips): NoteSplit | undefined;
+  takeSplit(keys: readonly string[] | undefined, cut: NoteSplit): void;
   readonly taken: Twips;
+  readonly planned: NoteSplit | undefined;
 }
 
-const NO_NOTES: NoteMeter = { peek: () => 0, take: () => {}, taken: 0 };
+/**
+ * 切开的那一刀：`key` 那一条在本页收到 `bottom`；`height` 是这一行引到的脚注在本页一共占的高。
+ * `rest` 为 false 的是「行都收得下、只差末尾那段段后间距」—— 名义上是一刀，其实收完了，本页照常收后面的脚注
+ */
+interface NoteSplit {
+  key: string;
+  bottom: Twips;
+  height: Twips;
+  rest: boolean;
+}
+
+const NO_NOTES: NoteMeter = {
+  peek: () => 0,
+  take: () => {},
+  split: () => undefined,
+  takeSplit: () => {},
+  taken: 0,
+  planned: undefined,
+};
 
 function noteMeter(flow: Flow): NoteMeter {
   const n = flow.notes;
   if (n === undefined) return NO_NOTES;
   const seen = new Set(n.onPage);
+  let empty = n.pieces.length === 0;
+  let closed = n.closed;
   let taken = 0;
-  const measure = (keys: readonly string[] | undefined, commit: boolean): Twips => {
-    if (keys === undefined) return 0;
-    let h: Twips = 0;
-    let first = seen.size === 0;
-    const local = commit ? seen : new Set(seen);
-    for (const k of keys) {
-      if (local.has(k)) continue;
-      const stacked = noteStack(flow, k);
-      if (stacked === undefined) continue;
-      local.add(k);
-      // 本页第一条脚注把分隔线那一段也带进来
-      if (first) h += separatorStack(flow)?.height ?? 0;
-      first = false;
-      h += stacked.height;
+  let planned: NoteSplit | undefined;
+  /** 这一行引到的、本页还没收的脚注（内容缺失的不算） */
+  const fresh = (keys: readonly string[] | undefined): { key: string; stacked: StackResult }[] => {
+    const out: { key: string; stacked: StackResult }[] = [];
+    for (const key of keys ?? []) {
+      if (seen.has(key) || out.some((f) => f.key === key)) continue;
+      const stacked = noteStack(flow, key);
+      if (stacked !== undefined) out.push({ key, stacked });
     }
-    return h;
+    return out;
+  };
+  const separator = () => separatorStack(flow)?.height ?? 0;
+  const measure = (keys: readonly string[] | undefined): Twips => {
+    const list = fresh(keys);
+    if (list.length === 0) return 0;
+    // 本页切出过续排：新的脚注排不进来，带着它的行只能去下一页
+    if (closed) return Number.POSITIVE_INFINITY;
+    // 本页第一条脚注把分隔线那一段也带进来
+    return (empty ? separator() : 0) + list.reduce((h, f) => h + f.stacked.height, 0);
+  };
+  const record = (keys: readonly string[] | undefined): void => {
+    for (const f of fresh(keys)) seen.add(f.key);
+    empty = false;
   };
   return {
-    peek: (keys) => measure(keys, false),
+    peek: measure,
     take(keys) {
-      taken += measure(keys, true);
+      const h = measure(keys);
+      if (h === 0) return;
+      taken += h;
+      record(keys);
+    },
+    split(keys, room) {
+      const list = fresh(keys);
+      if (closed || list.length === 0) return undefined;
+      let h = empty ? separator() : 0;
+      for (const [i, f] of list.entries()) {
+        if (h + f.stacked.height <= room) {
+          h += f.stacked.height;
+          continue;
+        }
+        // 只切这一行引到的**最后一条**：切前面那条，后面那几条就得排在续排那一截后面、
+        // 到了下一页才出现，而它们的引用在本页 —— 那还不如整行挪走
+        if (i !== list.length - 1) return undefined;
+        const fit = fitPiece(f.stacked, 0, room - h);
+        const rest = !fit.complete;
+        if (rest && fit.lines < FOOTNOTE_SPLIT_MIN_LINES) return undefined;
+        return { key: f.key, bottom: fit.bottom, height: h + fit.bottom, rest };
+      }
+      return undefined;
+    },
+    takeSplit(keys, cut) {
+      taken += cut.height;
+      record(keys);
+      closed = cut.rest;
+      planned = cut;
     },
     get taken() {
       return taken;
     },
+    get planned() {
+      return planned;
+    },
   };
 }
 
-/** 把这几条脚注收进当前页：本页脚注区跟着长高，正文可用的高跟着变矮 */
-function commitNotes(flow: Flow, page: PageLayout, keys: readonly string[] | undefined): void {
+/**
+ * 把这几条脚注收进当前页：本页脚注区跟着长高，正文可用的高跟着变矮。
+ *
+ * `planned` 是 fit 时定下的那一刀。没定过刀却放不下的（表格拆行的头片、空页上硬塞的那一行 ——
+ * 这两条路 fit 时没量过脚注）就地能切则切、一行都放不下就整条挪到下一页；本页已经切出过续排的，
+ * 新引到的一律挪到下一页（续排那一截要排在前面）。
+ */
+function commitNotes(
+  flow: Flow,
+  page: PageLayout,
+  keys: readonly string[] | undefined,
+  planned?: NoteSplit,
+): void {
   const n = flow.notes;
   if (n === undefined || keys === undefined) return;
-  for (const k of keys) {
-    if (n.onPage.includes(k)) continue;
-    const stacked = noteStack(flow, k);
+  for (const key of keys) {
+    if (n.onPage.includes(key)) continue;
+    const stacked = noteStack(flow, key);
     if (stacked === undefined) continue;
-    if (n.onPage.length === 0) n.height += separatorStack(flow)?.height ?? 0;
-    n.onPage.push(k);
-    n.height += stacked.height;
-    const list = n.byPage.get(page);
-    if (list === undefined) n.byPage.set(page, [k]);
-    else list.push(k);
+    n.onPage.push(key);
+    const whole: NotePiece = { key, section: flow.sectionIndex, top: 0, bottom: stacked.height };
+    if (n.closed) {
+      n.carry.push(whole);
+      continue;
+    }
+    const sep = n.pieces.length === 0 ? (separatorStack(flow)?.height ?? 0) : 0;
+    let bottom: Twips;
+    if (planned?.key === key) bottom = planned.bottom;
+    else {
+      const fit = fitPiece(stacked, 0, page.geometry.content.height - flow.y - n.height - sep);
+      if (fit.lines === 0 && !fit.complete) {
+        n.closed = true;
+        n.carry.push(whole);
+        continue;
+      }
+      bottom = fit.bottom;
+    }
+    addPiece(n, { ...whole, bottom }, sep, stacked);
   }
-  // 空页上硬塞的那一行（`count = max(1, raw)`）会走到这里：脚注比一整页还长。
-  // Word 会把后半截续排到下一页，那条路没做 —— 说一声，别让人以为是正文算错了
-  if (flow.y + n.height > page.geometry.content.height && !n.overflowReported) {
-    n.overflowReported = true;
-    flow.opts.diagnostics?.warn(
-      'footnote-overflow',
-      `第 ${page.index + 1} 页的脚注放不下，整条排在引用所在的页上（跨页续排还没做）`,
-    );
+}
+
+/** 一截收进本页；没收完的剩下那一截排进续排队列，本页从此不再收新的脚注 */
+function addPiece(n: NoteFlow, piece: NotePiece, sep: Twips, stacked: StackResult): void {
+  n.pieces.push(piece);
+  n.height += sep + piece.bottom - piece.top;
+  const next = nextPieceTop(stacked, piece.bottom);
+  if (next === undefined) return;
+  n.closed = true;
+  n.carry.push({ ...piece, top: next, bottom: stacked.height });
+}
+
+/**
+ * 新开的一页先收上一页续过来的脚注，占住页底。续排的那一截排第一，分隔线换成通栏的续排线；
+ * 长过这一页的接着切、再往下一页续。每页**至少续一行**（一行比整页还高时溢出并记诊断），
+ * 否则续排永远续不完。
+ */
+function takeCarry(flow: Flow, page: PageLayout): void {
+  const n = flow.notes as NoteFlow;
+  const queue = n.carry;
+  n.carry = [];
+  for (const c of queue) {
+    if (!n.onPage.includes(c.key)) n.onPage.push(c.key);
+    if (n.closed) {
+      n.carry.push(c);
+      continue;
+    }
+    const stacked = noteStack(flow, c.key, c.section);
+    if (stacked === undefined) continue;
+    const kind = c.top > 0 ? 'continuationSeparator' : 'separator';
+    const sep =
+      n.pieces.length === 0 ? (separatorStack(flow, page.sectionIndex, 'footnotes', kind)?.height ?? 0) : 0;
+    const room = page.geometry.content.height - flow.y - n.height - sep;
+    const fit = fitPiece(stacked, c.top, room, true);
+    if (fit.bottom - c.top > room && !n.overflowReported) {
+      n.overflowReported = true;
+      flow.opts.diagnostics?.warn(
+        'footnote-overflow',
+        `第 ${page.index + 1} 页：脚注里有一行比整页版心还高，只能溢出`,
+      );
+    }
+    n.carriedIn = true;
+    addPiece(n, { ...c, bottom: fit.bottom }, sep, stacked);
   }
 }
 
@@ -1690,21 +1885,25 @@ function stackNote(
 }
 
 /**
- * 造一页的脚注区。高度与分页时扣掉的那一份**同一个来源**（`noteStack` 的缓存），
+ * 造一页的脚注区。高度与分页时扣掉的那一份**同一个来源**（`noteStack` 的缓存 + 同一批截），
  * 于是「正文让出多少」与「脚注区画多高」不会各算各的对不上。
  */
 function placeFootnotes(flow: Flow, page: PageLayout): void {
   const n = flow.notes as NoteFlow;
-  const keys = n.byPage.get(page);
-  if (keys === undefined || keys.length === 0) return;
-  const sep = separatorStack(flow, page.sectionIndex);
+  const pieces = n.byPage.get(page);
+  const head = pieces?.[0];
+  if (pieces === undefined || head === undefined) return;
+  // 开头是切剩下的那一截：分隔线换成通栏的续排线（与 `takeCarry` 扣高度时的判断一致）
+  const continued = head.top > 0;
+  const kind = continued ? 'continuationSeparator' : 'separator';
+  const sep = separatorStack(flow, page.sectionIndex, 'footnotes', kind);
   const blocks: PlacedBlock[] = [];
   let y: Twips = sep?.height ?? 0;
-  for (const k of keys) {
-    const stacked = noteStack(flow, k, page.sectionIndex);
+  for (const p of pieces) {
+    const stacked = noteStack(flow, p.key, p.section);
     if (stacked === undefined) continue;
-    for (const b of stacked.blocks) blocks.push(shiftBlock(b, y));
-    y += stacked.height;
+    for (const b of slicePiece(stacked, p.top, p.bottom)) blocks.push(shiftBlock(b, y));
+    y += p.bottom - p.top;
   }
 
   const c = page.geometry.content;
@@ -1717,9 +1916,11 @@ function placeFootnotes(flow: Flow, page: PageLayout): void {
     separator: {
       x: 0,
       y: (sep?.height ?? 0) * FOOTNOTE_SEPARATOR_LINE_Y,
-      width: Math.min(FOOTNOTE_SEPARATOR_WIDTH, c.width),
+      // 续排线通栏（Word 默认的 `w:continuationSeparator` 就是一条贯穿栏宽的线），同样没有量过
+      width: continued ? c.width : Math.min(FOOTNOTE_SEPARATOR_WIDTH, c.width),
     },
-    notes: [...keys],
+    notes: [...new Set(pieces.map((p) => p.key))],
+    ...(continued ? { continued: true as const } : {}),
     blocks,
   };
 }

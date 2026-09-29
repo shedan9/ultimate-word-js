@@ -131,6 +131,30 @@ describe('尾注分隔线', () => {
   });
 });
 
+describe('脚注分隔线', () => {
+  const area = (continued: boolean) => ({
+    kind: 'footnotes' as const,
+    x: 1440,
+    y: 14000,
+    width: 9026,
+    height: 600,
+    separator: { x: 0, y: 100, width: continued ? 9026 : 2880 },
+    notes: ['footnote:1'],
+    ...(continued ? { continued: true as const } : {}),
+    blocks: [],
+  });
+  const lineOf = (continued: boolean) => {
+    const svg = buildPage({ ...paragraphPage(), footnotes: area(continued) });
+    const g = collect(svg, 'g').find((n) => n.attrs.class === 'uw-footnotes');
+    return collect(g as RElement, 'line').map((l) => [l.attrs.class, l.attrs.x2]);
+  };
+
+  it('开头是上一页续过来的：画通栏的续排线，class 与普通分隔线分开', () => {
+    expect(lineOf(false)).toEqual([['uw-footnote-separator', '144']]);
+    expect(lineOf(true)).toEqual([['uw-footnote-continuation', '451.3']]);
+  });
+});
+
 describe('页眉页脚', () => {
   const frame = (kind: 'header' | 'footer', y: number) => ({
     kind,

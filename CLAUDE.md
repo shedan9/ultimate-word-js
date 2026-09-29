@@ -177,11 +177,15 @@ SVG 当图片用时看不见宿主 `@font-face`，本页用到的族与外部图
 `w:footnotePr` 文档级 + 节级），走「run id → 号」外挂表进 item 流、进段落缓存键。分页**连引到的脚注一起量**：
 `LineLayout.notes` 记这行引出哪几条，放不下就连这一行去下一页；整份排完造 `PageLayout.footnotes`（底边贴版心底，
 与页眉同一套坐标，渲染走 `paintFrame` + 分隔线，索引收为 `frame: 'footnotes'`）。分隔线几何没有真值（`uncalibrated.ts`）；
-跨页续排、`eachPage` 重新编号未做（各记诊断）。
+跨页续排见下，`eachPage` 重新编号未做（记诊断）。
 **尾注内容已接入**（2026-09-29）：尾注**走正文的流**（能跨页、能拆），不另造区域 —— 最后一节（`w:pos="sectEnd"` 时每一节）排完，
 `placeEndnotes()` 先画短分隔线（粘着第一条尾注最少能放的那一截）再逐条交给 `place()`；排尾注期间开的新页顶上先画通栏续排线
 （占高从版心扣、不进 `blocks`）。块带 `endnote` 标记、线在 `PageLayout.noteSeparators`（相对版心），索引记成 `frame: 'endnotes'`。
 几何没有真值，沿用脚注的未标定常数。
+**脚注跨页续排已接入**（2026-09-29）：放不下的脚注按**行**切开（`@uw/layout` 的 `note-split.ts`，一截是摞好的那条脚注里的
+`[top, bottom)`，不重排），引用页收得下头 `FOOTNOTE_SPLIT_MIN_LINES` 行就切、剩下的续到下一页脚注区最上面，那一页换通栏续排线
+（`PlacedFootnotes.continued`）。容易搞反的两处：切口由 fit 定、commit 照用（fit 连 keepNext 接缝量）；**切过的一页不再收新脚注**，
+否则后引的会插到续排那截前面。顶着续排的页正文放不下让到下一页（`canDefer`），不硬塞。至少留几行、脚注内孤行寡行都没有真值。
 **Phase 8 已开始：回写 docx**（2026-09-23，新包 `@uw/serialize`，门面 `doc.toDocx()`，调试台「导出 docx」按钮）。
 补丁式：只重写改过的部件，没编辑的文档逐字节照搬；正文**走原文 XML 树**打补丁（见下）。Word 打开无修复提示只能人工验。
 真实实现：`@uw/core`（单位 / 错误 / 诊断）、`@uw/ooxml`（OPC 容器 + XML 树）、
@@ -339,7 +343,7 @@ preview 报的「最大差 x pt」**不是保真度指标** —— 它按行序�
 每行的绝对基线 = `page.geometry.content.y + PlacedLine.y + LineLayout.baseline`，
 gongwen-01 的 18 行与 Word 真值最大差 **0.06pt**（L3 判据 0.5pt），断言在 `fixture.test.ts`。
 逐行累加**不需要**「每页重新对齐网格」的修正 —— 网格吸附已经吸在每一行的行高上了。
-脚注（2026-09-29）按引用所在页占位、尾注接在正文后面走正文的流（见上面进度段）；未做：脚注跨页续排。
+脚注（2026-09-29）按引用所在页占位、放不下按行切开续到下一页，尾注接在正文后面走正文的流（见上面进度段）。
 
 **表格的几何已经标定完**（样本 `spike-table-01/02`，跑 `pnpm --filter @uw/fidelity spike:table`，
 落在 `table.ts` 的 `TABLE_RULES`）。这一层此前**一行都没跟 Word 比过** —— 列宽、格内边距、

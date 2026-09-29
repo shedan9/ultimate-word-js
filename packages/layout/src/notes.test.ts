@@ -56,13 +56,20 @@ function note(text = '注', lines = 1): { resolved: ResolvedBlock[] } {
 
 function source(
   notes: Record<string, { resolved: ResolvedBlock[] }>,
-  over: { numbering?: NoteNumbering; separator?: { resolved: ResolvedBlock[] } } = {},
+  over: {
+    numbering?: NoteNumbering;
+    separator?: { resolved: ResolvedBlock[] };
+    continuationSeparator?: { resolved: ResolvedBlock[] };
+  } = {},
 ): NoteSource {
   return {
     footnotes: {
       notes,
       numbering: over.numbering ?? {},
       ...(over.separator === undefined ? {} : { separator: over.separator }),
+      ...(over.continuationSeparator === undefined
+        ? {}
+        : { continuationSeparator: over.continuationSeparator }),
     },
     endnotes: { notes: {}, numbering: {} },
   };
@@ -214,16 +221,6 @@ describe('脚注占位（分页）', () => {
     expect(noted.pages[0]?.footnotes?.notes).toEqual(['footnote:1']);
   });
 
-  it('脚注比一整页还长时整条硬塞并记诊断（跨页续排还没做）', () => {
-    const sink = createDiagnosticSink();
-    const doc = layoutDocument(
-      body([line('1')]),
-      opts({ notes: source({ '1': note('长', 4) }), diagnostics: sink }),
-    );
-    expect(doc.pages[0]?.footnotes?.notes).toEqual(['footnote:1']);
-    expect(sink.list().map((d) => d.code)).toContain('footnote-overflow');
-  });
-
   it('正文里的号自成片段：带域结果标记、位置 -1，不与同一 run 里的字并在一起', () => {
     const r = runOf([{ kind: 'text', text: '甲' }, ref('1')]);
     const doc = layoutDocument(body([para([r])]), opts({ notes: source({ '1': note() }) }));
@@ -234,6 +231,111 @@ describe('脚注占位（分页）', () => {
       ['1', 1, -1, true],
     ]);
     expect(placed?.lines[0]?.line.notes).toEqual(['footnote:1']);
+  });
+});
+
+/** 脚注区里每一块的文字（每条脚注的每一段是一块、一行） */
+const areaText = (doc: DocumentLayout, page: number): string[] =>
+  (doc.pages[page]?.footnotes?.blocks ?? []).map((b) =>
+    b.kind === 'paragraph' ? b.lines.map((l) => l.line.fragments.map((f) => f.text).join('')).join('') : '',
+  );
+
+describe('脚注跨页续排', () => {
+  it('长过一整页的脚注：引用页收下能放的几行，剩下的续到下一页，续页的分隔线通栏', () => {
+    const sink = createDiagnosticSink();
+    const doc = layoutDocument(
+      body([line('1')]),
+      opts({ notes: source({ '1': note('长', 4) }), diagnostics: sink }),
+    );
+    // 一页三行：正文一行 + 脚注两行；剩下两行续到第二页（那一页只有脚注）
+    expect(doc.pages).toHaveLength(2);
+    expect(shape(doc)).toEqual([1, 0]);
+    const [a, b] = [doc.pages[0]?.footnotes, doc.pages[1]?.footnotes];
+    expect(a?.notes).toEqual(['footnote:1']);
+    expect(a?.height).toBe(2 * EA_LINE);
+    expect(a?.continued).toBeUndefined();
+    expect(areaText(doc, 0)).toEqual(['1长', '长']);
+    expect(b?.notes).toEqual(['footnote:1']);
+    expect(b?.continued).toBe(true);
+    expect(b?.height).toBe(2 * EA_LINE);
+    // 续过来的那一截从 0 开始摞，不带切口前的空白
+    expect(b?.blocks.map((x) => x.y)).toEqual([0, EA_LINE]);
+    expect(areaText(doc, 1)).toEqual(['长', '长']);
+    // 续排线通栏，首页那条仍是短线
+    expect(b?.separator.width).toBe(doc.pages[1]?.geometry.content.width);
+    expect(a?.separator.width).toBe(2100);
+    for (const p of doc.pages) {
+      const c = p.geometry.content;
+      expect((p.footnotes?.y ?? 0) + (p.footnotes?.height ?? 0)).toBe(c.y + c.height);
+    }
+    expect(sink.list().map((d) => d.code)).not.toContain('footnote-overflow');
+  });
+
+  it('长过两页的接着续：每一页都占满，最后一页只剩尾巴', () => {
+    const doc = layoutDocument(body([line('1')]), opts({ notes: source({ '1': note('长', 7) }) }));
+    expect(doc.pages.map((p) => p.footnotes?.height)).toEqual([2 * EA_LINE, 3 * EA_LINE, 2 * EA_LINE]);
+    expect(doc.pages.map((p) => p.footnotes?.continued === true)).toEqual([false, true, true]);
+  });
+
+  it('引用页只要收得下一行就切开，而不是把引用那一行挪走；续过来的脚注挤掉续页的正文', () => {
+    const doc = layoutDocument(
+      body([line(), line('1'), line(), line(), line()]),
+      opts({ notes: source({ '1': note('长', 3) }) }),
+    );
+    // 第一页：两行正文 + 脚注第一行；第二页：续过来的两行脚注 + 一行正文；第三页：剩下两行
+    expect(shape(doc)).toEqual([2, 1, 2]);
+    expect(doc.pages[0]?.footnotes?.height).toBe(EA_LINE);
+    expect(doc.pages[1]?.footnotes?.height).toBe(2 * EA_LINE);
+    expect(doc.pages[2]?.footnotes).toBeUndefined();
+  });
+
+  it('切出过续排的一页不再收新的脚注：后引的那条跟着它的行去下一页，排在续排那一截后面', () => {
+    const tall = sect({ page: { width: 3300, height: 1200 + 5 * EA_LINE, orientation: 'portrait' } });
+    const doc = layoutDocument(
+      body([line('1'), line('2'), line()], tall),
+      opts({ notes: source({ '1': note('甲', 6), '2': note('乙') }) }),
+    );
+    // 一页五行：正文一行 + 甲注四行（切开）；引乙的那一行去第二页
+    expect(shape(doc)).toEqual([1, 2]);
+    const b = doc.pages[1]?.footnotes;
+    expect(b?.notes).toEqual(['footnote:1', 'footnote:2']);
+    expect(b?.continued).toBe(true);
+    expect(areaText(doc, 1)).toEqual(['甲', '甲', '2乙']);
+  });
+
+  it('续排线那一段的高度按 continuationSeparator 的段落算，只在续页上扣', () => {
+    const blank = { resolved: [para([run('')], { widowControl: false })] as ResolvedBlock[] };
+    const doc = layoutDocument(
+      body([line('1')]),
+      opts({ notes: source({ '1': note('长', 4) }, { continuationSeparator: blank }) }),
+    );
+    const a = doc.pages[0]?.footnotes;
+    const b = doc.pages[1]?.footnotes;
+    // 首页没给 separator：占高 0，照收两行
+    expect(a?.height).toBe(2 * EA_LINE);
+    const sep = (b?.height ?? 0) - 2 * EA_LINE;
+    expect(sep).toBeGreaterThan(0);
+    expect(b?.blocks[0]?.y).toBe(sep);
+    expect(b?.separator.y).toBeCloseTo(sep / 2);
+  });
+
+  it('表格行里引的长脚注同样切开续排', () => {
+    const doc = layoutDocument(
+      body([table([2100], [row([cell([line('1')])])])]),
+      opts({ notes: source({ '1': note('长', 5) }) }),
+    );
+    expect(doc.pages.length).toBeGreaterThan(1);
+    expect(doc.pages[0]?.footnotes?.notes).toEqual(['footnote:1']);
+    expect(doc.pages[1]?.footnotes?.continued).toBe(true);
+    const total = doc.pages.reduce((h, p) => h + (p.footnotes?.blocks.length ?? 0), 0);
+    expect(total).toBe(5);
+  });
+
+  it('命中测试收得到续页上的脚注行', () => {
+    const doc = layoutDocument(body([line('1')]), opts({ notes: source({ '1': note('长', 4) }) }));
+    const index = buildLayoutIndex(doc);
+    const onSecond = index.lines.filter((l) => l.page === 1 && l.frame === 'footnotes');
+    expect(onSecond).toHaveLength(2);
   });
 });
 
