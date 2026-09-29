@@ -470,7 +470,7 @@ describe('目录页码（PAGEREF）与书签跳转', () => {
   });
 });
 
-describe('题注编号（SEQ）', () => {
+describe('题注编号（SEQ）与章节引用（STYLEREF）', () => {
   const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
   const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
   const fld = (type: 'begin' | 'separate' | 'end') => `<w:r><w:fldChar w:fldCharType="${type}"/></w:r>`;
@@ -480,9 +480,10 @@ describe('题注编号（SEQ）', () => {
     `<w:p>${style === undefined ? '' : `<w:pPr><w:pStyle w:val="${style}"/></w:pPr>`}<w:r><w:t>${text}</w:t></w:r></w:p>`;
 
   /** 标题样式的 id 是 `1`（中文版 Word 就这么写），大纲级别只写在样式里 —— 段落自己一个字都不提 */
-  function seqDocx(): Uint8Array {
+  function seqDocx(
+    body = `${para('第一章', '1')}${caption}${caption}${para('第二章')}${caption}`,
+  ): Uint8Array {
     const enc = new TextEncoder();
-    const body = `${para('第一章', '1')}${caption}${caption}${para('第二章')}${caption}`;
     return zip(
       new Map([
         [
@@ -548,5 +549,26 @@ describe('题注编号（SEQ）', () => {
     expect(captions(d)).toEqual(['图 1', '图 2', '图 1']);
     d.undo();
     expect(captions(d)).toEqual(['图 1', '图 2', '图 3']);
+  });
+
+  it('STYLEREF 按中文界面名认出英文 w:name 的内建标题；套上标题样式后跟着变，撤销变回来', async () => {
+    const ref = `<w:p><w:r><w:t>见</w:t></w:r>${fld('begin')}<w:r><w:instrText xml:space="preserve"> STYLEREF "标题 1" </w:instrText></w:r>${fld('separate')}<w:r><w:t>旧</w:t></w:r>${fld('end')}</w:p>`;
+    const d = await UltimateWord.load(seqDocx(`${para('第一章', '1')}${para('第二章')}${ref}`));
+    const line = () => d.layout.pages[0]?.blocks.at(-1);
+    const text = (): string => {
+      const block = line();
+      if (block === undefined || block.kind !== 'paragraph') return '';
+      return block.lines.map((l) => l.line.fragments.map((f) => f.text).join('')).join('');
+    };
+    expect(text()).toBe('见第一章');
+
+    const chapter = d.find('第二章')[0];
+    if (chapter === undefined) throw new Error('找不到「第二章」');
+    d.tx((t) => {
+      t.setParagraphProps(chapter, { styleId: '1' });
+    });
+    expect(text()).toBe('见第二章');
+    d.undo();
+    expect(text()).toBe('见第一章');
   });
 });

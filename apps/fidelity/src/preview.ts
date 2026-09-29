@@ -22,7 +22,7 @@ import { createDiagnosticSink } from '@uw/core';
 import { createTextMeasurer, FontRegistry } from '@uw/fonts';
 import { loadBundledPacks } from '@uw/fonts/node';
 import { layoutDocumentWithFields } from '@uw/layout';
-import { bookmarkTargets, fontNameCandidates, loadDocument } from '@uw/model';
+import { bookmarkTargets, fontNameCandidates, loadDocument, paragraphStyleNames } from '@uw/model';
 import { OpcPackage } from '@uw/ooxml';
 import type { RElement, RenderOptions } from '@uw/render-dom';
 import { buildDocument, el, fmt, imageHrefResolver, serialize } from '@uw/render-dom';
@@ -176,6 +176,7 @@ async function preview(name: string, args: Args): Promise<void> {
     settings: doc.cascade.settings,
     headerFooters: doc.headerFooters,
     bookmarks: bookmarkTargets(doc.body),
+    styleNames: paragraphStyleNames(doc.cascade.styles, doc.body.styles),
     diagnostics: sink,
   });
   // 图片走 data URI：产物是一份能直接双击打开的 HTML，外部文件一个都不带

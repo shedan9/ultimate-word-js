@@ -207,7 +207,7 @@ export interface DocumentLayout {
  * Word 常把一个数字切成好几个 `w:t`，不清掉旧的会留在页面上（与正文域同理）。
  */
 export interface HeaderFieldSpec {
-  type: 'PAGE' | 'NUMPAGES' | 'SECTIONPAGES' | 'clear';
+  type: 'PAGE' | 'NUMPAGES' | 'SECTIONPAGES' | 'STYLEREF' | 'clear';
   /** `\*` 开关解析出来的数字格式。缺席时 PAGE 跟着本节的 `w:pgNumType w:fmt` */
   format?: string;
 }
@@ -221,6 +221,12 @@ export interface HeaderFieldPlan {
    */
   totalPages?: number;
   sectionPages?: readonly number[];
+  /**
+   * 页眉里的 STYLEREF（「本页所在的章」）：run id → **按物理页序**每页显示的文字。
+   * 它要看这一页上排了哪些段落，开页那一刻正文还没排，所以同样只能拿上一趟的结果；
+   * 第一趟没有，缺席（或某页是 undefined）时保留文件里存着的旧值
+   */
+  styleRefs?: ReadonlyMap<NodeId, readonly (string | undefined)[]>;
 }
 
 export interface LayoutDocumentOptions {
@@ -596,10 +602,15 @@ function buildFrame(flow: Flow, kind: 'header' | 'footer', number: number): Plac
   if (content === undefined || content.resolved.length === 0) return undefined;
 
   // 静态页眉全文档共用一份；带页码的那种同一页码也能共用（奇偶页眉在偶数页之间就是同一份）
-  const key = flow.hfDynamic.has(ref.relId) ? `${ref.relId}|${number}|${flow.sectionIndex}` : ref.relId;
+  // STYLEREF 每一页都可能不同，页码相同也不能共用 —— 键里再带上物理页序
+  const pageIndex = flow.pages.length;
+  const perPage = flow.opts.headerFields?.styleRefs === undefined ? '' : `|${pageIndex}`;
+  const key = flow.hfDynamic.has(ref.relId)
+    ? `${ref.relId}|${number}|${flow.sectionIndex}${perPage}`
+    : ref.relId;
   let stacked = flow.hf.get(key);
   if (stacked === undefined) {
-    const values = headerFieldValues(flow.opts.headerFields, number, flow.sectionIndex, props);
+    const values = headerFieldValues(flow.opts.headerFields, number, pageIndex, flow.sectionIndex, props);
     stacked = stackBlocks(content.resolved, {
       measurer: flow.opts.measurer,
       settings: flow.opts.settings,
@@ -631,6 +642,7 @@ function buildFrame(flow: Flow, kind: 'header' | 'footer', number: number): Plac
 function headerFieldValues(
   plan: HeaderFieldPlan | undefined,
   number: number,
+  pageIndex: number,
   sectionIndex: number,
   props: SectionProps,
 ): ReadonlyMap<NodeId, string> | undefined {
@@ -644,6 +656,11 @@ function headerFieldValues(
       case 'PAGE':
         out.set(id, formatNumber(number, spec.format ?? props.pageNumFormat ?? 'decimal'));
         break;
+      case 'STYLEREF': {
+        const text = plan.styleRefs?.get(id)?.[pageIndex];
+        if (text !== undefined) out.set(id, text);
+        break;
+      }
       case 'NUMPAGES':
         if (plan.totalPages !== undefined)
           out.set(id, formatNumber(plan.totalPages, spec.format ?? 'decimal'));

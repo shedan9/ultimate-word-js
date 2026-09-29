@@ -1,5 +1,5 @@
 /**
- * 域求值 —— 目前是 PAGE / NUMPAGES / SECTIONPAGES / PAGEREF / SEQ，以及前四个与分页之间的那个**循环**。
+ * 域求值 —— 目前是 PAGE / NUMPAGES / SECTIONPAGES / PAGEREF / SEQ / STYLEREF，以及它们与分页之间的那个**循环**。
  *
  * 结构还原（界桩配对、指令解析）早在 `@uw/model` 的 fields.ts 做完了，这里只做「算成几」。
  * 分成两个包不是洁癖：配对只需要 run 序列，求值需要**页码**，而页码是分页的产物，
@@ -48,6 +48,17 @@
  * 前者本来就不递增，后者不在正文的文档序里。没有结果区的 SEQ 照样计数（Word 更新后它就有号了），
  * 只是没地方显示。
  *
+ * ## STYLEREF：正文里看文档序，页眉里看这一页
+ *
+ * 「图 2-1」的「2」是 `{ STYLEREF 1 \s }`，报告页眉里的「第三章 实施方案」是 `{ STYLEREF "标题 1" }`。
+ * 两处规则不同（Word 域参考原话）：**正文里**从域往前找最近的那一段、没有再往后找 —— 与页码无关，
+ * 同 SEQ 一起一次算完；**页眉里**先在**本页**从上往下找（`\l` 从下往上）、没有再从页顶往前、
+ * 再从页底往后 —— 一章从页中间开始时，这一页的页眉已经是新的一章。后者要知道这一页排了哪些段落，
+ * 开页时正文还没排，所以与 NUMPAGES 一样拿上一趟的结果、进迭代（`HeaderFieldPlan.styleRefs`）。
+ * 样式名要归一：中文版指令里写 `"标题 1"`，styles.xml 里内建样式的 `w:name` 是 `heading 1`，
+ * 数字 `1` 是「内建标题 1」的简写（`canonicalStyleName`）。编号开关 `\s` / `\t` 留下哪些字符没有样本
+ * （`uncalibrated.ts` 的 `STYLEREF_NUMERIC_CHARS`）；字符样式、`\p`、要编号而段落没编号的一律不求值。
+ *
  * ## 页眉页脚里的域走的是另一条路
  *
  * 同一个 `{ PAGE }` 在每一页显示的**不是同一串字**，所以一张全局的「run id → 文字」表
@@ -75,6 +86,7 @@ import type {
   NodeId,
   ResolvedBlock,
   ResolvedBody,
+  ResolvedParagraph,
 } from '@uw/model';
 import { fieldSwitch, formatNumber, walkBlocks, walkParagraphs } from '@uw/model';
 import type { HeaderFooterSource } from './header-footer.ts';
@@ -88,7 +100,11 @@ import type {
 import { layoutDocument } from './page.ts';
 import type { BlockLayout } from './table.ts';
 import type { LineLayout, ParagraphLayout } from './types.ts';
-import { FIELD_CHINESE_NUM_FORMATS, SEQ_RESET_ON_HIGHER_HEADINGS } from './uncalibrated.ts';
+import {
+  FIELD_CHINESE_NUM_FORMATS,
+  SEQ_RESET_ON_HIGHER_HEADINGS,
+  STYLEREF_NUMERIC_CHARS,
+} from './uncalibrated.ts';
 
 /** 求值结果：**run id → 这个 run 显示的文字**，盖掉它 content 里存着的旧值 */
 export type FieldValues = ReadonlyMap<NodeId, string>;
@@ -114,6 +130,11 @@ export interface LayoutDocumentWithFieldsOptions extends LayoutDocumentOptions {
    * 缺席时 PAGEREF 一律不求值（显示文件里存的旧页码）
    */
   bookmarks?: BookmarkTargets;
+  /**
+   * 段落样式 id → `w:name`。STYLEREF 靠它把指令里的样式名（`"标题 1"` / `"heading 1"` / `1`）
+   * 认成 id；缺席时 STYLEREF 一律不求值（显示文件里存的旧结果）
+   */
+  styleNames?: ReadonlyMap<string, string>;
 }
 
 export interface FieldLayoutResult {
@@ -137,19 +158,21 @@ export function layoutDocumentWithFields(
   fields: readonly FieldRegion[],
   opts: LayoutDocumentWithFieldsOptions,
 ): FieldLayoutResult {
-  const { anchors, plan, sequences } = fieldAnchors(
-    body,
-    fields,
-    opts.headerFooters,
-    opts.bookmarks,
-    opts.diagnostics,
-  );
+  const { anchors, plan, statics, headerRefs, paragraphs } = fieldAnchors(body, fields, opts);
 
-  let values: FieldValues = withSequences(opts.fieldValues ?? new Map(), sequences);
+  let values: FieldValues = withSequences(opts.fieldValues ?? new Map(), statics);
   let totals: Totals = {};
   // 「一共几页」只有 NUMPAGES / SECTIONPAGES 用得上。全篇只有 PAGE 时不把它算进收敛判据，
   // 否则每份带页码的文档都要白排一趟（PAGE 在开页那一刻就是准的）
   const needsTotals = [...plan.fields.values()].some((f) => f.type !== 'PAGE' && f.type !== 'clear');
+  const totalsOf = (l: DocumentLayout): Totals =>
+    needsTotals
+      ? {
+          totalPages: l.pages.length,
+          sectionPages: countBySection(l),
+          ...(headerRefs.length === 0 ? {} : { styleRefs: headerStyleRefs(headerRefs, paragraphs, l) }),
+        }
+      : {};
 
   // 诊断只在第一趟收：布局自己发的那几条（多栏、连续分节符改了版心）与域文字无关，
   // 每趟都发一遍只会让同一句话在诊断列表里出现三次
@@ -163,10 +186,8 @@ export function layoutDocumentWithFields(
   ];
 
   for (let passes = 1; ; passes++) {
-    const next = withSequences(evaluate(anchors, body, layout), sequences);
-    const nextTotals: Totals = needsTotals
-      ? { totalPages: layout.pages.length, sectionPages: countBySection(layout) }
-      : {};
+    const next = withSequences(evaluate(anchors, body, layout), statics);
+    const nextTotals = totalsOf(layout);
     if (sameValues(next, values) && sameTotals(nextTotals, totals)) {
       return { layout, values, passes, converged: true };
     }
@@ -200,13 +221,23 @@ export function layoutDocumentWithFields(
 interface Totals {
   totalPages?: number;
   sectionPages?: readonly number[];
+  styleRefs?: ReadonlyMap<NodeId, readonly (string | undefined)[]>;
 }
 
 function sameTotals(a: Totals, b: Totals): boolean {
   if (a.totalPages !== b.totalPages) return false;
   const x = a.sectionPages ?? [];
   const y = b.sectionPages ?? [];
-  return x.length === y.length && x.every((n, i) => n === y[i]);
+  if (x.length !== y.length || x.some((n, i) => n !== y[i])) return false;
+  const p = a.styleRefs ?? new Map<NodeId, readonly (string | undefined)[]>();
+  const q = b.styleRefs ?? new Map<NodeId, readonly (string | undefined)[]>();
+  if (p.size !== q.size) return false;
+  for (const [id, pages] of p) {
+    const other = q.get(id);
+    if (other === undefined || other.length !== pages.length || pages.some((t, i) => t !== other[i]))
+      return false;
+  }
+  return true;
 }
 
 // ── 域 → 承载结果的那个 run ───────────────────────────────────────────────────
@@ -239,17 +270,27 @@ function headerRunIds(source: HeaderFooterSource | undefined): Set<NodeId> {
 function fieldAnchors(
   body: ResolvedBody,
   fields: readonly FieldRegion[],
-  headerFooters: HeaderFooterSource | undefined,
-  bookmarks: BookmarkTargets | undefined,
-  diagnostics?: DiagnosticSink,
-): { anchors: FieldAnchor[]; plan: HeaderFieldPlan; sequences: FieldValues } {
+  opts: LayoutDocumentWithFieldsOptions,
+): {
+  anchors: FieldAnchor[];
+  plan: HeaderFieldPlan;
+  /** 与页码无关、一次算完的那些（SEQ、正文里的 STYLEREF） */
+  statics: FieldValues;
+  headerRefs: HeaderStyleRef[];
+  paragraphs: ParagraphInfo[];
+} {
+  const { headerFooters, bookmarks, diagnostics } = opts;
   const runPara = new Map<NodeId, NodeId>();
   const paraOrder = new Map<NodeId, number>();
+  const paragraphs: ParagraphInfo[] = [];
   for (const p of walkParagraphs(body)) {
     paraOrder.set(p.id, paraOrder.size);
+    paragraphs.push(paragraphInfo(p));
     for (const run of p.runs) runPara.set(run.id, p.id);
   }
   const inHeader = headerRunIds(headerFooters);
+  const statics = new Map<NodeId, string>();
+  const headerRefs: HeaderStyleRef[] = [];
 
   const anchors: FieldAnchor[] = [];
   const planned = new Map<NodeId, HeaderFieldSpec>();
@@ -263,6 +304,28 @@ function fieldAnchors(
       if (seq === undefined) continue;
       for (const id of region.resultRuns) claimed.add(id);
       seqs.push(seq);
+      continue;
+    }
+    if (type === 'STYLEREF') {
+      const first = region.resultRuns[0];
+      const ref = first === undefined ? undefined : styleRef(region, opts.styleNames, diagnostics);
+      if (first === undefined || ref === undefined || region.resultRuns.some((id) => claimed.has(id)))
+        continue;
+      for (const id of region.resultRuns) claimed.add(id);
+      const rest = region.resultRuns.slice(1);
+      if (inHeader.has(first)) {
+        // 页眉里的：每页看这一页排了什么，走 plan 那条路（与页眉的 PAGE 同理）
+        planned.set(first, { type: 'STYLEREF' });
+        for (const id of rest) planned.set(id, { type: 'clear' });
+        headerRefs.push({ ...ref, runId: first });
+        continue;
+      }
+      const order = paraOrder.get(runPara.get(first) ?? '');
+      if (order === undefined) continue;
+      const text = bodyStyleRef(ref, order, paragraphs, diagnostics);
+      if (text === undefined) continue;
+      statics.set(first, text);
+      for (const id of rest) statics.set(id, '');
       continue;
     }
     if (!EVALUABLE.has(type)) continue;
@@ -316,7 +379,8 @@ function fieldAnchors(
       clear: region.resultRuns.slice(1),
     });
   }
-  return { anchors, plan: { fields: planned }, sequences: sequenceValues(seqs, body) };
+  for (const [id, text] of sequenceValues(seqs, body)) statics.set(id, text);
+  return { anchors, plan: { fields: planned }, statics, headerRefs, paragraphs };
 }
 
 /** PAGEREF 能不能求值、目标是哪一段。不能的记诊断并答 undefined（照旧显示存着的结果） */
@@ -349,6 +413,213 @@ function pageRefTarget(
     );
   }
   return target;
+}
+
+// ── STYLEREF ─────────────────────────────────────────────────────────────────
+
+/** 一个段落在 STYLEREF 眼里的样子：文档序 + 样式 + 文字 + 编号 */
+interface ParagraphInfo {
+  id: NodeId;
+  styleId: string;
+  /** 段落的可见文字（不含编号、隐藏文字、域代码），制表位算一个空格 */
+  text: string;
+  /** 算好的编号文字，没编号时缺席 */
+  label?: string;
+}
+
+function paragraphInfo(p: ResolvedParagraph): ParagraphInfo {
+  let text = '';
+  for (const run of p.runs) {
+    if (run.props.hidden) continue;
+    for (const c of run.content) {
+      if (c.kind === 'text') text += c.text;
+      else if (c.kind === 'tab') text += ' ';
+    }
+  }
+  const label = p.props.numbering.label?.text;
+  return { id: p.id, styleId: p.props.styleId, text: text.trim(), ...(label === undefined ? {} : { label }) };
+}
+
+/** 解析好的 STYLEREF：认哪些段落样式、要文字还是要编号 */
+interface StyleRef {
+  styleIds: ReadonlySet<string>;
+  instruction: FieldInstruction;
+}
+
+interface HeaderStyleRef extends StyleRef {
+  runId: NodeId;
+}
+
+/**
+ * 中文版 Word 写进指令里的是**界面上的本地化名**（`STYLEREF "标题 1"`），styles.xml 里内建样式的
+ * `w:name` 却是英文（`heading 1`），两边要先归一到同一个名字才比得上。数字 `1`–`9` 是
+ * 「内建标题 N」的简写（Word 插入带章节号的题注时写 `STYLEREF 1 \s`）。
+ * 只收报告里真会被 STYLEREF 引用的几个；其余按名字原样比（不分大小写）
+ */
+const LOCALIZED_STYLE_NAMES: Readonly<Record<string, string>> = {
+  标题: 'title',
+  副标题: 'subtitle',
+  正文: 'normal',
+  题注: 'caption',
+};
+
+function canonicalStyleName(name: string): string {
+  const s = name.trim().toLowerCase().replace(/\s+/g, ' ');
+  const heading = /^(?:heading ?|标题 ?)?([1-9])$/.exec(s);
+  if (heading !== null) return `heading ${heading[1]}`;
+  return LOCALIZED_STYLE_NAMES[s] ?? s;
+}
+
+/** STYLEREF 能不能求值。不能的记诊断并答 undefined（照旧显示存着的结果） */
+function styleRef(
+  region: FieldRegion,
+  styleNames: ReadonlyMap<string, string> | undefined,
+  diagnostics: DiagnosticSink | undefined,
+): StyleRef | undefined {
+  const name = region.instruction.args[0];
+  if (styleNames === undefined || name === undefined) return undefined;
+  if (fieldSwitch(region.instruction, 'p') !== undefined) {
+    diagnostics?.info(
+      'field-styleref-relative',
+      `STYLEREF ${name} \\p（见上方 / 见下方）不求值，显示文件里存的结果`,
+    );
+    return undefined;
+  }
+  const want = canonicalStyleName(name);
+  const styleIds = new Set<string>();
+  for (const [id, styleName] of styleNames) {
+    if (id === name || canonicalStyleName(styleName) === want) styleIds.add(id);
+  }
+  if (styleIds.size === 0) {
+    // 字符样式也可能被引用（找的是带这个字符样式的文字），没做 —— 与样式不存在一起留洞
+    diagnostics?.warn(
+      'field-styleref-style-missing',
+      `STYLEREF 引用的段落样式「${name}」不存在（或是字符样式，没做），显示文件里存的结果`,
+    );
+    return undefined;
+  }
+  return { styleIds, instruction: region.instruction };
+}
+
+/** 找到的段落 → 显示的文字。要编号而段落没有编号时答 undefined（不猜 Word 显示什么） */
+function styleRefText(
+  ref: StyleRef,
+  p: ParagraphInfo,
+  diagnostics: DiagnosticSink | undefined,
+): string | undefined {
+  const instr = ref.instruction;
+  const has = (name: string) => fieldSwitch(instr, name) !== undefined;
+  if (!has('n') && !has('r') && !has('w') && !has('s')) return p.text;
+  if (p.label === undefined) {
+    diagnostics?.info(
+      'field-styleref-no-number',
+      `STYLEREF ${instr.args[0] ?? ''} 要的是编号，但找到的段落没有编号，显示文件里存的结果`,
+    );
+    return undefined;
+  }
+  // \n / \r / \w 三种「上下文」的差别只在多级编号引用别处时才显出来，本阶段都给编号文字本身
+  return has('t') || has('s') ? numericPart(p.label) : p.label.trim();
+}
+
+/** 去掉编号里「第」「章」这类非数字文字，只留数字与数字之间的分隔符（见 uncalibrated.ts） */
+function numericPart(label: string): string {
+  return [...label]
+    .filter((ch) => STYLEREF_NUMERIC_CHARS.test(ch))
+    .join('')
+    .replace(/^[.\-–—:]+|[.\-–—:]+$/g, '');
+}
+
+/**
+ * 正文里的 STYLEREF：从域所在段落**往前**找最近的一段，找不到再**往后**找。
+ * 与页码无关（页眉里的才看页），所以一次算完
+ */
+function bodyStyleRef(
+  ref: StyleRef,
+  order: number,
+  paragraphs: readonly ParagraphInfo[],
+  diagnostics: DiagnosticSink | undefined,
+): string | undefined {
+  let found: ParagraphInfo | undefined;
+  for (let i = order; i >= 0 && found === undefined; i--) {
+    const p = paragraphs[i];
+    if (p !== undefined && ref.styleIds.has(p.styleId)) found = p;
+  }
+  for (let i = order + 1; i < paragraphs.length && found === undefined; i++) {
+    const p = paragraphs[i];
+    if (p !== undefined && ref.styleIds.has(p.styleId)) found = p;
+  }
+  if (found === undefined) {
+    diagnostics?.warn(
+      'field-styleref-not-found',
+      `文档里没有「${ref.instruction.args[0] ?? ''}」样式的段落（Word 会显示「错误！文档中没有指定样式的文字。」），显示文件里存的结果`,
+    );
+    return undefined;
+  }
+  return styleRefText(ref, found, diagnostics);
+}
+
+/**
+ * 页眉里的 STYLEREF，逐页求：**先在本页从上往下找**（`\l` 从下往上），没有就从页顶**往前**找，
+ * 还没有再从页底**往后**找 —— Word 域参考里页眉页脚那一段的原话。于是一章从页中间开始时，
+ * 那一页的页眉已经是新的一章（本页有就用本页的），与「往前找」的正文规则不同。
+ *
+ * 「本页」按段落的文档序区间认：跨页的段落在两页上都算，表格里的段落按它所在的那一行算
+ */
+function headerStyleRefs(
+  refs: readonly HeaderStyleRef[],
+  paragraphs: readonly ParagraphInfo[],
+  layout: DocumentLayout,
+): Map<NodeId, (string | undefined)[]> {
+  const order = new Map<NodeId, number>();
+  paragraphs.forEach((p, i) => {
+    order.set(p.id, i);
+  });
+  const index = indexLayout(layout);
+  // 每页的段落区间 [lo, hi]；空白补页没有段落，挂在上一页的末尾（lo > hi 表示本页为空）
+  const spans: { lo: number; hi: number }[] = layout.pages.map(() => ({
+    lo: Number.POSITIVE_INFINITY,
+    hi: -1,
+  }));
+  for (const [id, page] of index.paragraphPages) {
+    const i = order.get(id);
+    const span = spans[page];
+    if (i === undefined || span === undefined) continue;
+    span.lo = Math.min(span.lo, i);
+    span.hi = Math.max(span.hi, i);
+  }
+  // 空页（没排段落）夹在上一页末段与下一段之间：lo = 末段 + 1、hi = 末段，本页找不到、前后照常找
+  let cursor = -1;
+  for (const span of spans) {
+    if (span.hi < 0) {
+      span.lo = cursor + 1;
+      span.hi = cursor;
+    } else {
+      cursor = span.hi;
+    }
+  }
+
+  const out = new Map<NodeId, (string | undefined)[]>();
+  for (const ref of refs) {
+    const matches: number[] = [];
+    paragraphs.forEach((p, i) => {
+      if (ref.styleIds.has(p.styleId)) matches.push(i);
+    });
+    const last = fieldSwitch(ref.instruction, 'l') !== undefined;
+    out.set(
+      ref.runId,
+      spans.map(({ lo, hi }) => {
+        const onPage = matches.filter((i) => i >= lo && i <= hi);
+        const hit =
+          (last ? onPage.at(-1) : onPage[0]) ??
+          matches.filter((i) => i < lo).at(-1) ??
+          matches.find((i) => i > hi);
+        const p = hit === undefined ? undefined : paragraphs[hit];
+        // 诊断在正文那条路报过同一类；页眉每页每趟都报会刷屏，这里静默
+        return p === undefined ? undefined : styleRefText(ref, p, undefined);
+      }),
+    );
+  }
+  return out;
 }
 
 // ── SEQ ───────────────────────────────────────────────────────────────────────
@@ -556,10 +827,12 @@ interface LayoutIndex {
   /** run id → 它**第一次**出现在第几页（物理页序，0 起） */
   runs: Map<NodeId, number>;
   paragraphs: Map<NodeId, number>;
+  /** 段落出现在哪些页（跨页的段落出现两次）—— 页眉 STYLEREF 认「本页有哪些段落」用 */
+  paragraphPages: [NodeId, number][];
 }
 
 function indexLayout(layout: DocumentLayout): LayoutIndex {
-  const index: LayoutIndex = { runs: new Map(), paragraphs: new Map() };
+  const index: LayoutIndex = { runs: new Map(), paragraphs: new Map(), paragraphPages: [] };
   layout.pages.forEach((page, i) => {
     for (const block of page.blocks) {
       if (block.kind === 'paragraph') {
@@ -599,6 +872,7 @@ function addParagraph(
 ): void {
   // 一律**第一次**为准：跨页的段落在两页上各出现一次，域该算在它先出现的那一页
   if (!index.paragraphs.has(paragraphId)) index.paragraphs.set(paragraphId, page);
+  index.paragraphPages.push([paragraphId, page]);
   for (const line of lines) {
     for (const f of line.fragments) if (!index.runs.has(f.runId)) index.runs.set(f.runId, page);
   }

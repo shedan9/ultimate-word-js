@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
 import type { LayoutDocumentWithFieldsOptions } from './fields.ts';
 import { layoutDocumentWithFields } from './fields.ts';
 import type { DocumentLayout, PlacedParagraph } from './page.ts';
-import { fakeMeasurer, NO_GRID, para, run, SIZE_5 } from './test-fixtures.ts';
+import { fakeMeasurer, NO_GRID, numberLabel, para, run, SIZE_5 } from './test-fixtures.ts';
 
 /** 一行 10 个字 */
 const TEN = '一二三四五六七八九十';
@@ -477,6 +477,133 @@ describe('SEQ（题注编号）', () => {
     expect(res.values.get(a.run.id)).toBe('1');
     expect(res.values.get(p.id)).toBe('1');
     expect(res.converged).toBe(true);
+  });
+});
+
+describe('STYLEREF（章节号 / 页眉里的当前章）', () => {
+  /** 标题 1 的样式 id 是 h1、w:name 是英文的 heading 1 —— 指令里写的却是中文界面名 */
+  const names = new Map([
+    ['h1', 'heading 1'],
+    ['a', 'Normal'],
+  ]);
+  const h1 = (text: string, label?: string): ResolvedBlock =>
+    para([run(text)], {
+      styleId: 'h1',
+      ...(label === undefined ? {} : { numbering: { numId: 1, level: 0, label: numberLabel(label) } }),
+    });
+  /** 一段「见 {STYLEREF …}」，结果 run 存着旧值「旧」 */
+  function ref(instr: string): { block: ResolvedBlock; region: FieldRegion; run: ResolvedRun } {
+    const r = run('旧');
+    return { block: para([run('见'), r]), region: field(instr, [r.id]), run: r };
+  }
+
+  it('正文里往前找最近的那一段；前面没有才往后找', () => {
+    const a = ref('STYLEREF "标题 1"');
+    const b = ref('STYLEREF "标题 1"');
+    const c = ref('STYLEREF "heading 1"');
+    const res = layoutDocumentWithFields(
+      body([a.block, h1('第一章'), b.block, h1('第二章'), c.block]),
+      [a.region, b.region, c.region],
+      opts({ styleNames: names }),
+    );
+    expect([a, b, c].map((x) => res.values.get(x.run.id))).toEqual(['第一章', '第一章', '第二章']);
+    expect(res.passes).toBe(1);
+  });
+
+  it('数字 N 是「内建标题 N」的简写', () => {
+    const a = ref('STYLEREF 1');
+    const res = layoutDocumentWithFields(
+      body([h1('第一章'), a.block]),
+      [a.region],
+      opts({ styleNames: names }),
+    );
+    expect(res.values.get(a.run.id)).toBe('第一章');
+  });
+
+  it('\\s / \\n \\t 只留编号里的数字，\\n 给整个编号', () => {
+    const s1 = ref('STYLEREF 1 \\s');
+    const n1 = ref('STYLEREF 1 \\n');
+    const s2 = ref('STYLEREF 1 \\s');
+    const t2 = ref('STYLEREF 1 \\n \\t');
+    const res = layoutDocumentWithFields(
+      body([h1('总则', '第1章'), s1.block, n1.block, h1('附则', '第一章'), s2.block, t2.block]),
+      [s1.region, n1.region, s2.region, t2.region],
+      opts({ styleNames: names }),
+    );
+    expect([s1, n1, s2, t2].map((x) => res.values.get(x.run.id))).toEqual(['1', '第1章', '一', '一']);
+  });
+
+  it('不求值的情形：样式不存在（记 warn）、要编号而没编号、\\p、没给样式表', () => {
+    const sink = createDiagnosticSink();
+    const missing = ref('STYLEREF "标题 7"');
+    const noNumber = ref('STYLEREF 1 \\s');
+    const relative = ref('STYLEREF 1 \\p');
+    const res = layoutDocumentWithFields(
+      body([h1('第一章'), missing.block, noNumber.block, relative.block]),
+      [missing.region, noNumber.region, relative.region],
+      opts({ styleNames: names, diagnostics: sink }),
+    );
+    for (const x of [missing, noNumber, relative]) expect(res.values.has(x.run.id)).toBe(false);
+    expect(sink.list().some((d) => d.code === 'field-styleref-style-missing' && d.severity === 'warn')).toBe(
+      true,
+    );
+
+    const bare = ref('STYLEREF 1');
+    const res2 = layoutDocumentWithFields(body([h1('第一章'), bare.block]), [bare.region], opts());
+    expect(res2.values.has(bare.run.id)).toBe(false);
+  });
+
+  describe('页眉里的', () => {
+    const pad = (): ResolvedBlock => para([run(TEN)]);
+    /** 第 1 页：第一章 + 两行；第 2 页：一行 + 第二章 + 一行；第 3 页：三行 */
+    const blocks = (): ResolvedBlock[] => [
+      h1('第一章'),
+      pad(),
+      pad(),
+      pad(),
+      h1('第二章'),
+      pad(),
+      pad(),
+      pad(),
+      pad(),
+    ];
+    function headerText(doc: DocumentLayout, page: number): string {
+      let out = '';
+      for (const block of doc.pages[page]?.header?.blocks ?? []) {
+        if (block.kind !== 'paragraph') continue;
+        for (const placed of block.lines) for (const f of placed.line.fragments) out += f.text;
+      }
+      return out;
+    }
+    function run3(instr: string) {
+      const r = run('旧');
+      const res = layoutDocumentWithFields(
+        body(blocks(), sect({ headers: [{ type: 'default', relId: 'h' }] })),
+        [field(instr, [r.id])],
+        opts({ styleNames: names, headerFooters: { h: { resolved: [para([r])] } } }),
+      );
+      return res;
+    }
+
+    it('每页先在本页从上往下找，本页没有才往前找：一章从页中间开始时这一页已经是新的一章', () => {
+      const res = run3('STYLEREF 1');
+      expect(res.layout.pages).toHaveLength(3);
+      expect([0, 1, 2].map((i) => headerText(res.layout, i))).toEqual(['第一章', '第二章', '第二章']);
+      expect(res.converged).toBe(true);
+    });
+
+    it('\\l 在本页从下往上找（本页有两章时取后一章）', () => {
+      const r = run('旧');
+      const res = layoutDocumentWithFields(
+        body(
+          [h1('第一章'), h1('第二章'), pad(), pad(), pad(), pad()],
+          sect({ headers: [{ type: 'default', relId: 'h' }] }),
+        ),
+        [field('STYLEREF 1 \\l', [r.id])],
+        opts({ styleNames: names, headerFooters: { h: { resolved: [para([r])] } } }),
+      );
+      expect([0, 1].map((i) => headerText(res.layout, i))).toEqual(['第二章', '第二章']);
+    });
   });
 });
 

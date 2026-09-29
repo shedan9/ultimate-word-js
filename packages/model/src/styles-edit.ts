@@ -15,7 +15,7 @@
  * 纯函数、不改入参：定义挂在撤销快照上（`Body.styles`）。
  */
 import type { ParaProps, RunProps } from './props.ts';
-import type { StyleDefinition } from './styles.ts';
+import type { StyleDefinition, StyleSheet } from './styles.ts';
 
 export type BuiltinStyleName = 'heading 1' | 'heading 2' | 'heading 3';
 
@@ -83,4 +83,18 @@ export function builtinStyleDefinition(
     uiPriority: 9,
     quickFormat: true,
   };
+}
+
+/**
+ * 段落样式 id → `w:name`（STYLEREF 靠它认样式名，见 `@uw/layout` 的 fields.ts）。
+ * 编辑期新增的样式（`Body.styles`）也算 —— 套了标题 1 却认不出，页眉里的「当前章」就不跟着变
+ */
+export function paragraphStyleNames(
+  sheet: StyleSheet,
+  added: readonly StyleDefinition[] = [],
+): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const s of sheet.all()) if (s.type === 'paragraph') out.set(s.id, s.name);
+  for (const d of added) out.set(d.id, d.name);
+  return out;
 }

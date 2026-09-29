@@ -215,3 +215,15 @@ export const PARA_FRAME_GROUP_KEYS = ['borders', 'shading', 'x', 'width'] as con
  * （数字位数变了才会连带改断行）。
  */
 export const SEQ_RESET_ON_HIGHER_HEADINGS = true;
+
+/**
+ * `STYLEREF … \s` / `\t` 从编号里留下哪些字符。Word 域参考对 `\t` 的原话是「去掉非分隔符、
+ * 非数字的文字」，`\s` 没写进参考（Word 插入带章节号的题注时写的就是 `STYLEREF 1 \s`），
+ * 按中文用户最常遇到的现象当成同一件事：章节编号「第1章」的题注显示「图 1-1」、
+ * 「第一章」显示「图 一-1」（所以汉字数字算数字）。首尾的分隔符去掉（「1.」→「1」）。
+ * 罗马数字与字母编号（`A.1`）没算进来 —— 它们与「Chapter」这类文字分不开，宁可少留。
+ *
+ * 钉死办法：一份 docx，标题 1 分别挂「第1章」「第一章」「1.」「Chapter A」四种多级编号，
+ * 每章里放一个 `{ STYLEREF 1 \s }` 和一个 `{ STYLEREF 1 \n \t }`，F9 后看显示什么。
+ */
+export const STYLEREF_NUMERIC_CHARS = /[0-9〇零一二三四五六七八九十百千壹贰叁肆伍陆柒捌玖拾佰仟.\-–—:]/u;
