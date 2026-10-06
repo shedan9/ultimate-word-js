@@ -17,6 +17,7 @@
  * 为什么是**全局单例式的注册表**而不是每份文档传一遍：字体解析和度量缓存是纯开销，
  * 同一个页面开十份公文没有理由解析十次宋体（API 设计 §4）。
  */
+import { FONT_NAME_GROUPS } from './aliases.ts';
 import type { RawFontMetrics } from './metrics.ts';
 import type { MetricsPack } from './metrics-pack.ts';
 import { packAdvance, packMetrics } from './metrics-pack.ts';
@@ -80,6 +81,14 @@ function normalize(name: string): string {
   return name.trim().toLowerCase();
 }
 
+/** 归一化名 → 同一款字体的其余名字（归一化后），见 aliases.ts */
+const ALIASES: ReadonlyMap<string, readonly string[]> = new Map(
+  FONT_NAME_GROUPS.flatMap((group) => {
+    const names = group.map(normalize);
+    return names.map((n) => [n, names.filter((m) => m !== n)] as const);
+  }),
+);
+
 export class FontRegistry {
   #revision = 0;
   /** 度量与替换关系变化都影响断行；消费侧用版本号丢弃派生缓存。 */
@@ -122,14 +131,29 @@ export class FontRegistry {
    */
   resolve(candidates: readonly string[]): ResolvedFont | undefined {
     for (const name of candidates) {
-      const hit = this.#sources.get(normalize(name));
+      const hit = this.#lookup(name);
       if (hit !== undefined) return hit;
     }
     // 原名都没有才轮到替换表：装了真字体就用真字体
     for (const name of candidates) {
       const sub = this.#substitutes.get(normalize(name));
       if (sub === undefined) continue;
-      const hit = this.#sources.get(normalize(sub));
+      const hit = this.#lookup(sub);
+      if (hit !== undefined) return hit;
+    }
+    return undefined;
+  }
+
+  /**
+   * 一个名字直接查；查不到再试同一款字体的别的名字（「SimSun」→「宋体」，见 aliases.ts）。
+   * 别名排在直接命中之后：宿主真注册了一个叫 SimSun 的字体文件时用它自己
+   */
+  #lookup(name: string): ResolvedFont | undefined {
+    const key = normalize(name);
+    const direct = this.#sources.get(key);
+    if (direct !== undefined) return direct;
+    for (const alias of ALIASES.get(key) ?? []) {
+      const hit = this.#sources.get(alias);
       if (hit !== undefined) return hit;
     }
     return undefined;
@@ -145,12 +169,12 @@ export class FontRegistry {
     // 「黑体」查不到但 altName「SimHei」查得到时，报 missing 会是假警报
     const candidates = typeof family === 'string' ? [family] : family;
     for (const name of candidates) {
-      const direct = this.#sources.get(normalize(name));
+      const direct = this.#lookup(name);
       if (direct !== undefined) return direct.source.kind;
     }
     for (const name of candidates) {
       const sub = this.#substitutes.get(normalize(name));
-      if (sub !== undefined && this.#sources.has(normalize(sub))) return 'fallback';
+      if (sub !== undefined && this.#lookup(sub) !== undefined) return 'fallback';
     }
     return 'missing';
   }

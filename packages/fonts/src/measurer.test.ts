@@ -11,6 +11,7 @@ import { createTextMeasurer } from './measurer.ts';
 import type { RawFontMetrics } from './metrics.ts';
 import type { MetricsPack } from './metrics-pack.ts';
 import { buildMetricsPack, packAdvance } from './metrics-pack.ts';
+import type { FontSource } from './registry.ts';
 import { FontRegistry, fontkitSource, metricsPackSource } from './registry.ts';
 
 /** 宋体家族的形状：unitsPerEm=256，win 跨度恰好 1 em */
@@ -118,9 +119,14 @@ describe('注册表的三级降级', () => {
   it('按候选名依次查 —— 中文版 Word 写「黑体」，磁盘上叫 SimHei', () => {
     const r = registry();
     expect(r.resolve(['黑体', 'SimHei'])?.family).toBe('SimHei');
-    expect(r.resolve(['黑体'])).toBeUndefined();
     expect(r.status(['黑体', 'SimHei'])).toBe('file');
-    expect(r.status('黑体')).toBe('missing');
+    // 「黑体」与 SimHei 是同一个文件的两个名字，单写一个也命中（aliases.ts）；
+    // 不在别名表里的一对（方正的中文名与英文名）仍然只靠候选名（`w:altName`）搭桥
+    expect(r.resolve(['黑体'])?.family).toBe('SimHei');
+    r.register('FZXiaoBiaoSong-B05S', r.resolve(['SimHei'])?.source as FontSource);
+    expect(r.resolve(['方正小标宋简体'])).toBeUndefined();
+    expect(r.status('方正小标宋简体')).toBe('missing');
+    expect(r.resolve(['方正小标宋简体', 'FZXiaoBiaoSong-B05S'])?.family).toBe('FZXiaoBiaoSong-B05S');
   });
 
   it('大小写与首尾空白不影响命中', () => {

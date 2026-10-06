@@ -1,3 +1,4 @@
+export * from './aliases.ts';
 export * from './measurer.ts';
 export * from './metrics.ts';
 export * from './metrics-pack.ts';
