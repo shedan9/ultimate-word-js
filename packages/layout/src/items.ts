@@ -494,6 +494,16 @@ function styleOf(props: ResolvedRunProps): FragmentStyle {
   };
   if (props.highlight !== 'none' && props.highlight !== '') style.highlight = props.highlight;
   if (props.shading !== undefined) style.shading = props.shading;
+  const rev = props.revision;
+  if (rev !== undefined) {
+    // Word「所有标记」的内嵌画法：字换成作者色，插入加下划线、删除加删除线，移动用双线。
+    // 只改画法不改宽度 —— 删除线与下划线都不占地方，被删的字照原字体原字号量
+    style.color = rev.color;
+    if (rev.kind === 'insert') style.underline = rev.move ? 'double' : 'single';
+    else if (rev.move) style.doubleStrike = true;
+    else style.strike = true;
+    style.revision = { kind: rev.kind, color: rev.color };
+  }
   STYLE_CACHE.set(props, style);
   return style;
 }

@@ -272,6 +272,26 @@ export interface RunNode<S extends PropSet> {
    * 块级控件铺到 run 上，段落这一层就对不上了。
    */
   contentControl?: NodeId;
+  /**
+   * 外层的修订容器（`w:ins` / `w:del` / `w:moveTo` / `w:moveFrom`），见 revisions.ts。
+   *
+   * 被删的字**也在树上**（原来解析时整块跳过）：显示「所有标记」要画它，回写要吐回它。
+   * 「这一刻显示不显示」不在这里定，是级联那一步按 `RevisionView` 折成 `hidden` 的 ——
+   * 与 `w:vanish` 同一条路，于是查找、复制、排版、命中测试不用各学一遍「删掉的字不算」。
+   * 压平成标记的道理与超链接相同。
+   */
+  revision?: RunRevision;
+}
+
+/**
+ * 一个 run 所在的修订。`move` 区分「移动」与普通增删：Word 画移动用双线、配色另算，
+ * 接受 / 拒绝时两者也不一样（移动要成对处理）。作者与时间原样带着，给修订面板用
+ */
+export interface RunRevision {
+  kind: 'insert' | 'delete';
+  move?: true;
+  author?: string;
+  date?: string;
 }
 
 export interface ParagraphNode<S extends PropSet> {
@@ -514,10 +534,14 @@ export function* walkParagraphs<S extends PropSet>(body: DocumentBody<S>): Gener
  *
  * 只给调试与测试用 —— **不要拿它去排版**：它把制表位当成 `\t`、把符号和图形当成空，
  * 这些在真正排版时的宽度完全不是这么算的。
+ *
+ * 答的是**最终状态**的文字：被删除的修订（`RunNode.revision`）不算 —— 原来解析时它们根本不进树，
+ * 进树之后这里不跳过的话，「这一段是不是空的」这种判断会被一段删掉的字骗过去
  */
 export function paragraphText<S extends PropSet>(p: ParagraphNode<S>): string {
   let out = '';
   for (const run of p.runs) {
+    if (run.revision?.kind === 'delete') continue;
     for (const c of run.content) {
       if (c.kind === 'text') out += c.text;
       else if (c.kind === 'tab') out += '\t';

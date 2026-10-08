@@ -122,6 +122,20 @@ export interface ResolvedRunProps {
   kerning: Twips;
   snapToGrid: boolean;
   langEastAsia: string;
+  /**
+   * 「所有标记」视图下这个 run 怎么标（作者色 + 增 / 删）。只在那个视图、且 run 在修订里时有；
+   * 最终 / 原始视图下看不见的那一半折成了 `hidden`，看得见的那一半与普通文字无异，都不带它。
+   * 它是**显示**用的派生量，不是格式：不进直接格式、不回写，见 revisions.ts
+   */
+  revision?: RevisionMark;
+}
+
+/** 见 `ResolvedRunProps.revision` */
+export interface RevisionMark {
+  kind: 'insert' | 'delete';
+  move?: true;
+  /** 作者色，六位十六进制。按作者在文档里第一次出现的顺序轮配色，见 revisions.ts */
+  color: string;
 }
 
 // ── 段落属性 ──────────────────────────────────────────────────────────────────

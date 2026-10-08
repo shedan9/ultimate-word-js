@@ -179,12 +179,46 @@ describe('透明容器一律压平', () => {
     expect(sink.list()).toEqual([]);
   });
 
-  it('w:del 的内容不进版式，但要留下一条 info —— 不能静默丢字', () => {
+  it('修订容器压平成 run 上的标记：被删的字也进树（显不显示是级联的事，见 revisions.ts）', () => {
     const { list, sink } = paras(
-      `<w:p><w:r><w:t>留</w:t></w:r><w:del><w:r><w:delText>删</w:delText></w:r></w:del></w:p>${SECT}`,
+      `<w:p><w:r><w:t>留</w:t></w:r>
+         <w:del w:id="1" w:author="张三" w:date="2026-10-01T00:00:00Z"><w:r><w:delText>删</w:delText></w:r></w:del>
+         <w:ins w:id="2" w:author="李四"><w:r><w:t>增</w:t></w:r></w:ins></w:p>${SECT}`,
     );
-    expect(paragraphText(list[0] as Paragraph)).toBe('留');
-    expect(sink.list().map((d) => [d.severity, d.code])).toEqual([['info', 'revision-deleted']]);
+    const runs = (list[0] as Paragraph).runs;
+    expect(runs.map((r) => r.content)).toEqual([
+      [{ kind: 'text', text: '留' }],
+      [{ kind: 'text', text: '删' }],
+      [{ kind: 'text', text: '增' }],
+    ]);
+    // 段落文字答最终状态（paragraphText 的口径）
+    expect(paragraphText(list[0] as Paragraph)).toBe('留增');
+    expect(runs.map((r) => r.revision)).toEqual([
+      undefined,
+      { kind: 'delete', author: '张三', date: '2026-10-01T00:00:00Z' },
+      { kind: 'insert', author: '李四' },
+    ]);
+    // 原来这里记一条 revision-deleted 的 info；字现在都在树上，不再有「没画出来」要留痕
+    expect(sink.list()).toEqual([]);
+  });
+
+  it('移动记成带 move 的增删；嵌套时内层说了算；被删的域代码照样是域代码', () => {
+    const { list } = paras(
+      `<w:p><w:moveFrom w:id="1" w:author="甲"><w:r><w:delText>挪</w:delText></w:r></w:moveFrom>
+         <w:moveTo w:id="2" w:author="甲"><w:r><w:t>挪</w:t></w:r></w:moveTo>
+         <w:ins w:id="3" w:author="乙"><w:del w:id="4" w:author="丙"><w:r><w:delText>又删</w:delText></w:r></w:del></w:ins>
+         <w:del w:id="5" w:author="丙"><w:r><w:fldChar w:fldCharType="begin"/></w:r>
+           <w:r><w:delInstrText xml:space="preserve"> PAGE </w:delInstrText></w:r></w:del></w:p>${SECT}`,
+    );
+    const runs = (list[0] as Paragraph).runs;
+    expect(runs.map((r) => r.revision)).toEqual([
+      { kind: 'delete', move: true, author: '甲' },
+      { kind: 'insert', move: true, author: '甲' },
+      { kind: 'delete', author: '丙' },
+      { kind: 'delete', author: '丙' },
+      { kind: 'delete', author: '丙' },
+    ]);
+    expect(runs[4]?.content).toEqual([{ kind: 'fieldInstruction', text: ' PAGE ' }]);
   });
 
   it('块级 w:sdt 里的段落和表格照样进树', () => {

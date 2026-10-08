@@ -48,6 +48,8 @@ export type {
   DocumentEvents,
   FindOptions,
   ReplaceResult,
+  RevisionSpan,
+  RevisionView,
   TextMatch,
   TocUpdateResult,
 } from './document.ts';

@@ -295,6 +295,38 @@ describe('装饰', () => {
   });
 });
 
+describe('修订的改动竖线', () => {
+  const REVISED: FragmentStyle = { ...STYLE, revision: { kind: 'insert', color: 'C00000' } };
+
+  it('有修订的行在版心左边外画一条与行盒等高的竖线；没有修订的行不画', () => {
+    const svg = buildPage(paragraphPage(line({ fragments: [frag({ style: REVISED })] })));
+    const bars = collect(svg, 'line').filter((n) => n.attrs.class === 'uw-change-bar');
+    expect(bars).toHaveLength(1);
+    // 行顶 0、行高 480 twips = 24pt；x 在版心左边往外 CHANGE_BAR_OFFSET_PT
+    expect([bars[0]?.attrs.x1, bars[0]?.attrs.y1, bars[0]?.attrs.y2]).toEqual(['-8', '0', '24']);
+    const none = buildPage(paragraphPage());
+    expect(collect(none, 'line').filter((n) => n.attrs.class === 'uw-change-bar')).toHaveLength(0);
+  });
+
+  it('表格里的行：竖线照样落在版心左边外，不跟着表格与格子的平移走', () => {
+    const c = cell({
+      x: 2000,
+      blocks: [
+        {
+          kind: 'paragraph',
+          layout: { lines: [line({ fragments: [frag({ style: REVISED })] })], spaceBefore: 0, spaceAfter: 0 },
+        } as unknown as CellLayout['blocks'][number],
+      ],
+    });
+    const pg = tablePage({ rowId: 'r1', cells: [c], gridAbove: 0, height: 480 }, [6000]);
+    const table = pg.blocks[0] as PlacedTable;
+    const svg = buildPage({ ...pg, blocks: [{ ...table, x: 300 }] });
+    const bars = collect(svg, 'line').filter((n) => n.attrs.class === 'uw-change-bar');
+    // 表格平移 300 twips = 15pt：竖线写在表格的坐标系里，所以是 -15 - 8
+    expect(bars.map((b) => b.attrs.x1)).toEqual(['-23']);
+  });
+});
+
 // ── 表格 ──────────────────────────────────────────────────────────────────────
 
 const SINGLE = { style: 'single', size: 10, space: 0, color: '000000' };

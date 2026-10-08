@@ -48,8 +48,18 @@ const RUN_CONTAINERS = new Set([
   'w:dir',
   'w:ins',
   'w:moveTo',
+  'w:del',
+  'w:moveFrom',
   'w:sdt',
 ]);
+
+/** 修订容器 → run 上的 `revision` 标记（与 parse-body.ts 的 `REVISIONS` 同一张表） */
+const REVISION_CONTAINERS: Readonly<Record<string, Pick<NonNullable<Run['revision']>, 'kind' | 'move'>>> = {
+  'w:ins': { kind: 'insert' },
+  'w:del': { kind: 'delete' },
+  'w:moveTo': { kind: 'insert', move: true },
+  'w:moveFrom': { kind: 'delete', move: true },
+};
 
 /** 重新生成 run 内容时丢掉的：Word 的分页缓存，内容一改就过期了，留着反而误导 */
 const STALE_IN_RUN = new Set(['w:lastRenderedPageBreak']);
@@ -74,15 +84,27 @@ interface Marks {
    * 不比它的话，控件末尾之后新拆出的 run 会被当成控件里的一路塞进去
    */
   control: Run['contentControl'];
+  /**
+   * 修订容器。比它是为了让**新打的字落在修订外面**：接着一段插入往后打字，
+   * 原来会被 `trailing()` 当成同一层塞进那个 `w:ins`，等于替用户署了别人的名
+   */
+  revision: Run['revision'];
 }
 
-const NO_MARKS: Marks = { link: undefined, field: undefined, control: undefined };
+const NO_MARKS: Marks = { link: undefined, field: undefined, control: undefined, revision: undefined };
+
+/** 只有属性、没有内容的 `w:r`（或空白文本节点） */
+function isBlankRun(node: XmlNode): boolean {
+  if (node.kind !== 'element') return node.kind !== 'text' || node.text.trim() === '';
+  return node.name === 'w:r' && node.children.every((c) => c.kind !== 'element' || c.name === 'w:rPr');
+}
 
 function sameMarks(run: Run, marks: Marks): boolean {
   return (
     same(run.hyperlink, marks.link) &&
     same(run.fieldSimple, marks.field) &&
-    run.contentControl === marks.control
+    run.contentControl === marks.control &&
+    same(run.revision, marks.revision)
   );
 }
 
@@ -123,6 +145,8 @@ class BodyWriter {
   #knownBookmarks: Set<string> | undefined;
   /** 下一个可用的 `w:bookmarkStart w:id`（全文唯一，接着原文最大的往下编） */
   #bookmarkId: number | undefined;
+  /** 下一个可用的修订 `w:id`，同上（合段搬走的修订要在新位置重新包一层） */
+  #revisionId: number | undefined;
 
   constructor(input: BodyWriteInput) {
     this.#in = input;
@@ -334,6 +358,9 @@ class BodyWriter {
         const children = this.#runs(content.children, cur, inner, home);
         // 容器里原有的 run 全删光了，容器也不留（空超链接在 Word 里是个点不中的幽灵）
         if (hasModelRun(content.children, this.#idOf) && cur.i === start) continue;
+        // 修订容器里只剩删空的 run（删字保留 run 的槽位，见 text-transaction.ts）：同理不留 ——
+        // 一条没有内容的修订在 Word 的审阅窗格里是一条点不中的空记录
+        if (REVISION_CONTAINERS[node.name] !== undefined && children.every(isBlankRun)) continue;
         out.push(content === node ? { ...content, children } : this.#sdt(node, content, children));
         trailing();
       } else out.push(node); // 书签、批注范围、w:del、w:proofErr……原样
@@ -355,7 +382,44 @@ class BodyWriter {
       return id === undefined ? marks : { ...marks, field: { id, instr: node.attrs['w:instr'] ?? '' } };
     }
     if (node.name === 'w:sdt') return { ...marks, control: this.#idOf.get(node) };
+    const rev = REVISION_CONTAINERS[node.name];
+    if (rev !== undefined) {
+      const revision: NonNullable<Run['revision']> = { ...rev };
+      const author = node.attrs['w:author'];
+      const date = node.attrs['w:date'];
+      if (author !== undefined) revision.author = author;
+      if (date !== undefined) revision.date = date;
+      return { ...marks, revision };
+    }
     return marks;
+  }
+
+  /** 搬到别处的修订重新包一层容器。id 接着原文里修订的最大 id 往下编 */
+  #revisionContainer(revision: NonNullable<Run['revision']>, children: XmlNode[]): XmlElement {
+    if (this.#revisionId === undefined) {
+      let max = -1;
+      const walk = (node: XmlElement) => {
+        if (REVISION_CONTAINERS[node.name] !== undefined) {
+          const id = Number(node.attrs['w:id']);
+          if (Number.isInteger(id)) max = Math.max(max, id);
+        }
+        for (const c of node.children) if (c.kind === 'element') walk(c);
+      };
+      walk(this.#in.original.root);
+      this.#revisionId = max + 1;
+    }
+    const name =
+      revision.kind === 'insert'
+        ? revision.move
+          ? 'w:moveTo'
+          : 'w:ins'
+        : revision.move
+          ? 'w:moveFrom'
+          : 'w:del';
+    const attrs: Record<string, string> = { 'w:id': String(this.#revisionId++) };
+    if (revision.author !== undefined) attrs['w:author'] = revision.author;
+    if (revision.date !== undefined) attrs['w:date'] = revision.date;
+    return el(name, attrs, children);
   }
 
   /**
@@ -396,7 +460,8 @@ class BodyWriter {
         ;
         i < runs.length &&
         same(runs[i]?.hyperlink, first.hyperlink) &&
-        same(runs[i]?.fieldSimple, first.fieldSimple);
+        same(runs[i]?.fieldSimple, first.fieldSimple) &&
+        same(runs[i]?.revision, first.revision);
         i++
       ) {
         const r = runs[i] as Run;
@@ -404,6 +469,10 @@ class BodyWriter {
         prev = r;
       }
       let nodes: XmlNode[] = group;
+      // 修订包在最里层：Word 写 `w:hyperlink > w:ins > w:r`，链接跨着修订的边界也不断
+      if (first.revision !== undefined && !same(first.revision, marks.revision)) {
+        nodes = [this.#revisionContainer(first.revision, nodes)];
+      }
       if (first.fieldSimple !== undefined && !same(first.fieldSimple, marks.field)) {
         const src = this.#in.sources.nodes.get(first.fieldSimple.id);
         nodes = [el('w:fldSimple', src?.attrs ?? { 'w:instr': first.fieldSimple.instr }, nodes)];
@@ -467,19 +536,25 @@ class BodyWriter {
       return undefined;
     };
     const out: XmlNode[] = [];
+    const deleted = run.revision?.kind === 'delete';
     for (const c of run.content) {
-      const node = this.#item(c, own);
+      const node = this.#item(c, own, deleted);
       if (node !== undefined) out.push(node);
     }
     return [...lead, ...out, ...tail];
   }
 
-  #item(c: RunContent, own: (c: RunContent) => XmlElement | undefined): XmlNode | undefined {
+  /** `deleted`：run 在 `w:del` / `w:moveFrom` 里，文字与域代码要写成 `w:delText` / `w:delInstrText` */
+  #item(
+    c: RunContent,
+    own: (c: RunContent) => XmlElement | undefined,
+    deleted: boolean,
+  ): XmlNode | undefined {
     switch (c.kind) {
       case 'text':
         // 删空的文字片段是占槽位的（text-transaction.ts），文件里不需要它
         if (c.text === '') return undefined;
-        return el('w:t', /^\s|\s$/.test(c.text) ? { 'xml:space': 'preserve' } : {}, [
+        return el(deleted ? 'w:delText' : 'w:t', /^\s|\s$/.test(c.text) ? { 'xml:space': 'preserve' } : {}, [
           { kind: 'text', text: c.text },
         ]);
       case 'tab':
@@ -491,7 +566,9 @@ class BodyWriter {
       case 'softHyphen':
         return el('w:softHyphen');
       case 'fieldInstruction':
-        return el('w:instrText', { 'xml:space': 'preserve' }, [{ kind: 'text', text: c.text }]);
+        return el(deleted ? 'w:delInstrText' : 'w:instrText', { 'xml:space': 'preserve' }, [
+          { kind: 'text', text: c.text },
+        ]);
       case 'symbol':
       case 'fieldChar':
       case 'noteReference':

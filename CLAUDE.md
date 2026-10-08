@@ -32,7 +32,14 @@ STYLEREF 正文里往前找、页眉里**先找本页**再往前，后者进页�
 `stackBlocks`、挂到 `PlacedFloat.textBox`（内嵌的借住进 `page.floats`，带 `inline`），框里段落不吸网格（未标定）；
 渲染按外框 `clipPath` 裁剪，常驻文字层收框里的字。框里的域不求值、不可编辑。
 **中英文字体名互通**（2026-10-06，`@uw/fonts` 的 `aliases.ts`）：文档写「SimSun」也命中登记成「宋体」的度量包
-（WPS / 英文版 Word 不写 `w:altName`），直接命中优先；「仿宋_GB2312」是另一个文件，不在表里。Phase 4 的**表格**：属性 + 级联（含 `w:tblStylePr` 条件格式）在 model 层，
+（WPS / 英文版 Word 不写 `w:altName`），直接命中优先；「仿宋_GB2312」是另一个文件，不在表里。
+**修订痕迹的显示**（2026-10-08，`@uw/model` 的 `revisions.ts`）：`w:ins` / `w:del` / `w:move*` 压平成 `RunNode.revision`，
+**被删的字也进树**（原来整块跳过）。显示哪一版在**级联**定：`final`（默认）/ `original` 把看不见的那一半折成 `hidden` ——
+与 `w:vanish` 同一条路，查找 / 复制 / 排版 / 命中测试都不用改；`markup` 带 `ResolvedRunProps.revision`（作者色），
+布局 `styleOf` 折成颜色 + 下划线 / 删除线，渲染只补页边改动竖线。门面 `LoadOptions.revisions` / `setRevisionView()` /
+`revisions()`；回写把修订当压平容器（新打的字落在修订外、被删 run 写 `w:delText`）。往被删除的修订里插字事务拒绝。
+作者配色与竖线没有真值；段落标记 / 表格行的修订、格式修订、接受拒绝没做。
+同日查清 AM-01-02「表格多拆一页」：那个「Word 29 页」是 **WPS** 写进 `app.xml` 的，行高全由已实测的规则（微软雅黑 1.716 em）定，不改。Phase 4 的**表格**：属性 + 级联（含 `w:tblStylePr` 条件格式）在 model 层，
 列宽 + 每格的 x 与可用宽 + 格内段落 + **边框冲突解析**在 layout 层，跨页按**行**拆，
 一行放不下时还会从**行间**切开（**拆行**，见下）。**表格这一层全部标定完了** ——
 几何、条件格式、格线冲突、拆行四问都有了真值。造样本的工具从此会造表

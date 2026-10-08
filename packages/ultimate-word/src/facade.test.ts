@@ -972,3 +972,119 @@ describe('尾注', () => {
     expect(parts.get('word/endnotes.xml')).toEqual(unzip(endnoteDocx()).get('word/endnotes.xml'));
   });
 });
+
+describe('修订的显示', () => {
+  const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+  const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+
+  /** 正文一处删除 + 一处插入（两位作者），页眉里也有一处插入 + 删除 —— 换视图要连页眉一起换 */
+  function revisedDocx(): Uint8Array {
+    const enc = new TextEncoder();
+    const ct = (part: string, type: string) =>
+      `<Override PartName="/word/${part}" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.${type}+xml"/>`;
+    const rel = (id: string, type: string, target: string) =>
+      `<Relationship Id="${id}" Type="${R}/${type}" Target="${target}"/>`;
+    const body =
+      '<w:p><w:r><w:t>原文</w:t></w:r>' +
+      '<w:del w:id="1" w:author="张三" w:date="2026-10-01T08:00:00Z"><w:r><w:delText>删掉</w:delText></w:r></w:del>' +
+      '<w:ins w:id="2" w:author="李四" w:date="2026-10-02T08:00:00Z"><w:r><w:t>新增</w:t></w:r></w:ins>' +
+      '<w:r><w:t>结尾</w:t></w:r></w:p>';
+    const header =
+      '<w:p><w:ins w:id="3" w:author="李四"><w:r><w:t>新眉</w:t></w:r></w:ins>' +
+      '<w:del w:id="4" w:author="李四"><w:r><w:delText>旧眉</w:delText></w:r></w:del></w:p>';
+    return zip(
+      new Map([
+        [
+          '[Content_Types].xml',
+          enc.encode(
+            '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+              '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+              '<Default Extension="xml" ContentType="application/xml"/>' +
+              ct('document.xml', 'document.main') +
+              ct('header1.xml', 'header') +
+              '</Types>',
+          ),
+        ],
+        [
+          '_rels/.rels',
+          enc.encode(
+            `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rel('rId1', 'officeDocument', 'word/document.xml')}</Relationships>`,
+          ),
+        ],
+        [
+          'word/_rels/document.xml.rels',
+          enc.encode(
+            `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rel('rId7', 'header', 'header1.xml')}</Relationships>`,
+          ),
+        ],
+        ['word/header1.xml', enc.encode(`<w:hdr xmlns:w="${W}" xmlns:r="${R}">${header}</w:hdr>`)],
+        [
+          'word/document.xml',
+          enc.encode(
+            `<w:document xmlns:w="${W}" xmlns:r="${R}"><w:body>${body}<w:sectPr><w:headerReference w:type="default" r:id="rId7"/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr></w:body></w:document>`,
+          ),
+        ],
+      ]),
+    );
+  }
+
+  /** 第一页正文与页眉画出来的字（各自拼成一串）+ 正文片段的颜色 */
+  function painted(d: UwDocument): { body: string; header: string; colors: string[] } {
+    const page = d.layout.pages[0];
+    const texts = (blocks: NonNullable<typeof page>['blocks']) =>
+      blocks.flatMap((b) => (b.kind === 'paragraph' ? b.lines.flatMap((l) => l.line.fragments) : []));
+    const body = texts(page?.blocks ?? []);
+    return {
+      body: body.map((f) => f.text).join(''),
+      header: texts(page?.header?.blocks ?? [])
+        .map((f) => f.text)
+        .join(''),
+      colors: body.map((f) => f.style.color),
+    };
+  }
+
+  it('默认最终状态：被删的字不占位；换到「所有标记」正文与页眉一起重排，只派发 layout:done', async () => {
+    const d = await UltimateWord.load(revisedDocx());
+    expect(d.revisionView).toBe('final');
+    expect(painted(d)).toMatchObject({ body: '原文新增结尾', header: '新眉' });
+    expect(d.find('删掉')).toHaveLength(0);
+
+    const events: string[] = [];
+    d.on('layout:done', () => events.push('layout'));
+    d.on('document:change', () => events.push('change'));
+    d.setRevisionView('markup');
+    expect(events).toEqual(['layout']);
+    expect(d.canUndo).toBe(false);
+    const markup = painted(d);
+    expect(markup).toMatchObject({ body: '原文删掉新增结尾', header: '新眉旧眉' });
+    // 作者按第一次出现配色：张三（删）第一色、李四（增）第二色
+    expect(new Set(markup.colors).size).toBe(3);
+    expect(d.find('删掉')).toHaveLength(1);
+
+    d.setRevisionView('original');
+    expect(painted(d)).toMatchObject({ body: '原文删掉结尾', header: '旧眉' });
+  });
+
+  it('LoadOptions.revisions 指定初始视图；修订列表与视图无关；视图下照常编辑', async () => {
+    const d = await UltimateWord.load(revisedDocx(), { revisions: 'markup' });
+    expect(d.revisionView).toBe('markup');
+    expect(painted(d).body).toBe('原文删掉新增结尾');
+    expect(d.revisions().map(({ kind, author, text }) => ({ kind, author, text }))).toEqual([
+      { kind: 'delete', author: '张三', text: '删掉' },
+      { kind: 'insert', author: '李四', text: '新增' },
+    ]);
+    // 编辑后重排仍按当前视图（修订的配色不因编辑漂移）
+    const before = painted(d).colors;
+    const [hit] = d.find('结尾');
+    if (hit === undefined) throw new Error('找不到「结尾」');
+    d.tx((t) => void t.insertText(hit.start, '甲'));
+    expect(painted(d).body).toBe('原文删掉新增甲结尾');
+    expect(painted(d).colors.slice(0, 3)).toEqual(before.slice(0, 3));
+  });
+
+  it('替换跳过首字落在被删除修订里的命中，不让整批回滚', async () => {
+    const d = await UltimateWord.load(revisedDocx(), { revisions: 'markup' });
+    expect(d.replaceAll(/删掉|结尾/, '改')).toEqual({ replaced: 1, skipped: 1 });
+    expect(painted(d).body).toBe('原文删掉新增改');
+  });
+});

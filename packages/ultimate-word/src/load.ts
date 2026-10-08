@@ -22,8 +22,10 @@ import {
   loadDocument,
   localDateTimeParts,
   paragraphStyleNames,
+  type RevisionView,
   resolveBody,
   scanFields,
+  withRevisionView,
 } from '@uw/model';
 import { OpcPackage } from '@uw/ooxml';
 import { UwDocument } from './document.ts';
@@ -36,6 +38,11 @@ export interface LoadOptions {
   fonts?: FontRegistry;
   /** 只作用于取字节那一步（fetch / Blob 读取）；排版是同步的，中途停不下来 */
   signal?: AbortSignal;
+  /**
+   * 修订显示哪一版：`final`（默认，最终状态）/ `markup`（所有标记，内嵌显示）/ `original`（原始状态）。
+   * 加载后可用 `doc.setRevisionView()` 换
+   */
+  revisions?: RevisionView;
 }
 
 async function toBytes(source: LoadSource, signal: AbortSignal | undefined): Promise<Uint8Array> {
@@ -66,7 +73,11 @@ export async function load(
 
   const sink = createDiagnosticSink();
   const pkg = OpcPackage.open(bytes);
-  const loaded = loadDocument(pkg, sink);
+  const loaded = loadDocument(
+    pkg,
+    sink,
+    options.revisions === undefined ? {} : { revisions: options.revisions },
+  );
   const measurer = createTextMeasurer(options.fonts ?? registry, {
     // 「黑体」→「SimHei」的桥在文档自己的 fontTable 里，fonts 不认识 model，所以在这儿接
     candidates: (family) => fontNameCandidates(loaded.fonts, family),
@@ -97,12 +108,17 @@ export async function load(
   });
   // 诊断表是追加式的，每趟重排只把这之后新记的交出去（`diagnostic` 事件报的就是它们）
   let reported = sink.list().length;
+  // 页眉页脚 / 注 / 文本框的级联结果不随编辑变，只随修订视图变（`setRevisionView`），换视图时整份换掉
+  let aux = loaded;
   return new UwDocument({
     loaded,
     pkg,
+    setRevisionView(view) {
+      aux = withRevisionView(aux, view);
+    },
     reflow(body) {
       const fields = scanFields(body, sink);
-      for (const hf of Object.values(loaded.headerFooters))
+      for (const hf of Object.values(aux.headerFooters))
         fields.push(
           ...scanFields(
             {
@@ -120,14 +136,15 @@ export async function load(
       const resolved = resolveBody(loaded.cascade, body, {
         hyperlinks: fieldHyperlinks(fields),
         cache: resolveCache,
+        revisions: aux.revisions,
       });
       const result = layoutDocumentWithFields(resolved, fields, {
         paragraphCache,
         measurer,
         settings,
-        headerFooters: loaded.headerFooters,
-        notes: loaded.notes,
-        textBoxes: loaded.textBoxes,
+        headerFooters: aux.headerFooters,
+        notes: aux.notes,
+        textBoxes: aux.textBoxes,
         bookmarks: bookmarkTargets(body),
         styleNames: paragraphStyleNames(loaded.cascade.styles, body.styles),
         now,
@@ -139,7 +156,7 @@ export async function load(
       const diagnostics = all.slice(reported);
       reported = all.length;
       return {
-        loaded: { ...loaded, body, resolved, fields, numbering },
+        loaded: { ...aux, body, resolved, fields, numbering },
         layout: result.layout,
         values: result.values,
         passes: result.passes,

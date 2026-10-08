@@ -854,3 +854,90 @@ describe('文本框', () => {
     expect(Object.values(again.textBoxes).map((t) => t.blocks.length)).toEqual([2]);
   });
 });
+
+describe('修订（w:ins / w:del 压平成 run 上的标记之后）', () => {
+  const REVISED =
+    '<w:p><w:r><w:t>原文</w:t></w:r>' +
+    '<w:del w:id="7" w:author="张三" w:date="2026-10-01T08:00:00Z"><w:r><w:delText>删掉</w:delText></w:r></w:del>' +
+    '<w:ins w:id="8" w:author="李四"><w:r><w:t>新增文字</w:t></w:r></w:ins>' +
+    '<w:r><w:t>结尾</w:t></w:r></w:p>';
+
+  const runOf = (body: Body, kind: 'insert' | 'delete') =>
+    paragraphs(body)
+      .flatMap((p) => p.runs)
+      .find((r) => r.revision?.kind === kind);
+  const xmlOf = (out: Uint8Array) => decoder.decode(unzip(out).get('word/document.xml'));
+
+  it('改同一段的别处：两个修订容器原样留着，重新加载修订还在', () => {
+    const { out, again } = roundTrip(docx(REVISED), (t, body) => {
+      t.insertText(textPosition(body) as DocPosition, '甲');
+    });
+    const xml = xmlOf(out);
+    expect(xml).toContain(
+      '<w:del w:id="7" w:author="张三" w:date="2026-10-01T08:00:00Z"><w:r><w:delText>删掉</w:delText></w:r></w:del>',
+    );
+    expect(xml).toContain('<w:ins w:id="8" w:author="李四"><w:r><w:t>新增文字</w:t></w:r></w:ins>');
+    expect(paragraphs(again.body)[0]?.runs.map((r) => r.revision?.kind)).toEqual([
+      undefined,
+      'delete',
+      'insert',
+      undefined,
+    ]);
+  });
+
+  it('插入的修订被格式命令拆开：拆出来的 run 留在同一个 w:ins 里', () => {
+    const { out } = roundTrip(docx(REVISED), (t, body) => {
+      const ins = runOf(body, 'insert');
+      t.setRunProps(
+        {
+          start: { nodeId: ins?.id ?? '', contentIndex: 0, offset: 2 },
+          end: { nodeId: ins?.id ?? '', contentIndex: 0, offset: 4 },
+        },
+        { bold: true },
+      );
+    });
+    expect(xmlOf(out)).toContain(
+      '<w:ins w:id="8" w:author="李四"><w:r><w:t>新增</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>文字</w:t></w:r></w:ins>',
+    );
+  });
+
+  it('被删除的 run 改了格式：内容重写时仍是 w:delText', () => {
+    const { out } = roundTrip(docx(REVISED), (t, body) => {
+      const del = runOf(body, 'delete');
+      t.setRunProps(
+        {
+          start: { nodeId: del?.id ?? '', contentIndex: 0, offset: 0 },
+          end: { nodeId: del?.id ?? '', contentIndex: 0, offset: 2 },
+        },
+        { italic: true },
+      );
+    });
+    expect(xmlOf(out)).toContain('<w:r><w:rPr><w:i/></w:rPr><w:delText>删掉</w:delText></w:r>');
+  });
+
+  it('删掉一整段被删除的修订：w:del 容器一起没了（等于接受了它）', () => {
+    const { out, again } = roundTrip(docx(REVISED), (t, body) => {
+      const del = runOf(body, 'delete');
+      t.deleteRange({
+        start: { nodeId: del?.id ?? '', contentIndex: 0, offset: 0 },
+        end: { nodeId: del?.id ?? '', contentIndex: 0, offset: 2 },
+      });
+    });
+    expect(xmlOf(out)).not.toContain('w:del ');
+    expect(runOf(again.body, 'delete')).toBeUndefined();
+  });
+
+  it('合段把插入的修订搬进上一段：在新位置重新包一层 w:ins，作者照旧、id 接着原文往下编', () => {
+    const { out, again } = roundTrip(
+      docx(
+        `<w:p><w:r><w:t>上一段</w:t></w:r></w:p><w:p><w:ins w:id="8" w:author="李四"><w:r><w:t>插入</w:t></w:r></w:ins></w:p>`,
+      ),
+      (t, body) => {
+        t.joinParagraph(paragraphs(body)[0]?.id ?? '');
+      },
+    );
+    expect(xmlOf(out)).toContain('<w:ins w:id="9" w:author="李四"><w:r><w:t>插入</w:t></w:r></w:ins>');
+    expect(paragraphs(again.body)).toHaveLength(1);
+    expect(runOf(again.body, 'insert')?.revision).toEqual({ kind: 'insert', author: '李四' });
+  });
+});

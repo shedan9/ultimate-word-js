@@ -1002,13 +1002,48 @@ await view.toPNG(2);     // 第 3 页（页序号从 0 起，与 scrollTo({ page
   （宋体 / 黑体 / 仿宋 / 楷体 / 等线 / 微软雅黑 / 新宋体 / 等线 Light），直接命中优先。「仿宋_GB2312」不算 ——
   那是另一个文件，该走 `substitute` 报 `fallback`。判据：fonts 4 项 + 原有一项按新语义改写（「黑体」单写也命中，
   不在表里的一对仍只靠候选名）。
-  **它没有改变 AM-01-02 的页数**（仍 42 页 vs Word 29 页），用写死在页脚里的「第 N 页」逐页对过，多出来的是两类：
+  **它没有改变 AM-01-02 的页数**（仍 42 页 vs ~~Word~~ 29 页），用写死在页脚里的「第 N 页」逐页对过，多出来的是两类：
+  > ⚠️ **更正（2026-10-08）：「29 页」不是 Word 的数**。它出自 `docProps/app.xml` 的 `<Pages>`，同一个文件的
+  > `<Application>` 写的是 **WPS Office** —— 这份 docx 是 WPS 从 PDF 转出来、WPS 自己排版存盘的，**从没在 Word 里排过**。
+  > 上面「48 页 → 42 页；Word 3 + 26 页」那句同理。语料没有 `truth.json` 时拿 `app.xml` 的页数当参照，先看是谁写的。
   · **附件标题页后面多一张空页**（7 处）：流程图那一段是固定行距 10706 twips（535pt），紧跟着的分节符段落是
     **空段落却带着同样的固定行距** —— PDF 转换器照抄的。一页放不下 535pt，我们把这个空段落推到新页；Word 没有。
     Word 怎么对待「只承载分节符的空段落」（不占高？能溢出页底？）没有真值，不猜着做。
     钉死办法：一节末尾放一张撑满版心的图，后面跟带 `sectPr` 的空段落，固定行距分别取 12pt / 300pt / 600pt，
     导 PDF 看下一节从第几页开始
-  · **表格多拆一页**（6 处，「管控活动列表」那几张）：还没查
+  · **表格多拆一页**（6 处，「管控活动列表」那几张）：~~还没查~~ 2026-10-08 查了，**不是我们的错，至少证明不了是**。
+    横排的那几节版心高 461.75pt，表排到 413.8pt 时下一行 48.45pt 只差 0.5pt，但后面还有约 108pt —— 要放下整张表，
+    得把行高少算 25%。逐格拆开看，行高全由**已实测**的规则定：表头那一格的字是**微软雅黑**（东亚规则 1.716 em，
+    `spike-script-01` P4 实测 61.77pt @ 36pt），末格是 8 个空的 Arial 段落（PDF 转换器拿来垫位置的）加宋体 1.3 em。
+    PDF 转换器按**它自己**（或 WPS）的字体度量摆的位置，Word 的雅黑行距大是出了名的。没有 Word 真值，
+    不为一份 WPS 排出来的页数去改标定过的行高
+- ✅ **修订痕迹的显示**（2026-10-08，`@uw/model` 的 `revisions.ts`）：原来解析时 `w:del` 整块跳过（记一条
+  `revision-deleted`）、`w:ins` 当透明容器，等于永远显示「最终状态、无标记」—— 审阅稿里看不出谁改了什么。
+  - `@uw/model`：`w:ins` / `w:del` / `w:moveTo` / `w:moveFrom` 与超链接一样压平成 run 上的标记（`RunNode.revision`：
+    增 / 删、是否移动、作者、时间），**被删的字也进树**（`w:delText` / `w:delInstrText` 照常收）。显示哪一版在**级联**定
+    （`ResolveBodyOptions.revisions`）：`final` 把被删的折成 `hidden`、`original` 把插入的折成 `hidden` ——
+    与 `w:vanish` 同一条路，查找 / 复制 / 排版 / 命中测试 / 可选文本层**一处都不用改**；`markup` 在
+    `ResolvedRunProps.revision` 上带作者色。作者按第一次出现的顺序配色（正文在前），`loadDocument(…, { revisions })`
+    一次定死、编辑重排沿用同一个对象（配色不漂）；换视图让级联备忘整份作废。`withRevisionView()` 连页眉页脚 / 注 /
+    文本框一起重新级联。`listRevisions()` 按「同段相邻、作者时间种类相同」合成一处，给修订面板。
+    口径统一成**最终状态**的三处：`paragraphText`、内容控件的显示文字、更新目录取的标题文字（被删的不进、插入的进）
+  - 编辑护栏：往被删除的修订里插字 / 插制表位**拒绝**（插进去的字跟着「已删除」）；删掉一段被删除的修订等于接受它；
+    `rangeEditable` 对首字在被删除修订里的命中答 false（`replaceAll` 跳过而不是整批回滚）
+  - `@uw/layout`：`styleOf` 把修订折进片段样式（作者色，插入单下划线 / 删除删除线，移动用双线），并带
+    `FragmentStyle.revision` 给渲染层画竖线。只改画法不改宽度，被删的字照原字体原字号量
+  - `@uw/render-dom`：有修订的行在版心左边外画一条改动竖线（`Ctx.dx` 累加表格 / 嵌套行的平移，竖线才落在同一条直线上）。
+    位置 / 粗细 / 颜色没有真值（`uncalibrated.ts` 的 `CHANGE_BAR_*`）
+  - `@uw/serialize`：修订容器进 `RUN_CONTAINERS`，标记进 `Marks` —— 新打的字落在修订**外面**（原来接着一段插入往后打，
+    会被塞进那个 `w:ins`、替用户署了别人的名）；被删 run 改写时写 `w:delText` / `w:delInstrText`；合段搬走的修订
+    重新包一层、`w:id` 接着原文往下编；只剩删空 run 的修订容器不写
+  - 门面：`LoadOptions.revisions`、`doc.revisionView` / `setRevisionView()`（不进撤销栈、只派发 `layout:done`）/
+    `revisions()`；调试台加了「修订」下拉框
+  - 判据：model 10 项（解析 2 + 视图 / 备忘 / 列表 / 护栏 8）、layout 1、render-dom 2、serialize 5、门面 3；
+    24 份 fixture 不编辑仍逐字节相同；浏览器回归全过（编辑 222 项不变）。**作者配色与改动竖线没有真值**，钉死办法在
+    `revisions.ts` 与 render-dom 的 `uncalibrated.ts`
+  - 未做：段落标记的修订（`w:pPr/w:rPr/w:del` —— 最终状态下该与下一段合成一段）、表格行的增删（`w:trPr/w:ins|del`）、
+    格式修订（`w:rPrChange` / `w:pPrChange`）、批注框、「简单标记」的红竖线、接受 / 拒绝（非目标）、
+    `markup` 下复制会带上被删的字
 - ~~**图片的几何标定**~~ ✅（2026-08-25）两份新样本 + `pnpm --filter @uw/fidelity spike:image`。
   为它给真值管线加了一路新数据：`truth.json` 的 `pages[].images[]`（照着 PDF 算子表把
   `q` / `Q` / `cm` 演一遍 CTM 读出来 —— 图片在 PDF 里没有自己的坐标，位置与大小全在矩阵里）。

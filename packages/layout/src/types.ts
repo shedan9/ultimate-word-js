@@ -66,6 +66,12 @@ export interface FragmentStyle {
   highlight?: string;
   /** `w:shd` 字符底纹，原样带着（不解析成 RGB，与单元格底纹一致）。没有时缺席 */
   shading?: Shading;
+  /**
+   * 「所有标记」视图下这段字在修订里（`ResolvedRunProps.revision`）。颜色与下划线 / 删除线
+   * **已经折进上面那几个字段**了，渲染层照常画字就是对的；带着它只为了画页边那条改动竖线。
+   * 不在修订里、或不是那个视图时缺席
+   */
+  revision?: { kind: 'insert' | 'delete'; color: string };
 }
 
 /** 断行与度量的最小单位。一个码点一个 item —— 逐字 x 是中文排版的硬需求 */

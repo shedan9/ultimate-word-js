@@ -82,8 +82,43 @@ interface LoadOptions {
   fonts?: FontRegistry;
   /** 只作用于取字节那一步（fetch / Blob 读取）；排版是同步的，中途停不下来 */
   signal?: AbortSignal;
+  /** 修订显示哪一版，默认 'final'（见下面 §3.1） */
+  revisions?: 'final' | 'markup' | 'original';
 }
 ```
+
+### 3.1 修订的显示 🟢（2026-10-08）
+
+```ts
+doc.revisionView;                 // 'final' | 'markup' | 'original'
+doc.setRevisionView('markup');    // 重新级联 + 重排，挂着的视图自己刷新
+doc.revisions();                  // RevisionSpan[]：谁、何时、插 / 删了什么、在哪儿（DocRange）
+
+interface RevisionSpan {
+  kind: 'insert' | 'delete';
+  move?: true;                    // w:moveTo / w:moveFrom
+  author?: string;
+  date?: string;                  // 原样的 ISO 串
+  paragraphId: NodeId;
+  text: string;
+  range: DocRange;
+}
+```
+
+| 视图 | 插入的字 | 删除的字 | 对应 Word |
+|---|---|---|---|
+| `final`（默认） | 照常 | 不占位 | 「简单标记」的版式（少那条红竖线）/「无标记」 |
+| `markup` | 作者色 + 下划线 | 作者色 + 删除线，**占位** | 「所有标记」关掉批注框（内嵌显示），页边画改动竖线 |
+| `original` | 不占位 | 照常 | 「原始状态」 |
+
+- **只做显示**（开发计划 §5）：没有接受 / 拒绝，没有修订模式下打字。普通编辑照常 —— 往**被删除**的修订里插字
+  会被事务拒绝（插进去的字跟着「已删除」，最终状态下打了看不见）；删掉一段被删除的修订等于接受了它；
+  `replaceAll` 跳过首字落在被删除修订里的命中（计入 `skipped`）。
+- 换视图**不是**模型修改：不进撤销栈、不派发 `document:change`，只派发 `layout:done`。
+  查找跟着视图走（最终状态下被删的字搜不到，`markup` 下搜得到）；`revisions()` 与视图无关。
+- 作者配色按作者在文档里**第一次出现**的顺序轮配（正文在前），色值与 Word 的「按作者」没对过真值。
+- 没做：段落标记的修订（最终状态下该与下一段合成一段，现在仍是两段）、表格行的增删、
+  格式修订（`w:rPrChange`，显示改后的格式、不标记）、批注框、「简单标记」的那条红竖线。
 
 > **当前实现**（2026-09-13）：`mode: 'preview' | 'edit'` 已可用，默认预览。
 > 编辑态接入文字 / 段落事务、模型选区与 IME。只有 DOM 渲染器，因此仍没有 `renderer`。
@@ -709,7 +744,7 @@ interface Diagnostic {
 | `field-nested-eval` | 诊断 | 两个可求值的域抢同一片结果区（嵌套域），内层已跳过 |
 | `field-not-converged` | 诊断 | 域求值 5 趟仍未自洽，已冻结在页数最多的那一趟 |
 | `header-footer-missing` | 诊断 | 页眉页脚的引用指不到部件，这一节按没有页眉页脚处理 |
-| `revision-deleted` | 诊断（info） | 修订痕迹里被删除的文字，不参与排版 |
+| ~~`revision-deleted`~~ | ~~诊断（info）~~ | 2026-10-08 起不再报：被删除的文字进了模型（§3.1），「没画出来」不再是静默丢字 |
 | `wrap-both-sides-approximated` | 诊断（info） | 四周型环绕的对象两侧都放得下字，只排了宽的那一侧（Word 两侧都排），这几行会比 Word 多 |
 
 **规则**：能画出**任何**有意义的东西，就不要抛。

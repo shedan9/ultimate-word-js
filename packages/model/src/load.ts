@@ -9,6 +9,7 @@
  * 换个生成器路径就变了，而关系类型 URI 是规范定死的。
  */
 import type { DiagnosticSink } from '@uw/core';
+import { createDiagnosticSink } from '@uw/core';
 import type { OpcPackage, XmlDocument } from '@uw/ooxml';
 import { RelType } from '@uw/ooxml';
 import type { CascadeContext } from './cascade.ts';
@@ -19,13 +20,15 @@ import { parseFontTable } from './font-table.ts';
 import type { ImageResource } from './images.ts';
 import { collectImages } from './images.ts';
 import type { Block, Body, ResolvedBlock, ResolvedBody, SectionProps } from './nodes.ts';
-import type { LoadedNotes } from './notes.ts';
+import type { LoadedNotes, NotePart } from './notes.ts';
 import { allNoteContents, parseNoteParts } from './notes.ts';
 import type { Numbering } from './numbering.ts';
 import { parseNumbering } from './numbering.ts';
 import type { ParseExtras } from './parse-body.ts';
 import { parseBody, parseHeaderFooter } from './parse-body.ts';
 import { resolveBlocks, resolveBody } from './resolve-body.ts';
+import type { RevisionDisplay, RevisionView } from './revisions.ts';
+import { revisionAuthors, revisionDisplay } from './revisions.ts';
 import { DEFAULT_SECTION_PROPS } from './section.ts';
 import { parseSettings } from './settings.ts';
 import { parseStyles } from './styles.ts';
@@ -72,6 +75,12 @@ export interface LoadedDocument {
   cascade: CascadeContext;
   body: Body;
   resolved: ResolvedBody;
+  /**
+   * `resolved` 与页眉页脚 / 注 / 文本框的级联结果按哪一版修订折的（revisions.ts）。
+   * 作者配色在这里按全文一次定死：编辑期重新级联要接着用**同一个对象**，换了配色的话
+   * 同一位作者的字会在打一个字之后变色
+   */
+  revisions: RevisionDisplay;
   /** 字体表：本地化字体名 →`altName` 的桥，`@uw/fonts` 查字体要它 */
   fonts: FontTable;
   /**
@@ -135,7 +144,16 @@ export interface HeaderFooterContent {
   resolved: ResolvedBlock[];
 }
 
-export function loadDocument(pkg: OpcPackage, diagnostics: DiagnosticSink): LoadedDocument {
+export interface LoadDocumentOptions {
+  /** 修订显示哪一版，默认 `final`（见 revisions.ts） */
+  revisions?: RevisionView;
+}
+
+export function loadDocument(
+  pkg: OpcPackage,
+  diagnostics: DiagnosticSink,
+  opts: LoadDocumentOptions = {},
+): LoadedDocument {
   const cascade = loadCascadeContext(pkg, diagnostics);
   const partName = pkg.mainDocumentPartName();
   // 文本框内容按部件分开收：里面的图要按各自部件的关系表解引用
@@ -173,23 +191,38 @@ export function loadDocument(pkg: OpcPackage, diagnostics: DiagnosticSink): Load
     ),
   );
   const hyperlinks = new Map([...fieldHyperlinks(fields), ...fieldHyperlinks(noteFields)]);
+  // 作者配色按「第一次出现」排，正文在前：审阅稿的正文里第一位改稿人拿第一色
+  const boxBlocks = boxSinks.flatMap(({ sink }) => Object.values(sink));
+  const revisions = revisionDisplay(
+    opts.revisions ?? 'final',
+    revisionAuthors(
+      [body.sections.flatMap((s) => s.blocks), ...Object.values(headerFooters).map((hf) => hf.blocks)]
+        .concat(
+          noteContents.map((n) => n.blocks),
+          boxBlocks,
+        )
+        .map((blocks) => ({ sections: [{ id: '', props: DEFAULT_SECTION_PROPS, blocks }] })),
+    ),
+  );
+  const resolveOpts = { hyperlinks, revisions };
 
   for (const hf of Object.values(headerFooters)) {
-    hf.resolved = resolveBlocks(cascade, hf.blocks, { hyperlinks });
+    hf.resolved = resolveBlocks(cascade, hf.blocks, resolveOpts);
   }
-  for (const n of noteContents) n.resolved = resolveBlocks(cascade, n.blocks, { hyperlinks });
+  for (const n of noteContents) n.resolved = resolveBlocks(cascade, n.blocks, resolveOpts);
   // 文本框里的域不扫（求值没做，显示文件里存着的结果）；超链接照全文那张表铺
   const textBoxes: Record<string, TextBoxContent> = {};
   for (const { part, sink } of boxSinks) {
     for (const [id, blocks] of Object.entries(sink)) {
-      textBoxes[id] = { id, part, blocks, resolved: resolveBlocks(cascade, blocks, { hyperlinks }) };
+      textBoxes[id] = { id, part, blocks, resolved: resolveBlocks(cascade, blocks, resolveOpts) };
     }
   }
 
   return {
     cascade,
     body,
-    resolved: resolveBody(cascade, body, { hyperlinks }),
+    resolved: resolveBody(cascade, body, resolveOpts),
+    revisions,
     fields,
     headerFooters,
     // 图片按**引用**收（与页眉页脚同理，见 images.ts），所以要等页眉页脚解析完 ——
@@ -220,6 +253,51 @@ export function loadDocument(pkg: OpcPackage, diagnostics: DiagnosticSink): Load
     notes,
     textBoxes,
   };
+}
+
+/**
+ * 换一种修订视图（revisions.ts）：正文、页眉页脚、注、文本框的级联结果全按新视图重做一遍，
+ * 作者配色不变。不改 `loaded`，返回新的一份（页眉页脚等表也是新的，原来那份可能还挂在旧布局上）。
+ *
+ * 超链接照加载时那样铺：正文与页眉页脚的域在 `loaded.fields` 里（编辑后门面会换成新扫的那份），
+ * 注里的域现扫 —— 扫描的诊断加载时已经报过，这里丢进一个不用的收集器，免得同一条报两遍
+ */
+export function withRevisionView(loaded: LoadedDocument, view: RevisionView): LoadedDocument {
+  if (view === loaded.revisions.view) return loaded;
+  const revisions: RevisionDisplay = { ...loaded.revisions, view };
+  const quiet = createDiagnosticSink();
+  const noteFields = allNoteContents(loaded.notes).flatMap((n) =>
+    scanFields({ sections: [{ id: `${n.id}:sec`, props: DEFAULT_SECTION_PROPS, blocks: n.blocks }] }, quiet),
+  );
+  const opts = {
+    hyperlinks: new Map([...fieldHyperlinks(loaded.fields), ...fieldHyperlinks(noteFields)]),
+    revisions,
+  };
+  const { cascade } = loaded;
+  const again = <T extends { blocks: Block[]; resolved: ResolvedBlock[] }>(c: T): T => ({
+    ...c,
+    resolved: resolveBlocks(cascade, c.blocks, opts),
+  });
+  const part = (p: NotePart): NotePart => {
+    const out: NotePart = { ...p, notes: mapValues(p.notes, again) };
+    if (p.separator !== undefined) out.separator = again(p.separator);
+    if (p.continuationSeparator !== undefined) out.continuationSeparator = again(p.continuationSeparator);
+    return out;
+  };
+  return {
+    ...loaded,
+    revisions,
+    resolved: resolveBody(cascade, loaded.body, opts),
+    headerFooters: mapValues(loaded.headerFooters, again),
+    notes: { footnotes: part(loaded.notes.footnotes), endnotes: part(loaded.notes.endnotes) },
+    textBoxes: mapValues(loaded.textBoxes, again),
+  };
+}
+
+function mapValues<T>(record: Record<string, T>, f: (value: T) => T): Record<string, T> {
+  const out: Record<string, T> = {};
+  for (const [k, v] of Object.entries(record)) out[k] = f(v);
+  return out;
 }
 
 /**

@@ -26,6 +26,8 @@ import type {
   NodeId,
   QueryNode,
   ResolvedRun,
+  RevisionSpan,
+  RevisionView,
   RunOrder,
   TextChangeSet,
   TextEditor,
@@ -43,6 +45,7 @@ import {
   findMatches,
   findText,
   fragmentOfRange,
+  listRevisions,
   paragraphStyleNames,
   paragraphsOfRange,
   planTableOfContents,
@@ -67,7 +70,7 @@ import { createView } from './view.ts';
 /** `query()` 答的节点：段落 / run / 表格 / 行 / 格，直接格式那棵树上的 */
 export type DocNode = QueryNode<DirectProps>;
 
-export type { FindOptions, TextMatch };
+export type { FindOptions, RevisionSpan, RevisionView, TextMatch };
 
 /** `replaceAll` 的结果。跳过的是落在域（页码、目录、超链接域的显示文字）里的命中，事务改不了它们 */
 export interface ReplaceResult {
@@ -114,6 +117,8 @@ export interface UwDocumentInit {
   /** 原包。回写只重写改过的部件，其余条目从这里逐字节照搬；没有它就不能 `toDocx()` */
   pkg?: OpcPackage;
   reflow?: (body: LoadedDocument['body']) => Reflowed;
+  /** 换修订视图：把下一趟 `reflow` 要用的页眉页脚 / 注 / 文本框按新视图重新级联（见 load.ts） */
+  setRevisionView?: (view: RevisionView) => void;
   layout: DocumentLayout;
   /** 与 `layout` 自洽的域求值结果（run id → 显示的文字），查找时用它跳过旧值 */
   fieldValues: ReadonlyMap<NodeId, string>;
@@ -143,6 +148,7 @@ export class UwDocument {
   #fieldValues: ReadonlyMap<NodeId, string>;
   readonly #editor: TextEditor;
   readonly #reflow: UwDocumentInit['reflow'];
+  readonly #setRevisionView: UwDocumentInit['setRevisionView'];
   readonly #pkg: OpcPackage | undefined;
   #prepared: (Reflowed & { duration: number }) | undefined;
   readonly #listeners = new Set<(change: TextChangeSet) => void>();
@@ -166,6 +172,7 @@ export class UwDocument {
       },
     });
     this.#reflow = init.reflow;
+    this.#setRevisionView = init.setRevisionView;
     this.#pkg = init.pkg;
     this.#fieldValues = init.fieldValues;
     this.#diagnostics = [...init.diagnostics];
@@ -205,6 +212,57 @@ export class UwDocument {
     const result = this.#prepared;
     if (!result) throw new Error('缺少预排版结果');
     this.#prepared = undefined;
+    const fresh = this.#adopt(result);
+    for (const listener of this.#listeners) listener(change);
+    this.#events.emit('document:change', { changeSet: change, source });
+    this.#events.emit('layout:done', {
+      pageCount: this.pageCount,
+      duration: result.duration,
+      iterations: result.passes ?? 1,
+    });
+    for (const d of fresh) this.#events.emit('diagnostic', d);
+    return change;
+  }
+
+  /**
+   * 修订显示哪一版（`LoadOptions.revisions`，默认 `final`）。见 `setRevisionView`
+   */
+  get revisionView(): RevisionView {
+    return this.#loaded.revisions.view;
+  }
+
+  /**
+   * 换修订视图并重排：`final` 最终状态（被删的字不占位）/ `markup` 所有标记（作者色，插入加下划线、
+   * 删除加删除线并**占位**，页边画改动竖线）/ `original` 原始状态（插入的字不占位）。
+   *
+   * 不是模型修改：不进撤销栈、不派发 `document:change`，只派发 `layout:done`。
+   * 选区与装饰的位置照旧有效（模型没动），但落在这一版看不见的字上的那些画不出来
+   */
+  setRevisionView(view: RevisionView): void {
+    if (view === this.revisionView) return;
+    if (!this.#reflow || !this.#setRevisionView) throw new Error('文档未配置重排，不能切换修订视图');
+    this.#setRevisionView(view);
+    const t0 = performance.now();
+    const result = this.#reflow(this.#editor.body);
+    const fresh = this.#adopt(result);
+    this.#events.emit('layout:done', {
+      pageCount: this.pageCount,
+      duration: performance.now() - t0,
+      iterations: result.passes ?? 1,
+    });
+    for (const d of fresh) this.#events.emit('diagnostic', d);
+  }
+
+  /**
+   * 文档里的修订，文档序；同一段里相邻、作者 / 时间 / 种类都相同的合成一处。
+   * 与这一刻显示哪一版无关 —— 答的是文件里记着什么（给修订面板用）
+   */
+  revisions(): RevisionSpan[] {
+    return listRevisions(this.#editor.body);
+  }
+
+  /** 收下一趟重排的结果、刷新视图，返回新发现的诊断（事件由调用方按自己的顺序派发） */
+  #adopt(result: Reflowed): Diagnostic[] {
     this.#loaded = result.loaded;
     this.#layout = result.layout;
     this.#fieldValues = result.values;
@@ -221,15 +279,7 @@ export class UwDocument {
     }
     // 视图先刷新、再告诉宿主：监听者里去读 `view.selection` / `view.rectsOf` 拿到的是新布局上的
     for (const update of this.#views) update(this.layout);
-    for (const listener of this.#listeners) listener(change);
-    this.#events.emit('document:change', { changeSet: change, source });
-    this.#events.emit('layout:done', {
-      pageCount: this.pageCount,
-      duration: result.duration,
-      iterations: result.passes ?? 1,
-    });
-    for (const d of fresh) this.#events.emit('diagnostic', d);
-    return change;
+    return fresh;
   }
 
   /**

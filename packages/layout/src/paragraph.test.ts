@@ -288,6 +288,30 @@ describe('渲染片段', () => {
     expect(plain?.style).not.toHaveProperty('shading');
   });
 
+  it('「所有标记」的修订折进片段样式：作者色 + 插入下划线 / 删除删除线，移动用双线；宽度不变', () => {
+    const plain = layoutParagraph(para([run('增删')]), opts());
+    const out = layoutParagraph(
+      para([
+        run('增', { revision: { kind: 'insert', color: 'C00000' } }),
+        run('删', { revision: { kind: 'delete', color: '1F4E9F' } }),
+        run('移', { revision: { kind: 'insert', move: true, color: '2E7D32' } }),
+        run('走', { revision: { kind: 'delete', move: true, color: '2E7D32' } }),
+      ]),
+      opts(),
+    );
+    const [ins, del, moveTo, moveFrom] = out.lines[0]?.fragments ?? [];
+    expect(ins?.style).toMatchObject({ color: 'C00000', underline: 'single', strike: false });
+    expect(ins?.style.revision).toEqual({ kind: 'insert', color: 'C00000' });
+    expect(del?.style).toMatchObject({ color: '1F4E9F', underline: 'none', strike: true });
+    expect(moveTo?.style.underline).toBe('double');
+    expect(moveFrom?.style).toMatchObject({ doubleStrike: true, strike: false });
+    // 删除线与下划线都不占地方：被删的字照原样量宽
+    expect(del?.width).toBe(plain.lines[0]?.fragments[0]?.glyphX[1]);
+    expect(layoutParagraph(para([run('素')]), opts()).lines[0]?.fragments[0]?.style).not.toHaveProperty(
+      'revision',
+    );
+  });
+
   it('布局结果整个可结构化克隆 —— 它要过 Worker 边界', () => {
     const out = layoutParagraph(para([run('中文abc')]), opts());
     expect(structuredClone(out)).toEqual(out);

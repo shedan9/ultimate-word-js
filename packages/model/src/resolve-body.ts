@@ -37,6 +37,8 @@ import type {
 import type { NumberingCounters } from './numbering-counter.ts';
 import { createNumberingCounters } from './numbering-counter.ts';
 import type { ResolvedParaProps, ResolvedRunProps } from './props.ts';
+import type { RevisionDisplay } from './revisions.ts';
+import { applyRevision, DEFAULT_REVISION_DISPLAY } from './revisions.ts';
 import { extendStyleSheet } from './styles.ts';
 
 /**
@@ -54,6 +56,7 @@ interface Pass {
   memo: WeakMap<Paragraph, MemoEntry> | undefined;
   /** 本段所在单元格命中的表格样式层，序列化成串供备忘比对；正文里是空串 */
   layersKey: string;
+  revisions: RevisionDisplay;
 }
 
 interface MemoEntry {
@@ -89,6 +92,7 @@ interface ResolveCacheState extends ResolveCache {
   context: CascadeContext | undefined;
   numbering: Body['numbering'];
   styles: Body['styles'];
+  revisions: RevisionDisplay | undefined;
   paragraphs: WeakMap<Paragraph, MemoEntry>;
 }
 
@@ -98,6 +102,7 @@ export function createResolveCache(): ResolveCache {
     context: undefined,
     numbering: undefined,
     styles: undefined,
+    revisions: undefined,
     paragraphs: new WeakMap(),
   };
   return state;
@@ -108,13 +113,21 @@ function memoFor(
   cache: ResolveCache | undefined,
   context: CascadeContext,
   body: Body,
+  revisions: RevisionDisplay,
 ): WeakMap<Paragraph, MemoEntry> | undefined {
   if (cache === undefined) return undefined;
   const state = cache as ResolveCacheState;
-  if (state.context !== context || state.numbering !== body.numbering || state.styles !== body.styles) {
+  // 换了修订视图同理整份作废：任何一段里的修订 run 都要换一种折法
+  if (
+    state.context !== context ||
+    state.numbering !== body.numbering ||
+    state.styles !== body.styles ||
+    state.revisions !== revisions
+  ) {
     state.context = context;
     state.numbering = body.numbering;
     state.styles = body.styles;
+    state.revisions = revisions;
     state.paragraphs = new WeakMap();
   }
   return state.paragraphs;
@@ -131,6 +144,11 @@ export interface ResolveBodyOptions {
   hyperlinks?: ReadonlyMap<NodeId, FieldHyperlink>;
   /** 跨调用复用没变的段落（见 `ResolveCache`）。门面每份文档持有一份 */
   cache?: ResolveCache;
+  /**
+   * 修订显示哪一版（revisions.ts）。缺席 = 最终状态：删掉的字不占位，与原来整块跳过 `w:del` 时的版式一致。
+   * 备忘按**身份**认它，视图没变就传同一个对象
+   */
+  revisions?: RevisionDisplay;
 }
 
 export function resolveBody(
@@ -149,8 +167,9 @@ export function resolveBody(
     ctx,
     counters: createNumberingCounters(ctx.numbering, ctx.styles),
     hyperlinks: opts.hyperlinks,
-    memo: memoFor(opts.cache, context, body),
+    memo: memoFor(opts.cache, context, body, opts.revisions ?? DEFAULT_REVISION_DISPLAY),
     layersKey: '',
+    revisions: opts.revisions ?? DEFAULT_REVISION_DISPLAY,
   };
   return {
     sections: body.sections.map((s): ResolvedSection => {
@@ -179,6 +198,7 @@ export function resolveBlocks(
     hyperlinks: opts.hyperlinks,
     memo: undefined,
     layersKey: '',
+    revisions: opts.revisions ?? DEFAULT_REVISION_DISPLAY,
   };
   return blocks.map((b) => block(pass, b));
 }
@@ -225,8 +245,13 @@ function resolveParagraph(pass: Pass, p: Paragraph): ResolvedParagraph {
     props,
     // 正文 run 不吃编号的 rPr（那份只作用于编号文字，见 cascade.ts 文件头第 3 条）
     runs: p.runs.map((r): ResolvedRun => {
-      const rp: ResolvedRunProps = resolveRunProps(ctx, p.props, r.props);
+      const rp: ResolvedRunProps = applyRevision(
+        resolveRunProps(ctx, p.props, r.props),
+        r.revision,
+        pass.revisions,
+      );
       const out: ResolvedRun = { kind: 'run', id: r.id, props: rp, content: structuredClone(r.content) };
+      if (r.revision !== undefined) out.revision = { ...r.revision };
       // 容器（`w:hyperlink`）优先于 HYPERLINK 域：两者同时罩着一个 run 不合法，
       // 真遇上时听那个**写在正文结构里**的，域是派生量
       const link = r.hyperlink ?? pass.hyperlinks?.get(r.id);

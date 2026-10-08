@@ -279,6 +279,8 @@ export function rangeEditable(body: Body, range: DocRange): boolean {
   const first = entries.get(range.start.nodeId);
   const last = entries.get(range.end.nodeId);
   if (first === undefined || last === undefined || first.paragraph !== last.paragraph) return false;
+  // 替换的新字接着首字写，首字在被删除的修订里就插不进去（见 `insertableAt`）
+  if (first.run.revision?.kind === 'delete') return false;
   for (let i = first.runIndex; i <= last.runIndex; i++) {
     const run = first.paragraph.runs[i] as Run;
     if (entries.get(run.id)?.protected) return false;
@@ -566,6 +568,14 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
         return { ...entry, run: replacements.get(position.nodeId) ?? entry.run };
       }
 
+      /**
+       * 被删除的修订里不许再插东西：插进去的字会跟着它一起「已删除」—— 最终状态下打了看不见，
+       * 回写成 `w:delText`。修订模式下的编辑是非目标（revisions.ts），所以拒绝而不是替用户挪位置。
+       * 删除照常允许：删掉一段被删除的修订，回写就是那段 `w:del` 没了，等于接受了它
+       */
+      function insertableAt(entry: RunEntry): void {
+        if (entry.run.revision?.kind === 'delete') throw new Error('不能往被删除的修订里插入内容');
+      }
       /** 可删除的非文字片段上的位置（前 0 / 后 1）；文字位置照旧交给 textAt 检查。 */
       function editableAt(entry: RunEntry, position: DocPosition): void {
         const c = entry.run.content[position.contentIndex];
@@ -733,6 +743,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
 
       function splice(position: DocPosition, count: number, insertedText: string): void {
         const entry = entryAt(position);
+        if (insertedText !== '') insertableAt(entry);
         const text = textAt(entry, position);
         const deletedText = text.slice(position.offset, position.offset + count);
         if (deletedText === insertedText) return;
@@ -877,6 +888,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
               const host = paragraphAt(entryAt(position).paragraph.id).blocks;
               if (!draft.sections.some((s) => s.blocks === host)) throw new Error('表格里不能插分页符');
             }
+            insertableAt(entryAt(position));
             const index = insertContent(position, item);
             return { nodeId: position.nodeId, contentIndex: index, offset: 1 };
           });

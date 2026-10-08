@@ -84,3 +84,17 @@ export const LEADER_FALLBACK_SIZE = 240;
  * 三个数用同一份样本钉死：带脚注的 docx 导 PDF，`truth.json` 的 `pages[].rules[]` 给出线宽。
  */
 export const FOOTNOTE_SEPARATOR_STROKE_PT = 0.5;
+
+/**
+ * 修订的改动竖线（「所有标记」视图下，有修订的那一行在页边画的那条线）：
+ * 离版心左边多远（pt）、多粗（pt）、什么颜色。
+ *
+ * 照 Word 界面的观感写的：「修订选项 → 修订行：外侧框线」，颜色「自动」。三个数都没有真值 ——
+ * 尤其是**位置**：Word 量的是版心左边还是段落缩进后的文字左边，单页 / 对称页边距时
+ * 「外侧」是不是总在左边，都没有样本。它不改坐标，L2 / L3 管不到。
+ * 钉死办法：一份缩进不同的三段、各带一处插入的 docx，切到「所有标记」导 PDF，
+ * 读真值 `pages[].rules[]` 里那几条竖线的 x 与线宽（颜色要给抽取器补一路描边色）。
+ */
+export const CHANGE_BAR_OFFSET_PT = 8;
+export const CHANGE_BAR_WIDTH_PT = 0.75;
+export const CHANGE_BAR_COLOR = '#808080';

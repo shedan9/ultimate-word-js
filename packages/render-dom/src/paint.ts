@@ -60,6 +60,9 @@ import { defaultFontFamily } from './font-stack.ts';
 import type { RElement } from './tree.ts';
 import { el, fmt, fmtList, textEl } from './tree.ts';
 import {
+  CHANGE_BAR_COLOR,
+  CHANGE_BAR_OFFSET_PT,
+  CHANGE_BAR_WIDTH_PT,
   DOUBLE_STRIKE_GAP_EM,
   FOOTNOTE_SEPARATOR_STROKE_PT,
   LEADER_DOT_PITCH_EM,
@@ -102,6 +105,11 @@ interface Ctx {
   debug: boolean;
   /** 裁剪用的 `clipPath` id 计数器 —— 同一页上两张裁过的图不能共用一个 id */
   clip: { n: number };
+  /**
+   * 当前坐标原点离「版心左边」（页眉页脚里是框左边）多远。表格、嵌套行都套着一层 `translate`，
+   * 页边的改动竖线要画在同一条竖直线上，就得把这些平移减回去。进出平移的地方成对加减
+   */
+  dx: { tw: Twips };
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -115,6 +123,7 @@ function context(opts: RenderOptions): Ctx {
     imageHref: opts.imageHref ?? (() => undefined),
     debug: opts.debug === true,
     clip: { n: 0 },
+    dx: { tw: 0 },
   };
 }
 
@@ -410,6 +419,24 @@ function paintLine(line: LineLayout, x0: Twips, y0: Twips, ctx: Ctx, out: REleme
     for (const d of decorations(frag, x0, baseline, ctx)) out.push(d);
     out.push(paintFragment(frag, x0, baseline, ctx));
   }
+  if (line.fragments.some((f) => f.style.revision !== undefined)) out.push(changeBar(y0, line.height, ctx));
+}
+
+/**
+ * 修订的改动竖线：这一行有修订（只在「所有标记」视图下才有，见 `FragmentStyle.revision`），
+ * 页边画一条与行盒等高的竖线。位置、粗细、颜色都没有真值（`uncalibrated.ts`）
+ */
+function changeBar(top: Twips, height: Twips, ctx: Ctx): RElement {
+  const x = fmt(pt(-ctx.dx.tw) - CHANGE_BAR_OFFSET_PT);
+  return el('line', {
+    class: ctx.cls('change-bar'),
+    x1: x,
+    y1: fmt(pt(top)),
+    x2: x,
+    y2: fmt(pt(top + height)),
+    stroke: CHANGE_BAR_COLOR,
+    'stroke-width': fmt(CHANGE_BAR_WIDTH_PT),
+  });
 }
 
 /**
@@ -636,6 +663,7 @@ function paintPlacedTable(t: PlacedTable, ctx: Ctx): RElement {
     // 0.25pt，与改这条之前一样，不值得为它换一套画法。
     const inner = rowTop + placed.row.gridAbove;
     const innerHeight = placed.height - placed.row.gridAbove;
+    ctx.dx.tw += t.x;
     for (const cell of placed.row.cells) {
       if (cell.vMerge !== 'continue') {
         paintCellShading(cell, inner, innerHeight, ctx, shading);
@@ -643,6 +671,7 @@ function paintPlacedTable(t: PlacedTable, ctx: Ctx): RElement {
       }
       paintCellBorders(cell, t.columns, rowTop, placed.height, ctx, seen, borders);
     }
+    ctx.dx.tw -= t.x;
   }
 
   return el('g', { class: ctx.cls('table'), 'data-id': t.id, transform: `translate(${fmt(pt(t.x))} 0)` }, [
@@ -809,12 +838,14 @@ function paintBlockStack(
 function paintNestedRow(row: RowLayout, x0: Twips, y: Twips, ctx: Ctx, out: RElement[]): void {
   const seen = new Set<string>();
   const children: RElement[] = [];
+  ctx.dx.tw += x0;
   for (const cell of row.cells) {
     if (cell.vMerge === 'continue') continue;
     paintCellShading(cell, row.gridAbove, row.height - row.gridAbove, ctx, children);
     paintCellContent(cell, row.gridAbove, row.height - row.gridAbove, ctx, children);
     paintCellBorders(cell, [], 0, row.height, ctx, seen, children);
   }
+  ctx.dx.tw -= x0;
   out.push(
     el('g', { class: ctx.cls('nested-row'), transform: `translate(${fmt(pt(x0))} ${fmt(pt(y))})` }, children),
   );

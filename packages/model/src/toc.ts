@@ -253,11 +253,16 @@ function splitText(text: string): RunContent[] {
   return out;
 }
 
-/** 标题段落进目录的文字：隐藏文字、域代码不进，域结果照进（与屏幕上看见的一致） */
+/**
+ * 标题段落进目录的文字：隐藏文字、域代码不进，域结果照进（与屏幕上看见的一致）。
+ * 修订按**最终状态**算，与这一刻显示哪一版无关：被删的字不进、插入的字进 ——
+ * 「所有标记」下更新目录，目录里冒出一串划了线的旧标题才奇怪（原始状态下插入的字是折成 hidden 的，要放回来）
+ */
 function headingText(p: ResolvedParagraph, keepTabs: boolean, keepBreaks: boolean): string {
   let text = '';
   for (const run of p.runs) {
-    if (run.props.hidden) continue;
+    if (run.revision?.kind === 'delete') continue;
+    if (run.props.hidden && run.revision?.kind !== 'insert') continue;
     for (const c of run.content) {
       if (c.kind === 'text') text += c.text;
       else if (c.kind === 'tab') text += keepTabs ? '\t' : ' ';

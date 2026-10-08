@@ -229,7 +229,8 @@ export function textOfContentControl<S extends PropSet>(span: ContentControlSpan
     .map((p) => {
       let out = '';
       for (const run of p.runs) {
-        if (!members.has(run)) continue;
+        // 被删除的修订不算「现在显示的」，与 `paragraphText` 同一口径（最终状态）
+        if (!members.has(run) || run.revision?.kind === 'delete') continue;
         for (const c of run.content) {
           if (c.kind === 'text') out += c.text;
           else if (c.kind === 'tab') out += '\t';

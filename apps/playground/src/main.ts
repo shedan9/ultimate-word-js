@@ -28,6 +28,11 @@ app.innerHTML = `
     <label><input type="checkbox" class="text-layer" checked> 原生选区</label>
     <label><input type="checkbox" class="edit-mode"> 编辑</label>
     <label><input type="checkbox" class="virtualize" checked> 按需绘制</label>
+    <label>修订 <select class="revisions" disabled>
+      <option value="final">最终状态</option>
+      <option value="markup">所有标记</option>
+      <option value="original">原始状态</option>
+    </select></label>
     <button type="button" class="toc" disabled>更新目录</button>
     <button type="button" class="export" disabled>导出 docx</button>
     <label class="find">查找 <input type="search" placeholder="回车到下一处" disabled><span class="hits"></span></label>
@@ -49,6 +54,7 @@ const findInput = app.querySelector<HTMLInputElement>('input[type=search]') as H
 const hitsLabel = app.querySelector<HTMLElement>('.hits') as HTMLElement;
 const exportButton = app.querySelector<HTMLButtonElement>('.export') as HTMLButtonElement;
 const tocButton = app.querySelector<HTMLButtonElement>('.toc') as HTMLButtonElement;
+const revisionSelect = app.querySelector<HTMLSelectElement>('.revisions') as HTMLSelectElement;
 
 let doc: UwDocument | undefined;
 let view: UwView | undefined;
@@ -127,12 +133,15 @@ async function openFile(file: File): Promise<void> {
   status.textContent = `正在读 ${file.name}…`;
   try {
     const t0 = performance.now();
-    doc = await UltimateWord.load(file);
+    doc = await UltimateWord.load(file, {
+      revisions: revisionSelect.value as 'final' | 'markup' | 'original',
+    });
     const ms = performance.now() - t0;
     fileName = file.name;
     findInput.disabled = false;
     exportButton.disabled = false;
     tocButton.disabled = false;
+    revisionSelect.disabled = false;
 
     const first = doc.layout.pages[0]?.geometry;
     const size =
@@ -179,6 +188,18 @@ tocButton.addEventListener('click', () => {
   const { updated, skipped } = doc.updateTableOfContents();
   const why = skipped.map((s) => s.reason).join('；');
   status.textContent = `更新了 ${updated} 个目录${skipped.length ? `，跳过 ${skipped.length} 个（${why}）` : ''}`;
+});
+/**
+ * 修订视图不是视图的构造选项，是**文档**的：换了要重新级联、重排（`doc.setRevisionView`），
+ * 挂着的视图自己跟着刷新，不必重挂。查找结果跟着变（最终状态下删掉的字搜不到），所以重搜一遍
+ */
+revisionSelect.addEventListener('change', () => {
+  if (doc === undefined) return;
+  const t0 = performance.now();
+  doc.setRevisionView(revisionSelect.value as 'final' | 'markup' | 'original');
+  const count = doc.revisions().length;
+  status.textContent = `${count} 处修订 · 换视图重排 ${(performance.now() - t0).toFixed(1)}ms · ${doc.pageCount} 页`;
+  search.rerun();
 });
 debugInput.addEventListener('change', remount);
 textLayerInput.addEventListener('change', remount);

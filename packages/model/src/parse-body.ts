@@ -24,6 +24,7 @@ import type {
   Paragraph,
   Run,
   RunContent,
+  RunRevision,
   Section,
   Table,
   TableCell,
@@ -82,10 +83,18 @@ const IGNORED_IN_RUN = new Set([
 ]);
 
 /** 透明容器：内容照收，容器本身不产生节点 */
-const TRANSPARENT = new Set(['w:smartTag', 'w:bdo', 'w:dir', 'w:ins', 'w:moveTo']);
+const TRANSPARENT = new Set(['w:smartTag', 'w:bdo', 'w:dir']);
 
-/** 删除的内容：`w:del` / `w:moveFrom` 里的文字是「已删除」，最终版式里不出现 */
-const DELETED = new Set(['w:del', 'w:moveFrom']);
+/**
+ * 修订容器：内容照收，容器压平成 run 上的 `revision` 标记。
+ * 被删的字也收（原来整块跳过）—— 显不显示是级联按 `RevisionView` 定的，见 revisions.ts
+ */
+const REVISIONS: Readonly<Record<string, Pick<RunRevision, 'kind' | 'move'>>> = {
+  'w:ins': { kind: 'insert' },
+  'w:del': { kind: 'delete' },
+  'w:moveTo': { kind: 'insert', move: true },
+  'w:moveFrom': { kind: 'delete', move: true },
+};
 
 interface Ctx {
   diagnostics: DiagnosticSink;
@@ -464,6 +473,7 @@ interface RunMarks {
   link?: Run['hyperlink'];
   field?: Run['fieldSimple'];
   control?: NodeId;
+  revision?: RunRevision;
 }
 
 /**
@@ -501,10 +511,9 @@ function collectRuns(ctx: Ctx, parent: XmlElement, out: Run[], marks: RunMarks, 
         const control = openControl(ctx, el, 'inline', marks.control ?? ctx.blockControl);
         collectRuns(ctx, content, out, { ...marks, control }, bookmarks);
       }
-    } else if (DELETED.has(el.name)) {
-      // 修订只做显示、不做编辑（非目标），显示的是**接受后**的版式：删掉的字不占位。
-      // 记一条 info 是因为「文档里有字没画出来」必须留痕，否则查起来无从下手
-      ctx.diagnostics.info('revision-deleted', `跳过了 <${el.name}> 里被删除的内容`, { part: ctx.part });
+    } else if (REVISIONS[el.name] !== undefined) {
+      // 嵌套时内层说了算：`w:ins` 里再包一层 `w:del` 是「插进来又删掉」，最终版里没有它
+      collectRuns(ctx, el, out, { ...marks, revision: revisionOf(el) }, bookmarks);
     } else if (el.name === 'w:pPr') {
       // 段落属性已在别处解析
     } else if (!IGNORED.has(el.name)) {
@@ -524,7 +533,17 @@ function parseRun(ctx: Ctx, r: XmlElement, marks: RunMarks): Run {
   if (marks.link !== undefined) run.hyperlink = marks.link;
   if (marks.field !== undefined) run.fieldSimple = marks.field;
   if (marks.control !== undefined) run.contentControl = marks.control;
+  if (marks.revision !== undefined) run.revision = marks.revision;
   return run;
+}
+
+function revisionOf(el: XmlElement): RunRevision {
+  const out: RunRevision = { ...(REVISIONS[el.name] as RunRevision) };
+  const author = attr(el, 'w:author');
+  const date = attr(el, 'w:date');
+  if (author !== undefined) out.author = author;
+  if (date !== undefined) out.date = date;
+  return out;
 }
 
 const BREAK_TYPES = ['page', 'column'] as const;
@@ -544,7 +563,11 @@ function collectContentItem(ctx: Ctx, el: XmlElement, out: RunContent[]): void {
       out.push({ kind: 'text', text: xmlText(el) });
       break;
     case 'w:delText':
-      break; // 同 DELETED：已删除的字不占位，外层已经记过诊断
+      // 被删的字照样是字：「所有标记」要画它。最终版里不占位靠的是级联把整个 run 折成 hidden，
+      // 不是在这里丢掉 —— 丢了就画不出来、也回写不回去
+      out.push({ kind: 'text', text: xmlText(el) });
+      break;
+    case 'w:delInstrText':
     case 'w:instrText':
       // 域代码**不去首尾空白**（与 `w:t` 相反）：这段文字不显示，空白是词与词的分隔符。
       // 一条指令常被切成好几段，去掉空白再拼就成了 ` IF ` + ` = 1 ` → `IF= 1`，
