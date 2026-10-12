@@ -44,6 +44,7 @@ export type {
 } from '@uw/view/dom';
 export type { BindingInfo, Bindings } from './bindings.ts';
 export type {
+  CommentOptions,
   CommentSpan,
   DocNode,
   DocumentEvents,

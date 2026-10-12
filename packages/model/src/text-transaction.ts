@@ -8,6 +8,16 @@
 
 import { bookmarkTargets } from './bookmarks.ts';
 import { CLEAR_RUN_PROPS } from './clear-format.ts';
+import type { CommentDraft } from './comment-edit.ts';
+import {
+  checkCommentDraft,
+  commentBlocks,
+  commentIdSeed,
+  newComment,
+  threadOf,
+  threadRoot,
+} from './comment-edit.ts';
+import type { CommentContent } from './comments.ts';
 import { contentControlSpans, rangeOfContentControl, withinContentControl } from './content-control.ts';
 import { scanFields } from './fields.ts';
 import type { Block, Body, NodeId, Paragraph, Run, RunContent, TableCell, TableRow } from './nodes.ts';
@@ -168,6 +178,23 @@ export interface TextTransaction {
    * 名字已在别的段落上时拒绝（Word 不许重名），已在这一段上时不修改。
    */
   addBookmark(paragraphId: NodeId, name: string): void;
+  /**
+   * 在范围上加一条批注（Word「新建批注」），返回它的 id（`comments.xml` 的 `w:id`，接着用过的最大号往下编，
+   * 删掉的号不复用，见 comment-edit.ts）。范围盖住的 run 打上标记，端点落在 run 中间就拆开（同 setRunProps，
+   * 可跨段落 / 表格）；折叠范围（或盖不住一个字的范围）是**点批注**：在起点插一个空 run 当锚。
+   */
+  addComment(range: DocRange, comment: CommentDraft): string;
+  /**
+   * 回复一条批注，返回回复的 id。回复罩着与顶层那条相同的字；回复的回复挂到顶层上
+   * （Word 的批注线程只有一层）。
+   */
+  replyComment(parent: string, comment: CommentDraft): string;
+  /** 把批注正文整个换成 `text`（`\n` 分段、`\t` 写成制表位），作者与时间不变；文字没变时不修改 */
+  setCommentText(id: string, text: string): void;
+  /** 标记解决 / 重新打开：改的是**整条线程**（顶层与全部回复），与 Word 的「解决」按钮一致 */
+  setCommentDone(id: string, done: boolean): void;
+  /** 删掉批注：内容与 run 上的标记一起去掉。删顶层那条连回复一起删，删回复只删它自己 */
+  deleteComment(id: string): void;
 }
 
 /**
@@ -418,6 +445,8 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
     }
   }
   let serial = 0;
+  /** 批注 id 只增不减（comment-edit.ts ①）：撤销回去再新建，也不会撞上撤销掉的那条 */
+  let commentSerial = commentIdSeed(body);
   function newId(): string {
     let id: string;
     do {
@@ -525,7 +554,8 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
         inverseMoves = moves.map((m) => ({ from: m.to, to: m.from, length: m.length })),
       ): void {
         changes.push({
-          paragraphId: paragraphIds[0] as string,
+          // 只改了批注内容（正文一个字没动）时没有段落，变更仍要记下 —— 否则整次算无修改、进不了撤销栈
+          paragraphId: paragraphIds[0] ?? '',
           nodeId: '',
           contentIndex: 0,
           offset: 0,
@@ -754,6 +784,69 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
         };
         replacements.set(entry.run.id, { ...entry.run, content });
         changes.push({ ...position, paragraphId: entry.paragraph.id, deletedText, insertedText });
+      }
+
+      /**
+       * 点批注的锚：在位置处放一个只带标记的空 run（与解析时引用标记所在的那个 run 同形），返回段落 id。
+       * 落在空 run 上就直接标它；落在 run 中间先拆开。空 run 抄邻居的格式与外层标记（超链接、修订…），
+       * 回写才不会为了它把邻居所在的容器切成两截
+       */
+      function anchorComment(position: DocPosition, id: string): NodeId {
+        const at = materialize(position);
+        flush();
+        const { run, paragraph, runIndex } = entryAt(at);
+        const runs = [...paragraph.runs];
+        const mark = (r: Run): Run => ({ ...r, comments: [...(r.comments ?? []), id] });
+        if (run.content.length === 0) runs[runIndex] = mark(run);
+        else {
+          const order = buildRunOrder(draft);
+          const anchor = mark({ ...run, id: newId(), content: [] });
+          if ((compareDocPositions(order, at, runStart(run)) as number) <= 0)
+            runs.splice(runIndex, 0, anchor);
+          else if ((compareDocPositions(order, at, runEnd(run)) as number) >= 0)
+            runs.splice(runIndex + 1, 0, anchor);
+          else {
+            const local: TextChange[] = [];
+            const [left, right] = splitRun(run, at, local);
+            runs.splice(runIndex, 1, left, anchor, right);
+            changes.push(...local);
+          }
+        }
+        replaceParagraphs(paragraph.id, 1, [{ ...paragraph, runs }]);
+        return paragraph.id;
+      }
+      /**
+       * 改标记：带着 `target`（或 `any` 里任何一个）的 run 换上 `update` 的结果，空了就去掉字段。
+       * 返回改过的段落
+       */
+      function markComment(
+        target: string,
+        update: (marks: string[]) => string[],
+        any: ReadonlySet<string> = new Set([target]),
+      ): NodeId[] {
+        const touched: NodeId[] = [];
+        draft = mapParagraphs(draft, (p) => {
+          let hit = false;
+          const runs = p.runs.map((r) => {
+            if (!r.comments?.some((m) => any.has(m))) return r;
+            hit = true;
+            const marks = update(r.comments);
+            const { comments: _old, ...rest } = r;
+            return marks.length ? { ...rest, comments: marks } : rest;
+          });
+          if (!hit) return p;
+          touched.push(p.id);
+          return { ...p, runs };
+        });
+        entries = indexRuns(draft);
+        return touched;
+      }
+      /** 罩着这条批注的段落（只改内容、不动标记的命令拿它当变更涉及的段落） */
+      function paragraphsMarked(id: string): NodeId[] {
+        const out: NodeId[] = [];
+        for (const p of walkParagraphs(draft))
+          if (p.runs.some((r) => r.comments?.includes(id))) out.push(p.id);
+        return out;
       }
 
       function command<T>(action: () => T): T {
@@ -1526,6 +1619,119 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             structural([paragraphId], []);
           });
         },
+        addComment(range, comment) {
+          return command(() => {
+            checkCommentDraft(comment);
+            flush();
+            for (const at of [range.start, range.end]) checkPosition(at);
+            const order = buildRunOrder(draft);
+            const cmp = (a: DocPosition, b: DocPosition) => compareDocPositions(order, a, b) as number;
+            if (cmp(range.start, range.end) > 0) throw new RangeError('批注范围的起点必须在终点之前');
+            const id = String(commentSerial++);
+            const { start, end } = range;
+            const local: TextChange[] = [];
+            const updates = new Map<NodeId, Paragraph>();
+            if (cmp(start, end) < 0) {
+              const paragraphs = [...walkParagraphs(draft)];
+              const indexOf = (at: DocPosition) =>
+                paragraphs.findIndex((p) => p.id === at.nodeId || p.runs.some((r) => r.id === at.nodeId));
+              const last = indexOf(end);
+              for (let i = indexOf(start); i <= last; i++) {
+                const paragraph = paragraphs[i] as Paragraph;
+                const runs: Run[] = [];
+                for (const run of paragraph.runs) {
+                  // 只标**有内容**的 run：空 run 布局里没有片段，范围的两端锚不到它身上（comments.ts）
+                  const covered =
+                    run.content.length > 0 && cmp(runEnd(run), start) > 0 && cmp(runStart(run), end) < 0;
+                  if (!covered) {
+                    runs.push(run);
+                    continue;
+                  }
+                  let head = run;
+                  let tail: Run | undefined;
+                  if (end.nodeId === run.id && cmp(end, runEnd(run)) < 0)
+                    [head, tail] = splitRun(head, end, local);
+                  let before: Run | undefined;
+                  let middle = head;
+                  if (start.nodeId === run.id && cmp(start, runStart(run)) > 0)
+                    [before, middle] = splitRun(head, start, local);
+                  if (before) runs.push(before);
+                  runs.push({ ...middle, comments: [...(middle.comments ?? []), id] });
+                  if (tail) runs.push(tail);
+                }
+                if (runs.some((r, ri) => r !== paragraph.runs[ri]))
+                  updates.set(paragraph.id, { ...paragraph, runs });
+              }
+            }
+            let touched: NodeId[];
+            if (updates.size) {
+              draft = mapParagraphs(draft, (p) => updates.get(p.id) ?? p);
+              entries = indexRuns(draft);
+              changes.push(...local);
+              touched = [...updates.keys()];
+            } else touched = [anchorComment(start, id)];
+            const blocks = commentBlocks(comment.text, () => `cm:${newId()}`);
+            draft = { ...draft, comments: { ...draft.comments, [id]: newComment(id, comment, blocks) } };
+            structural(touched, []);
+            return id;
+          });
+        },
+        replyComment(parent, comment) {
+          return command(() => {
+            checkCommentDraft(comment);
+            flush();
+            const comments = draft.comments ?? {};
+            if (comments[parent] === undefined) throw new RangeError(`没有批注：${parent}`);
+            const root = threadRoot(comments, parent);
+            const id = String(commentSerial++);
+            const touched = markComment(root, (marks) => [...marks, id]);
+            const blocks = commentBlocks(comment.text, () => `cm:${newId()}`);
+            draft = { ...draft, comments: { ...comments, [id]: newComment(id, comment, blocks, root) } };
+            structural(touched, []);
+            return id;
+          });
+        },
+        setCommentText(id, text) {
+          return command(() => {
+            if (typeof text !== 'string') throw new TypeError('批注正文必须是字符串');
+            flush();
+            const comments = draft.comments ?? {};
+            const target = comments[id];
+            if (target === undefined) throw new RangeError(`没有批注：${id}`);
+            const blocks = commentBlocks(text, () => `cm:${newId()}`);
+            const plain = (bs: readonly Block[]) => JSON.stringify(bs.map(blockShape));
+            if (plain(blocks) === plain(target.blocks)) return;
+            draft = { ...draft, comments: { ...comments, [id]: { ...target, blocks } } };
+            structural(paragraphsMarked(id), []);
+          });
+        },
+        setCommentDone(id, done) {
+          return command(() => {
+            if (typeof done !== 'boolean') throw new TypeError('done 必须是布尔值');
+            flush();
+            const comments = draft.comments ?? {};
+            if (comments[id] === undefined) throw new RangeError(`没有批注：${id}`);
+            const thread = threadOf(comments, id);
+            if (thread.every((t) => comments[t]?.done === done)) return;
+            const next = { ...comments };
+            for (const t of thread) next[t] = { ...(comments[t] as CommentContent), done };
+            draft = { ...draft, comments: next };
+            structural(paragraphsMarked(threadRoot(comments, id)), []);
+          });
+        },
+        deleteComment(id) {
+          return command(() => {
+            flush();
+            const comments = draft.comments ?? {};
+            if (comments[id] === undefined) throw new RangeError(`没有批注：${id}`);
+            const gone = new Set(threadRoot(comments, id) === id ? threadOf(comments, id) : [id]);
+            const touched = markComment(id, (marks) => marks.filter((m) => !gone.has(m)), gone);
+            const next = Object.fromEntries(Object.entries(comments).filter(([key]) => !gone.has(key)));
+            const { comments: _old, ...rest } = draft;
+            draft = Object.keys(next).length ? { ...rest, comments: next } : rest;
+            structural(touched, []);
+          });
+        },
         addStyle(definition) {
           return command(() => {
             if (typeof definition?.id !== 'string' || definition.id === '')
@@ -1597,6 +1803,11 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
       }
     },
   };
+}
+
+/** 比批注正文变没变：只比内容，不比节点 id（每次重新生成的段落 id 都不一样） */
+function blockShape(b: Block): unknown {
+  return b.kind === 'paragraph' ? b.runs.map((r) => r.content) : b.id;
 }
 
 /** 能填文字的控件类型；复选框要改符号、图片要换图、文档部件是目录这类生成内容 */

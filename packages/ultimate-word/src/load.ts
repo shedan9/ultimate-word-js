@@ -43,6 +43,8 @@ export interface LoadOptions {
    * 加载后可用 `doc.setRevisionView()` 换
    */
   revisions?: RevisionView;
+  /** 新建批注 / 回复默认的署名（`doc.addComment` 的 `author`）。缺席时写空作者 */
+  author?: string;
 }
 
 async function toBytes(source: LoadSource, signal: AbortSignal | undefined): Promise<Uint8Array> {
@@ -113,6 +115,7 @@ export async function load(
   return new UwDocument({
     loaded,
     pkg,
+    ...(options.author === undefined ? {} : { author: options.author }),
     setRevisionView(view) {
       aux = withRevisionView(aux, view);
     },

@@ -126,8 +126,9 @@ export interface LoadedDocument {
    */
   textBoxes: Record<string, TextBoxContent>;
   /**
-   * 批注内容（`comments.xml`），按 `w:id` 索引，见 comments.ts。罩着哪些字在正文 run 的
-   * `comments` 标记上。**不级联、不排版**：批注框画不画、画在哪由宿主定，这里只给数据
+   * 批注部件（`comments.xml`），**加载时的样子**，见 comments.ts。可编辑的那一份在 `Body.comments`
+   * （与 run 上的标记一起随撤销走），这里留着给回写比「改了哪些」。**不级联、不排版**：
+   * 批注框画不画、画在哪由宿主定
    */
   comments: LoadedComments;
 }
@@ -177,6 +178,9 @@ export function loadDocument(
     ...parseBody(pkg.xml(partName), diagnostics, partName, undefined, extrasFor(partName)),
     numbering: cascade.numbering,
   };
+  // 批注内容挂到可编辑的树上（`Body.comments`）：增删改要随撤销走
+  const comments = parseCommentParts(pkg, diagnostics);
+  if (Object.keys(comments.comments).length) body.comments = comments.comments;
   // 域要在级联**之前**扫：级联是按段落递归的，跨段落的配对在那儿看不见
   const fields = scanFields(body, diagnostics);
 
@@ -259,7 +263,7 @@ export function loadDocument(
     numbering: cascade.numbering,
     notes,
     textBoxes,
-    comments: parseCommentParts(pkg, diagnostics),
+    comments,
   };
 }
 

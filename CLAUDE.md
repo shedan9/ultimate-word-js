@@ -52,11 +52,13 @@ STYLEREF 正文里往前找、页眉里**先找本页**再往前，后者进页�
 **段落标记与整行的修订**（2026-10-12）同样在级联折（`resolve-body.ts` 的 `blockList` / `table`）：这一版里不存在的段落标记
 （`ParagraphNode.markRevision`）让本段并进下一段、用**下一段**的属性与 id、不计编号；不存在的行（`TableRowNode.revision`）
 不进树、断头的纵向合并重新起头。拆段时原标记归后段；回写 `#syncRevisionMark()` 防新段 / 新行抄到「已删除」。合并段取谁的属性没有真值。
-**批注（只读）**（2026-10-12，`@uw/model` 的 `comments.ts`）：范围压平成 run 上的 `comments` 标记（**数组**，批注能交叠），
+**批注**（2026-10-12，`@uw/model` 的 `comments.ts`）：范围压平成 run 上的 `comments` 标记（**数组**，批注能交叠），
 界桩在 `parse-body.ts` 的 `skipped()` 里开合（哪一层都可能出现，跨段跨表一直开着），引用标记所在的空 run 也标上；
-内容摊进 `LoadedDocument.comments`，回复 / 已解决读 `commentsExtended.xml`（按末段 `w14:paraId` 认）。门面 `doc.comments()`；
+内容摊进 **`Body.comments`**（与标记同进同退、随撤销走），回复 / 已解决读 `commentsExtended.xml`（按末段 `w14:paraId` 认）。门面 `doc.comments()`；
 范围两端只落在**有字**的 run 上（空 run 布局里没有片段，锚不住）。**视图不画批注框**，宿主走 `decorate` / `overlay`，
-调试台的「批注」开关是样板。批注的编辑没做，`comments.xml` 原样回写。
+调试台的「批注」开关是样板。**编辑**同日接上（`comment-edit.ts` + serialize 的 `comments-writer.ts`）：门面 `addComment` /
+`replyComment` / `editComment` / `resolveComment` / `deleteComment`。容易搞反的三处：新 id **只增不减**（回写按 `w:id` 认原文那条）、
+重写正文时**留住末段 paraId**、点批注是一个只带标记的空 run（回写时它自己不写，只写界桩与引用）。
 同日查清 AM-01-02「表格多拆一页」：那个「Word 29 页」是 **WPS** 写进 `app.xml` 的，行高全由已实测的规则（微软雅黑 1.716 em）定，不改。Phase 4 的**表格**：属性 + 级联（含 `w:tblStylePr` 条件格式）在 model 层，
 列宽 + 每格的 x 与可用宽 + 格内段落 + **边框冲突解析**在 layout 层，跨页按**行**拆，
 一行放不下时还会从**行间**切开（**拆行**，见下）。**表格这一层全部标定完了** ——

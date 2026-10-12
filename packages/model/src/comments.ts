@@ -3,8 +3,8 @@
  *
  * 与脚注同理分两处放：
  *
- * - **内容**按 `w:id` 摊成一张表（`LoadedComments.comments`），不挂在正文节点上 ——
- *   批注罩着的字会被编辑，内容只有一份
+ * - **内容**按 `w:id` 摊成一张表（`Body.comments`），不挂在正文节点上 ——
+ *   批注罩着的字会被编辑，内容只有一份。表挂在可编辑的树上，增删改随撤销走（comment-edit.ts）
  * - **罩着哪些字**是正文 run 上的标记（`RunNode.comments`），跟着编辑走：拆 run、拆段自动带着，
  *   前面插了字不用映射。起止位置用的时候现算（`listComments`）
  *
@@ -14,7 +14,8 @@
  *
  * **画不画由宿主定**：Word 的批注框住在页边，打开它整页要缩小、重排 —— 这一层只给数据，
  * 宿主拿 `range` 交给 `view.decorate()` / `view.overlay()` 自己画（api.md §8）。
- * 批注的编辑（增删改、回复、标记解决）没做，回写原样照搬 `comments.xml`。
+ * 批注的增删改、回复、标记解决是事务命令（text-transaction.ts 的 `addComment` 等），
+ * 回写在 `@uw/serialize` 的 comments-writer.ts。
  */
 import type { DiagnosticSink } from '@uw/core';
 import type { OpcPackage } from '@uw/ooxml';
@@ -125,10 +126,11 @@ export interface CommentSpan extends Omit<CommentContent, 'blocks'> {
  *
  * 吃**可编辑的那棵树**：标记只挂在那里（级联树不带）。
  */
-export function listComments(body: Body, loaded: LoadedComments): CommentSpan[] {
+export function listComments(body: Body): CommentSpan[] {
   const anchors = commentAnchors(body);
-  const order = Object.keys(loaded.comments);
-  const spans = Object.values(loaded.comments).map((c): CommentSpan => {
+  const contents = body.comments ?? {};
+  const order = Object.keys(contents);
+  const spans = Object.values(contents).map((c): CommentSpan => {
     const { blocks, ...rest } = c;
     const span: CommentSpan = { ...rest, text: blocksText(blocks), quote: '' };
     const anchor = anchors.get(c.id);

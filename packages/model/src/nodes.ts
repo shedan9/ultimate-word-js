@@ -17,6 +17,7 @@
  * （图片、脚注…），每加一种就改遍所有签名的设计撑不住。
  */
 import type { Twips } from '@uw/core';
+import type { CommentContent } from './comments.ts';
 import type { ContentControl } from './content-control.ts';
 import type { Numbering } from './numbering.ts';
 import type { ParaProps, ResolvedParaProps, ResolvedRunProps, RunProps } from './props.ts';
@@ -627,6 +628,13 @@ export type Body = DocumentBody<DirectProps> & {
    * 控件**有哪些内容**不在这里，在节点的 `contentControl` 标记上（内容会被编辑，标记跟着节点走）。
    */
   contentControls?: Readonly<Record<NodeId, ContentControl>>;
+  /**
+   * 批注内容（`comments.xml`），按 `w:id` 索引、顺序同文件；文档没有批注时缺席。
+   *
+   * 放在树上的理由同 `contentControls`：批注能增删改（comment-edit.ts），内容与 run 上的 `comments` 标记
+   * 必须同进同退 —— 撤销只回退标记、不回退内容，就会剩一条罩不着字的批注或一段没有批注的标记。
+   */
+  comments?: Readonly<Record<string, CommentContent>>;
 };
 
 export type ResolvedRun = RunNode<ResolvedProps>;

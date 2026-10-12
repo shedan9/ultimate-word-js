@@ -34,6 +34,7 @@ import type {
   TableRow,
   TableWidth,
 } from '@uw/model';
+import { walkParagraphs } from '@uw/model';
 import type { XmlDocument, XmlElement, XmlNode } from '@uw/ooxml';
 import { child } from '@uw/ooxml';
 import { PPR_ORDER, patchParaProps, patchRunProps, RPR_ORDER } from './props-writer.ts';
@@ -136,6 +137,11 @@ export interface BodyWriteInput {
   body: Body;
   diagnostics?: DiagnosticSink;
   part?: string;
+  /**
+   * 删掉了的批注（原文 `comments.xml` 里有、编辑后没有）：它们的界桩与引用标记要从正文里摘掉，
+   * 否则 Word 看到一对指向不存在的批注的界桩。新加的批注不用传 —— 树上的标记与 `body.comments` 说得清
+   */
+  removedComments?: ReadonlySet<string>;
 }
 
 export function writeBody(input: BodyWriteInput): XmlDocument {
@@ -158,6 +164,13 @@ class BodyWriter {
   #bookmarkId: number | undefined;
   /** 下一个可用的修订 `w:id`，同上（合段搬走的修订要在新位置重新包一层） */
   #revisionId: number | undefined;
+  /**
+   * 新加的批注 → 罩着的头一个与末一个 run。界桩写在它们两边，引用标记紧跟末一个（Word 的写法：
+   * `commentRangeStart · 字 · commentRangeEnd · 引用`）。原文里已有界桩的批注不在这里 —— 界桩原样留在原处
+   */
+  readonly #newComments = new Map<string, { first: NodeId; last: NodeId }>();
+  /** 引用标记那个 run 的 `w:rPr`（批注引用的字符样式），照原文里第一个引用 run 抄；没有就不写 */
+  #refRPr: XmlElement | null | undefined;
 
   constructor(input: BodyWriteInput) {
     this.#in = input;
@@ -169,6 +182,18 @@ class BodyWriter {
       const last = section?.blocks.at(-1);
       const sectPr = section === undefined ? undefined : input.sources.nodes.get(section.id);
       if (last !== undefined && sectPr !== undefined) this.#sectFor.set(last.id, sectPr);
+    }
+    const marked = commentMarkerIds(input.original.root);
+    const fresh = new Set(Object.keys(input.body.comments ?? {}).filter((id) => !marked.has(id)));
+    if (fresh.size) {
+      for (const p of walkParagraphs(input.body))
+        for (const r of p.runs)
+          for (const id of r.comments ?? []) {
+            if (!fresh.has(id)) continue;
+            const span = this.#newComments.get(id);
+            if (span === undefined) this.#newComments.set(id, { first: r.id, last: r.id });
+            else span.last = r.id;
+          }
     }
   }
 
@@ -183,10 +208,12 @@ class BodyWriter {
     const last = out.at(-1);
     const tail = last?.kind === 'element' && last.name === 'w:sectPr' ? out.length - 1 : out.length;
     const children = [...out.slice(0, tail), ...rest, ...out.slice(tail)];
-    const root = {
+    let root: XmlElement = {
       ...original.root,
       children: original.root.children.map((c) => (c === bodyEl ? { ...bodyEl, children } : c)),
     };
+    const removed = this.#in.removedComments;
+    if (removed?.size) root = withoutCommentMarkers(root, removed);
     return { declaration: original.declaration, root };
   }
 
@@ -344,7 +371,7 @@ class BodyWriter {
         r !== undefined && !anchored(r) && sameMarks(r, marks);
         r = cur.items[cur.i]
       ) {
-        out.push(this.#run(r, cur.items[cur.i - 1]));
+        out.push(...this.#emit(r, this.#run(r, cur.items[cur.i - 1])));
         cur.i++;
       }
     };
@@ -366,7 +393,8 @@ class BodyWriter {
           cur.i++;
         }
         out.push(...this.#looseRuns(before, marks, prev));
-        out.push(this.#run(cur.items[cur.i++] as Run, undefined));
+        const anchor = cur.items[cur.i++] as Run;
+        out.push(...this.#emit(anchor, this.#run(anchor, undefined)));
         trailing();
       } else if (RUN_CONTAINERS.has(node.name)) {
         // 进容器之前，先把挂在外面这一层的新 run 放下 —— 它们在容器之前
@@ -497,7 +525,7 @@ class BodyWriter {
     let prev = template;
     for (let i = 0; i < runs.length; ) {
       const first = runs[i] as Run;
-      const group: XmlElement[] = [];
+      const group: XmlNode[] = [];
       for (
         ;
         i < runs.length &&
@@ -507,7 +535,7 @@ class BodyWriter {
         i++
       ) {
         const r = runs[i] as Run;
-        group.push(this.#run(r, prev));
+        group.push(...this.#emit(r, this.#run(r, prev)));
         prev = r;
       }
       let nodes: XmlNode[] = group;
@@ -531,6 +559,46 @@ class BodyWriter {
   }
 
   // ── run ─────────────────────────────────────────────────────────────────────
+
+  /**
+   * 一个 run 连同新批注在它两边的界桩：是哪条新批注的头一个 run 就在前面写 `commentRangeStart`，
+   * 是末一个就在后面写 `commentRangeEnd` + 引用 run。点批注的锚是个新造的空 run，它自己不写
+   * （空 `<w:r/>` 在 Word 里什么都不是），只写界桩与引用
+   */
+  #emit(run: Run, node: XmlElement): XmlNode[] {
+    if (this.#newComments.size === 0 || run.comments === undefined) return [node];
+    const before: XmlNode[] = [];
+    const ends: XmlNode[] = [];
+    const refs: XmlNode[] = [];
+    for (const id of run.comments) {
+      const span = this.#newComments.get(id);
+      if (span === undefined) continue;
+      if (span.first === run.id) before.push(el('w:commentRangeStart', { 'w:id': id }));
+      if (span.last === run.id) {
+        ends.push(el('w:commentRangeEnd', { 'w:id': id }));
+        refs.push(this.#referenceRun(id));
+      }
+    }
+    if (before.length + ends.length === 0) return [node];
+    const bare = run.content.length === 0 && !this.#in.sources.nodes.has(run.id);
+    return [...before, ...(bare ? [] : [node]), ...ends, ...refs];
+  }
+
+  #referenceRun(id: string): XmlElement {
+    if (this.#refRPr === undefined) {
+      this.#refRPr = null;
+      const walk = (node: XmlElement): boolean => {
+        if (node.name === 'w:r' && child(node, 'w:commentReference') !== undefined) {
+          this.#refRPr = child(node, 'w:rPr') ?? null;
+          return true;
+        }
+        return node.children.some((c) => c.kind === 'element' && walk(c));
+      };
+      walk(this.#in.original.root);
+    }
+    const ref = el('w:commentReference', { 'w:id': id });
+    return el('w:r', {}, this.#refRPr === null ? [ref] : [this.#refRPr, ref]);
+  }
 
   #run(run: Run, template: Run | undefined): XmlElement {
     const src = this.#in.sources.nodes.get(run.id);
@@ -1101,4 +1169,47 @@ function patchTcPr(
   if (next === tcPr) return tcPr;
   if (next.children.length === 0 && Object.keys(next.attrs).length === 0) return undefined;
   return next;
+}
+
+const COMMENT_MARKERS = new Set(['w:commentRangeStart', 'w:commentRangeEnd', 'w:commentReference']);
+
+/** 原文正文里出现过界桩或引用标记的批注 id */
+function commentMarkerIds(root: XmlElement): Set<string> {
+  const out = new Set<string>();
+  const walk = (node: XmlElement): void => {
+    if (COMMENT_MARKERS.has(node.name)) {
+      const id = node.attrs['w:id'];
+      if (id !== undefined) out.add(id);
+    }
+    for (const c of node.children) if (c.kind === 'element') walk(c);
+  };
+  walk(root);
+  return out;
+}
+
+/**
+ * 摘掉指向已删批注的界桩与引用标记。引用标记所在的 run 摘完只剩 `w:rPr` 的话整个不要 ——
+ * 留着就是一个带着「批注引用」字符样式的空 run
+ */
+function withoutCommentMarkers(node: XmlElement, removed: ReadonlySet<string>): XmlElement {
+  let changed = false;
+  const children: XmlNode[] = [];
+  for (const c of node.children) {
+    if (c.kind !== 'element') {
+      children.push(c);
+      continue;
+    }
+    if (COMMENT_MARKERS.has(c.name) && removed.has(c.attrs['w:id'] ?? '')) {
+      changed = true;
+      continue;
+    }
+    const next = withoutCommentMarkers(c, removed);
+    if (next !== c) {
+      changed = true;
+      if (next.name === 'w:r' && next.children.every((x) => x.kind !== 'element' || x.name === 'w:rPr'))
+        continue;
+    }
+    children.push(next);
+  }
+  return changed ? { ...node, children } : node;
 }

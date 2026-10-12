@@ -86,6 +86,14 @@ export interface TocUpdateResult {
   skipped: { reason: string }[];
 }
 
+/** 新批注 / 回复的署名与时间。缺席的取 `LoadOptions.author`、作者的首字、此刻 */
+export interface CommentOptions {
+  author?: string;
+  initials?: string;
+  /** 原样写进 `w:date`。缺席时按 Word 的惯例写**本地时间**带 `Z`（`2026-10-12T09:30:00Z`） */
+  date?: string;
+}
+
 /** docx 的 MIME，`toDocx()` 的 Blob 带着它，下载时浏览器才知道扩展名 */
 export const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
@@ -118,6 +126,8 @@ export interface UwDocumentInit {
   loaded: LoadedDocument;
   /** 原包。回写只重写改过的部件，其余条目从这里逐字节照搬；没有它就不能 `toDocx()` */
   pkg?: OpcPackage;
+  /** 新批注的默认署名（`LoadOptions.author`） */
+  author?: string;
   reflow?: (body: LoadedDocument['body']) => Reflowed;
   /** 换修订视图：把下一趟 `reflow` 要用的页眉页脚 / 注 / 文本框按新视图重新级联（见 load.ts） */
   setRevisionView?: (view: RevisionView) => void;
@@ -152,6 +162,7 @@ export class UwDocument {
   readonly #reflow: UwDocumentInit['reflow'];
   readonly #setRevisionView: UwDocumentInit['setRevisionView'];
   readonly #pkg: OpcPackage | undefined;
+  readonly #author: string | undefined;
   #prepared: (Reflowed & { duration: number }) | undefined;
   readonly #listeners = new Set<(change: TextChangeSet) => void>();
   readonly #views = new Set<(layout: DocumentLayout) => void>();
@@ -176,6 +187,7 @@ export class UwDocument {
     this.#reflow = init.reflow;
     this.#setRevisionView = init.setRevisionView;
     this.#pkg = init.pkg;
+    this.#author = init.author;
     this.#fieldValues = init.fieldValues;
     this.#diagnostics = [...init.diagnostics];
     this.#diagnosticKeys = new Set(this.#diagnostics.map(diagnosticKey));
@@ -271,7 +283,59 @@ export class UwDocument {
    * `view.overlay()` 挂气泡，样式由宿主定（api.md §8）
    */
   comments(): CommentSpan[] {
-    return listComments(this.#editor.body, this.#loaded.comments);
+    return listComments(this.#editor.body);
+  }
+
+  /**
+   * 新建批注（Word「审阅 → 新建批注」），返回它的 id。`range` 盖住的字打上标记，折叠的 range 是点批注；
+   * `text` 里 `\n` 分段。一个事务、一个撤销单元，`toDocx()` 写进 `comments.xml`（文档原来没有批注就新建部件）
+   */
+  addComment(range: DocRange, text: string, options: CommentOptions = {}): string {
+    let id = '';
+    this.tx((t) => {
+      id = t.addComment(range, { text, ...this.#signature(options) });
+    });
+    return id;
+  }
+
+  /** 回复一条批注，返回回复的 id。回复的回复挂到顶层那条上（Word 的批注线程只有一层） */
+  replyComment(id: string, text: string, options: CommentOptions = {}): string {
+    let reply = '';
+    this.tx((t) => {
+      reply = t.replyComment(id, { text, ...this.#signature(options) });
+    });
+    return reply;
+  }
+
+  /** 改批注正文（整个换掉）。作者与时间不变 */
+  editComment(id: string, text: string): void {
+    this.tx((t) => {
+      t.setCommentText(id, text);
+    });
+  }
+
+  /** 标记解决（`done = false` 重新打开）。改的是整条线程，与 Word 的「解决」按钮一致 */
+  resolveComment(id: string, done = true): void {
+    this.tx((t) => {
+      t.setCommentDone(id, done);
+    });
+  }
+
+  /** 删掉批注；删顶层那条连回复一起删 */
+  deleteComment(id: string): void {
+    this.tx((t) => {
+      t.deleteComment(id);
+    });
+  }
+
+  #signature(options: CommentOptions): { author?: string; initials?: string; date: string } {
+    const author = options.author ?? this.#author;
+    const initials = options.initials ?? (author === undefined ? undefined : [...author][0]);
+    return {
+      ...(author === undefined ? {} : { author }),
+      ...(initials === undefined ? {} : { initials }),
+      date: options.date ?? wordLocalDate(new Date()),
+    };
   }
 
   /** 收下一趟重排的结果、刷新视图，返回新发现的诊断（事件由调用方按自己的顺序派发） */
@@ -553,4 +617,13 @@ export class UwDocument {
 
 function diagnosticKey(d: Diagnostic): string {
   return [d.severity, d.code, d.message, d.part ?? '', d.path ?? ''].join('\u0000');
+}
+
+/**
+ * Word 写批注时间的样子：**本地时间**却带着 `Z`、不带毫秒（comments.ts）。照着写，同一份文件里
+ * 新旧批注的时间才可比；写真 UTC 的话，东八区的新批注在 Word 里会显示成早了八小时
+ */
+function wordLocalDate(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}Z`;
 }

@@ -83,6 +83,10 @@ export const RelType = {
   COMMENTS: `${OFFICE_DOC}/comments`,
   /** Word 2013 起的批注扩展（回复挂在谁下面、是否已解决）。微软自己的命名空间，不在 ECMA-376 里 */
   COMMENTS_EXTENDED: 'http://schemas.microsoft.com/office/2011/relationships/commentsExtended',
+  /** Word 2019 起：批注段落的 paraId → 跨会话不变的 durableId（`w16cid`）。只在删批注时顺手清掉指空的条目 */
+  COMMENTS_IDS: 'http://schemas.microsoft.com/office/2016/09/relationships/commentsIds',
+  /** Word 365 起：durableId → UTC 时间等（`w16cex`），同上 */
+  COMMENTS_EXTENSIBLE: 'http://schemas.microsoft.com/office/2018/08/relationships/commentsExtensible',
   IMAGE: `${OFFICE_DOC}/image`,
   HYPERLINK: `${OFFICE_DOC}/hyperlink`,
 } as const;

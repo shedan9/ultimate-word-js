@@ -48,4 +48,6 @@ export const ContentType = {
   SETTINGS: 'application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml',
   FONT_TABLE: 'application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml',
   THEME: 'application/vnd.openxmlformats-officedocument.theme+xml',
+  COMMENTS: 'application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml',
+  COMMENTS_EXTENDED: 'application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml',
 } as const;

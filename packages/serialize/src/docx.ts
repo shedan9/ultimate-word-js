@@ -9,7 +9,10 @@
  * - `document.xml` —— 正文变了（body-writer.ts，补丁式，未改的段落逐字节不变），或内容控件填了值
  * - `numbering.xml` —— 新建列表加了定义（numbering-writer.ts，只追加）
  * - `styles.xml` —— 套用文档里没有的内建样式补了定义（styles-writer.ts，只追加）
- * - 新建 numbering.xml / styles.xml 时，外加 `[Content_Types].xml` 与主文档的关系表各登记一条
+ * - `comments.xml` / `commentsExtended.xml` —— 批注增删改、回复、解决（comments-writer.ts，补丁式）；
+ *   删批注时还会清 `commentsIds.xml` / `commentsExtensible.xml` 里指空的条目
+ * - 新建 numbering.xml / styles.xml / comments.xml / commentsExtended.xml 时，外加 `[Content_Types].xml`
+ *   与主文档的关系表各登记一条
  *
  * 页眉页脚、设置都不编辑，所以都不写。`docProps/app.xml` 里的字数 / 页数统计
  * 会过期，Word 打开时自己重算，不写是对的 —— 写了也只是我们算的数，不是 Word 的。
@@ -17,10 +20,11 @@
 import type { DiagnosticSink } from '@uw/core';
 import { createDiagnosticSink } from '@uw/core';
 import type { Body, BodySources } from '@uw/model';
-import { parseBody, parseNumbering, parseStyles } from '@uw/model';
+import { parseBody, parseCommentParts, parseNumbering, parseStyles } from '@uw/model';
 import type { OpcPackage, XmlDocument } from '@uw/ooxml';
 import { ContentType, parseXml, RelType, relsPartNameOf, serializeXml } from '@uw/ooxml';
 import { writeBody } from './body-writer.ts';
+import { ParaIds, pruneCommentIds, writeComments } from './comments-writer.ts';
 import { addedNumbering, writeNumbering } from './numbering-writer.ts';
 import { addedStyles, writeStyles } from './styles-writer.ts';
 import { el, same } from './xml-edit.ts';
@@ -50,10 +54,16 @@ export function serializeDocx(pkg: OpcPackage, body: Body, options: SerializeOpt
   // 重新解析的诊断在加载时已经报过一遍，这里丢掉
   const originalBody = parseBody(original, createDiagnosticSink(), main, sources);
 
-  // 控件表单独比：值恰好等于占位文字时正文一个字没变，只有「占位符标记」清掉了
+  const originalComments = parseCommentParts(pkg, createDiagnosticSink()).comments;
+  const comments = body.comments ?? {};
+  const removedComments = new Set(Object.keys(originalComments).filter((id) => comments[id] === undefined));
+
+  // 控件表单独比：值恰好等于占位文字时正文一个字没变，只有「占位符标记」清掉了。
+  // 删掉的批注同理：界桩可能夹在空处（没罩着字，run 上没有标记），正文树一样也得摘
   if (
     !same(originalBody.sections, body.sections) ||
-    !same(originalBody.contentControls, body.contentControls)
+    !same(originalBody.contentControls, body.contentControls) ||
+    removedComments.size > 0
   ) {
     const doc = writeBody({
       original,
@@ -61,6 +71,7 @@ export function serializeDocx(pkg: OpcPackage, body: Body, options: SerializeOpt
       sources,
       body,
       part: main,
+      removedComments,
       ...(options.diagnostics === undefined ? {} : { diagnostics: options.diagnostics }),
     });
     changes.set(main, bytesOf(doc));
@@ -83,8 +94,47 @@ export function serializeDocx(pkg: OpcPackage, body: Body, options: SerializeOpt
     const part = stylesPart ?? registerPart(pkg, main, pending, STYLES_PART);
     changes.set(part, bytesOf(writeStyles(baseStyles, newStyles)));
   }
+
+  if (!same(originalComments, comments)) {
+    const commentsPart = pkg.partNameByRelType(RelType.COMMENTS);
+    const extendedPart = pkg.partNameByRelType(RelType.COMMENTS_EXTENDED);
+    const written = writeComments({
+      base: commentsPart === undefined ? undefined : pkg.xml(commentsPart),
+      baseExtended: extendedPart === undefined ? undefined : pkg.xml(extendedPart),
+      original: originalComments,
+      now: comments,
+      paraIds: new ParaIds(usedParaIds(pkg)),
+    });
+    if (written.comments !== undefined)
+      changes.set(commentsPart ?? registerPart(pkg, main, pending, COMMENTS_PART), bytesOf(written.comments));
+    if (written.extended !== undefined)
+      changes.set(
+        extendedPart ?? registerPart(pkg, main, pending, COMMENTS_EXTENDED_PART),
+        bytesOf(written.extended),
+      );
+    const idsPart = pkg.partNameByRelType(RelType.COMMENTS_IDS);
+    const extensiblePart = pkg.partNameByRelType(RelType.COMMENTS_EXTENSIBLE);
+    const pruned = pruneCommentIds(
+      idsPart === undefined ? undefined : pkg.xml(idsPart),
+      extensiblePart === undefined ? undefined : pkg.xml(extensiblePart),
+      written.removedParaIds,
+    );
+    if (idsPart !== undefined && pruned.ids !== undefined) changes.set(idsPart, bytesOf(pruned.ids));
+    if (extensiblePart !== undefined && pruned.extensible !== undefined)
+      changes.set(extensiblePart, bytesOf(pruned.extensible));
+  }
   for (const [part, doc] of pending) changes.set(part, bytesOf(doc));
   return pkg.save(changes);
+}
+
+/** 包里所有 XML 部件用过的 `w14:paraId`（新造的要避开它们：Word 要求全文唯一） */
+function usedParaIds(pkg: OpcPackage): string[] {
+  const out: string[] = [];
+  for (const part of pkg.partNames()) {
+    if (!part.endsWith('.xml')) continue;
+    for (const m of pkg.text(part).matchAll(/w14:paraId="([0-9A-Fa-f]+)"/g)) out.push(m[1] as string);
+  }
+  return out;
 }
 
 interface NewPart {
@@ -99,6 +149,16 @@ const NUMBERING_PART: NewPart = {
   relType: RelType.NUMBERING,
 };
 const STYLES_PART: NewPart = { base: 'styles', contentType: ContentType.STYLES, relType: RelType.STYLES };
+const COMMENTS_PART: NewPart = {
+  base: 'comments',
+  contentType: ContentType.COMMENTS,
+  relType: RelType.COMMENTS,
+};
+const COMMENTS_EXTENDED_PART: NewPart = {
+  base: 'commentsExtended',
+  contentType: ContentType.COMMENTS_EXTENDED,
+  relType: RelType.COMMENTS_EXTENDED,
+};
 
 /**
  * 原包没有这个部件：新建一个，登记内容类型与关系。部件名取 Word 的惯例（`/word/numbering.xml`，

@@ -126,7 +126,7 @@ interface RevisionSpan {
   「所有标记」下被删行的底色与段落标记处的 ¶、单元格级修订（`w:cellIns` / `w:cellDel`）；
   `revisions()` 不单列段落标记与整行（行里的字通常也包在 `w:del` 里，照样列得出来）。
 
-### 3.2 批注 🟢（2026-10-12）
+### 3.2 批注 🟢（2026-10-12，读 + 增删改 / 回复 / 解决）
 
 ```ts
 doc.comments();                   // CommentSpan[]：按锚点的文档序
@@ -151,8 +151,24 @@ interface CommentSpan {
   落在它身上的位置锚不住；点批注落在旁边那个字上。
 - 回复与「已解决」来自 Word 2013 起的 `commentsExtended.xml`（按批注末段的 `w14:paraId` 认），
   WPS / 老版 Word 没有这个部件，一律顶层、未解决。
-- 没做：批注的增删改、回复、标记解决（`comments.xml` 回写原样照搬）；脚注里的批注答不出 `range`；
-  批注正文只给纯文字（富文本在模型里有，门面没开口）。
+- 没做：脚注里的批注答不出 `range`；批注正文只给纯文字（富文本在模型里有，门面没开口）。
+
+**编辑**（2026-10-12）—— 每个调用一个事务、一个撤销单元，`toDocx()` 写回 `comments.xml`（与 `commentsExtended.xml`）：
+
+```ts
+const id = doc.addComment(range, '这里要核实', { author?, initials?, date? }); // 折叠的 range 是点批注
+const reply = doc.replyComment(id, '已核实');   // 回复的回复挂到顶层那条上（Word 的线程只有一层）
+doc.editComment(id, '改过的正文');              // 整个换掉，\n 分段；作者与时间不变
+doc.resolveComment(id);                          // 解决整条线程；resolveComment(id, false) 重新打开
+doc.deleteComment(id);                           // 删顶层那条连回复一起删
+
+UltimateWord.load(src, { author: '张三' });      // 新批注的默认署名；缩写缺省取首字
+```
+
+- 新 id 接着文档里用过的最大号往下编，**删掉的号不复用**（回写按 `w:id` 认原文里的那条）。
+- `date` 缺省按 Word 的惯例写**本地时间带 `Z`**（`2026-10-12T09:30:00Z`），与文件里原有的批注可比。
+- 底层是事务命令（`tx.addComment` / `replyComment` / `setCommentText` / `setCommentDone` / `deleteComment`），
+  要与别的编辑并成一个撤销单元就走 `doc.tx()`。
 
 > **当前实现**（2026-09-13）：`mode: 'preview' | 'edit'` 已可用，默认预览。
 > 编辑态接入文字 / 段落事务、模型选区与 IME。只有 DOM 渲染器，因此仍没有 `renderer`。
