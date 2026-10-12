@@ -13,6 +13,8 @@ import { createDiagnosticSink } from '@uw/core';
 import type { OpcPackage, XmlDocument } from '@uw/ooxml';
 import { RelType } from '@uw/ooxml';
 import type { CascadeContext } from './cascade.ts';
+import type { LoadedComments } from './comments.ts';
+import { parseCommentParts } from './comments.ts';
 import type { FieldRegion } from './fields.ts';
 import { fieldHyperlinks, scanFields } from './fields.ts';
 import type { FontTable } from './font-table.ts';
@@ -123,6 +125,11 @@ export interface LoadedDocument {
    * 对象上只有引用，内容在这里。**不可编辑**（文本框里的编辑没做），重排时照旧用加载时级联好的这一份
    */
   textBoxes: Record<string, TextBoxContent>;
+  /**
+   * 批注内容（`comments.xml`），按 `w:id` 索引，见 comments.ts。罩着哪些字在正文 run 的
+   * `comments` 标记上。**不级联、不排版**：批注框画不画、画在哪由宿主定，这里只给数据
+   */
+  comments: LoadedComments;
 }
 
 /** 一个文本框的内容。两棵树的分工与页眉页脚一致 */
@@ -252,6 +259,7 @@ export function loadDocument(
     numbering: cascade.numbering,
     notes,
     textBoxes,
+    comments: parseCommentParts(pkg, diagnostics),
   };
 }
 

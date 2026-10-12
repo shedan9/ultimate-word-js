@@ -11,6 +11,7 @@ export * from './bookmarks.ts';
 export * from './cascade.ts';
 export * from './cascade-table.ts';
 export * from './clear-format.ts';
+export * from './comments.ts';
 export * from './content-control.ts';
 export * from './date-format.ts';
 export * from './fields.ts';

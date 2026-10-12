@@ -281,6 +281,15 @@ export interface RunNode<S extends PropSet> {
    * 压平成标记的道理与超链接相同。
    */
   revision?: RunRevision;
+  /**
+   * 罩着这个 run 的批注（`w:commentRangeStart` / `End` 之间，外加 `w:commentReference` 所在的那个 run），
+   * 存的是 `comments.xml` 里的 `w:id`，按范围开始的先后。见 comments.ts。
+   *
+   * 批注范围可以**交叠**（A 罩 1–5 字、B 罩 3–8 字），不像内容控件那样嵌套，所以是数组而不是一个 id。
+   * 做成标记而不是「批注 → 起止位置」的表，理由同内容控件：拆 run、拆段时 `{ ...原节点 }` 自动带着，
+   * 前面插了字范围不用映射。只在可编辑的树上，级联树不带 —— 排版用不上，带上还会进段落缓存的键
+   */
+  comments?: string[];
 }
 
 /**

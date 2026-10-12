@@ -120,6 +120,34 @@ interface RevisionSpan {
 - 没做：段落标记的修订（最终状态下该与下一段合成一段，现在仍是两段）、表格行的增删、
   格式修订（`w:rPrChange`，显示改后的格式、不标记）、批注框、「简单标记」的那条红竖线。
 
+### 3.2 批注 🟢（2026-10-12）
+
+```ts
+doc.comments();                   // CommentSpan[]：按锚点的文档序
+
+interface CommentSpan {
+  id: string;                     // comments.xml 的 w:id
+  author?: string;
+  initials?: string;
+  date?: string;                  // 原样的 ISO 串（Word 写本地时间却带 Z，不换算）
+  parent?: string;                // 回复：被回复那条的 id（commentsExtended.xml）
+  done: boolean;                  // 已解决
+  text: string;                   // 批注正文，段间 \n
+  quote: string;                  // 罩着的原文，段间 \n；点批注为空串
+  range?: DocRange;               // 此刻罩着的范围；点批注是折叠的；罩着的字删光了就没有
+}
+```
+
+- **视图不画批注框**：Word 的批注栏要把整页缩小、重排，那是 Word 的界面不是文档的版式。
+  拿 `range` 交给 `view.decorate()` 标底色、`view.overlay()` 挂气泡（配方见 §15），长什么样是宿主的事。
+- 范围是正文 run 上的**标记**（与内容控件同理），所以编辑之后照样罩着同一段字、范围里插字跟着变长、
+  撤销复原；不用宿主映射位置。两端只落在**有字**的 run 上 —— 引用标记所在的那个空 run 布局里没有，
+  落在它身上的位置锚不住；点批注落在旁边那个字上。
+- 回复与「已解决」来自 Word 2013 起的 `commentsExtended.xml`（按批注末段的 `w14:paraId` 认），
+  WPS / 老版 Word 没有这个部件，一律顶层、未解决。
+- 没做：批注的增删改、回复、标记解决（`comments.xml` 回写原样照搬）；脚注里的批注答不出 `range`；
+  批注正文只给纯文字（富文本在模型里有，门面没开口）。
+
 > **当前实现**（2026-09-13）：`mode: 'preview' | 'edit'` 已可用，默认预览。
 > 编辑态接入文字 / 段落事务、模型选区与 IME。只有 DOM 渲染器，因此仍没有 `renderer`。
 > `virtualize` / `classPrefix` / `fontFamily` / `debug` 从底层原样透出。
@@ -864,6 +892,20 @@ for (const h of doc.query('paragraph[styleId=Heading1]')) {
 }
 ```
 
+### 把 Word 批注挂到页边
+
+```ts
+for (const c of doc.comments()) {
+  if (!c.range || c.parent) continue;               // 回复跟着顶层那条一起画
+  view.decorate(c.range, { className: 'comment' });
+  const thread = [c, ...doc.comments().filter(r => r.parent === c.id)];
+  view.overlay(c.range.start, renderThread(thread), { placement: 'right-of-line', offset: { x: 12, y: 0 } });
+}
+doc.on('document:change', redraw);                  // 范围跟着字走，重画一遍就对
+```
+
+`apps/playground` 的「批注」开关就是这一段：被批的字按作者着色，页边一枚首字圆章，点开是整串回复。
+
 ### 点目录条目跳到标题
 
 ```ts
@@ -921,4 +963,5 @@ main.on('viewport:change', ({ visiblePages }) => thumbs.scrollTo({ page: visible
 | `tx` · `undo` / `redo` · 选区 · IME | Phase 7 |
 | `toDocx` | Phase 8 |
 | `bindings` | ✅（2026-09-28，建在 Phase 7 的事务与 Phase 8 的回写上） |
+| `comments`（只读） | ✅（2026-10-12） |
 | `@uw/react` | Phase 6 ✅（2026-09-13） |

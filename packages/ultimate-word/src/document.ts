@@ -18,6 +18,7 @@ import type { Diagnostic } from '@uw/core';
 import type { DocumentLayout } from '@uw/layout';
 import { indentCharUnit, paragraphPageNumbers } from '@uw/layout';
 import type {
+  CommentSpan,
   DirectProps,
   DocPosition,
   DocRange,
@@ -45,6 +46,7 @@ import {
   findMatches,
   findText,
   fragmentOfRange,
+  listComments,
   listRevisions,
   paragraphStyleNames,
   paragraphsOfRange,
@@ -70,7 +72,7 @@ import { createView } from './view.ts';
 /** `query()` 答的节点：段落 / run / 表格 / 行 / 格，直接格式那棵树上的 */
 export type DocNode = QueryNode<DirectProps>;
 
-export type { FindOptions, RevisionSpan, RevisionView, TextMatch };
+export type { CommentSpan, FindOptions, RevisionSpan, RevisionView, TextMatch };
 
 /** `replaceAll` 的结果。跳过的是落在域（页码、目录、超链接域的显示文字）里的命中，事务改不了它们 */
 export interface ReplaceResult {
@@ -259,6 +261,17 @@ export class UwDocument {
    */
   revisions(): RevisionSpan[] {
     return listRevisions(this.#editor.body);
+  }
+
+  /**
+   * 文档里的批注（`comments.xml`），按锚点的文档序；回复带 `parent`、已解决的带 `done`。
+   * `range` 是此刻罩着的字 —— 编辑之后照样跟着（标记挂在 run 上），罩着的字删光了就没有 `range`。
+   *
+   * 视图不画批注框（Word 的批注栏要把整页缩小重排）：拿 `range` 交给 `view.decorate()` 标底色、
+   * `view.overlay()` 挂气泡，样式由宿主定（api.md §8）
+   */
+  comments(): CommentSpan[] {
+    return listComments(this.#editor.body, this.#loaded.comments);
   }
 
   /** 收下一趟重排的结果、刷新视图，返回新发现的诊断（事件由调用方按自己的顺序派发） */

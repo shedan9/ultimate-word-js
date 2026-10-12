@@ -13,7 +13,14 @@
  * 换一台没有中文字体的机器打开，断行点与基线一个都不会动。
  */
 import { twipsToPt } from '@uw/core';
-import type { DecorationHandle, DocRange, UwDocument, UwView } from 'ultimate-word';
+import type {
+  CommentSpan,
+  DecorationHandle,
+  DocRange,
+  OverlayHandle,
+  UwDocument,
+  UwView,
+} from 'ultimate-word';
 import { UltimateWord } from 'ultimate-word';
 
 const app = document.querySelector<HTMLElement>('#app');
@@ -28,6 +35,7 @@ app.innerHTML = `
     <label><input type="checkbox" class="text-layer" checked> 原生选区</label>
     <label><input type="checkbox" class="edit-mode"> 编辑</label>
     <label><input type="checkbox" class="virtualize" checked> 按需绘制</label>
+    <label><input type="checkbox" class="show-comments" checked> 批注<span class="comment-count"></span></label>
     <label>修订 <select class="revisions" disabled>
       <option value="final">最终状态</option>
       <option value="markup">所有标记</option>
@@ -55,6 +63,8 @@ const hitsLabel = app.querySelector<HTMLElement>('.hits') as HTMLElement;
 const exportButton = app.querySelector<HTMLButtonElement>('.export') as HTMLButtonElement;
 const tocButton = app.querySelector<HTMLButtonElement>('.toc') as HTMLButtonElement;
 const revisionSelect = app.querySelector<HTMLSelectElement>('.revisions') as HTMLSelectElement;
+const commentsInput = app.querySelector<HTMLInputElement>('.show-comments') as HTMLInputElement;
+const commentCount = app.querySelector<HTMLElement>('.comment-count') as HTMLElement;
 
 let doc: UwDocument | undefined;
 let view: UwView | undefined;
@@ -88,7 +98,90 @@ function remount(): void {
     if (target !== undefined) current.scrollTo(target, { align: 'start', behavior: 'smooth' });
   });
   search.rerun();
+  comments.render();
 }
+
+/**
+ * 批注 = `doc.comments()`（模型）→ `view.decorate` 着色 + `view.overlay` 挂圆章（视图），
+ * 视图本身不画批注框（api.md §8）。一串回复挂一枚章，挂在顶层那条的起点所在行的右边；
+ * 编辑后范围跟着字走，所以 `document:change` 时整套重画一遍就对
+ */
+const comments = (() => {
+  let handles: (DecorationHandle | OverlayHandle)[] = [];
+  const clear = () => {
+    for (const h of handles) h.dispose();
+    handles = [];
+  };
+  const when = (date: string | undefined) => (date === undefined ? '' : date.slice(0, 16).replace('T', ' '));
+  const entry = (c: CommentSpan): HTMLElement => {
+    const el = document.createElement('div');
+    el.className = 'comment-entry';
+    const who = document.createElement('span');
+    who.className = 'comment-who';
+    who.textContent = c.author ?? '（无名）';
+    const at = document.createElement('span');
+    at.className = 'comment-when';
+    at.textContent = when(c.date);
+    const text = document.createElement('p');
+    text.className = 'comment-text';
+    text.textContent = c.text;
+    el.append(who, at, text);
+    return el;
+  };
+  const render = () => {
+    clear();
+    if (doc === undefined || view === undefined) return;
+    const list = doc.comments();
+    commentCount.textContent = list.length === 0 ? '' : `（${list.length}）`;
+    if (!commentsInput.checked) return;
+    const authors = new Map<string, number>();
+    const tone = (c: CommentSpan) => {
+      const key = c.author ?? '';
+      if (!authors.has(key)) authors.set(key, authors.size % 5);
+      return `author-${authors.get(key)}`;
+    };
+    const ids = new Set(list.map((c) => c.id));
+    for (const c of list) {
+      if (c.range !== undefined && c.parent === undefined) {
+        handles.push(view.decorate(c.range, { className: `comment-range ${tone(c)}` }));
+      }
+    }
+    for (const head of list) {
+      if (head.range === undefined || (head.parent !== undefined && ids.has(head.parent))) continue;
+      const thread = [head, ...list.filter((c) => c.parent === head.id)];
+      const box = document.createElement('div');
+      box.className = `comment-thread ${tone(head)}${head.done ? ' done' : ''}`;
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'comment-chip';
+      chip.textContent = (head.initials ?? head.author ?? '?').slice(0, 1);
+      chip.setAttribute('aria-expanded', 'false');
+      chip.setAttribute('aria-label', `${head.author ?? '批注'}：${head.text}`);
+      const card = document.createElement('div');
+      card.className = 'comment-card';
+      card.hidden = true;
+      card.append(...thread.map(entry));
+      if (head.done) {
+        const state = document.createElement('div');
+        state.className = 'comment-state';
+        state.textContent = '已解决';
+        card.append(state);
+      }
+      chip.addEventListener('click', () => {
+        card.hidden = !card.hidden;
+        // 每个 overlay 外壳自成层叠上下文（z-index:3），点开的那一串要把外壳抬起来才盖得住下面几行的圆章
+        const shell = box.closest<HTMLElement>('[data-overlay]');
+        if (shell !== null) shell.style.zIndex = card.hidden ? '3' : '4';
+        chip.setAttribute('aria-expanded', String(!card.hidden));
+      });
+      box.append(chip, card);
+      handles.push(
+        view.overlay(head.range.start, box, { placement: 'right-of-line', offset: { x: 12, y: 0 } }),
+      );
+    }
+  };
+  return { render, clear };
+})();
 
 /**
  * 查找 = `doc.find`（模型）→ `view.decorate`（视图）→ `view.scrollTo`（视图）三步，
@@ -142,6 +235,8 @@ async function openFile(file: File): Promise<void> {
     exportButton.disabled = false;
     tocButton.disabled = false;
     revisionSelect.disabled = false;
+    // 编辑改了批注罩着的字，范围跟着变：整套重画
+    doc.on('document:change', () => comments.render());
 
     const first = doc.layout.pages[0]?.geometry;
     const size =
@@ -205,6 +300,7 @@ debugInput.addEventListener('change', remount);
 textLayerInput.addEventListener('change', remount);
 virtualizeInput.addEventListener('change', remount);
 editInput.addEventListener('change', remount);
+commentsInput.addEventListener('change', comments.render);
 findInput.addEventListener('input', search.rerun);
 findInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {

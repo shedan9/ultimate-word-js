@@ -317,6 +317,26 @@ describe('表格', () => {
   });
 });
 
+describe('批注范围（RunNode.comments）', () => {
+  it('界桩落在哪一层都开合：从正文直下开始、穿过表格、在单元格里结束；交叠的两条各记各的', () => {
+    const { list } = paras(
+      `<w:p><w:r><w:t>前</w:t></w:r></w:p><w:commentRangeStart w:id="7"/>` +
+        `<w:tbl><w:tr><w:tc><w:p><w:r><w:t>格</w:t></w:r><w:commentRangeStart w:id="8"/><w:r><w:t>内</w:t></w:r></w:p>` +
+        `<w:commentRangeEnd w:id="7"/></w:tc></w:tr></w:tbl>` +
+        `<w:p><w:ins w:id="1"><w:r><w:t>后</w:t></w:r></w:ins><w:commentRangeEnd w:id="8"/><w:r><w:commentReference w:id="8"/></w:r></w:p>${SECT}`,
+    );
+    const marks = list.flatMap((p) => p.runs.map((r) => [paragraphText({ ...p, runs: [r] }), r.comments]));
+    expect(marks).toEqual([
+      ['前', undefined],
+      ['格', ['7']],
+      ['内', ['7', '8']],
+      ['后', ['8']],
+      // 引用标记所在的 run 归它指的那条批注 —— 点批注只有这一处能落脚
+      ['', ['8']],
+    ]);
+  });
+});
+
 describe('未知元素', () => {
   it('报一条诊断后跳过，同名的只报一次 —— 否则一份文档能刷出上千条', () => {
     const { sink } = paras(`<w:p><w:zzz/><w:zzz/><w:r><w:qqq/></w:r></w:p>${SECT}`);

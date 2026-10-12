@@ -41,6 +41,7 @@ import { attrOf, attrOnOff, enumVal } from './xml-values.ts';
 /**
  * 排版上完全无关、见到就跳过的元素 —— 书签终点、拼写检查标记、批注范围、编辑权限范围。
  * 书签**起点**不在这里：PAGEREF 要知道书签落在第几页，起点记到段落上（`ParagraphNode.bookmarks`）。
+ * 批注范围在这里但**不白跳**：`skipped()` 顺手开合 `Ctx.comments`，夹在中间的 run 标上批注 id。
  *
  * 它们**不该**进诊断：每份 Word 文档都有一堆，报出来只会淹掉真正的未知元素。
  */
@@ -121,6 +122,11 @@ interface Ctx {
   lastParagraph: Paragraph | undefined;
   /** 文本框内容往哪儿摊、形状颜色按哪套主题换算，见 `ParseExtras` */
   extras: ParseExtras;
+  /**
+   * 此刻开着的批注范围（`w:commentRangeStart` 见过、`w:commentRangeEnd` 还没见），按开的先后。
+   * 跨段落、跨表格一直开着 —— 批注常罩着好几段，所以它挂在整个部件的上下文上而不是段落上
+   */
+  comments: string[];
 }
 
 /**
@@ -163,6 +169,21 @@ function record(ctx: Ctx, id: NodeId, el: XmlElement): void {
   ctx.sources?.nodes.set(id, el);
 }
 
+/**
+ * 该不该悄悄跳过（`IGNORED`）。批注范围的两个界桩在这里开合 `Ctx.comments` ——
+ * 它们能出现在 body / 段落 / 表格 / 行 / 格 / 内容控件里的任何一层，每层各写一遍判断会漏
+ */
+function skipped(ctx: Ctx, el: XmlElement): boolean {
+  if (el.name === 'w:commentRangeStart' || el.name === 'w:commentRangeEnd') {
+    const id = attr(el, 'w:id');
+    if (id !== undefined) {
+      ctx.comments = ctx.comments.filter((c) => c !== id);
+      if (el.name === 'w:commentRangeStart') ctx.comments.push(id);
+    }
+  }
+  return IGNORED.has(el.name);
+}
+
 function nextId(ctx: Ctx, prefix: string): NodeId {
   const n = ctx.counters.get(prefix) ?? 0;
   ctx.counters.set(prefix, n + 1);
@@ -200,6 +221,7 @@ export function parseBody(
     bookmarks: [],
     lastParagraph: undefined,
     extras,
+    comments: [],
   };
   const body = child(doc.root, 'w:body');
   if (body === undefined) {
@@ -245,7 +267,7 @@ export function parseBody(
         pendBookmark(ctx, el);
         break;
       default:
-        if (!IGNORED.has(el.name)) unknown(ctx, el, 'w:body');
+        if (!skipped(ctx, el)) unknown(ctx, el, 'w:body');
     }
   }
   flushBookmarks(ctx);
@@ -317,6 +339,56 @@ export function parseNotes(
   return out;
 }
 
+/** `comments.xml` 里的一条批注 */
+export interface ParsedComment {
+  /** `w:id`。正文里的 `w:commentRangeStart` / `w:commentReference` 指的就是它 */
+  id: string;
+  author?: string;
+  initials?: string;
+  /** `w:date` 原样（ISO 8601，Word 写的是**本地时间**却带着 `Z`，不换算） */
+  date?: string;
+  /**
+   * 批注**最后一段**的 `w14:paraId` —— `commentsExtended.xml` 用它认批注（回复挂在谁下面、
+   * 是否已解决），不用 `w:id`。只能从原文 XML 读：段落节点不带它
+   */
+  paraId?: string;
+  blocks: Block[];
+}
+
+/**
+ * `comments.xml` → 一条条批注。与 `parseNotes` 同一套：根下一列 `w:comment`，每条里面直接挂块，
+ * 整个部件共用一个 id 前缀与计数器
+ */
+export function parseComments(
+  doc: XmlDocument,
+  diagnostics: DiagnosticSink,
+  part: string,
+  idPrefix: string,
+): ParsedComment[] {
+  const ctx = partCtx(diagnostics, part, idPrefix, {});
+  const out: ParsedComment[] = [];
+  for (const el of children(doc.root)) {
+    if (el.name !== 'w:comment') continue;
+    const id = attr(el, 'w:id');
+    if (id === undefined) continue;
+    const comment: ParsedComment = { id, blocks: blockList(ctx, el) };
+    flushBookmarks(ctx);
+    const author = attr(el, 'w:author');
+    const initials = attr(el, 'w:initials');
+    const date = attr(el, 'w:date');
+    const last = children(el)
+      .filter((p) => p.name === 'w:p')
+      .at(-1);
+    const paraId = last === undefined ? undefined : attr(last, 'w14:paraId');
+    if (author !== undefined) comment.author = author;
+    if (initials !== undefined) comment.initials = initials;
+    if (date !== undefined) comment.date = date;
+    if (paraId !== undefined) comment.paraId = paraId;
+    out.push(comment);
+  }
+  return out;
+}
+
 /** 正文以外的部件（页眉页脚、脚注）共用的解析上下文 */
 function partCtx(diagnostics: DiagnosticSink, part: string, idPrefix: string, extras: ParseExtras): Ctx {
   return {
@@ -332,6 +404,7 @@ function partCtx(diagnostics: DiagnosticSink, part: string, idPrefix: string, ex
     bookmarks: [],
     lastParagraph: undefined,
     extras,
+    comments: [],
   };
 }
 
@@ -377,7 +450,7 @@ function blockList(ctx: Ctx, parent: XmlElement): Block[] {
         pendBookmark(ctx, el);
         break;
       default:
-        if (!IGNORED.has(el.name)) unknown(ctx, el, parent.name);
+        if (!skipped(ctx, el)) unknown(ctx, el, parent.name);
     }
   }
   return out;
@@ -404,7 +477,7 @@ function sdtBlocks(ctx: Ctx, sdt: XmlElement): Block[] {
     else if (el.name === 'w:tbl') out.push(parseTable(ctx, el));
     else if (el.name === 'w:sdt') out.push(...sdtBlocks(ctx, el));
     else if (el.name === 'w:bookmarkStart') pendBookmark(ctx, el);
-    else if (!IGNORED.has(el.name)) unknown(ctx, el, 'w:sdtContent');
+    else if (!skipped(ctx, el)) unknown(ctx, el, 'w:sdtContent');
   }
   ctx.blockControl = outer;
   return out;
@@ -516,7 +589,7 @@ function collectRuns(ctx: Ctx, parent: XmlElement, out: Run[], marks: RunMarks, 
       collectRuns(ctx, el, out, { ...marks, revision: revisionOf(el) }, bookmarks);
     } else if (el.name === 'w:pPr') {
       // 段落属性已在别处解析
-    } else if (!IGNORED.has(el.name)) {
+    } else if (!skipped(ctx, el)) {
       unknown(ctx, el, parent.name);
     }
   }
@@ -534,6 +607,15 @@ function parseRun(ctx: Ctx, r: XmlElement, marks: RunMarks): Run {
   if (marks.field !== undefined) run.fieldSimple = marks.field;
   if (marks.control !== undefined) run.contentControl = marks.control;
   if (marks.revision !== undefined) run.revision = marks.revision;
+  // 引用标记（`w:commentReference`）所在的 run 也算进那条批注：范围是空的（只在一个点上批）
+  // 或文件里压根没写范围（老文档）时，它是唯一能落脚的地方。这个 run 本身没有内容，
+  // 算进来不会让范围多罩一个字
+  const refs = children(r)
+    .filter((el) => el.name === 'w:commentReference')
+    .map((el) => attr(el, 'w:id'))
+    .filter((id): id is string => id !== undefined);
+  const comments = [...ctx.comments, ...refs.filter((id) => !ctx.comments.includes(id))];
+  if (comments.length) run.comments = comments;
   return run;
 }
 
@@ -674,7 +756,7 @@ function parseTable(ctx: Ctx, tbl: XmlElement): Table {
       }
     } else if (el.name === 'w:bookmarkStart') {
       pendBookmark(ctx, el);
-    } else if (el.name !== 'w:tblPr' && el.name !== 'w:tblGrid' && !IGNORED.has(el.name)) {
+    } else if (el.name !== 'w:tblPr' && el.name !== 'w:tblGrid' && !skipped(ctx, el)) {
       unknown(ctx, el, 'w:tbl');
     }
   }
@@ -700,7 +782,7 @@ function parseRow(ctx: Ctx, tr: XmlElement): TableRow {
       if (content !== undefined) for (const tc of children(content, 'w:tc')) cells.push(parseCell(ctx, tc));
     } else if (el.name === 'w:bookmarkStart') {
       pendBookmark(ctx, el);
-    } else if (el.name !== 'w:trPr' && el.name !== 'w:tblPrEx' && !IGNORED.has(el.name)) {
+    } else if (el.name !== 'w:trPr' && el.name !== 'w:tblPrEx' && !skipped(ctx, el)) {
       unknown(ctx, el, 'w:tr');
     }
   }
@@ -728,7 +810,7 @@ function parseCell(ctx: Ctx, tc: XmlElement): TableCell {
     else if (el.name === 'w:tbl') blocks.push(parseTable(ctx, el));
     else if (el.name === 'w:sdt') blocks.push(...sdtBlocks(ctx, el));
     else if (el.name === 'w:bookmarkStart') pendBookmark(ctx, el);
-    else if (el.name !== 'w:tcPr' && !IGNORED.has(el.name)) unknown(ctx, el, 'w:tc');
+    else if (el.name !== 'w:tcPr' && !skipped(ctx, el)) unknown(ctx, el, 'w:tc');
   }
 
   const vMergeEl = tcPr === undefined ? undefined : child(tcPr, 'w:vMerge');

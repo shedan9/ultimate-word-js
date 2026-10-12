@@ -80,6 +80,9 @@ export const RelType = {
   FOOTER: `${OFFICE_DOC}/footer`,
   FOOTNOTES: `${OFFICE_DOC}/footnotes`,
   ENDNOTES: `${OFFICE_DOC}/endnotes`,
+  COMMENTS: `${OFFICE_DOC}/comments`,
+  /** Word 2013 起的批注扩展（回复挂在谁下面、是否已解决）。微软自己的命名空间，不在 ECMA-376 里 */
+  COMMENTS_EXTENDED: 'http://schemas.microsoft.com/office/2011/relationships/commentsExtended',
   IMAGE: `${OFFICE_DOC}/image`,
   HYPERLINK: `${OFFICE_DOC}/hyperlink`,
 } as const;

@@ -1044,6 +1044,21 @@ await view.toPNG(2);     // 第 3 页（页序号从 0 起，与 scrollTo({ page
   - 未做：段落标记的修订（`w:pPr/w:rPr/w:del` —— 最终状态下该与下一段合成一段）、表格行的增删（`w:trPr/w:ins|del`）、
     格式修订（`w:rPrChange` / `w:pPrChange`）、批注框、「简单标记」的红竖线、接受 / 拒绝（非目标）、
     `markup` 下复制会带上被删的字
+- ✅ **批注（只读）**（2026-10-12，`@uw/model` 的 `comments.ts`）：原来 `w:commentRangeStart` / `End` / `w:commentReference`
+  在解析时一律跳过、`comments.xml` 根本不读 —— 审阅过的周报打开来看不到任何批注。
+  - `@uw/model`：批注范围压平成 run 上的标记（`RunNode.comments`，**数组** —— 批注能交叠，不像内容控件那样嵌套），
+    开合在 `parse-body.ts` 的 `skipped()` 里做：界桩能出现在 body / 段落 / 表格 / 行 / 格 / 控件的任何一层，
+    每层各写一遍判断会漏；范围跨段、跨表格一直开着。引用标记所在的 run 也标上那条批注（点批注与老文档只有它能落脚）。
+    标记只在可编辑的树上（级联树不带，排版用不上、带上还会进段落缓存的键）。内容走 `parseComments()`
+    （与 `parseNotes` 同一套，id 前缀 `cm:`）摊进 `LoadedDocument.comments`；回复与「已解决」读 `commentsExtended.xml`，
+    按批注**末段的 `w14:paraId`** 认（不按 `w:id`）。`listComments()` 现算范围：两端只取**有字**的 run ——
+    引用标记那个空 run 布局里没有片段，落在它身上的位置命中测试与光标都答不出来（调试台上点批注的圆章因此一度挂不上），
+    点批注落在旁边那个字上
+  - 门面：`doc.comments()`（api.md §3.2）。**视图不画批注框**：Word 的批注栏要把整页缩小重排，那是界面不是版式；
+    宿主拿 `range` 走 `decorate` / `overlay`。调试台加了「批注」开关（按作者着色 + 页边首字圆章，点开整串回复，已解决的变淡）
+  - 回写一个字没改：正文走原文 XML 树，批注界桩是段落里的非 run 元素，编辑过的段落也照样吐回；`comments.xml` 逐字节照搬
+  - 判据：解析 1 项（跨表格开合 + 交叠 + 引用 run）、门面 3 项（字段 / 排序 / 点批注锚点、编辑后范围跟着字、回写后再加载一致）
+  - 未做：批注的增删改 / 回复 / 标记解决、脚注里的批注答不出 `range`、门面只给批注正文的纯文字
 - ~~**图片的几何标定**~~ ✅（2026-08-25）两份新样本 + `pnpm --filter @uw/fidelity spike:image`。
   为它给真值管线加了一路新数据：`truth.json` 的 `pages[].images[]`（照着 PDF 算子表把
   `q` / `Q` / `cm` 演一遍 CTM 读出来 —— 图片在 PDF 里没有自己的坐标，位置与大小全在矩阵里）。

@@ -23,6 +23,29 @@
       /* 查找命中：装饰只给位置，长什么样是宿主的事 */
       .hit { background: rgba(255, 211, 61, .45); }
       .hit-current { background: rgba(255, 128, 0, .6); outline: 1px solid #d4640a; }
+      /* 批注：被批的字按作者着一层淡色，页边一枚首字圆章，点开是整串回复。
+         作者色只有五个，按出现顺序轮着用 —— 与查找的黄色分开，两者同时开着也认得出 */
+      .author-0 { --c: #0f766e; } .author-1 { --c: #7c3aed; } .author-2 { --c: #be185d; }
+      .author-3 { --c: #1d4ed8; } .author-4 { --c: #a16207; }
+      .comment-range { background: color-mix(in srgb, var(--c) 18%, transparent); border-bottom: 1.5px solid var(--c); }
+      .comment-thread { position: relative; }
+      .comment-chip {
+        width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; cursor: pointer;
+        background: var(--c); color: #fff; font: 600 11px/22px system-ui, sans-serif;
+      }
+      .comment-chip:focus-visible { outline: 2px solid #1f2328; outline-offset: 2px; }
+      .comment-thread.done .comment-chip { opacity: .45; }
+      .comment-card {
+        position: absolute; top: 28px; right: 0; z-index: 2; width: 240px; padding: 10px 12px;
+        background: #fff; color: #1f2328; border-left: 3px solid var(--c); border-radius: 4px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, .25); font-size: 13px; text-align: left;
+      }
+      .comment-card[hidden] { display: none; }
+      .comment-entry + .comment-entry { margin-top: 8px; padding: 8px 0 0 12px; border-top: 1px solid #d0d7de; }
+      .comment-who { font-weight: 600; }
+      .comment-when { margin-left: 6px; color: #57606a; font-size: 12px; }
+      .comment-text { margin: 2px 0 0; white-space: pre-wrap; }
+      .comment-state { margin-top: 8px; color: #57606a; font-size: 12px; }
       .find input { width: 160px; }
       .hits { min-width: 4em; opacity: .8; font-variant-numeric: tabular-nums; }
     </style>

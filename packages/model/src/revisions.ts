@@ -154,7 +154,7 @@ function sameRevision(a: RunRevision, b: RunRevision): boolean {
 }
 
 /** 修订里看得见的那部分文字：文字原样，制表位 / 换行写成 `\t` / `\n`，对象写 U+FFFC，界桩与指令不算 */
-function runText<S extends PropSet>(run: RunNode<S>): string {
+export function runText<S extends PropSet>(run: RunNode<S>): string {
   let s = '';
   for (const c of run.content) {
     if (c.kind === 'text') s += c.text;
