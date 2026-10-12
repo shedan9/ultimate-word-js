@@ -18,12 +18,13 @@
  * ③ **裁剪（`a:srcRect`）不改外框。** 它的四个值是「从这条边往里裁掉百分之多少」，
  *    裁剩的那一块被**拉伸**回原来的外框。当成「外框变小」会让图整个缩水。
  *
- * ## VML（`w:pict`）只取两样：图片引用与外框尺寸
+ * ## VML（`w:pict`）：图片引用、外框尺寸与几种基本形状
  *
- * VML 图形本身是非目标（开发计划 §5），但老文件（以及 Word 为兼容写的 Fallback）里的
- * 图片都走这条路 —— 公文的红头与印章尤其常见。只解析 `style` 的外框与定位
- * 与 `v:imagedata@r:id`，够把图画在对的地方；`v:line` / `v:rect` 这些真的 VML 图形
- * 仍然只得到一个占位框。
+ * VML 图形整体是非目标（开发计划 §5），但老文件（以及 Word 为兼容写的 Fallback）里的
+ * 图片都走这条路 —— 公文的红头与印章尤其常见。解析 `style` 的外框与定位
+ * 与 `v:imagedata@r:id`，够把图画在对的地方。~~`v:line` / `v:rect` 这些真的 VML 图形
+ * 仍然只得到一个占位框~~ —— 2026-10-12 起直线 / 矩形 / 圆角矩形 / 椭圆 / 直线连接符
+ * 按几何画（见下面「形状」），自定义路径（`v:shape@path`）与组合仍是占位框。
  *
  * `position:absolute` 的形状是**浮动**的，折成与 `wp:anchor` 同一份 `DrawingAnchor`
  * （`vmlAnchor`）。原来一律当内嵌：WPS 从 PDF 转出来的文件把页脚里的每一小段字都放进
@@ -33,14 +34,31 @@
  *
  * 内容是一列块（`w:txbxContent`），交给调用方解析（`DrawingParseOptions.textBox`，
  * 块的解析在 parse-body.ts，这里 import 它会成环），对象上只留 id、内边距与纵向对齐。
- * 外观只认矩形的填充与轮廓（`ShapeStyle`）—— 文本框就是矩形，别的几何仍是非目标。
  * `mc:AlternateContent` 里 Choice（wps）与 Fallback（VML）各有一份同样的内容，
  * 调用方只收 Choice，所以一个文本框只摊出一份。
+ *
+ * ## 形状（`wps:wsp` / VML 的基本形状）
+ *
+ * 外观 = 预设几何 + 填充 + 轮廓（`ShapeStyle`），文本框与纯形状同一份。原来只有文本框解析它，
+ * 纯形状一律画虚线占位框 —— 而公文红头下面那条红色分隔线**常常就是一条直线形状**
+ * （「插入 → 形状 → 直线」，不是段落边框），高度为 0 的直线连占位框都画不出来，整条线消失。
+ * 几何只认能**照规范公式画准**的那些（`PRESET_GEOMETRY`），自由曲线、箭头块、组合仍是占位框。
+ * VML 那边认 `v:line` / `v:rect` / `v:roundrect` / `v:oval` 与直线连接符（老文件与兼容写法里的线）。
  */
 import { emuToTwips, inchToTwips, mmToTwips, ptToTwips, pxToTwips, type Twips } from '@uw/core';
 import type { XmlElement } from '@uw/ooxml';
 import { attr, child, children, textContent } from '@uw/ooxml';
-import type { AnchorPos, DrawingAnchor, ImageRef, NodeId, ObjectContent, ShapeStyle } from './nodes.ts';
+import type {
+  AnchorPos,
+  DrawingAnchor,
+  ImageRef,
+  LineEnd,
+  NodeId,
+  ObjectContent,
+  ShapeGeometry,
+  ShapeStroke,
+  ShapeStyle,
+} from './nodes.ts';
 import { attrInt, attrOnOff, put } from './xml-values.ts';
 
 /** 解析对象时要从外面借的两样 */
@@ -91,7 +109,7 @@ export function parseDrawing(
   put(out, 'graphic', graphicUri(frame));
   put(out, 'image', blipRef(frame, idPrefix));
   if (inline === undefined) out.anchor = anchorOf(frame);
-  drawingTextBox(frame, opts, out);
+  drawingShape(frame, opts, out);
   return out;
 }
 
@@ -108,15 +126,22 @@ export function parsePict(pict: XmlElement, idPrefix: string, opts: DrawingParse
   const shape = findShape(pict);
   const root = vmlRoot(pict, shape);
   const style = parseStyle(attr(root ?? shape ?? pict, 'style'));
+  // `v:line` 的外框不在 style 里，在 from / to 两个端点上
+  const line = root === undefined ? undefined : vmlLine(root);
   const out: ObjectContent = {
     kind: 'object',
     objectKind: 'picture',
-    width: cssLength(style.width) ?? 0,
-    height: cssLength(style.height) ?? 0,
+    width: line?.width ?? cssLength(style.width) ?? 0,
+    height: line?.height ?? cssLength(style.height) ?? 0,
   };
-  if (root !== undefined) put(out, 'anchor', vmlAnchor(root, style));
+  if (root !== undefined) put(out, 'anchor', vmlAnchor(root, style, line));
   // 文本框常是 `v:rect` / `v:roundrect`，不是 `v:shape` —— 不能等找到图片形状才认
   if (root !== undefined) vmlTextBox(root, style, opts, out);
+  // 纯形状：没有图片、不是文本框、几何认得出来
+  const imaged = shape !== undefined && child(shape, 'v:imagedata') !== undefined;
+  if (root !== undefined && !imaged && out.textBox === undefined) {
+    put(out, 'shape', vmlShapeStyle(root, style, line, false));
+  }
   if (shape === undefined) return out;
 
   put(out, 'alt', nonEmpty(attr(shape, 'alt') ?? attr(shape, 'o:title')));
@@ -262,48 +287,102 @@ function positionOf(anchor: XmlElement, name: string): AnchorPos {
 const BODY_INSET_EMU = { l: 91440, t: 45720, r: 91440, b: 45720 };
 
 /**
- * DrawingML 文本框：`a:graphicData/wps:wsp/wps:txbx/w:txbxContent`。
+ * `a:graphicData/wps:wsp`：文本框（`wps:txbx/w:txbxContent`）与外观。
  *
  * 只认 `wps:wsp` 直接挂在 graphicData 下的那种 —— 组合（`wpg:wgp`）与画布（`wpc:wpc`）
- * 里的子形状各有自己的坐标系，那是组合的几何，还是非目标
+ * 里的子形状各有自己的坐标系，那是组合的几何，还没做。
+ *
+ * 外观的规矩：文本框一律收（没写 prstGeom 的就是矩形）；纯形状只在**几何认得出来**时收，
+ * 认不出的（`a:custGeom`、箭头块）不收，渲染层照旧画占位框。带图片填充的（`a:blipFill`）
+ * 已经作为图片画了，不再叠一层形状
  */
-function drawingTextBox(frame: XmlElement, opts: DrawingParseOptions, out: ObjectContent): void {
-  if (opts.textBox === undefined) return;
+function drawingShape(frame: XmlElement, opts: DrawingParseOptions, out: ObjectContent): void {
   const graphic = child(frame, 'a:graphic');
   const data = graphic && child(graphic, 'a:graphicData');
   const wsp = data && child(data, 'wps:wsp');
-  const txbx = wsp && child(wsp, 'wps:txbx');
-  const content = txbx && child(txbx, 'w:txbxContent');
-  if (wsp === undefined || content === undefined) return;
+  if (wsp === undefined) return;
 
-  const bodyPr = child(wsp, 'wps:bodyPr');
-  const inset = (name: keyof typeof BODY_INSET_EMU): Twips =>
-    emuToTwips(attrInt(bodyPr, `${name}Ins`) ?? BODY_INSET_EMU[name]);
-  const anchor = bodyPr === undefined ? undefined : attr(bodyPr, 'anchor');
-  out.textBox = {
-    id: opts.textBox(content),
-    inset: { left: inset('l'), top: inset('t'), right: inset('r'), bottom: inset('b') },
-    vAlign: anchor === 'ctr' ? 'center' : anchor === 'b' ? 'bottom' : 'top',
-  };
-  put(out, 'shape', drawingShapeStyle(wsp, opts.themeColors));
+  const txbx = child(wsp, 'wps:txbx');
+  const content = txbx && child(txbx, 'w:txbxContent');
+  if (opts.textBox !== undefined && content !== undefined) {
+    const bodyPr = child(wsp, 'wps:bodyPr');
+    const inset = (name: keyof typeof BODY_INSET_EMU): Twips =>
+      emuToTwips(attrInt(bodyPr, `${name}Ins`) ?? BODY_INSET_EMU[name]);
+    const anchor = bodyPr === undefined ? undefined : attr(bodyPr, 'anchor');
+    out.textBox = {
+      id: opts.textBox(content),
+      inset: { left: inset('l'), top: inset('t'), right: inset('r'), bottom: inset('b') },
+      vAlign: anchor === 'ctr' ? 'center' : anchor === 'b' ? 'bottom' : 'top',
+    };
+    put(out, 'shape', drawingShapeStyle(wsp, opts.themeColors, true));
+    return;
+  }
+  if (out.image !== undefined) return;
+  put(out, 'shape', drawingShapeStyle(wsp, opts.themeColors, false));
 }
 
 /**
- * `wps:spPr` 的填充与轮廓；spPr 没写的退到 `wps:style` 的 `a:fillRef` / `a:lnRef`
+ * 预设几何的归一：`a:prstGeom@prst` → 我们画得准的那一套。与基本形状同形的流程图符号折过去，
+ * 直线连接符折成直线。**不在表里的一律认不出**（返回 undefined）—— 宁可占位，不画错形状
+ */
+const PRESET_GEOMETRY: Readonly<Record<string, ShapeGeometry>> = {
+  rect: 'rect',
+  roundRect: 'roundRect',
+  ellipse: 'ellipse',
+  line: 'line',
+  straightConnector1: 'line',
+  triangle: 'triangle',
+  rtTriangle: 'rtTriangle',
+  diamond: 'diamond',
+  parallelogram: 'parallelogram',
+  trapezoid: 'trapezoid',
+  hexagon: 'hexagon',
+  octagon: 'octagon',
+  flowChartProcess: 'rect',
+  flowChartAlternateProcess: 'roundRect',
+  flowChartDecision: 'diamond',
+  flowChartConnector: 'ellipse',
+  flowChartTerminator: 'flowChartTerminator',
+  flowChartInputOutput: 'flowChartInputOutput',
+};
+
+/**
+ * `wps:spPr` 的几何、填充与轮廓；spPr 没写的退到 `wps:style` 的 `a:fillRef` / `a:lnRef`
  * （形状样式：「这一类形状默认用主题的第几号填充」，颜色写在引用里面）。
  *
- * 渐变 / 图案 / 图片填充不认（不画底色）—— 画错一个底色会盖住字，不画只是少了装饰
+ * 渐变 / 图案 / 图片填充不认（不画底色）—— 画错一个底色会盖住字，不画只是少了装饰。
+ *
+ * `textBox` 为真时几何认不出也照收（按矩形画，文本框的内容比外框要紧）；为假时认不出就整个不收
  */
 function drawingShapeStyle(
   wsp: XmlElement,
   themeColors: DrawingParseOptions['themeColors'],
+  textBox: boolean,
 ): ShapeStyle | undefined {
   const spPr = child(wsp, 'wps:spPr');
   const style = child(wsp, 'wps:style');
   const out: ShapeStyle = {};
 
+  const prstGeom = spPr && child(spPr, 'a:prstGeom');
+  const prst = prstGeom && attr(prstGeom, 'prst');
+  const geometry = prst === undefined ? undefined : PRESET_GEOMETRY[prst];
+  if (geometry === undefined && !textBox) return undefined;
+  // 纯形状显式写成矩形也记下来：它靠「有 shape」与占位框分家，透明的矩形也不该画虚线框。
+  // 文本框不记矩形（缺席就是矩形），透明的框整个没有 shape —— 与 VML 那边一致
+  if (geometry !== undefined && !(textBox && geometry === 'rect')) out.geometry = geometry;
+  put(out, 'adjust', adjustOf(prstGeom));
+  const xfrm = spPr && child(spPr, 'a:xfrm');
+  if (xfrm !== undefined) {
+    const rot = attrInt(xfrm, 'rot');
+    if (rot !== undefined && rot !== 0) out.rotation = rot / ROT_PER_DEGREE;
+    if (attrOnOff(xfrm, 'flipH') === true) out.flipH = true;
+    if (attrOnOff(xfrm, 'flipV') === true) out.flipV = true;
+  }
+
   const fill = spPr === undefined ? undefined : fillOf(spPr);
-  if (fill === undefined) {
+  if (geometry === 'line') {
+    // 线没有内部，样式引用里的 fillRef 对它不起作用
+  } else if (fill === undefined) {
     // spPr 一个填充都没写：看形状样式。idx 0 是「无填充」
     const ref = style && child(style, 'a:fillRef');
     if (ref !== undefined && (attrInt(ref, 'idx') ?? 0) > 0) put(out, 'fill', drawingColor(ref, themeColors));
@@ -325,9 +404,67 @@ function drawingShapeStyle(
       : lnFill === 'none'
         ? undefined
         : drawingColor(lnFill, themeColors);
-  if (color !== undefined && width > 0) out.stroke = { color, width };
+  if (color !== undefined && width > 0) out.stroke = drawingStroke(color, width, ln, geometry);
 
-  return out.fill === undefined && out.stroke === undefined ? undefined : out;
+  if (out.geometry === undefined && out.fill === undefined && out.stroke === undefined) return undefined;
+  return out;
+}
+
+/** `a:avLst` 里名叫 `adj`（或 `adj1`）的那个调整值，`fmla="val 16667"` */
+function adjustOf(prstGeom: XmlElement | undefined): number | undefined {
+  const avLst = prstGeom && child(prstGeom, 'a:avLst');
+  if (avLst === undefined) return undefined;
+  for (const gd of children(avLst)) {
+    const name = attr(gd, 'name');
+    if (gd.name !== 'a:gd' || (name !== 'adj' && name !== 'adj1')) continue;
+    const m = /^val\s+(-?\d+)$/.exec((attr(gd, 'fmla') ?? '').trim());
+    return m === null ? undefined : Number.parseInt(m[1] as string, 10);
+  }
+  return undefined;
+}
+
+const PRESET_DASHES = new Set([
+  'dot',
+  'dash',
+  'lgDash',
+  'dashDot',
+  'lgDashDot',
+  'lgDashDotDot',
+  'sysDash',
+  'sysDot',
+  'sysDashDot',
+  'sysDashDotDot',
+]);
+
+const LINE_END_TYPES = new Set(['triangle', 'stealth', 'arrow', 'oval', 'diamond']);
+const LINE_END_SIZES = new Set(['sm', 'med', 'lg']);
+
+/** 轮廓的虚线与线端（`a:prstDash` / `a:headEnd` / `a:tailEnd`）。线端只有直线有意义 */
+function drawingStroke(
+  color: string,
+  width: Twips,
+  ln: XmlElement | undefined,
+  geometry: ShapeGeometry | undefined,
+): ShapeStroke {
+  const out: ShapeStroke = { color, width };
+  const dash = ln && child(ln, 'a:prstDash');
+  const val = dash && attr(dash, 'val');
+  if (val !== undefined && PRESET_DASHES.has(val)) out.dash = val;
+  if (geometry === 'line' && ln !== undefined) {
+    put(out, 'head', lineEndOf(child(ln, 'a:headEnd')));
+    put(out, 'tail', lineEndOf(child(ln, 'a:tailEnd')));
+  }
+  return out;
+}
+
+function lineEndOf(el: XmlElement | undefined): LineEnd | undefined {
+  const type = el && attr(el, 'type');
+  if (el === undefined || type === undefined || !LINE_END_TYPES.has(type)) return undefined;
+  const size = (name: string): LineEnd['w'] => {
+    const v = attr(el, name);
+    return v !== undefined && LINE_END_SIZES.has(v) ? (v as LineEnd['w']) : 'med';
+  };
+  return { type: type as LineEnd['type'], w: size('w'), len: size('len') };
 }
 
 /**
@@ -491,19 +628,31 @@ function vmlTextBox(
     inset: { left: inset(0), top: inset(1), right: inset(2), bottom: inset(3) },
     vAlign: anchor.startsWith('middle') ? 'center' : anchor.startsWith('bottom') ? 'bottom' : 'top',
   };
-  put(out, 'shape', vmlShapeStyle(root));
+  put(out, 'shape', vmlShapeStyle(root, style, undefined, true));
 }
 
 /**
- * VML 的填充与轮廓。**缺省是填白、描黑 0.75pt**（VML 规范的默认值）——
- * 所以 `filled="f"` / `stroked="f"` 要显式认；`v:fill` / `v:stroke` 子元素的 `on="f"` 同样关掉
+ * VML 的几何、填充与轮廓。**缺省是填白、描黑 0.75pt**（VML 规范的默认值）——
+ * 所以 `filled="f"` / `stroked="f"` 要显式认；`v:fill` / `v:stroke` 子元素的 `on="f"` 同样关掉。
+ *
+ * 与 DrawingML 同一条规矩：文本框认不出几何也收（按矩形），纯形状认不出就不收
  */
-function vmlShapeStyle(shape: XmlElement): ShapeStyle | undefined {
+function vmlShapeStyle(
+  shape: XmlElement,
+  style: Record<string, string>,
+  line: VmlLine | undefined,
+  textBox: boolean,
+): ShapeStyle | undefined {
+  const geometry = vmlGeometry(shape);
+  if (geometry === undefined && !textBox) return undefined;
   const out: ShapeStyle = {};
+  if (geometry !== undefined && !(textBox && geometry === 'rect')) out.geometry = geometry;
+  if (geometry === 'roundRect') put(out, 'adjust', vmlArcSize(attr(shape, 'arcsize')));
+
   const fillEl = child(shape, 'v:fill');
   const strokeEl = child(shape, 'v:stroke');
   const filled = vmlBool(attr(shape, 'filled')) ?? true;
-  if (filled && vmlBool(fillEl && attr(fillEl, 'on')) !== false) {
+  if (geometry !== 'line' && filled && vmlBool(fillEl && attr(fillEl, 'on')) !== false) {
     put(out, 'fill', vmlColor(attr(shape, 'fillcolor') ?? (fillEl && attr(fillEl, 'color')) ?? 'white'));
   }
   const stroked = vmlBool(attr(shape, 'stroked')) ?? true;
@@ -513,9 +662,149 @@ function vmlShapeStyle(shape: XmlElement): ShapeStyle | undefined {
       (strokeEl && attr(strokeEl, 'weight')) ?? attr(shape, 'strokeweight') ?? '0.75pt',
       ptToTwips,
     );
-    if (color !== undefined && width !== undefined && width > 0) out.stroke = { color, width };
+    if (color !== undefined && width !== undefined && width > 0) {
+      out.stroke = vmlStroke(color, width, strokeEl, geometry);
+    }
   }
-  return out.fill === undefined && out.stroke === undefined ? undefined : out;
+
+  // 旋转与翻转在 style 里：`rotation:45`（度）、`flip:x` / `flip:y` / `flip:x y`
+  const rot = Number.parseFloat(style.rotation ?? '');
+  if (!Number.isNaN(rot) && rot !== 0) out.rotation = rot;
+  const flip = (style.flip ?? '').toLowerCase();
+  if (flip.includes('x') !== (line?.flipH === true)) out.flipH = true;
+  if (flip.includes('y') !== (line?.flipV === true)) out.flipV = true;
+
+  if (out.geometry === undefined && out.fill === undefined && out.stroke === undefined) return undefined;
+  return out;
+}
+
+/**
+ * VML 元素 → 几何。`v:shape` 只认两种：直线连接符（`o:connectortype="straight"`，
+ * 形状类型 `#_x0000_t32`）与文本框（`#_x0000_t202`，矩形）—— 别的 `v:shape` 是一条自定义路径，
+ * 认不出
+ */
+function vmlGeometry(shape: XmlElement): ShapeGeometry | undefined {
+  switch (shape.name) {
+    case 'v:rect':
+      return 'rect';
+    case 'v:roundrect':
+      return 'roundRect';
+    case 'v:oval':
+      return 'ellipse';
+    case 'v:line':
+      return 'line';
+    case 'v:shape': {
+      const type = attr(shape, 'type') ?? '';
+      if (attr(shape, 'o:connectortype') === 'straight' || type.endsWith('_x0000_t32')) return 'line';
+      if (type.endsWith('_x0000_t202')) return 'rect';
+      return undefined;
+    }
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * `v:roundrect@arcsize`：圆角半径占**短边一半**的比例（缺省 0.2）。写法有三种：
+ * `0.2`、`20%`、定点数 `13107f`（÷ 65536）。换成 DrawingML 的 `adj`（半径占短边的 1/100000），
+ * 所以要再乘 0.5
+ */
+function vmlArcSize(value: string | undefined): number {
+  const v = (value ?? '').trim();
+  let ratio = 0.2;
+  if (v.endsWith('f')) ratio = Number.parseFloat(v) / 65536;
+  else if (v.endsWith('%')) ratio = Number.parseFloat(v) / 100;
+  else if (v !== '') ratio = Number.parseFloat(v);
+  if (Number.isNaN(ratio)) ratio = 0.2;
+  return Math.round(Math.min(1, Math.max(0, ratio)) * 50000);
+}
+
+/** VML 的 `dashstyle` → DrawingML 的预设虚线名（同一套图案，名字不同） */
+const VML_DASHES: Readonly<Record<string, string>> = {
+  shortdash: 'sysDash',
+  shortdot: 'sysDot',
+  shortdashdot: 'sysDashDot',
+  shortdashdotdot: 'sysDashDotDot',
+  dot: 'dot',
+  dash: 'dash',
+  longdash: 'lgDash',
+  dashdot: 'dashDot',
+  longdashdot: 'lgDashDot',
+  longdashdotdot: 'lgDashDotDot',
+};
+
+/** VML 的箭头类型 → DrawingML 的线端类型 */
+const VML_ARROWS: Readonly<Record<string, LineEnd['type']>> = {
+  block: 'triangle',
+  classic: 'stealth',
+  open: 'arrow',
+  oval: 'oval',
+  diamond: 'diamond',
+};
+
+const VML_ARROW_WIDTH: Readonly<Record<string, LineEnd['w']>> = { narrow: 'sm', medium: 'med', wide: 'lg' };
+const VML_ARROW_LENGTH: Readonly<Record<string, LineEnd['len']>> = { short: 'sm', medium: 'med', long: 'lg' };
+
+function vmlStroke(
+  color: string,
+  width: Twips,
+  strokeEl: XmlElement | undefined,
+  geometry: ShapeGeometry | undefined,
+): ShapeStroke {
+  const out: ShapeStroke = { color, width };
+  if (strokeEl === undefined) return out;
+  const dash = VML_DASHES[(attr(strokeEl, 'dashstyle') ?? '').toLowerCase()];
+  if (dash !== undefined) out.dash = dash;
+  if (geometry === 'line') {
+    const end = (which: 'start' | 'end'): LineEnd | undefined => {
+      const type = VML_ARROWS[(attr(strokeEl, `${which}arrow`) ?? '').toLowerCase()];
+      if (type === undefined) return undefined;
+      return {
+        type,
+        w: VML_ARROW_WIDTH[(attr(strokeEl, `${which}arrowwidth`) ?? '').toLowerCase()] ?? 'med',
+        len: VML_ARROW_LENGTH[(attr(strokeEl, `${which}arrowlength`) ?? '').toLowerCase()] ?? 'med',
+      };
+    };
+    put(out, 'head', end('start'));
+    put(out, 'tail', end('end'));
+  }
+  return out;
+}
+
+/** `v:line` 的两个端点折成外框 + 方向 */
+interface VmlLine {
+  /** 外框左上角相对锚点的偏移（端点里较小的那个坐标） */
+  left: Twips;
+  top: Twips;
+  width: Twips;
+  height: Twips;
+  flipH?: true;
+  flipV?: true;
+}
+
+/**
+ * `v:line@from` / `@to`（「x,y」，CSS 长度，不带单位按 px，缺省 `0,0` 与 `10,10`）。
+ * 外框是两个端点围成的矩形；线从哪个角画到哪个角折成翻转 —— 与 DrawingML 的直线同一种说法，
+ * 渲染层只认一种
+ */
+function vmlLine(root: XmlElement): VmlLine | undefined {
+  if (root.name !== 'v:line') return undefined;
+  const point = (value: string | undefined, fallback: string): [Twips, Twips] => {
+    const [x, y] = (value ?? fallback).split(',');
+    return [cssLength(nonEmpty(x?.trim())) ?? 0, cssLength(nonEmpty(y?.trim())) ?? 0];
+  };
+  const [x1, y1] = point(attr(root, 'from'), '0,0');
+  const [x2, y2] = point(attr(root, 'to'), '10,10');
+  const out: VmlLine = {
+    left: Math.min(x1, x2),
+    top: Math.min(y1, y2),
+    width: Math.abs(x2 - x1),
+    height: Math.abs(y2 - y1),
+  };
+  // 外框里的规范方向是「左上 → 右下」；起点在右边就是水平翻转，起点在下面就是竖直翻转
+  if (x2 < x1) out.flipH = true;
+  if (y2 < y1) out.flipV = true;
+  return out;
 }
 
 /** VML 的布尔：`t` / `true` / `f` / `false`（**不是** ST_OnOff —— 那一套里 `f` 算真） */
@@ -594,7 +883,11 @@ const VML_WRAP_SIDE: Readonly<Record<string, NonNullable<DrawingAnchor['wrapText
  * ② 环绕在子元素 `w10:wrap` 上，**没有它就是「浮于 / 衬于文字」**（不绕）；
  * ③ 衬于文字下方写成**负的 `z-index`**，不是一个单独的开关
  */
-function vmlAnchor(shape: XmlElement, style: Record<string, string>): DrawingAnchor | undefined {
+function vmlAnchor(
+  shape: XmlElement,
+  style: Record<string, string>,
+  line: VmlLine | undefined,
+): DrawingAnchor | undefined {
   if (style.position !== 'absolute') return undefined;
   const z = Number.parseInt(style['z-index'] ?? '0', 10);
   const wrapEl = child(shape, 'w10:wrap');
@@ -606,8 +899,8 @@ function vmlAnchor(shape: XmlElement, style: Record<string, string>): DrawingAnc
     wrap: (wrapType === undefined ? undefined : VML_WRAP[wrapType]) ?? 'none',
     behindDoc: z < 0,
     z: Number.isNaN(z) ? 0 : Math.abs(z),
-    h: vmlAxis(style, 'horizontal', 'left', VML_H_RELATIVE, 'column'),
-    v: vmlAxis(style, 'vertical', 'top', VML_V_RELATIVE, 'paragraph'),
+    h: vmlAxis(style, 'horizontal', 'left', VML_H_RELATIVE, 'column', line?.left ?? 0),
+    v: vmlAxis(style, 'vertical', 'top', VML_V_RELATIVE, 'paragraph', line?.top ?? 0),
     // VML 规范的缺省环绕距离：左右 9pt、上下 0
     dist: {
       top: dist('top', 0),
@@ -627,6 +920,8 @@ function vmlAxis(
   edge: 'left' | 'top',
   relatives: Readonly<Record<string, string>>,
   fallback: string,
+  /** `v:line` 的端点偏移：它的外框左上角不在 left / top 上，在两个端点里较小的那个坐标上 */
+  extra: Twips,
 ): AnchorPos {
   const rel = style[`mso-position-${axis}-relative`];
   const pos: AnchorPos = { relativeFrom: (rel === undefined ? undefined : relatives[rel]) ?? fallback };
@@ -635,7 +930,7 @@ function vmlAxis(
     pos.align = align;
     return pos;
   }
-  pos.offset = (cssLength(style[edge]) ?? 0) + (cssLength(style[`margin-${edge}`]) ?? 0);
+  pos.offset = (cssLength(style[edge]) ?? 0) + (cssLength(style[`margin-${edge}`]) ?? 0) + extra;
   return pos;
 }
 

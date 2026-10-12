@@ -124,9 +124,9 @@ export type NoteType = 'footnote' | 'endnote';
  * 理由与页眉页脚一样（load.ts）—— 同一张图常被引用多次（每页一个页眉 logo），
  * 挂在节点上要么复制几份字节，要么变成跨节点引用（原则 1.1 挡的正是后者）。
  *
- * 没有 `image` 的对象是**画不出来的图形**（图表 / SmartArt / 形状 / OLE），
+ * 没有 `image` 也没有 `shape` 的对象是**画不出来的图形**（图表 / SmartArt / 认不出几何的形状 / OLE），
  * 它们是非目标（开发计划 §5），渲染层画占位框 —— 但**占位框的尺寸是对的**，
- * 所以周围的文字不会跟着错位。
+ * 所以周围的文字不会跟着错位。认得出几何的形状（直线、矩形、椭圆……）2026-10-12 起照画，见 `ShapeStyle`。
  */
 export interface ObjectContent {
   kind: 'object';
@@ -152,8 +152,9 @@ export interface ObjectContent {
    */
   textBox?: TextBoxRef;
   /**
-   * 形状自己的底色与边框。**只有文本框解析它**：纯形状（线、矩形、箭头）的几何
-   * 还是非目标，照旧画占位框；文本框是矩形，填充与轮廓就是它的全部外观
+   * 形状的外观：几何 + 填充 + 轮廓。文本框与**认得出几何**的纯形状（直线、矩形、椭圆、
+   * 流程图那几种）才有；认不出的（自由曲线、箭头块、组合）缺席，照旧画占位框 ——
+   * 画一个错的形状比画一个占位框更误导人
    */
   shape?: ShapeStyle;
 }
@@ -168,10 +169,72 @@ export interface TextBoxRef {
   vAlign: 'top' | 'center' | 'bottom';
 }
 
-/** 形状的填充与轮廓。颜色是 RRGGBB（主题色已在解析时换算）；缺席 = 不填 / 不画线 */
+/**
+ * 形状的外观。颜色是 RRGGBB（主题色已在解析时换算）；`fill` / `stroke` 缺席 = 不填 / 不画线。
+ *
+ * 几何只带**名字与一个调整值**，不在这里算路径：路径要按外框尺寸算，外框是布局之后才
+ * 定下来的东西（内嵌对象跟着行走、浮动对象按参照物换算），渲染层手上才有最终的那个框
+ */
 export interface ShapeStyle {
+  /**
+   * 预设几何（`a:prstGeom@prst` 归一后的名字；VML 的 `v:line` / `v:oval` / `v:roundrect` 折成同一套）。
+   * 缺席 = 矩形 —— 没写 prstGeom 的文本框就是矩形
+   */
+  geometry?: ShapeGeometry;
+  /**
+   * 几何的第一个调整值（`a:avLst` 里的 `adj`，单位 1/100000）。缺席按该几何的规范缺省
+   * （圆角矩形 16667、平行四边形 25000……）。只有带调整柄的几何看它
+   */
+  adjust?: number;
   fill?: string;
-  stroke?: { color: string; width: Twips };
+  stroke?: ShapeStroke;
+  /** `a:xfrm@rot` 换成的度，正值顺时针。绕外框中心转 */
+  rotation?: number;
+  /**
+   * 翻转。对直线来说它**就是方向**：线永远是外框的一条对角线，从左上到右下还是从左下到
+   * 右上全靠 `flipV` 说 —— 丢了它，红头下面那条斜过来的线会朝反方向斜
+   */
+  flipH?: true;
+  flipV?: true;
+}
+
+/**
+ * 认得出的预设几何。流程图里与基本形状同形的（`flowChartProcess` = 矩形、
+ * `flowChartDecision` = 菱形……）解析时就折成基本形状；直线连接符折成 `line`
+ */
+export type ShapeGeometry =
+  | 'rect'
+  | 'roundRect'
+  | 'ellipse'
+  | 'line'
+  | 'triangle'
+  | 'rtTriangle'
+  | 'diamond'
+  | 'parallelogram'
+  | 'trapezoid'
+  | 'hexagon'
+  | 'octagon'
+  | 'flowChartTerminator'
+  | 'flowChartInputOutput';
+
+export interface ShapeStroke {
+  color: string;
+  width: Twips;
+  /**
+   * 预设虚线（`a:prstDash@val`：`dash` / `sysDot` / `lgDashDot`…，VML 的 `dashstyle` 折成同名）。
+   * 缺席 = 实线。图案按**线宽的倍数**定义，渲染时乘上线宽
+   */
+  dash?: string;
+  /** 线头（`a:headEnd`，路径起点）/ 线尾（`a:tailEnd`，路径终点）。只有直线画它 */
+  head?: LineEnd;
+  tail?: LineEnd;
+}
+
+/** 线端的箭头。`w` / `len` 是相对线宽的三档，具体倍数没有真值（render-dom 的 `uncalibrated.ts`） */
+export interface LineEnd {
+  type: 'triangle' | 'stealth' | 'arrow' | 'oval' | 'diamond';
+  w: 'sm' | 'med' | 'lg';
+  len: 'sm' | 'med' | 'lg';
 }
 
 /**

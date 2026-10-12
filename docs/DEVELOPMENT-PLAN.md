@@ -1072,6 +1072,25 @@ await view.toPNG(2);     // 第 3 页（页序号从 0 起，与 scrollTo({ page
   - 回写一个字没改：正文走原文 XML 树，批注界桩是段落里的非 run 元素，编辑过的段落也照样吐回；`comments.xml` 逐字节照搬
   - 判据：解析 1 项（跨表格开合 + 交叠 + 引用 run）、门面 3 项（字段 / 排序 / 点批注锚点、编辑后范围跟着字、回写后再加载一致）
   - 未做：批注的增删改 / 回复 / 标记解决、脚注里的批注答不出 `range`、门面只给批注正文的纯文字
+- ✅ **形状**（2026-10-12）：原来只有文本框解析外观，纯形状一律画虚线占位框；而**零尺寸的对象渲染层直接跳过** ——
+  公文红头下那条红色分隔线常常就是一条直线形状（「插入 → 形状 → 直线」，不是段落边框），外框零高，整条线消失。
+  - `@uw/model`：`ShapeStyle` 加上 `geometry`（`a:prstGeom` 归一：矩形 / 圆角矩形 / 椭圆 / 直线 / 三角 / 直角三角 / 菱形 /
+    平行四边形 / 梯形 / 六边形 / 八边形 / 流程图终止符 / 流程图数据，与基本形状同形的流程图符号与直线连接符折过去）、
+    `adjust`（`a:avLst` 的 `adj`）、`stroke.dash`（`a:prstDash`）、`stroke.head` / `tail`（线端箭头）、`rotation` / `flipH` / `flipV`。
+    **认不出的几何不收**（`a:custGeom`、箭头块）—— 画一个错的形状比占位框更误导人；透明但认得出的形状照收，不画占位框。
+    线没有内部，样式引用的 `fillRef` 对它不起作用。VML 认 `v:line`（外框取 from / to 围成的矩形、偏移加上较小端点、
+    方向折成翻转）/ `v:rect` / `v:roundrect`（`arcsize` 是短边一半的比例，换成 adj 要乘 0.5）/ `v:oval` /
+    直线连接符（`o:connectortype="straight"` 或 `#_x0000_t32`，方向在 style 的 `flip`），`dashstyle` 与箭头折成 DrawingML 的名字
+  - `@uw/render-dom`：`shape-geometry.ts` 按规范的预设公式（`presetShapeDefinitions.xml`）现算路径 —— 外框是布局之后才定的，
+    模型手上没有；虚线图案按线宽缩放（§20.1.10.48）；**直线永远是外框的左上 → 右下对角线，方向全靠绕中心的翻转**；
+    带箭头的直线与箭头装进同一个组、共用变换，实心三角 / 隐形箭头把线缩到箭头底边（不然平头线端从斜边旁边探出来）。
+    零尺寸的跳过规则给直线开了口子（一个方向是 0 照画）
+  - 判据：model 13 项（DrawingML 8 + VML 5）、render-dom 9 项 + 端到端 3 项（`mc:AlternateContent` 包着的红线只画一条、
+    页脚 VML 斜线的外框 / 翻转 / 虚线）；浏览器回归全过（编辑 222 项不变）。布局一行没改（`shape` 本来就带到了 `LineObject` / `PlacedFloat`）
+  - **没有真值**：箭头三档相对线宽的倍数（取 LibreOffice 的 2 / 3 / 5，`LINE_END_SCALE`）、形状旋转时外框算不算转完的外接矩形
+    （与图片那边的说法互相矛盾），钉死办法在 render-dom 的 `uncalibrated.ts`
+  - 未做：组合（`wpg:wgp` / `v:group`，流程图常用）与画布、肘形 / 曲线连接符、`a:custGeom` 自由曲线、箭头块与标注框、
+    渐变 / 图案填充、复合线（`cmpd="dbl"`）、旋转过的文本框内容不跟着转
 - ~~**图片的几何标定**~~ ✅（2026-08-25）两份新样本 + `pnpm --filter @uw/fidelity spike:image`。
   为它给真值管线加了一路新数据：`truth.json` 的 `pages[].images[]`（照着 PDF 算子表把
   `q` / `Q` / `cm` 演一遍 CTM 读出来 —— 图片在 PDF 里没有自己的坐标，位置与大小全在矩阵里）。
@@ -1476,7 +1495,9 @@ await view.toPNG(2);     // 第 3 页（页序号从 0 起，与 scrollTo({ page
 - 修订痕迹（track changes）的编辑，只做**显示**
 - 数学公式 OMML 的排版 —— 转 MathML 交给浏览器
 - VML / 旧版图形、SmartArt、图表（`c:chart`）—— 降级为占位图（**文本框除外**：框里是正文级的字，
-  2026-09-29 起 DrawingML 与 VML 的文本框都画内容，VML 的绝对定位也认）
+  2026-09-29 起 DrawingML 与 VML 的文本框都画内容，VML 的绝对定位也认；**基本形状也除外**：
+  2026-10-12 起 VML 的 `v:line` / `v:rect` / `v:roundrect` / `v:oval` 与直线连接符按几何画 ——
+  公文红头下的分隔线在老文件与兼容写法里就是 `v:line`，画成占位框等于版头少一条线。自定义路径与组合仍是占位图）
 - .doc（二进制）格式
 - 完整 autofit 表格算法
 - RTL / 复杂文字（阿拉伯、天城文）

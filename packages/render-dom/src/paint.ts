@@ -23,9 +23,9 @@
  *
  * ## 已知的洞（写下来免得以为已经画了）
  *
- * - **图形（图表 / SmartArt / 形状）**：画的是一个虚线占位框加可选文本。图片本身已经画了
- *   （`paintObject`），画不出来的只剩这些「本来就不是位图」的东西与 EMF / WMF ——
- *   它们的**尺寸是对的**，所以周围的文字不会跟着错位
+ * - **图形（图表 / SmartArt / 认不出几何的形状 / 组合）**：画的是一个虚线占位框加可选文本。
+ *   图片本身已经画了（`paintObject`），认得出几何的形状也画了（`paintShape`，2026-10-12），
+ *   画不出来的只剩这些与 EMF / WMF —— 它们的**尺寸是对的**，所以周围的文字不会跟着错位
  * - **制表位与空白补位上的高亮 / 底纹**：它们不出文字片段，于是 run 级背景在制表位处断开；
  *   Word 会把制表位那一段也铺上
  * - **纵向合并区的内容裁剪**：`vMerge="restart"` 那一格的内容整个算在起始行里
@@ -57,6 +57,7 @@ import type {
 } from '@uw/layout';
 import { borderThicknessFactor, contentHeightOf } from '@uw/layout';
 import { defaultFontFamily } from './font-stack.ts';
+import { dashArray, lineEnds, shapeOutline, shapeTransform } from './shape-geometry.ts';
 import type { RElement } from './tree.ts';
 import { el, fmt, fmtList, textEl } from './tree.ts';
 import {
@@ -1011,8 +1012,9 @@ function paintObject(
   floating = false,
 ): RElement | undefined {
   // 零尺寸的对象（`w:pict` 里认不出尺寸的那些）什么都不画：一个 0×0 的框既看不见，
-  // 又会让命中测试多出一个永远命不中的目标
-  if (obj.width <= 0 || obj.height <= 0) return undefined;
+  // 又会让命中测试多出一个永远命不中的目标。直线例外 —— 横线的外框本来就是零高
+  const isLine = obj.shape?.geometry === 'line' && (obj.width > 0 || obj.height > 0);
+  if (!isLine && (obj.width <= 0 || obj.height <= 0)) return undefined;
 
   const box = { x: pt(x), y: pt(y), width: pt(obj.width), height: pt(obj.height) };
   const href = obj.image === undefined ? undefined : ctx.imageHref(obj.image.id);
@@ -1140,8 +1142,11 @@ function paintTextBox(f: PlacedFloat, box: PlacedTextBox, ctx: Ctx): RElement {
 }
 
 /**
- * 形状（目前只有文本框）的填充与轮廓。轮廓骑在外框边上（一半在里一半在外），
- * 与 SVG 的 stroke 一样 —— DrawingML 的线缺省也是居中对齐的
+ * 形状（文本框与纯形状）：几何 + 填充 + 轮廓。轮廓骑在外框边上（一半在里一半在外），
+ * 与 SVG 的 stroke 一样 —— DrawingML 的线缺省也是居中对齐的。
+ *
+ * 几何的公式在 `shape-geometry.ts`。直线带箭头时线与箭头装进同一个组、共用一个变换，
+ * 箭头跟着翻转走；什么都不画的形状（透明的矩形、无框文本框）不出元素
  */
 function paintShape(
   box: { x: number; y: number; width: number; height: number },
@@ -1150,23 +1155,43 @@ function paintShape(
   cls: string,
 ): RElement | undefined {
   const shape = obj.shape;
-  if (shape === undefined) return undefined;
-  return el(
-    'rect',
-    {
-      class: `${cls} ${ctx.cls('shape')}`,
-      'data-run': obj.runId,
-      x: fmt(box.x),
-      y: fmt(box.y),
-      width: fmt(box.width),
-      height: fmt(box.height),
-      fill: shape.fill === undefined ? 'none' : cssColor(shape.fill),
-      ...(shape.stroke === undefined
-        ? {}
-        : { stroke: cssColor(shape.stroke.color), 'stroke-width': fmt(pt(shape.stroke.width)) }),
-    },
-    titleOf(obj),
-  );
+  if (shape === undefined || (shape.fill === undefined && shape.stroke === undefined)) return undefined;
+  const isLine = shape.geometry === 'line';
+  const stroke = shape.stroke;
+  const outline = shapeOutline(shape, box);
+  const color = stroke === undefined ? undefined : cssColor(stroke.color);
+  const paint: Record<string, string> = {
+    fill: shape.fill === undefined || isLine ? 'none' : cssColor(shape.fill),
+  };
+  if (stroke !== undefined && color !== undefined) {
+    paint.stroke = color;
+    paint['stroke-width'] = fmt(pt(stroke.width));
+    const dash = dashArray(stroke.dash, pt(stroke.width));
+    if (dash !== undefined) paint['stroke-dasharray'] = dash;
+  }
+  const transform = shapeTransform(shape, box);
+  const own = { class: `${cls} ${ctx.cls('shape')}`, 'data-run': obj.runId };
+
+  const ends =
+    isLine && stroke !== undefined && color !== undefined ? lineEnds(stroke, box, color) : undefined;
+  if (ends === undefined || ends.ends.length === 0) {
+    outline.attrs = { ...own, ...outline.attrs, ...paint, ...(transform === undefined ? {} : { transform }) };
+    outline.children = titleOf(obj);
+    return outline;
+  }
+  outline.attrs = {
+    ...outline.attrs,
+    x1: fmt(ends.start[0]),
+    y1: fmt(ends.start[1]),
+    x2: fmt(ends.end[0]),
+    y2: fmt(ends.end[1]),
+    ...paint,
+  };
+  return el('g', { ...own, ...(transform === undefined ? {} : { transform }) }, [
+    ...titleOf(obj),
+    outline,
+    ...ends.ends,
+  ]);
 }
 
 /**

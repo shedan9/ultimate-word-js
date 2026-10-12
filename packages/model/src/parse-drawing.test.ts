@@ -208,7 +208,9 @@ describe('w:pict（VML）', () => {
 
   it('认不出尺寸时留 0 —— 零尺寸占位比编一个错尺寸强（行不会跟着错位）', () => {
     const [obj] = objects(`<w:p><w:r><w:pict><v:rect style="width:50%"/></w:pict></w:r></w:p>`);
-    expect(obj).toEqual({ kind: 'object', objectKind: 'picture', width: 0, height: 0 });
+    // 形状的外观照收（v:rect 是认得出的矩形），尺寸留 0 —— 渲染层不画零尺寸的矩形
+    expect(obj).toMatchObject({ kind: 'object', objectKind: 'picture', width: 0, height: 0 });
+    expect(obj?.image).toBeUndefined();
   });
 });
 

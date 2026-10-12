@@ -98,3 +98,22 @@ export const FOOTNOTE_SEPARATOR_STROKE_PT = 0.5;
 export const CHANGE_BAR_OFFSET_PT = 8;
 export const CHANGE_BAR_WIDTH_PT = 0.75;
 export const CHANGE_BAR_COLOR = '#808080';
+
+/**
+ * 形状线端（箭头）的大小：`a:headEnd` / `a:tailEnd` 的 `w` / `len` 三档各是**线宽**的几倍。
+ *
+ * 取 2 / 3 / 5：ECMA-376 只说是「相对线宽的小 / 中 / 大」，没给倍数，这三个数是 LibreOffice
+ * 导入 DrawingML 时用的。细线上的箭头 Word 还有一个下限（0.75pt 的线画出来的中号箭头
+ * 不止 2.25pt 宽），这里取线宽不小于 `LINE_END_MIN_WIDTH_PT` 来近似。它不改坐标，L2 / L3 管不到。
+ * 钉死办法：一份「0.75 / 1.5 / 3pt 线宽 × 三档 w × 三档 len」的箭头直线样本导 PDF，
+ * 给真值抽取器补一路填充多边形（`f` 之前的 `m` / `l`），量三角形的底宽与高。
+ */
+export const LINE_END_SCALE = { sm: 2, med: 3, lg: 5 } as const;
+export const LINE_END_MIN_WIDTH_PT = 1;
+
+// ── 形状的旋转 ────────────────────────────────────────────────────────────────
+// 形状绕外框中心转，外框（`wp:extent`）当成**没转之前**的尺寸（`shape-geometry.ts` 的 `shapeTransform`）。
+// 图片那边（`paint.ts` 的 `objectTransform`）按「extent 是转完的外接矩形」处理、90° 时把长宽比缩回去 ——
+// 两种说法互相矛盾，至少有一边是错的，都没有样本。形状这边取规范的字面意思（`a:xfrm/a:ext` 是形状自己的
+// 尺寸，Word 存盘时 extent 与它相等）。钉死办法：同一个 100×50pt 的矩形 / 图片各转 30° 与 90°，
+// 导 PDF 看四个角落在哪（矩形的轮廓走 `rules[]`，图片走 `images[]` 的矩阵）。
