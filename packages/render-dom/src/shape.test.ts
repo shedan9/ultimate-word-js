@@ -158,3 +158,139 @@ describe('闭合形状', () => {
     expect(placeholders(svg)).toHaveLength(1);
   });
 });
+
+describe('连接符', () => {
+  it('肘形：横 → 竖 → 横，拐在 adjust 占宽的比例上，不填充', () => {
+    const svg = buildPage(
+      page([
+        float({
+          width: 2000,
+          height: 1000,
+          shape: {
+            geometry: 'bentConnector3',
+            adjust: 25000,
+            fill: 'FFFFFF',
+            stroke: { color: '000000', width: 20 },
+          },
+        }),
+      ]),
+    );
+    const [p] = shapes(svg);
+    expect(p?.tag).toBe('path');
+    expect(p?.attrs.d).toBe('M72 144 L97 144 L97 194 L172 194');
+    expect(p?.attrs.fill).toBe('none');
+  });
+
+  it('箭头顺着最后一段（横的）而不是外框的对角线；零高时跳过缩成一点的那一竖', () => {
+    const tail = { type: 'triangle' as const, w: 'med' as const, len: 'med' as const };
+    const svg = buildPage(
+      page([
+        float({
+          width: 2000,
+          height: 1000,
+          shape: { geometry: 'bentConnector3', stroke: { color: '000000', width: 20, tail } },
+        }),
+        float({
+          width: 2000,
+          height: 0,
+          shape: { geometry: 'bentConnector3', stroke: { color: '000000', width: 20, head: tail } },
+        }),
+      ]),
+    );
+    const [bent, flat] = shapes(svg);
+    const [line] = collect(bent as RElement, (n) => n.tag === 'path' && n.attrs.fill === 'none');
+    // 末段从 (122, 194) 往右到 172，缩回 3pt 到箭头底边
+    expect(line?.attrs.d).toBe('M72 144 L122 144 L122 194 L169 194');
+    const [arrow] = collect(bent as RElement, (n) => n.tag === 'path' && n.attrs.fill === '#000000');
+    expect(arrow?.attrs.d).toBe('M172 194 L169 195.5 L169 192.5 Z');
+    const [head] = collect(flat as RElement, (n) => n.tag === 'path' && n.attrs.fill === '#000000');
+    expect(head?.attrs.d).toBe('M72 144 L75 142.5 L75 145.5 Z');
+  });
+
+  it('曲线：两段三次贝塞尔在拐点那一竖的正中接上', () => {
+    const svg = buildPage(
+      page([
+        float({
+          width: 2000,
+          height: 1000,
+          shape: { geometry: 'curvedConnector3', stroke: { color: '000000', width: 20 } },
+        }),
+      ]),
+    );
+    expect(shapes(svg)[0]?.attrs.d).toBe('M72 144 C97 144 122 156.5 122 169 C122 181.5 147 194 172 194');
+  });
+});
+
+describe('组合', () => {
+  const groups = (svg: RElement) =>
+    collect(svg, (n) => (n.attrs.class ?? '').split(' ').includes('uw-group'));
+
+  it('成员相对组合外框画，认不出的成员画占位框，组合自己不画占位框', () => {
+    const svg = buildPage(
+      page([
+        float({
+          width: 4000,
+          height: 2000,
+          graphic: 'wordprocessingGroup',
+          group: [
+            {
+              x: 0,
+              y: 0,
+              width: 2000,
+              height: 1000,
+              shape: { geometry: 'rect', fill: 'FFFFFF', stroke: { color: '000000', width: 20 } },
+            },
+            { x: 2000, y: 1000, width: 2000, height: 1000 },
+          ],
+        }),
+      ]),
+    );
+    const [g] = groups(svg);
+    expect(g?.tag).toBe('g');
+    expect(g?.attrs['data-run']).toBe('r1');
+    const [r] = shapes(g as RElement);
+    expect(r?.attrs).toMatchObject({ x: '72', y: '144', width: '100', height: '50' });
+    const [ph] = placeholders(svg);
+    expect(ph?.attrs).toMatchObject({ x: '172', y: '194', width: '100', height: '50' });
+  });
+
+  it('成员图片按转之前的框画，旋转翻转绕成员中心（不像独立图片那样把长宽比缩回去）', () => {
+    const svg = buildPage(
+      page([
+        float({
+          width: 4000,
+          height: 2000,
+          group: [
+            { x: 0, y: 0, width: 2000, height: 1000, image: { id: 'rId9', relId: 'rId9', rotation: 90 } },
+          ],
+        }),
+      ]),
+      { imageHref: (id) => `img:${id}` },
+    );
+    const [img] = collect(svg, (n) => n.tag === 'image');
+    expect(img?.attrs).toMatchObject({ href: 'img:rId9', x: '72', y: '144', width: '100', height: '50' });
+    expect(img?.attrs.transform).toBe('rotate(90 122 169)');
+  });
+
+  it('全是横线的组合零高也照画', () => {
+    const svg = buildPage(
+      page([
+        float({
+          width: 4000,
+          height: 0,
+          group: [
+            {
+              x: 0,
+              y: 0,
+              width: 4000,
+              height: 0,
+              shape: { geometry: 'line', stroke: { color: '000000', width: 20 } },
+            },
+          ],
+        }),
+      ]),
+    );
+    expect(groups(svg)).toHaveLength(1);
+    expect(shapes(svg)[0]?.tag).toBe('line');
+  });
+});

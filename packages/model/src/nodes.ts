@@ -153,10 +153,39 @@ export interface ObjectContent {
   textBox?: TextBoxRef;
   /**
    * 形状的外观：几何 + 填充 + 轮廓。文本框与**认得出几何**的纯形状（直线、矩形、椭圆、
-   * 流程图那几种）才有；认不出的（自由曲线、箭头块、组合）缺席，照旧画占位框 ——
+   * 流程图那几种）才有；认不出的（自由曲线、箭头块）缺席，照旧画占位框 ——
    * 画一个错的形状比画一个占位框更误导人
    */
   shape?: ShapeStyle;
+  /**
+   * 组合与画布（`wpg:wgp` / `wpc:wpc` / `v:group`）的成员。**嵌套组合已摊平**：每个成员的外框
+   * 已从组合自己的坐标系（`a:chOff` / `a:chExt`、`coordsize`）换算到本对象外框里，
+   * 一路上各层组合的旋转与翻转也已叠进成员自己的 `rotation` / `flip*`。
+   *
+   * 在场时对象自己没有 `image` / `shape` / `textBox` —— 组合本身不画任何东西，画的全是成员。
+   * 摊平而不是留着树：渲染层与布局（成员里的文本框要摞字）都只关心「每个成员最终在哪」，
+   * 留着树就得两边各写一遍坐标系的换算
+   */
+  group?: GroupMember[];
+}
+
+/**
+ * 组合里的一个成员。三样都没有的是**认不出的成员**（自由曲线、箭头块……），照旧画占位框 ——
+ * 与独立的对象同一条规矩
+ */
+export interface GroupMember {
+  /**
+   * 相对**对象外框左上角**，是成员**转之前**的框（DrawingML 的 `a:off` / `a:ext` 本来就是
+   * 没转过的框，旋转绕它的中心做）—— 与独立对象的外框不同，那个是 `wp:extent`
+   */
+  x: Twips;
+  y: Twips;
+  width: Twips;
+  height: Twips;
+  /** 旋转与翻转已叠上各层组合的（见 `ObjectContent.group`），所以画的时候只看这一份 */
+  image?: ImageRef;
+  shape?: ShapeStyle;
+  textBox?: TextBoxRef;
 }
 
 /** 文本框的引用与版式。内边距与纵向对齐改的是**内容**摆在框里的哪儿，外框不动 */
@@ -215,7 +244,14 @@ export type ShapeGeometry =
   | 'hexagon'
   | 'octagon'
   | 'flowChartTerminator'
-  | 'flowChartInputOutput';
+  | 'flowChartInputOutput'
+  /**
+   * 连接符：与直线一样是**开放路径**（没有填充、两端能带箭头），从外框左上走到右下，
+   * 方向同样全靠翻转。`bentConnector3` 的拐点在 `adjust`（占宽的比例，**可以出界**）
+   */
+  | 'bentConnector2'
+  | 'bentConnector3'
+  | 'curvedConnector3';
 
 export interface ShapeStroke {
   color: string;
@@ -225,7 +261,7 @@ export interface ShapeStroke {
    * 缺席 = 实线。图案按**线宽的倍数**定义，渲染时乘上线宽
    */
   dash?: string;
-  /** 线头（`a:headEnd`，路径起点）/ 线尾（`a:tailEnd`，路径终点）。只有直线画它 */
+  /** 线头（`a:headEnd`，路径起点）/ 线尾（`a:tailEnd`，路径终点）。只有直线与连接符画它 */
   head?: LineEnd;
   tail?: LineEnd;
 }

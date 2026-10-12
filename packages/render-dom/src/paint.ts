@@ -57,7 +57,15 @@ import type {
 } from '@uw/layout';
 import { borderThicknessFactor, contentHeightOf } from '@uw/layout';
 import { defaultFontFamily } from './font-stack.ts';
-import { dashArray, lineEnds, shapeOutline, shapeTransform } from './shape-geometry.ts';
+import {
+  dashArray,
+  isOpenGeometry,
+  lineEnds,
+  openPath,
+  openPathD,
+  shapeOutline,
+  shapeTransform,
+} from './shape-geometry.ts';
 import type { RElement } from './tree.ts';
 import { el, fmt, fmtList, textEl } from './tree.ts';
 import {
@@ -1012,32 +1020,49 @@ function paintObject(
   floating = false,
 ): RElement | undefined {
   // 零尺寸的对象（`w:pict` 里认不出尺寸的那些）什么都不画：一个 0×0 的框既看不见，
-  // 又会让命中测试多出一个永远命不中的目标。直线例外 —— 横线的外框本来就是零高
-  const isLine = obj.shape?.geometry === 'line' && (obj.width > 0 || obj.height > 0);
-  if (!isLine && (obj.width <= 0 || obj.height <= 0)) return undefined;
+  // 又会让命中测试多出一个永远命不中的目标。直线与连接符例外 —— 横线的外框本来就是零高；
+  // 组合也例外（全是横线的组合同样零高）
+  const thin =
+    (isOpenGeometry(obj.shape?.geometry) || obj.group !== undefined) && (obj.width > 0 || obj.height > 0);
+  if (!thin && (obj.width <= 0 || obj.height <= 0)) return undefined;
 
   const box = { x: pt(x), y: pt(y), width: pt(obj.width), height: pt(obj.height) };
-  const href = obj.image === undefined ? undefined : ctx.imageHref(obj.image.id);
   const cls = floating ? ctx.cls('float') : ctx.cls('object');
+  const own = { class: cls, 'data-run': obj.runId };
+  if (obj.group !== undefined) return paintGroup(box, obj, obj.group, ctx, cls);
+  const href = obj.image === undefined ? undefined : ctx.imageHref(obj.image.id);
   // 文本框画不出来的不是它，是它的外观：矩形的填充与轮廓就是全部。两样都没有的是透明的框，
   // 什么都不画 —— 画成虚线占位框会让每个无框文本框（页脚里的一小段字）都套着一圈虚线
   if (href === undefined && (obj.textBox !== undefined || obj.shape !== undefined)) {
-    return paintShape(box, obj, ctx, cls);
+    return paintShape(box, obj.shape, { ...own, class: `${cls} ${ctx.cls('shape')}` }, titleOf(obj));
   }
-  if (href === undefined) return placeholder(box, obj, ctx, cls);
+  if (href === undefined || obj.image === undefined) return placeholder(box, obj, ctx, cls);
+  return paintImage(box, obj.image, href, objectTransform(box, obj.image), own, titleOf(obj), ctx);
+}
 
-  const crop = obj.image?.crop;
+/**
+ * 一张图：`<image>`，裁过的再套一个切回外框的 clipPath。`transform` 由调用方给 ——
+ * 独立对象的外框是转完的外接矩形（`objectTransform` 要缩回长宽比），组合成员的是转之前的框
+ */
+function paintImage(
+  box: { x: number; y: number; width: number; height: number },
+  imageRef: NonNullable<LineObject['image']>,
+  href: string,
+  transform: string | undefined,
+  own: Record<string, string>,
+  title: RElement[],
+  ctx: Ctx,
+): RElement {
+  const crop = imageRef.crop;
   const attrs: Record<string, string> = {
-    class: cls,
-    'data-run': obj.runId,
+    ...own,
     href,
     preserveAspectRatio: 'none',
     ...cropGeometry(box, crop),
   };
-  const transform = objectTransform(box, obj.image);
   if (transform !== undefined) attrs.transform = transform;
 
-  const image: RElement = el('image', attrs, titleOf(obj));
+  const image: RElement = el('image', attrs, title);
   if (crop === undefined) return image;
 
   // 裁剪：放大后的图 + 一个切回外框的 clipPath。id 必须每张图一个 —— 同一页上
@@ -1142,26 +1167,64 @@ function paintTextBox(f: PlacedFloat, box: PlacedTextBox, ctx: Ctx): RElement {
 }
 
 /**
- * 形状（文本框与纯形状）：几何 + 填充 + 轮廓。轮廓骑在外框边上（一半在里一半在外），
+ * 组合：一个 `<g>` 装着各个成员。成员的框相对对象外框（`@uw/model` 已把各层组合的坐标系
+ * 乘完摊平），旋转翻转也已叠好，所以这里每个成员都与一个独立对象同一种画法 ——
+ * 图片照画、形状照画、认不出的画占位框。成员里文本框的**字**不在这里，在 `page.floats`
+ * 里紧跟着组合的那几份（`inline`），外框（填充与轮廓）在这里
+ */
+function paintGroup(
+  box: { x: number; y: number; width: number; height: number },
+  obj: LineObject | PlacedFloat,
+  members: NonNullable<LineObject['group']>,
+  ctx: Ctx,
+  cls: string,
+): RElement {
+  const children: RElement[] = [...titleOf(obj)];
+  const memberCls = ctx.cls('group-member');
+  for (const m of members) {
+    const mb = { x: box.x + pt(m.x), y: box.y + pt(m.y), width: pt(m.width), height: pt(m.height) };
+    const href = m.image === undefined ? undefined : ctx.imageHref(m.image.id);
+    let drawn: RElement | undefined;
+    if (href !== undefined && m.image !== undefined) {
+      drawn = paintImage(mb, m.image, href, shapeTransform(m.image, mb), { class: memberCls }, [], ctx);
+    } else if (m.shape !== undefined || m.textBox !== undefined) {
+      drawn = paintShape(mb, m.shape, { class: `${memberCls} ${ctx.cls('shape')}` }, []);
+    } else if (mb.width > 0 && mb.height > 0) {
+      drawn = placeholderRect(mb, `${memberCls} ${ctx.cls('object-placeholder')}`, {}, []);
+    }
+    if (drawn !== undefined) children.push(drawn);
+  }
+  return el(
+    'g',
+    {
+      class: `${cls} ${ctx.cls('group')}`,
+      'data-run': obj.runId,
+      ...(obj.graphic === undefined ? {} : { 'data-graphic': obj.graphic }),
+    },
+    children,
+  );
+}
+
+/**
+ * 形状（文本框、纯形状、组合成员）：几何 + 填充 + 轮廓。轮廓骑在外框边上（一半在里一半在外），
  * 与 SVG 的 stroke 一样 —— DrawingML 的线缺省也是居中对齐的。
  *
- * 几何的公式在 `shape-geometry.ts`。直线带箭头时线与箭头装进同一个组、共用一个变换，
+ * 几何的公式在 `shape-geometry.ts`。直线与连接符带箭头时线与箭头装进同一个组、共用一个变换，
  * 箭头跟着翻转走；什么都不画的形状（透明的矩形、无框文本框）不出元素
  */
 function paintShape(
   box: { x: number; y: number; width: number; height: number },
-  obj: LineObject | PlacedFloat,
-  ctx: Ctx,
-  cls: string,
+  shape: LineObject['shape'],
+  own: Record<string, string>,
+  title: RElement[],
 ): RElement | undefined {
-  const shape = obj.shape;
   if (shape === undefined || (shape.fill === undefined && shape.stroke === undefined)) return undefined;
-  const isLine = shape.geometry === 'line';
+  const open = isOpenGeometry(shape.geometry);
   const stroke = shape.stroke;
   const outline = shapeOutline(shape, box);
   const color = stroke === undefined ? undefined : cssColor(stroke.color);
   const paint: Record<string, string> = {
-    fill: shape.fill === undefined || isLine ? 'none' : cssColor(shape.fill),
+    fill: shape.fill === undefined || open ? 'none' : cssColor(shape.fill),
   };
   if (stroke !== undefined && color !== undefined) {
     paint.stroke = color;
@@ -1170,25 +1233,25 @@ function paintShape(
     if (dash !== undefined) paint['stroke-dasharray'] = dash;
   }
   const transform = shapeTransform(shape, box);
-  const own = { class: `${cls} ${ctx.cls('shape')}`, 'data-run': obj.runId };
 
   const ends =
-    isLine && stroke !== undefined && color !== undefined ? lineEnds(stroke, box, color) : undefined;
+    open && stroke !== undefined && color !== undefined
+      ? lineEnds(stroke, openPath(shape, box), color)
+      : undefined;
   if (ends === undefined || ends.ends.length === 0) {
     outline.attrs = { ...own, ...outline.attrs, ...paint, ...(transform === undefined ? {} : { transform }) };
-    outline.children = titleOf(obj);
+    outline.children = title;
     return outline;
   }
-  outline.attrs = {
-    ...outline.attrs,
-    x1: fmt(ends.start[0]),
-    y1: fmt(ends.start[1]),
-    x2: fmt(ends.end[0]),
-    y2: fmt(ends.end[1]),
-    ...paint,
-  };
+  const points = ends.path.points;
+  const [x1, y1] = points[0] as [number, number];
+  const [x2, y2] = points[points.length - 1] as [number, number];
+  outline.attrs =
+    shape.geometry === 'line'
+      ? { ...outline.attrs, x1: fmt(x1), y1: fmt(y1), x2: fmt(x2), y2: fmt(y2), ...paint }
+      : { ...outline.attrs, d: openPathD(ends.path), ...paint };
   return el('g', { ...own, ...(transform === undefined ? {} : { transform }) }, [
-    ...titleOf(obj),
+    ...title,
     outline,
     ...ends.ends,
   ]);
@@ -1210,12 +1273,25 @@ function placeholder(
   ctx: Ctx,
   cls: string,
 ): RElement {
+  return placeholderRect(
+    box,
+    `${cls} ${ctx.cls('object-placeholder')}`,
+    { 'data-run': obj.runId, ...(obj.graphic === undefined ? {} : { 'data-graphic': obj.graphic }) },
+    titleOf(obj),
+  );
+}
+
+function placeholderRect(
+  box: { x: number; y: number; width: number; height: number },
+  cls: string,
+  extra: Record<string, string>,
+  title: RElement[],
+): RElement {
   return el(
     'rect',
     {
-      class: `${cls} ${ctx.cls('object-placeholder')}`,
-      'data-run': obj.runId,
-      ...(obj.graphic === undefined ? {} : { 'data-graphic': obj.graphic }),
+      class: cls,
+      ...extra,
       x: fmt(box.x),
       y: fmt(box.y),
       width: fmt(box.width),
@@ -1225,7 +1301,7 @@ function placeholder(
       'stroke-width': '0.5',
       'stroke-dasharray': '3 2',
     },
-    titleOf(obj),
+    title,
   );
 }
 

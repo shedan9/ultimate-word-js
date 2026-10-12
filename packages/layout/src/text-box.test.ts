@@ -128,3 +128,40 @@ describe('文本框的内容', () => {
     expect(boxes[1]?.blocks).toBe(boxes[0]?.blocks);
   });
 });
+
+describe('组合成员里的文本框', () => {
+  /** 一个 1600 × 600 的组合（放得进版心的一行）：左边一个矩形成员带文本框，右边一条线 */
+  function group(anchor?: DrawingAnchor) {
+    return runOf([
+      {
+        kind: 'object' as const,
+        objectKind: 'drawing' as const,
+        width: 1600,
+        height: 600,
+        group: [
+          { x: 0, y: 0, width: 800, height: 600, textBox: ref(), shape: { fill: 'FFFFFF' } },
+          { x: 800, y: 300, width: 800, height: 0, shape: { geometry: 'line' as const } },
+        ],
+        ...(anchor === undefined ? {} : { anchor }),
+      },
+    ]);
+  }
+
+  it('浮动组合：成员的字借住在组合后面（inline、z 相同），框 = 组合外框 + 成员的偏移', () => {
+    const doc = layoutDocument(body([para([group(ANCHOR)])]), opts());
+    const [g, member] = doc.pages[0]?.floats ?? [];
+    expect(g).toMatchObject({ x: 300, y: 400, width: 1600, height: 600, z: 7 });
+    expect(g?.group).toHaveLength(2);
+    expect(g?.inline).toBeUndefined();
+    expect(member).toMatchObject({ x: 300, y: 400, width: 800, height: 600, z: 7, inline: true });
+    expect(member?.textBox).toMatchObject({ x: 400, y: 450, width: 600 });
+  });
+
+  it('内嵌组合：成员的字同样借住进 page.floats，外框按行算', () => {
+    const doc = layoutDocument(body([para([run('一'), group()])]), opts());
+    const [member] = doc.pages[0]?.floats ?? [];
+    expect(member?.inline).toBe(true);
+    expect(member?.x).toBe(600 + SIZE_5);
+    expect(member?.textBox?.x).toBe(600 + SIZE_5 + 100);
+  });
+});

@@ -585,6 +585,7 @@ function objectsOf(
       ...(item.graphic === undefined ? {} : { graphic: item.graphic }),
       ...(item.textBox === undefined ? {} : { textBox: item.textBox }),
       ...(item.shape === undefined ? {} : { shape: item.shape }),
+      ...(item.group === undefined ? {} : { group: item.group }),
     };
     if (item.float !== undefined) {
       floats.push({

@@ -24,7 +24,7 @@
  * 图片都走这条路 —— 公文的红头与印章尤其常见。解析 `style` 的外框与定位
  * 与 `v:imagedata@r:id`，够把图画在对的地方。~~`v:line` / `v:rect` 这些真的 VML 图形
  * 仍然只得到一个占位框~~ —— 2026-10-12 起直线 / 矩形 / 圆角矩形 / 椭圆 / 直线连接符
- * 按几何画（见下面「形状」），自定义路径（`v:shape@path`）与组合仍是占位框。
+ * 按几何画（见下面「形状」），组合见下面「组合与画布」，自定义路径（`v:shape@path`）仍是占位框。
  *
  * `position:absolute` 的形状是**浮动**的，折成与 `wp:anchor` 同一份 `DrawingAnchor`
  * （`vmlAnchor`）。原来一律当内嵌：WPS 从 PDF 转出来的文件把页脚里的每一小段字都放进
@@ -42,8 +42,16 @@
  * 外观 = 预设几何 + 填充 + 轮廓（`ShapeStyle`），文本框与纯形状同一份。原来只有文本框解析它，
  * 纯形状一律画虚线占位框 —— 而公文红头下面那条红色分隔线**常常就是一条直线形状**
  * （「插入 → 形状 → 直线」，不是段落边框），高度为 0 的直线连占位框都画不出来，整条线消失。
- * 几何只认能**照规范公式画准**的那些（`PRESET_GEOMETRY`），自由曲线、箭头块、组合仍是占位框。
- * VML 那边认 `v:line` / `v:rect` / `v:roundrect` / `v:oval` 与直线连接符（老文件与兼容写法里的线）。
+ * 几何只认能**照规范公式画准**的那些（`PRESET_GEOMETRY`），自由曲线、箭头块仍是占位框。
+ * VML 那边认 `v:line` / `v:rect` / `v:roundrect` / `v:oval` 与直线 / 肘形 / 曲线连接符（老文件与兼容写法里的线）。
+ *
+ * ## 组合与画布（`wpg:wgp` / `wpc:wpc` / `v:group`）
+ *
+ * 流程图几乎都是组合：几个框 + 几条连接符 + 框里的字。原来整个组合只有一个占位框，
+ * 更糟的是 ② 那条深搜会捞到**第一个成员**的图片、把它拉伸画满整个组合的外框。
+ * 现在摊成 `ObjectContent.group`：每一层组合都是一个坐标系（子坐标 `chOff` / `chExt` 映到
+ * 自己的 `off` / `ext`，再绕中心翻转、旋转），一路乘下去，成员的框落到对象外框里。
+ * 见 `memberTransform` 那一段。
  */
 import { emuToTwips, inchToTwips, mmToTwips, ptToTwips, pxToTwips, type Twips } from '@uw/core';
 import type { XmlElement } from '@uw/ooxml';
@@ -51,6 +59,7 @@ import { attr, child, children, textContent } from '@uw/ooxml';
 import type {
   AnchorPos,
   DrawingAnchor,
+  GroupMember,
   ImageRef,
   LineEnd,
   NodeId,
@@ -58,6 +67,7 @@ import type {
   ShapeGeometry,
   ShapeStroke,
   ShapeStyle,
+  TextBoxRef,
 } from './nodes.ts';
 import { attrInt, attrOnOff, put } from './xml-values.ts';
 
@@ -107,8 +117,10 @@ export function parseDrawing(
 
   put(out, 'alt', altText(frame));
   put(out, 'graphic', graphicUri(frame));
-  put(out, 'image', blipRef(frame, idPrefix));
   if (inline === undefined) out.anchor = anchorOf(frame);
+  // 组合先认：它的图片与形状都在成员身上，往下深搜 blip 会把第一个成员的图画满整个外框
+  if (drawingGroup(frame, idPrefix, opts, out)) return out;
+  put(out, 'image', blipRef(frame, idPrefix));
   drawingShape(frame, opts, out);
   return out;
 }
@@ -135,6 +147,12 @@ export function parsePict(pict: XmlElement, idPrefix: string, opts: DrawingParse
     height: line?.height ?? cssLength(style.height) ?? 0,
   };
   if (root !== undefined) put(out, 'anchor', vmlAnchor(root, style, line));
+  if (root?.name === 'v:group') {
+    // 成员里的 `v:imagedata` 是成员的图，不是整个组合的（同 DrawingML 那边的理由）
+    put(out, 'alt', nonEmpty(attr(root, 'alt') ?? attr(root, 'o:title')));
+    put(out, 'group', vmlGroup(root, out.width, out.height, idPrefix, opts));
+    return out;
+  }
   // 文本框常是 `v:rect` / `v:roundrect`，不是 `v:shape` —— 不能等找到图片形状才认
   if (root !== undefined) vmlTextBox(root, style, opts, out);
   // 纯形状：没有图片、不是文本框、几何认得出来
@@ -290,7 +308,7 @@ const BODY_INSET_EMU = { l: 91440, t: 45720, r: 91440, b: 45720 };
  * `a:graphicData/wps:wsp`：文本框（`wps:txbx/w:txbxContent`）与外观。
  *
  * 只认 `wps:wsp` 直接挂在 graphicData 下的那种 —— 组合（`wpg:wgp`）与画布（`wpc:wpc`）
- * 里的子形状各有自己的坐标系，那是组合的几何，还没做。
+ * 里的子形状各有自己的坐标系，走 `drawingGroup`。
  *
  * 外观的规矩：文本框一律收（没写 prstGeom 的就是矩形）；纯形状只在**几何认得出来**时收，
  * 认不出的（`a:custGeom`、箭头块）不收，渲染层照旧画占位框。带图片填充的（`a:blipFill`）
@@ -300,8 +318,16 @@ function drawingShape(frame: XmlElement, opts: DrawingParseOptions, out: ObjectC
   const graphic = child(frame, 'a:graphic');
   const data = graphic && child(graphic, 'a:graphicData');
   const wsp = data && child(data, 'wps:wsp');
-  if (wsp === undefined) return;
+  if (wsp !== undefined) wspAppearance(wsp, opts, out.image !== undefined, out);
+}
 
+/** 一个 `wps:wsp` 的文本框与外观，写进 `out`（独立对象与组合成员共用）。`imaged` = 已经作为图片画了 */
+function wspAppearance(
+  wsp: XmlElement,
+  opts: DrawingParseOptions,
+  imaged: boolean,
+  out: { textBox?: TextBoxRef; shape?: ShapeStyle },
+): void {
   const txbx = child(wsp, 'wps:txbx');
   const content = txbx && child(txbx, 'w:txbxContent');
   if (opts.textBox !== undefined && content !== undefined) {
@@ -317,7 +343,7 @@ function drawingShape(frame: XmlElement, opts: DrawingParseOptions, out: ObjectC
     put(out, 'shape', drawingShapeStyle(wsp, opts.themeColors, true));
     return;
   }
-  if (out.image !== undefined) return;
+  if (imaged) return;
   put(out, 'shape', drawingShapeStyle(wsp, opts.themeColors, false));
 }
 
@@ -344,7 +370,20 @@ const PRESET_GEOMETRY: Readonly<Record<string, ShapeGeometry>> = {
   flowChartConnector: 'ellipse',
   flowChartTerminator: 'flowChartTerminator',
   flowChartInputOutput: 'flowChartInputOutput',
+  bentConnector2: 'bentConnector2',
+  bentConnector3: 'bentConnector3',
+  curvedConnector3: 'curvedConnector3',
 };
+
+/** 开放路径：没有内部（填充不画）、两端能带箭头 */
+function isOpenGeometry(geometry: ShapeGeometry | undefined): boolean {
+  return (
+    geometry === 'line' ||
+    geometry === 'bentConnector2' ||
+    geometry === 'bentConnector3' ||
+    geometry === 'curvedConnector3'
+  );
+}
 
 /**
  * `wps:spPr` 的几何、填充与轮廓；spPr 没写的退到 `wps:style` 的 `a:fillRef` / `a:lnRef`
@@ -380,7 +419,7 @@ function drawingShapeStyle(
   }
 
   const fill = spPr === undefined ? undefined : fillOf(spPr);
-  if (geometry === 'line') {
+  if (isOpenGeometry(geometry)) {
     // 线没有内部，样式引用里的 fillRef 对它不起作用
   } else if (fill === undefined) {
     // spPr 一个填充都没写：看形状样式。idx 0 是「无填充」
@@ -439,7 +478,7 @@ const PRESET_DASHES = new Set([
 const LINE_END_TYPES = new Set(['triangle', 'stealth', 'arrow', 'oval', 'diamond']);
 const LINE_END_SIZES = new Set(['sm', 'med', 'lg']);
 
-/** 轮廓的虚线与线端（`a:prstDash` / `a:headEnd` / `a:tailEnd`）。线端只有直线有意义 */
+/** 轮廓的虚线与线端（`a:prstDash` / `a:headEnd` / `a:tailEnd`）。线端只有直线与连接符有意义 */
 function drawingStroke(
   color: string,
   width: Twips,
@@ -450,7 +489,7 @@ function drawingStroke(
   const dash = ln && child(ln, 'a:prstDash');
   const val = dash && attr(dash, 'val');
   if (val !== undefined && PRESET_DASHES.has(val)) out.dash = val;
-  if (geometry === 'line' && ln !== undefined) {
+  if (isOpenGeometry(geometry) && ln !== undefined) {
     put(out, 'head', lineEndOf(child(ln, 'a:headEnd')));
     put(out, 'tail', lineEndOf(child(ln, 'a:tailEnd')));
   }
@@ -607,12 +646,12 @@ function hslToRgb(h: number, s: number, l: number): string {
 /** `v:textbox@inset` 的缺省值：与 DrawingML 相同，左右 0.1 英寸、上下 0.05 英寸 */
 const VML_INSET_DEFAULT = [inchToTwips(0.1), inchToTwips(0.05), inchToTwips(0.1), inchToTwips(0.05)] as const;
 
-/** VML 文本框：形状直下的 `v:textbox/w:txbxContent`。组合里的不认（见 `drawingTextBox`） */
+/** VML 文本框：形状直下的 `v:textbox/w:txbxContent`（独立对象与组合成员共用） */
 function vmlTextBox(
   root: XmlElement,
   style: Record<string, string>,
   opts: DrawingParseOptions,
-  out: ObjectContent,
+  out: { textBox?: TextBoxRef; shape?: ShapeStyle },
 ): void {
   if (opts.textBox === undefined) return;
   const textbox = child(root, 'v:textbox');
@@ -648,11 +687,12 @@ function vmlShapeStyle(
   const out: ShapeStyle = {};
   if (geometry !== undefined && !(textBox && geometry === 'rect')) out.geometry = geometry;
   if (geometry === 'roundRect') put(out, 'adjust', vmlArcSize(attr(shape, 'arcsize')));
+  if (geometry === 'bentConnector3' || geometry === 'curvedConnector3') put(out, 'adjust', vmlAdj(shape));
 
   const fillEl = child(shape, 'v:fill');
   const strokeEl = child(shape, 'v:stroke');
   const filled = vmlBool(attr(shape, 'filled')) ?? true;
-  if (geometry !== 'line' && filled && vmlBool(fillEl && attr(fillEl, 'on')) !== false) {
+  if (!isOpenGeometry(geometry) && filled && vmlBool(fillEl && attr(fillEl, 'on')) !== false) {
     put(out, 'fill', vmlColor(attr(shape, 'fillcolor') ?? (fillEl && attr(fillEl, 'color')) ?? 'white'));
   }
   const stroked = vmlBool(attr(shape, 'stroked')) ?? true;
@@ -679,9 +719,9 @@ function vmlShapeStyle(
 }
 
 /**
- * VML 元素 → 几何。`v:shape` 只认两种：直线连接符（`o:connectortype="straight"`，
- * 形状类型 `#_x0000_t32`）与文本框（`#_x0000_t202`，矩形）—— 别的 `v:shape` 是一条自定义路径，
- * 认不出
+ * VML 元素 → 几何。`v:shape` 只认连接符（`o:connectortype` 或形状类型 `#_x0000_t32` 直线 /
+ * `t33` `t34` 肘形 / `t38` 曲线，编号就是 DrawingML 预设几何的老编号）与文本框（`#_x0000_t202`，矩形）
+ * —— 别的 `v:shape` 是一条自定义路径，认不出
  */
 function vmlGeometry(shape: XmlElement): ShapeGeometry | undefined {
   switch (shape.name) {
@@ -696,6 +736,9 @@ function vmlGeometry(shape: XmlElement): ShapeGeometry | undefined {
     case 'v:shape': {
       const type = attr(shape, 'type') ?? '';
       if (attr(shape, 'o:connectortype') === 'straight' || type.endsWith('_x0000_t32')) return 'line';
+      if (type.endsWith('_x0000_t33')) return 'bentConnector2';
+      if (type.endsWith('_x0000_t34')) return 'bentConnector3';
+      if (type.endsWith('_x0000_t38')) return 'curvedConnector3';
       if (type.endsWith('_x0000_t202')) return 'rect';
       return undefined;
     }
@@ -717,6 +760,15 @@ function vmlArcSize(value: string | undefined): number {
   else if (v !== '') ratio = Number.parseFloat(v);
   if (Number.isNaN(ratio)) ratio = 0.2;
   return Math.round(Math.min(1, Math.max(0, ratio)) * 50000);
+}
+
+/**
+ * VML 连接符的 `adj`（第一个值，21600 是整个宽）→ DrawingML 的 1/100000。缺省 10800 = 正中。
+ * 不夹：拐点本来就可以落在外框外面（两个框上下摞着、连接符从侧面绕出去）
+ */
+function vmlAdj(shape: XmlElement): number {
+  const first = Number.parseFloat((attr(shape, 'adj') ?? '').split(',')[0] ?? '');
+  return Math.round(((Number.isNaN(first) ? 10800 : first) / 21600) * 100000);
 }
 
 /** VML 的 `dashstyle` → DrawingML 的预设虚线名（同一套图案，名字不同） */
@@ -755,7 +807,7 @@ function vmlStroke(
   if (strokeEl === undefined) return out;
   const dash = VML_DASHES[(attr(strokeEl, 'dashstyle') ?? '').toLowerCase()];
   if (dash !== undefined) out.dash = dash;
-  if (geometry === 'line') {
+  if (isOpenGeometry(geometry)) {
     const end = (which: 'start' | 'end'): LineEnd | undefined => {
       const type = VML_ARROWS[(attr(strokeEl, `${which}arrow`) ?? '').toLowerCase()];
       if (type === undefined) return undefined;
@@ -783,15 +835,19 @@ interface VmlLine {
 }
 
 /**
- * `v:line@from` / `@to`（「x,y」，CSS 长度，不带单位按 px，缺省 `0,0` 与 `10,10`）。
+ * `v:line@from` / `@to`（「x,y」，CSS 长度，不带单位按 px，缺省 `0,0` 与 `10,10`；
+ * 组合里的线是组合坐标系里的数，由调用方换 `length`）。
  * 外框是两个端点围成的矩形；线从哪个角画到哪个角折成翻转 —— 与 DrawingML 的直线同一种说法，
  * 渲染层只认一种
  */
-function vmlLine(root: XmlElement): VmlLine | undefined {
+function vmlLine(
+  root: XmlElement,
+  length: (value: string | undefined) => number | undefined = cssLength,
+): VmlLine | undefined {
   if (root.name !== 'v:line') return undefined;
   const point = (value: string | undefined, fallback: string): [Twips, Twips] => {
     const [x, y] = (value ?? fallback).split(',');
-    return [cssLength(nonEmpty(x?.trim())) ?? 0, cssLength(nonEmpty(y?.trim())) ?? 0];
+    return [length(nonEmpty(x?.trim())) ?? 0, length(nonEmpty(y?.trim())) ?? 0];
   };
   const [x1, y1] = point(attr(root, 'from'), '0,0');
   const [x2, y2] = point(attr(root, 'to'), '10,10');
@@ -932,6 +988,367 @@ function vmlAxis(
   }
   pos.offset = (cssLength(style[edge]) ?? 0) + (cssLength(style[`margin-${edge}`]) ?? 0) + extra;
   return pos;
+}
+
+// ── 组合与画布 ────────────────────────────────────────────────────────────────
+
+/** 2×3 仿射矩阵：(x, y) → (a·x + c·y + e, b·x + d·y + f) */
+interface Affine {
+  a: number;
+  b: number;
+  c: number;
+  d: number;
+  e: number;
+  f: number;
+}
+
+/** m ∘ n：点先过 n、再过 m */
+function compose(m: Affine, n: Affine): Affine {
+  return {
+    a: m.a * n.a + m.c * n.b,
+    b: m.b * n.a + m.d * n.b,
+    c: m.a * n.c + m.c * n.d,
+    d: m.b * n.c + m.d * n.d,
+    e: m.a * n.e + m.c * n.f + m.e,
+    f: m.b * n.e + m.d * n.f + m.f,
+  };
+}
+
+function applyAffine(m: Affine, x: number, y: number): [number, number] {
+  return [m.a * x + m.c * y + m.e, m.b * x + m.d * y + m.f];
+}
+
+const EMU_TO_TWIPS: Affine = { a: emuToTwips(1), b: 0, c: 0, d: emuToTwips(1), e: 0, f: 0 };
+
+interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** 一个框连同它的旋转（度）与翻转，单位是它所在的那个坐标系的 */
+interface Frame extends Box {
+  rot: number;
+  flipH: boolean;
+  flipV: boolean;
+}
+
+/**
+ * from 框线性映到 to 框（不转不翻）。from 在某个方向上退化成 0 时那个方向按 `fallback` 缩放 ——
+ * 全是横线的组合 `chExt cy="0"`，按 0 除会把整组炸成 NaN
+ */
+function boxMap(from: Box, to: Box, fallback: number): Affine {
+  const sx = from.w === 0 ? fallback : to.w / from.w;
+  const sy = from.h === 0 ? fallback : to.h / from.h;
+  return { a: sx, b: 0, c: 0, d: sy, e: to.x - from.x * sx, f: to.y - from.y * sy };
+}
+
+/** 绕框中心先翻转、再旋转 —— 与渲染层 `shapeTransform` 同一个顺序（DrawingML 的说法） */
+function spin(frame: Frame): Affine {
+  const cx = frame.x + frame.w / 2;
+  const cy = frame.y + frame.h / 2;
+  const r = (frame.rot * Math.PI) / 180;
+  const fx = frame.flipH ? -1 : 1;
+  const fy = frame.flipV ? -1 : 1;
+  const a = Math.cos(r) * fx;
+  const b = Math.sin(r) * fx;
+  const c = -Math.sin(r) * fy;
+  const d = Math.cos(r) * fy;
+  return { a, b, c, d, e: cx - (a * cx + c * cy), f: cy - (b * cx + d * cy) };
+}
+
+/** 成员落到对象外框里的样子：转之前的框 + 叠完的旋转翻转 */
+interface Placement {
+  box: Pick<GroupMember, 'x' | 'y' | 'width' | 'height'>;
+  rotation: number;
+  flipH: boolean;
+  flipV: boolean;
+}
+
+/**
+ * 成员自己的框（所在组合的坐标系）→ 对象外框里的框。
+ *
+ * 矩阵的线性部分拆成「旋转 × 缩放（× 水平镜像）」：框的**中心**照矩阵走，宽高乘各自方向的缩放，
+ * 旋转与镜像叠到成员自己的上面。镜像为什么能折成 flipH：一层组合的竖直翻转 = 转 180° 再水平翻转，
+ * 而水平翻转越过成员自己的旋转会把它变成反方向（F·R(θ) = R(−θ)·F）。
+ * 各层缩放不等比又带旋转时矩阵里会有错切，这里按没有处理 —— 那种组合 Word 自己也画得走样
+ */
+function placeMember(m: Affine, frame: Frame): Placement {
+  const [cx, cy] = applyAffine(m, frame.x + frame.w / 2, frame.y + frame.h / 2);
+  const width = frame.w * Math.hypot(m.a, m.b);
+  const height = frame.h * Math.hypot(m.c, m.d);
+  const mirrored = m.a * m.d - m.b * m.c < 0;
+  const theta = (Math.atan2(mirrored ? -m.b : m.b, mirrored ? -m.a : m.a) * 180) / Math.PI;
+  const rotation = theta + (mirrored ? -frame.rot : frame.rot);
+  return {
+    box: { x: tidy(cx - width / 2), y: tidy(cy - height / 2), width: tidy(width), height: tidy(height) },
+    rotation: (((Math.round(rotation * 1e4) / 1e4) % 360) + 360) % 360,
+    flipH: frame.flipH !== mirrored,
+    flipV: frame.flipV,
+  };
+}
+
+/** 矩阵乘出来的 1439.9999999 收成 1440 —— 不改几何，只是别让测试与回归对着浮点噪声 */
+function tidy(v: number): number {
+  return Math.round(v * 1000) / 1000;
+}
+
+/** 把叠完的旋转翻转写到成员的形状 / 图片上（盖掉它们自己解析出的那一份） */
+function orient(target: ShapeStyle | ImageRef | undefined, p: Placement): void {
+  if (target === undefined) return;
+  delete target.rotation;
+  delete target.flipH;
+  delete target.flipV;
+  if (p.rotation !== 0) target.rotation = p.rotation;
+  if (p.flipH) target.flipH = true;
+  if (p.flipV) target.flipV = true;
+}
+
+function member(p: Placement, content: Omit<GroupMember, 'x' | 'y' | 'width' | 'height'>): GroupMember {
+  orient(content.shape, p);
+  orient(content.image, p);
+  return { ...p.box, ...content };
+}
+
+/** `a:xfrm` → 框（EMU）。缺席返回 undefined：没有框的成员放不到任何地方 */
+function xfrmFrame(xfrm: XmlElement | undefined): Frame | undefined {
+  if (xfrm === undefined) return undefined;
+  const off = child(xfrm, 'a:off');
+  const ext = child(xfrm, 'a:ext');
+  return {
+    x: attrInt(off, 'x') ?? 0,
+    y: attrInt(off, 'y') ?? 0,
+    w: attrInt(ext, 'cx') ?? 0,
+    h: attrInt(ext, 'cy') ?? 0,
+    rot: (attrInt(xfrm, 'rot') ?? 0) / ROT_PER_DEGREE,
+    flipH: attrOnOff(xfrm, 'flipH') === true,
+    flipV: attrOnOff(xfrm, 'flipV') === true,
+  };
+}
+
+/**
+ * 一层组合把**子坐标**（`a:chOff` / `a:chExt`）映到自己在父坐标系里的框（`a:off` / `a:ext`），
+ * 再绕中心翻转、旋转。没写子坐标的按「与自己的框重合」
+ */
+function groupTransform(xfrm: XmlElement, own: Frame): Affine {
+  const chOff = child(xfrm, 'a:chOff');
+  const chExt = child(xfrm, 'a:chExt');
+  const inner: Box =
+    chOff === undefined && chExt === undefined
+      ? own
+      : {
+          x: attrInt(chOff, 'x') ?? 0,
+          y: attrInt(chOff, 'y') ?? 0,
+          w: attrInt(chExt, 'cx') ?? 0,
+          h: attrInt(chExt, 'cy') ?? 0,
+        };
+  return compose(spin(own), boxMap(inner, own, 1));
+}
+
+function grpXfrm(group: XmlElement): XmlElement | undefined {
+  const grpSpPr = child(group, 'wpg:grpSpPr');
+  return grpSpPr && child(grpSpPr, 'a:xfrm');
+}
+
+/**
+ * `wpg:wgp`（组合）/ `wpc:wpc`（画布）→ `out.group`。不是组合返回 false。
+ *
+ * 最外层组合的框（`a:off` / `a:ext`，EMU）映到对象外框（`wp:extent`，twips）上 —— 两者通常
+ * 一样大，不一样时（用户拖过外框、Word 还没重算组合）以外框为准，与图片「照 extent 画」同理。
+ * 画布没有自己的子坐标系，成员的 `a:off` 直接是相对画布左上角的 EMU
+ */
+function drawingGroup(
+  frame: XmlElement,
+  idPrefix: string,
+  opts: DrawingParseOptions,
+  out: ObjectContent,
+): boolean {
+  const graphic = child(frame, 'a:graphic');
+  const data = graphic && child(graphic, 'a:graphicData');
+  const wgp = data && child(data, 'wpg:wgp');
+  const wpc = data && child(data, 'wpc:wpc');
+  if (wgp === undefined && wpc === undefined) return false;
+
+  const members: GroupMember[] = [];
+  if (wgp !== undefined) {
+    const xfrm = grpXfrm(wgp);
+    const own = xfrmFrame(xfrm);
+    const m =
+      xfrm === undefined || own === undefined
+        ? EMU_TO_TWIPS
+        : compose(
+            boxMap(own, { x: 0, y: 0, w: out.width, h: out.height }, emuToTwips(1)),
+            groupTransform(xfrm, own),
+          );
+    drawingMembers(wgp, m, idPrefix, opts, members);
+  } else if (wpc !== undefined) {
+    drawingMembers(wpc, EMU_TO_TWIPS, idPrefix, opts, members);
+  }
+  // 一个成员都认不出：不设 group，对象照旧是占位框
+  if (members.length > 0) out.group = members;
+  return true;
+}
+
+/** 一层组合里的成员。嵌套组合乘上自己的变换往下走，`mc:AlternateContent` 只看 Choice */
+function drawingMembers(
+  container: XmlElement,
+  m: Affine,
+  idPrefix: string,
+  opts: DrawingParseOptions,
+  out: GroupMember[],
+): void {
+  for (const el of children(container)) {
+    switch (el.name) {
+      case 'mc:AlternateContent': {
+        const choice = child(el, 'mc:Choice');
+        if (choice !== undefined) drawingMembers(choice, m, idPrefix, opts, out);
+        break;
+      }
+      case 'wpg:grpSp':
+      case 'wpg:wgp': {
+        const xfrm = grpXfrm(el);
+        const own = xfrmFrame(xfrm);
+        if (xfrm !== undefined && own !== undefined) {
+          drawingMembers(el, compose(m, groupTransform(xfrm, own)), idPrefix, opts, out);
+        }
+        break;
+      }
+      case 'wps:wsp': {
+        const spPr = child(el, 'wps:spPr');
+        const frame = xfrmFrame(spPr && child(spPr, 'a:xfrm'));
+        if (frame === undefined) break;
+        // 图片填充的形状（`a:blipFill` 挂在 spPr 上）当图片画，与独立对象同一条规矩
+        const content: Omit<GroupMember, 'x' | 'y' | 'width' | 'height'> = {};
+        put(content, 'image', blipRef(el, idPrefix));
+        wspAppearance(el, opts, content.image !== undefined, content);
+        out.push(member(placeMember(m, frame), content));
+        break;
+      }
+      case 'pic:pic': {
+        const spPr = child(el, 'pic:spPr');
+        const frame = xfrmFrame(spPr && child(spPr, 'a:xfrm'));
+        if (frame === undefined) break;
+        const content: Omit<GroupMember, 'x' | 'y' | 'width' | 'height'> = {};
+        put(content, 'image', blipRef(el, idPrefix));
+        out.push(member(placeMember(m, frame), content));
+        break;
+      }
+      default:
+        // 组合自己的属性（`wpg:grpSpPr` / `wpg:cNvGrpSpPr`）、画布的背景与外框（`wpc:bg` / `wpc:whole`）、
+        // 墨迹（`w14:contentPart`）都不是成员
+        break;
+    }
+  }
+}
+
+/** VML 里能当组合成员的元素（`v:group` 另外处理：它是下一层坐标系） */
+const VML_MEMBERS = new Set([
+  'v:shape',
+  'v:rect',
+  'v:roundrect',
+  'v:oval',
+  'v:line',
+  'v:polyline',
+  'v:arc',
+  'v:curve',
+  'v:image',
+]);
+
+/** 组合坐标系里的数：**不带单位、不是 px**，是 `coordsize` 那一套格子。带了单位也只取数 */
+function coordNumber(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const n = Number.parseFloat(value);
+  return Number.isNaN(n) ? undefined : n;
+}
+
+/** `coordorigin` / `coordsize`：组合内部的坐标系，缺省原点 0,0、大小 1000 × 1000（VML 规范） */
+function vmlCoords(group: XmlElement): Box {
+  const pair = (value: string | undefined, fallback: number): [number, number] => {
+    const [a, b] = (value ?? '').split(',');
+    return [coordNumber(nonEmpty(a?.trim())) ?? fallback, coordNumber(nonEmpty(b?.trim())) ?? fallback];
+  };
+  const [x, y] = pair(attr(group, 'coordorigin'), 0);
+  const [w, h] = pair(attr(group, 'coordsize'), 1000);
+  return { x, y, w, h };
+}
+
+/** 成员（或下一层组合）在所在组合坐标系里的框：style 的 left / top / width / height + 旋转翻转 */
+function vmlFrame(style: Record<string, string>, line: VmlLine | undefined): Frame {
+  const flip = (style.flip ?? '').toLowerCase();
+  const rot = coordNumber(style.rotation) ?? 0;
+  if (line !== undefined) {
+    return {
+      x: line.left,
+      y: line.top,
+      w: line.width,
+      h: line.height,
+      rot,
+      flipH: flip.includes('x') !== (line.flipH === true),
+      flipV: flip.includes('y') !== (line.flipV === true),
+    };
+  }
+  return {
+    x: (coordNumber(style.left) ?? 0) + (coordNumber(style['margin-left']) ?? 0),
+    y: (coordNumber(style.top) ?? 0) + (coordNumber(style['margin-top']) ?? 0),
+    w: coordNumber(style.width) ?? 0,
+    h: coordNumber(style.height) ?? 0,
+    rot,
+    flipH: flip.includes('x'),
+    flipV: flip.includes('y'),
+  };
+}
+
+/**
+ * `v:group` → 成员。组合自己在对象外框里就是 (0, 0, 宽, 高)（style 的尺寸已经换成 twips），
+ * 内部坐标按 `coordorigin` / `coordsize` 映过去 —— 所以成员的 `left:3600` 不是 3600px，
+ * 是 coordsize 那张格子上的 3600 格
+ */
+function vmlGroup(
+  group: XmlElement,
+  width: Twips,
+  height: Twips,
+  idPrefix: string,
+  opts: DrawingParseOptions,
+): GroupMember[] | undefined {
+  const style = parseStyle(attr(group, 'style'));
+  const own: Frame = { ...vmlFrame(style, undefined), x: 0, y: 0, w: width, h: height };
+  const members: GroupMember[] = [];
+  vmlMembers(group, compose(spin(own), boxMap(vmlCoords(group), own, 1)), idPrefix, opts, members);
+  return members.length > 0 ? members : undefined;
+}
+
+function vmlMembers(
+  container: XmlElement,
+  m: Affine,
+  idPrefix: string,
+  opts: DrawingParseOptions,
+  out: GroupMember[],
+): void {
+  for (const el of children(container)) {
+    const style = parseStyle(attr(el, 'style'));
+    if (el.name === 'v:group') {
+      const own = vmlFrame(style, undefined);
+      vmlMembers(el, compose(m, compose(spin(own), boxMap(vmlCoords(el), own, 1))), idPrefix, opts, out);
+      continue;
+    }
+    if (!VML_MEMBERS.has(el.name)) continue;
+    const line = vmlLine(el, coordNumber);
+    const content: Omit<GroupMember, 'x' | 'y' | 'width' | 'height'> = {};
+    const data = child(el, 'v:imagedata');
+    const relId =
+      data === undefined
+        ? el.name === 'v:image'
+          ? attr(el, 'r:id')
+          : undefined
+        : (attr(data, 'r:id') ?? attr(data, 'o:relid'));
+    if (relId !== undefined) content.image = { id: `${idPrefix}${relId}`, relId };
+    vmlTextBox(el, style, opts, content);
+    if (content.image === undefined && content.textBox === undefined) {
+      put(content, 'shape', vmlShapeStyle(el, style, line, false));
+    }
+    out.push(member(placeMember(m, vmlFrame(style, line)), content));
+  }
 }
 
 // ── VML 的外框与图片 ──────────────────────────────────────────────────────────

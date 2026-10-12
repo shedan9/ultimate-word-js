@@ -98,7 +98,10 @@ export function* imageRefs<S extends PropSet>(blocks: readonly BlockNode<S>[]): 
     if (block.kind !== 'paragraph') continue;
     for (const run of block.runs) {
       for (const c of run.content) {
-        if (c.kind === 'object' && c.image !== undefined) yield c.image;
+        if (c.kind !== 'object') continue;
+        if (c.image !== undefined) yield c.image;
+        // 组合成员的图同样按引用收 —— 流程图里插的截图在成员身上，不在组合上
+        for (const m of c.group ?? []) if (m.image !== undefined) yield m.image;
       }
     }
   }

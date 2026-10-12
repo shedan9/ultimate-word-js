@@ -62,6 +62,7 @@ import type { TextMeasurer } from '@uw/fonts';
 import type {
   AnchorPos,
   DocumentSettings,
+  GroupMember,
   NodeId,
   ResolvedBlock,
   ResolvedBody,
@@ -297,13 +298,17 @@ export interface PlacedFloat {
   behindDoc: boolean;
   /** z 序（`wp:anchor@relativeHeight`），同一页内已按它升序排好 */
   z: number;
-  /** 形状的填充与轮廓（文本框） */
+  /** 形状的填充与轮廓（文本框与纯形状） */
   shape?: ShapeStyle;
+  /** 组合的成员（坐标相对本对象外框）。成员里的文本框内容另外借住在 `page.floats`（带 `inline`） */
+  group?: GroupMember[];
   /** 文本框的内容，已经摞好（`attachTextBox`） */
   textBox?: PlacedTextBox;
   /**
-   * **内嵌**文本框借住在这里：外框（填充与轮廓）照旧由它所在的行画，这一份只带内容 ——
-   * 行的绘制是按段落缓存复用的，内容却要等分页后才摞（要知道纸坐标才能裁剪）。
+   * **外框别处已经画了**，这一份只带文本框的内容。两种情形借住在这里：
+   * ① **内嵌**文本框 —— 外框（填充与轮廓）照旧由它所在的行画：行的绘制是按段落缓存复用的，
+   *    内容却要等分页后才摞（要知道纸坐标才能裁剪）；
+   * ② **组合成员**里的文本框 —— 外框随组合一起画，这一份的框就是成员的框（紧跟在组合后面，z 相同）。
    * 渲染层据此不再画外框、可选文本层不再给它补替代说明
    */
   inline?: true;
@@ -1707,6 +1712,7 @@ function placeFloats(flow: Flow, page: PageLayout): void {
     eachFloat(blocks, x, y, page, (f, placed) => {
       if (f.textBox !== undefined) attachTextBox(flow, page, placed, f.textBox);
       out.push(placed);
+      attachGroupTextBoxes(flow, page, placed, f.group, out);
     });
   }
   // 内嵌文本框在正文的层里（z 最低），浮于文字上方的对象该盖住它，所以排在最前
@@ -1756,10 +1762,40 @@ function attachTextBox(flow: Flow, page: PageLayout, f: PlacedFloat, ref: TextBo
   };
 }
 
+/**
+ * 组合成员里的文本框：每个成员的内容各借住一份进 `out`（带 `inline`）—— 外框由组合画，
+ * 这一份的框就是成员的框。排在组合**后面**、z 相同：稳定排序之后字盖在组合的填充上
+ */
+function attachGroupTextBoxes(
+  flow: Flow,
+  page: PageLayout,
+  f: PlacedFloat,
+  members: readonly GroupMember[] | undefined,
+  out: PlacedFloat[],
+): void {
+  for (const m of members ?? []) {
+    if (m.textBox === undefined) continue;
+    const box: PlacedFloat = {
+      runId: f.runId,
+      contentIndex: f.contentIndex,
+      x: f.x + m.x,
+      y: f.y + m.y,
+      width: m.width,
+      height: m.height,
+      objectKind: f.objectKind,
+      behindDoc: f.behindDoc,
+      z: f.z,
+      inline: true,
+    };
+    attachTextBox(flow, page, box, m.textBox);
+    if (box.textBox !== undefined) out.push(box);
+  }
+}
+
 /** 文本框的内容不吸行网格时用的「没有网格」 */
 const NO_GRID: SectionProps['docGrid'] = { type: 'default', linePitch: 0, charSpace: 0 };
 
-/** 内嵌文本框：外框按行算（与渲染层画内嵌对象同一个式子），内容接上后借住进 `out` */
+/** 内嵌文本框（含内嵌组合里的）：外框按行算（与渲染层画内嵌对象同一个式子），内容接上后借住进 `out` */
 function collectInlineTextBoxes(
   flow: Flow,
   page: PageLayout,
@@ -1773,7 +1809,7 @@ function collectInlineTextBoxes(
     if (block.kind !== 'paragraph') continue;
     for (const placed of block.lines) {
       for (const o of placed.line.objects ?? []) {
-        if (o.textBox === undefined) continue;
+        if (o.textBox === undefined && o.group === undefined) continue;
         const f: PlacedFloat = {
           runId: o.runId,
           contentIndex: o.contentIndex,
@@ -1787,8 +1823,11 @@ function collectInlineTextBoxes(
           z: 0,
           inline: true,
         };
-        attachTextBox(flow, page, f, o.textBox);
-        if (f.textBox !== undefined) out.push(f);
+        if (o.textBox !== undefined) {
+          attachTextBox(flow, page, f, o.textBox);
+          if (f.textBox !== undefined) out.push(f);
+        }
+        attachGroupTextBoxes(flow, page, f, o.group, out);
       }
     }
   }
@@ -1848,6 +1887,7 @@ function resolveFloat(f: LineFloat, page: PageLayout, ctx: FloatContext): Placed
   if (f.alt !== undefined) out.alt = f.alt;
   if (f.graphic !== undefined) out.graphic = f.graphic;
   if (f.shape !== undefined) out.shape = f.shape;
+  if (f.group !== undefined) out.group = f.group;
   return out;
 }
 

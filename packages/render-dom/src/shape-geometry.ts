@@ -69,6 +69,10 @@ export function shapeOutline(shape: ShapeStyle, box: Box): RElement {
     case 'line':
       // 规范方向永远是左上 → 右下，反过来的由翻转给（`shapeTransform`）
       return el('line', { x1: fmt(x), y1: fmt(y), x2: fmt(x + w), y2: fmt(y + h) });
+    case 'bentConnector2':
+    case 'bentConnector3':
+    case 'curvedConnector3':
+      return el('path', { d: openPathD(openPath(shape, box)) });
     case 'triangle':
       return polygon(box, [
         [0, h],
@@ -154,11 +158,104 @@ export function shapeOutline(shape: ShapeStyle, box: Box): RElement {
   }
 }
 
+/** 开放路径（直线与连接符）：没有内部、两端能带箭头 */
+export function isOpenGeometry(geometry: ShapeStyle['geometry']): boolean {
+  return (
+    geometry === 'line' ||
+    geometry === 'bentConnector2' ||
+    geometry === 'bentConnector3' ||
+    geometry === 'curvedConnector3'
+  );
+}
+
+/**
+ * 开放路径的骨架：端点、拐点与贝塞尔控制点，**翻转之前**从外框左上走到右下（方向由翻转给，同直线）。
+ * `curve` 时 `points` 是 起点 + 每段三个点（`C` 的两个控制点 + 终点）
+ */
+export interface OpenPath {
+  points: [number, number][];
+  curve: boolean;
+}
+
+/**
+ * 规范的预设定义：`bentConnector2` 先横后竖；`bentConnector3` 横 → 竖 → 横，拐在 `adj1` 占宽的比例上
+ * （**不夹**：拐点本来就可以在外框外面，两个框上下摞着时连接符从侧面绕出去）；
+ * `curvedConnector3` 是同一条折线的圆滑版（两段三次贝塞尔，在拐点那一竖的正中接上）
+ */
+export function openPath(shape: ShapeStyle, box: Box): OpenPath {
+  const { x, y, width: w, height: h } = box;
+  const k = (shape.adjust ?? 50000) / 100000;
+  switch (shape.geometry) {
+    case 'bentConnector2':
+      return {
+        points: [
+          [x, y],
+          [x + w, y],
+          [x + w, y + h],
+        ],
+        curve: false,
+      };
+    case 'bentConnector3': {
+      const x1 = x + w * k;
+      return {
+        points: [
+          [x, y],
+          [x1, y],
+          [x1, y + h],
+          [x + w, y + h],
+        ],
+        curve: false,
+      };
+    }
+    case 'curvedConnector3': {
+      const x2 = x + w * k;
+      return {
+        points: [
+          [x, y],
+          [(x + x2) / 2, y],
+          [x2, y + h / 4],
+          [x2, y + h / 2],
+          [x2, y + (h * 3) / 4],
+          [(x + w + x2) / 2, y + h],
+          [x + w, y + h],
+        ],
+        curve: true,
+      };
+    }
+    default:
+      return {
+        points: [
+          [x, y],
+          [x + w, y + h],
+        ],
+        curve: false,
+      };
+  }
+}
+
+/** 骨架 → `d` */
+export function openPathD(path: OpenPath): string {
+  const pt = ([px, py]: [number, number]): string => `${fmt(px)} ${fmt(py)}`;
+  const [first, ...rest] = path.points;
+  if (first === undefined) return '';
+  if (!path.curve) return [`M${pt(first)}`, ...rest.map((p) => `L${pt(p)}`)].join(' ');
+  const parts = [`M${pt(first)}`];
+  for (let i = 0; i + 2 < rest.length; i += 3) {
+    parts.push(
+      `C${pt(rest[i] as [number, number])} ${pt(rest[i + 1] as [number, number])} ${pt(rest[i + 2] as [number, number])}`,
+    );
+  }
+  return parts.join(' ');
+}
+
 /**
  * 旋转与翻转，都绕外框中心。SVG 的变换列表**从右往左**作用在点上：点先翻转、再旋转 ——
  * 与 DrawingML 一致（翻转发生在形状自己的坐标里，旋转在最外面）
  */
-export function shapeTransform(shape: ShapeStyle, box: Box): string | undefined {
+export function shapeTransform(
+  shape: Pick<ShapeStyle, 'rotation' | 'flipH' | 'flipV'>,
+  box: Box,
+): string | undefined {
   const cx = box.x + box.width / 2;
   const cy = box.y + box.height / 2;
   const parts: string[] = [];
@@ -195,30 +292,48 @@ export function dashArray(dash: string | undefined, widthPt: number): string | u
 }
 
 /**
- * 直线两端的箭头。坐标是**翻转之前**的（线从外框左上画到右下），由调用方把它们与线一起
+ * 直线与连接符两端的箭头。坐标是**翻转之前**的（路径从外框左上走到右下），由调用方把它们与线一起
  * 放进同一个带 `shapeTransform` 的组里 —— 箭头跟着翻转走，不用自己再算一遍方向。
  *
- * 返回箭头元素，以及线要缩回到哪儿：实心三角的尖就是线的端点，线若画到尖上，平头的线端会从
+ * 箭头朝向取端点与**第一个不重合的**相邻点（肘形线的第一段、曲线的第一个控制点）：
+ * 外框零高的肘形线中间那一竖缩成了一个点，拿紧挨着的那个算会得出零向量。
+ *
+ * 返回箭头元素，以及缩过端点的路径：实心三角的尖就是线的端点，线若画到尖上，平头的线端会从
  * 三角形的两条斜边旁边探出来（线越粗越明显），所以三角形 / 隐形箭头把线缩到箭头的底边
  */
 export function lineEnds(
   stroke: NonNullable<ShapeStyle['stroke']>,
-  box: Box,
+  path: OpenPath,
   color: string,
-): { ends: RElement[]; start: [number, number]; end: [number, number] } {
-  const start: [number, number] = [box.x, box.y];
-  const end: [number, number] = [box.x + box.width, box.y + box.height];
-  const len = Math.hypot(box.width, box.height);
+): { ends: RElement[]; path: OpenPath } {
   const ends: RElement[] = [];
-  if (len === 0) return { ends, start, end };
-  const ux = box.width / len;
-  const uy = box.height / len;
+  const points = path.points.map((p) => [...p] as [number, number]);
   const widthPt = Math.max(LINE_END_MIN_WIDTH_PT, twipsToPt(stroke.width));
-  const head = stroke.head === undefined ? undefined : arrow(stroke.head, start, [-ux, -uy], widthPt, color);
-  const tail = stroke.tail === undefined ? undefined : arrow(stroke.tail, end, [ux, uy], widthPt, color);
+  const outward = (from: number, step: 1 | -1): [number, number] | undefined => {
+    const [px, py] = points[from] as [number, number];
+    for (let i = from + step; i >= 0 && i < points.length; i += step) {
+      const [qx, qy] = points[i] as [number, number];
+      const len = Math.hypot(px - qx, py - qy);
+      if (len > 1e-9) return [(px - qx) / len, (py - qy) / len];
+    }
+    return undefined;
+  };
+  const last = points.length - 1;
+  const headDir = stroke.head === undefined ? undefined : outward(0, 1);
+  const tailDir = stroke.tail === undefined ? undefined : outward(last, -1);
+  const head =
+    stroke.head === undefined || headDir === undefined
+      ? undefined
+      : arrow(stroke.head, points[0] as [number, number], headDir, widthPt, color);
+  const tail =
+    stroke.tail === undefined || tailDir === undefined
+      ? undefined
+      : arrow(stroke.tail, points[last] as [number, number], tailDir, widthPt, color);
   if (head !== undefined) ends.push(head.el);
   if (tail !== undefined) ends.push(tail.el);
-  return { ends, start: head?.back ?? start, end: tail?.back ?? end };
+  if (head?.back !== undefined) points[0] = head.back;
+  if (tail?.back !== undefined) points[last] = tail.back;
+  return { ends, path: { points, curve: path.curve } };
 }
 
 /**

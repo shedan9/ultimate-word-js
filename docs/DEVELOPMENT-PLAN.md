@@ -994,7 +994,7 @@ await view.toPNG(2);     // 第 3 页（页序号从 0 起，与 scrollTo({ page
   - 判据：model 13 项 + layout 6 项 + render-dom 3 项 + 端到端 3 项（真 docx：正文 DrawingML 框里带图 + 页脚 VML 框）
     + 回写 1 项（框所在段落与后一段改字，框原样回写、重新加载内容还在）；浏览器回归全过
   - 未做：框里的域不求值（显示存着的结果）、框里的编辑与命中测试（字不在布局索引里）、竖排文字（`vert`）、
-    `spAutoFit` 不重算高度（存盘时已算好）、组合（`wpg:wgp` / `v:group`）与画布里的框、表格单元格里的内嵌框只剩外框、
+    `spAutoFit` 不重算高度（存盘时已算好）、~~组合（`wpg:wgp` / `v:group`）与画布里的框~~（✅ 2026-10-12，见「组合」）、表格单元格里的内嵌框只剩外框、
     链接的文本框（`wps:linkedTxbx`）、线条等纯形状的几何（仍是占位框）
 - ✅ **中英文字体名互通**（2026-10-06，`@uw/fonts` 的 `aliases.ts`）：中文 Windows 字体在 `name` 表里同时登记中文名与英文名，
   Word 按哪个都找得到；`w:altName` 那条桥只有中文版 Word 会搭（「宋体」→ SimSun），WPS / 英文版 Word 只写「SimSun」，
@@ -1089,8 +1089,30 @@ await view.toPNG(2);     // 第 3 页（页序号从 0 起，与 scrollTo({ page
     页脚 VML 斜线的外框 / 翻转 / 虚线）；浏览器回归全过（编辑 222 项不变）。布局一行没改（`shape` 本来就带到了 `LineObject` / `PlacedFloat`）
   - **没有真值**：箭头三档相对线宽的倍数（取 LibreOffice 的 2 / 3 / 5，`LINE_END_SCALE`）、形状旋转时外框算不算转完的外接矩形
     （与图片那边的说法互相矛盾），钉死办法在 render-dom 的 `uncalibrated.ts`
-  - 未做：组合（`wpg:wgp` / `v:group`，流程图常用）与画布、肘形 / 曲线连接符、`a:custGeom` 自由曲线、箭头块与标注框、
+  - 未做：~~组合（`wpg:wgp` / `v:group`，流程图常用）与画布、肘形 / 曲线连接符~~（✅ 见下一条）、`a:custGeom` 自由曲线、箭头块与标注框、
     渐变 / 图案填充、复合线（`cmpd="dbl"`）、旋转过的文本框内容不跟着转
+- ✅ **组合与画布**（2026-10-12）：流程图几乎都是组合（几个框 + 几条连接符 + 框里的字），原来整个组合只有一个占位框；
+  更糟的是解析深搜 `a:blip` 会捞到**第一个成员的图**，拉伸画满整个组合的外框。
+  - `@uw/model`：`ObjectContent.group`（`GroupMember[]`）。每层组合是一个坐标系 —— 子坐标（`a:chOff` / `a:chExt`、VML 的
+    `coordorigin` / `coordsize`）映到自己的框，再绕中心先翻转后旋转；一路乘成仿射矩阵，成员的框（**转之前的**）中心照矩阵走、
+    宽高乘各方向的缩放，旋转翻转叠到成员自己的上面（镜像折成 flipH、成员旋转变号：F·R(θ) = R(−θ)·F）。嵌套组合**摊平**。
+    认 `wps:wsp`（形状 / 文本框 / 图片填充）、`pic:pic`、`wpg:grpSp`、成员外面的 `mc:AlternateContent`（只看 Choice）；
+    画布（`wpc:wpc`）没有子坐标系，成员 off 直接是相对画布的 EMU。VML 认 `v:group` 嵌套与里面的基本形状 / 文本框 / 图片 /
+    `v:line`（端点是组合坐标，**不是 px**）。组合本身不再深搜图片；成员的图进 `imageRefs()` 按引用收字节。
+    一个成员都认不出时不设 `group`，对象退回占位框；认不出的单个成员留一个空成员（画占位框）
+  - 连接符：`bentConnector2` / `bentConnector3` / `curvedConnector3`（VML 的 `#_x0000_t33` / `t34` / `t38`，`adj` 按 21600 折算），
+    开放路径（不填充、两端能带箭头）。`bentConnector3` 的拐点**不夹**，能落在外框外面
+  - `@uw/layout`：`group` 一路带到 `LineObject` / `LineFloat` / `PlacedFloat`；成员里的文本框在 `placeFloats` 里
+    （内嵌组合在 `collectInlineTextBoxes` 里）各摞一份借住进 `page.floats`，带 `inline`（语义扩成「外框别处画了」），
+    紧跟组合、z 相同，稳定排序后字盖在组合的填充上
+  - `@uw/render-dom`：`paintGroup` 一个 `<g>`，成员各按独立对象的画法 —— 图片（按转之前的框绕中心转，**不**像独立图片那样
+    缩回长宽比）、形状、认不出的画占位框；零高的组合照画。`shape-geometry.ts` 的 `openPath()` 给开放路径的骨架，
+    `lineEnds()` 的箭头朝向取端点与**第一个不重合**的相邻点（零高的肘形线中间那一竖缩成一点）
+  - 判据：model 10 项（DrawingML 8：子坐标缩放、不深搜图、连接符、嵌套翻转、竖直翻转折算、旋转 90°、画布、认不出的成员；VML 2）、
+    layout 2 项、render-dom 6 项 + 端到端 4 项（`mc:AlternateContent` 包着的流程图组合：字只摊一份、成员图片拿到字节、
+    连接符带箭头、字在框里）；浏览器回归全过（编辑 222 项不变）。**语料里没有一份带组合的文档**，几何没有真值
+  - 未做：各层不等比缩放又带旋转时的错切（按没有处理）、最外层组合旋转时 `wp:extent` 是不是外接矩形、画布的背景与外框
+    （`wpc:bg` / `wpc:whole`）、`bentConnector4/5` 与 `curvedConnector2/4/5`、成员文本框的字不跟着旋转、组合的命中与编辑
 - ~~**图片的几何标定**~~ ✅（2026-08-25）两份新样本 + `pnpm --filter @uw/fidelity spike:image`。
   为它给真值管线加了一路新数据：`truth.json` 的 `pages[].images[]`（照着 PDF 算子表把
   `q` / `Q` / `cm` 演一遍 CTM 读出来 —— 图片在 PDF 里没有自己的坐标，位置与大小全在矩阵里）。

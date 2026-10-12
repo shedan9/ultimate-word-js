@@ -17,6 +17,7 @@ import type {
   Border,
   DocPosition,
   DrawingAnchor,
+  GroupMember,
   ImageRef,
   NodeId,
   ObjectContent,
@@ -193,8 +194,10 @@ export interface ObjectItem {
   graphic?: string;
   /** 文本框（内容在 `LayoutDocumentOptions.textBoxes`，分页排完才摞，见 page.ts 的 `attachTextBox`） */
   textBox?: TextBoxRef;
-  /** 形状的填充与轮廓（目前只有文本框带） */
+  /** 形状的填充与轮廓（文本框与认得出几何的纯形状） */
   shape?: ShapeStyle;
+  /** 组合的成员（坐标相对对象外框）。成员里的文本框也是分页排完才摞，见 page.ts 的 `attachGroupTextBoxes` */
+  group?: GroupMember[];
   /**
    * **浮动且不参与文字流**（有 `wp:anchor` 就算：印章、水印、衬于文字下方的红头、
    * 页脚里的文本框）。
@@ -236,6 +239,8 @@ export interface LineObject {
   /** 同 `ObjectItem.textBox`。内嵌文本框的**内容**不画在这里，在 `PageLayout.floats`（带 `inline`） */
   textBox?: TextBoxRef;
   shape?: ShapeStyle;
+  /** 同 `ObjectItem.group` */
+  group?: GroupMember[];
 }
 
 /**
