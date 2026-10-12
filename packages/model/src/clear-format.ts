@@ -26,6 +26,7 @@ export const CLEAR_RUN_PROPS = Object.freeze({
   vertAlign: null,
   highlight: null,
   shading: null,
+  emphasis: null,
   charSpacing: null,
   scale: null,
   position: null,

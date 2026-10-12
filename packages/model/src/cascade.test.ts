@@ -161,6 +161,26 @@ describe('高亮与字符底纹', () => {
   });
 });
 
+describe('着重号', () => {
+  const ctx = ctxFrom(`
+    <w:style w:type="character" w:styleId="Em">
+      <w:name w:val="Em"/><w:rPr><w:em w:val="dot"/></w:rPr>
+    </w:style>
+  `);
+
+  it('没写时是 none；字符样式里的着重号级联下来，直接格式写 none 盖掉它；认不出的取值不收', () => {
+    expect(resolveRunProps(ctx, undefined, undefined).emphasis).toBe('none');
+    expect(resolveRunProps(ctx, undefined, rPr('<w:rStyle w:val="Em"/>')).emphasis).toBe('dot');
+    expect(resolveRunProps(ctx, undefined, rPr('<w:rStyle w:val="Em"/><w:em w:val="none"/>')).emphasis).toBe(
+      'none',
+    );
+    expect(resolveRunProps(ctx, undefined, rPr('<w:em w:val="circle"/>')).emphasis).toBe('circle');
+    expect(resolveRunProps(ctx, undefined, rPr('<w:rStyle w:val="Em"/><w:em w:val="wave"/>')).emphasis).toBe(
+      'dot',
+    );
+  });
+});
+
 describe('段落边框与底纹', () => {
   const ctx = ctxFrom(`
     <w:style w:type="paragraph" w:styleId="Head">

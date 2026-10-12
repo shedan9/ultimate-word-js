@@ -68,6 +68,12 @@ export interface FragmentStyle {
   /** `w:shd` 字符底纹，原样带着（不解析成 RGB，与单元格底纹一致）。没有时缺席 */
   shading?: Shading;
   /**
+   * `w:em` 着重号：画什么、画在字的上方还是下方。上下已经按语言定好了（`dot` 在中文里画在下方，
+   * 见 `uncalibrated.ts` 的 `EMPHASIS_DOT_BELOW_LANGS`）—— 渲染层手上没有语言，判断只能在这边做。
+   * 每个号落在哪个 x 见 `LineFragment.emphasisX`。没有着重号时缺席
+   */
+  emphasis?: { mark: 'dot' | 'comma' | 'circle'; below: boolean };
+  /**
    * 「所有标记」视图下这段字在修订里（`ResolvedRunProps.revision`）。颜色与下划线 / 删除线
    * **已经折进上面那几个字段**了，渲染层照常画字就是对的；带着它只为了画页边那条改动竖线。
    * 不在修订里、或不是那个视图时缺席
@@ -301,6 +307,12 @@ export interface LineFragment {
   width: Twips;
   /** 每个**码点**一个 x，与 `text` 的码点序一一对应 */
   glyphX: Twips[];
+  /**
+   * 着重号的中线 x（与 `glyphX` 同一坐标系）：每个要画号的字一个，**空白不画**。
+   * 中线 = 字左边 + 本字推进宽度的一半 —— 推进宽度渲染层拿不到（`glyphX` 的差里混着两端对齐拉开的字距），
+   * 所以在这边算好带过去。只在 `style.emphasis` 存在时有
+   */
+  emphasisX?: Twips[];
   /**
    * 列表编号。渲染层照画，但**可选文本层不要收它**（复制出来会多出一串「一、」），
    * `runId` 也不指向任何真实节点，见 `CharItem.numbering`。

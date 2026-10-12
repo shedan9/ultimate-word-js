@@ -303,6 +303,26 @@ describe('模型不认识的 XML 留在文件里', () => {
     expect(decoder.decode(unzip(cleared.out).get('word/document.xml'))).not.toContain('w:shd');
   });
 
+  it('着重号：w:em 按 schema 顺序插在 w:vertAlign 之后、w:lang 之前；清除格式一并去掉', () => {
+    const body =
+      '<w:p><w:r><w:rPr><w:vertAlign w:val="superscript"/><w:lang w:eastAsia="zh-CN"/></w:rPr><w:t>着重</w:t></w:r></w:p>';
+    const whole = (b: Body) => {
+      const at = textPosition(b, 0, 0) as DocPosition;
+      return { start: at, end: { ...at, offset: 2 } };
+    };
+    const marked = roundTrip(docx(body), (t, b) => {
+      t.setRunProps(whole(b), { emphasis: 'dot' });
+    });
+    expect(decoder.decode(unzip(marked.out).get('word/document.xml'))).toContain(
+      '<w:rPr><w:vertAlign w:val="superscript"/><w:em w:val="dot"/><w:lang w:eastAsia="zh-CN"/></w:rPr>',
+    );
+    expect(shape(marked.again.body)).toEqual(shape(marked.edited));
+    const cleared = roundTrip(docx(body.replace('<w:lang', '<w:em w:val="dot"/><w:lang')), (t, b) => {
+      t.clearRunProps(whole(b));
+    });
+    expect(decoder.decode(unzip(cleared.out).get('word/document.xml'))).not.toContain('w:em');
+  });
+
   it('段落边框逐边补：只改变了的那条，w:bar 与主题色留着，新边按 CT_PBdr 顺序插；段落底纹插在 pBdr 后', () => {
     const body =
       '<w:p><w:pPr><w:pBdr><w:top w:val="single" w:sz="4" w:space="1" w:color="4472C4" w:themeColor="accent1"/><w:bar w:val="single" w:sz="4"/></w:pBdr><w:jc w:val="center"/></w:pPr><w:r><w:t>版头</w:t></w:r></w:p>';

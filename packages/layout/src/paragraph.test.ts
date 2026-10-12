@@ -288,6 +288,35 @@ describe('渲染片段', () => {
     expect(plain?.style).not.toHaveProperty('shading');
   });
 
+  it('着重号：中文的点画在字下、日文的在字上，underDot 总在下；号落在每个字的中线上，空白不画', () => {
+    const marksOf = (out: ReturnType<typeof layoutParagraph>) =>
+      (out.lines[0]?.fragments ?? []).flatMap((f) => f.emphasisX ?? []);
+    const zh = layoutParagraph(para([run('甲 乙', { emphasis: 'dot' }), run('素')]), opts());
+    const frags = zh.lines[0]?.fragments ?? [];
+    expect(frags[0]?.style.emphasis).toEqual({ mark: 'dot', below: true });
+    const plain = frags.find((f) => f.text === '素');
+    expect(plain?.style).not.toHaveProperty('emphasis');
+    expect(plain).not.toHaveProperty('emphasisX');
+    // 「甲」「乙」各一个、空格没有；中线 = 字左边 + 半个字宽
+    const xs = marksOf(zh);
+    expect(xs).toHaveLength(2);
+    expect(xs[0]).toBe(SIZE_5 / 2);
+    const yi = frags
+      .flatMap((f) => [...f.text].map((ch, i) => [ch, f.glyphX[i]] as const))
+      .find(([c]) => c === '乙');
+    expect(xs[1]).toBe((yi?.[1] ?? 0) + SIZE_5 / 2);
+
+    const ja = layoutParagraph(para([run('甲', { emphasis: 'dot', langEastAsia: 'ja-JP' })]), opts());
+    expect(ja.lines[0]?.fragments[0]?.style.emphasis).toEqual({ mark: 'dot', below: false });
+    const under = layoutParagraph(para([run('甲', { emphasis: 'underDot', langEastAsia: 'ja-JP' })]), opts());
+    expect(under.lines[0]?.fragments[0]?.style.emphasis).toEqual({ mark: 'dot', below: true });
+    const sesame = layoutParagraph(para([run('甲', { emphasis: 'comma' })]), opts());
+    expect(sesame.lines[0]?.fragments[0]?.style.emphasis).toEqual({ mark: 'comma', below: false });
+    // 号不占宽：断行与逐字 x 与没有着重号时一模一样
+    const bare = layoutParagraph(para([run('甲 乙'), run('素')]), opts());
+    expect(frags.map((f) => f.glyphX)).toEqual(bare.lines[0]?.fragments.map((f) => f.glyphX));
+  });
+
   it('「所有标记」的修订折进片段样式：作者色 + 插入下划线 / 删除删除线，移动用双线；宽度不变', () => {
     const plain = layoutParagraph(para([run('增删')]), opts());
     const out = layoutParagraph(

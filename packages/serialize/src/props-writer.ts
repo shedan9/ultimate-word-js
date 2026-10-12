@@ -307,6 +307,7 @@ const RUN_FIELDS: readonly Field<RunProps>[] = [
   val('underline', 'w:u'),
   shadingField<RunProps>(),
   val('vertAlign', 'w:vertAlign'),
+  val('emphasis', 'w:em'),
   {
     keys: ['langEastAsia'],
     name: 'w:lang',

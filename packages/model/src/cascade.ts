@@ -121,6 +121,7 @@ function applyRunLevel(acc: RunAccum, level: RunProps): void {
   if (level.vertAlign !== undefined) p.vertAlign = level.vertAlign;
   if (level.highlight !== undefined) p.highlight = level.highlight;
   if (level.shading !== undefined) p.shading = level.shading;
+  if (level.emphasis !== undefined) p.emphasis = level.emphasis;
   if (level.charSpacing !== undefined) p.charSpacing = level.charSpacing;
   if (level.scale !== undefined) p.scale = level.scale;
   if (level.position !== undefined) p.position = level.position;
@@ -172,6 +173,7 @@ function finishRun(acc: RunAccum, theme: Theme, settings: DocumentSettings): Res
     vertAlign: p.vertAlign ?? 'baseline',
     highlight: p.highlight ?? 'none',
     shading: p.shading,
+    emphasis: p.emphasis ?? 'none',
     charSpacing: p.charSpacing ?? 0,
     scale: p.scale ?? 100,
     position: p.position ?? 0,

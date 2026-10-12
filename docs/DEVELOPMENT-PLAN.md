@@ -1457,6 +1457,20 @@ await view.toPNG(2);     // 第 3 页（页序号从 0 起，与 scrollTo({ page
   2 项级联单测 + 1 项布局单测 + 4 项画法单测 + 1 项回写单测 + 1 项剪贴板单测，浏览器回归不变全绿。
   未做：制表位 / 空白补位处的背景（它们不出文字片段，高亮在制表位处断开）、
   高亮的编辑命令与工具栏（Word 的荧光笔没有默认快捷键）。
+- ✅ **着重号**（2026-10-12）：`w:em` 原来整条链都不认识，中文公文里给关键词加的「字下点」一个都画不出来。
+  `RunProps.emphasis`（ST_Em 五个取值，级联照常、缺席 `none`）→ 布局 `styleOf` 折成 `FragmentStyle.emphasis`
+  （画什么 + 上下），`fragmentsOf` 给每个要画号的字算**中线** x（`LineFragment.emphasisX`，空白跳过）——
+  中线要本字的推进宽度，`glyphX` 的差里混着两端对齐拉开的字距，渲染层算不出来。渲染层一个片段一个 `<g>`：
+  点是实心圆、圈是空心圆、芝麻点是斜水滴，跟着片段基线走（上下标 / `w:position` 抬起来的字，号也抬）。
+  **`dot` 的上下看语言**：规范说是「字上方的点」，中文版 Word 的着重号按钮写的却正是 `dot`、画在下方 ——
+  `w:lang w:eastAsia` 是 `zh*` 画下方，其余画上方；`underDot` 总在下，`comma` / `circle` 总在上。
+  回写 `w:em` 按 schema 顺序插（`w:vertAlign` 之后、`w:lang` 之前），`clearRunProps` 一并清除；
+  剪贴板写 CSS `text-emphasis`（上下与屏幕一致），可信来源粘回来认它。
+  **整层没有真值**（layout 的 `EMPHASIS_DOT_BELOW_LANGS` + render-dom 的 `EMPHASIS_*`，钉死办法写在那里）：
+  按什么换边、号多大离字多远、标点下画不画（现在画 —— 常见抱怨是 Word 把号加到了标点下）、
+  **撑不撑高行盒**（现在不撑；「加了着重号行距变大」的抱怨说明 Word 会留地方，留多少不知道，宁可不动已标定的行高）。
+  1 项级联 + 1 项布局 + 1 项画法 + 1 项回写 + 1 项剪贴板单测。
+  未做：编辑命令（Word 的着重号没有默认快捷键，只在字体对话框里）、行盒的撑高。
 - ✅ **段落边框与底纹**（2026-09-28）：`w:pBdr`（上 / 下 / 左 / 右 / between，`w:bar` 不解析）与 `w:pPr/w:shd` 进 `ParaProps`，
   边框**逐边**级联（样式给下边、直接格式加上边，两条都在），`nil` 盖掉样式的线；`setParagraphProps` 的 `borders` 按边合并，
   `clearParagraphProps` 一并清除（Word 的 Ctrl+Q 也清）。布局分两步保住段落缓存：`layoutParagraph` 给出单独一段的

@@ -26,6 +26,7 @@ import type {
 import { attrInt, attrOnOff, enumVal, intVal, onOff, put, valOf } from './xml-values.ts';
 
 const VERT_ALIGNS = ['baseline', 'superscript', 'subscript'] as const;
+const EMPHASIS_MARKS = ['none', 'dot', 'comma', 'circle', 'underDot'] as const;
 const LINE_RULES = ['auto', 'exact', 'atLeast'] as const;
 const HINTS = ['default', 'eastAsia', 'cs'] as const;
 const TAB_ALIGNMENTS = ['left', 'center', 'right', 'decimal', 'bar', 'clear'] as const;
@@ -91,6 +92,7 @@ export function parseRunProps(rPr: XmlElement | undefined): RunProps {
   put(out, 'vertAlign', enumVal(valOf(rPr, 'w:vertAlign'), VERT_ALIGNS));
   put(out, 'highlight', valOf(rPr, 'w:highlight'));
   put(out, 'shading', parseShading(child(rPr, 'w:shd')));
+  put(out, 'emphasis', enumVal(valOf(rPr, 'w:em'), EMPHASIS_MARKS));
 
   const color = child(rPr, 'w:color');
   if (color !== undefined) {

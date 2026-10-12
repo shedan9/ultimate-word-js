@@ -82,6 +82,7 @@ export function runProps(over: Partial<ResolvedRunProps> = {}): ResolvedRunProps
     vertAlign: 'baseline',
     highlight: 'none',
     shading: undefined,
+    emphasis: 'none',
     charSpacing: 0,
     scale: 100,
     position: 0,

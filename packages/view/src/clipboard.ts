@@ -15,7 +15,15 @@
  */
 
 import { TWIP_PER_PT } from '@uw/core';
-import type { FragmentRun, Justification, RichFragment, RunPropsPatch, Shading } from '@uw/model';
+import { emphasisOf } from '@uw/layout';
+import type {
+  EmphasisMark,
+  FragmentRun,
+  Justification,
+  RichFragment,
+  RunPropsPatch,
+  Shading,
+} from '@uw/model';
 import { HIGHLIGHT_COLORS, highlightFill, shadingFill } from '@uw/render-dom';
 
 /** 粘贴进来的一段文字；补丁在光标处继承来的格式之上再改。 */
@@ -65,8 +73,34 @@ function runStyle(props: FragmentRun['props']): string {
       ? []
       : [`vertical-align:${props.vertAlign === 'superscript' ? 'super' : 'sub'}`]),
     ...backgroundStyle(props),
+    ...emphasisStyle(props),
   ];
   return style.join(';');
+}
+
+/**
+ * 着重号写成 CSS `text-emphasis`，上下与屏幕上一致（中文的点在字下）。浏览器照着画，粘回来也认它。
+ * Word 自己的 HTML 怎么写着重号没有对过，粘进 Word 多半丢掉 —— 丢的只是这一样
+ */
+const CSS_EMPHASIS = { dot: 'filled dot', comma: 'filled sesame', circle: 'open circle' } as const;
+
+function emphasisStyle(props: FragmentRun['props']): string[] {
+  const emphasis = emphasisOf(props);
+  if (emphasis === undefined) return [];
+  return [
+    `text-emphasis:${CSS_EMPHASIS[emphasis.mark]}`,
+    `text-emphasis-position:${emphasis.below ? 'under' : 'over'} right`,
+  ];
+}
+
+/** CSS 的 `text-emphasis(-style)` → `w:em`。上下不管：中文版 Word 的着重号写的就是 `dot`，上下由语言定 */
+function readEmphasis(value: string): EmphasisMark | undefined {
+  const v = value.toLowerCase();
+  if (/\bnone\b/.test(v)) return 'none';
+  if (v.includes('sesame')) return 'comma';
+  if (v.includes('circle')) return 'circle';
+  if (v.includes('dot')) return 'dot';
+  return undefined;
 }
 
 /**
@@ -184,6 +218,7 @@ interface Inherited {
   family?: string | undefined;
   /** 高亮的 `w:highlight` 名字；与 `shading` 互斥（后写的那个说了算） */
   highlight?: string | undefined;
+  emphasis?: EmphasisMark | undefined;
   shading?: Shading | undefined;
   pre: boolean;
   align?: Justification | undefined;
@@ -300,6 +335,8 @@ function inherit(el: Element, from: Inherited): Inherited {
   // 背景只从行内元素上读：块上的背景是段落底纹，铺到每个 run 上就成了字符底纹。
   // CSS 的 background 本不继承，这里顺着 span 往下带，是因为它包住的字确实都铺着这块底
   if (!BLOCKS.has(tag)) readBackground(style, next);
+  const emphasis = style.get('text-emphasis-style') ?? style.get('text-emphasis');
+  if (emphasis) next.emphasis = readEmphasis(emphasis) ?? next.emphasis;
   const whiteSpace = style.get('white-space');
   if (whiteSpace) next.pre = whiteSpace.startsWith('pre') || whiteSpace === 'break-spaces';
   const textAlign = style.get('text-align');
@@ -365,6 +402,7 @@ function patchOf(state: Inherited, trusted: boolean): RunPropsPatch {
     // 清成 null（回到样式值）而不是写 none，免得每个粘进来的 run 都多一个 `<w:highlight w:val="none"/>`
     highlight: state.highlight ?? null,
     shading: state.shading ?? null,
+    emphasis: state.emphasis === undefined || state.emphasis === 'none' ? null : state.emphasis,
     ...(ascii || eastAsia
       ? {
           fonts: {

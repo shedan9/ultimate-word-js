@@ -48,6 +48,14 @@ export interface RunFontThemes {
 
 export type VerticalAlign = 'baseline' | 'superscript' | 'subscript';
 
+/**
+ * `w:em`：着重号（ST_Em 的五个取值）。`none` 是显式关掉 —— 样式里开了、这一段要去掉时写的就是它。
+ *
+ * `dot` 画在字上方还是下方**规范没说死**（只说「字上方的点」），中文版 Word 的「着重号」按钮写的正是 `dot`，
+ * 画出来却在字下方 —— 位置由布局层按语言定（`@uw/layout` 的 `EMPHASIS_DOT_BELOW_LANGS`），这里只照抄取值
+ */
+export type EmphasisMark = 'none' | 'dot' | 'comma' | 'circle' | 'underDot';
+
 export interface RunProps {
   /** 字符样式 id（`w:rStyle`） */
   styleId?: string;
@@ -80,6 +88,8 @@ export interface RunProps {
   highlight?: string;
   /** `w:shd`：字符底纹（「边框和底纹」里给文字加的那个）。与单元格底纹同一个类型 */
   shading?: Shading;
+  /** `w:em`：着重号。只画不占宽（会不会撑高行盒没有真值，见 `@uw/layout` 的 uncalibrated.ts） */
+  emphasis?: EmphasisMark;
   /** `w:spacing`：字符间距，本来就是 twips */
   charSpacing?: Twips;
   /** `w:w`：字符横向缩放，百分比（100 = 不缩放）。**直接改字符宽度**，排版必须认 */
@@ -116,6 +126,8 @@ export interface ResolvedRunProps {
   highlight: string;
   /** 没有底纹时是 undefined（不伪造一个「无填充」的底纹） */
   shading: Shading | undefined;
+  /** 没有着重号时是 `none` */
+  emphasis: EmphasisMark;
   charSpacing: Twips;
   scale: number;
   position: Twips;

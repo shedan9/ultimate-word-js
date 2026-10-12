@@ -21,6 +21,7 @@ const base: ResolvedRunProps = {
   vertAlign: 'baseline',
   highlight: 'none',
   shading: undefined,
+  emphasis: 'none',
   charSpacing: 0,
   scale: 100,
   position: 0,
@@ -49,7 +50,7 @@ describe('剪贴板 HTML', () => {
     });
     expect(isTrustedHtml(html)).toBe(true);
     const fonts = { ascii: 'Times New Roman', hAnsi: 'Times New Roman', eastAsia: '仿宋' };
-    const common = { strike: false, size: 320, fonts, highlight: null, shading: null };
+    const common = { strike: false, size: 320, fonts, highlight: null, shading: null, emphasis: null };
     expect(parse(html)).toEqual([
       {
         justification: 'center',
@@ -92,6 +93,7 @@ style='font:7.0pt "Times New Roman"'>&nbsp;&nbsp; </span></span><![endif]><b>要
       vertAlign: 'baseline',
       highlight: null,
       shading: null,
+      emphasis: null,
     } as const;
     expect(parse(html)).toEqual([
       {
@@ -155,6 +157,31 @@ style='font:7.0pt "Times New Roman"'>&nbsp;&nbsp; </span></span><![endif]><b>要
       ['绿', 'green', null],
       ['普通', null, null],
     ]);
+  });
+
+  it('着重号：复制写 text-emphasis（中文的点在字下），读回成 w:em；不在可信来源里的不带', () => {
+    const html = fragmentToHtml({
+      paragraphs: [
+        {
+          justification: 'left',
+          runs: [
+            { text: '重', props: { ...base, emphasis: 'dot' } },
+            { text: '圈', props: { ...base, emphasis: 'circle' } },
+            { text: '素', props: base },
+          ],
+        },
+      ],
+    });
+    expect(html).toContain('text-emphasis:filled dot;text-emphasis-position:under right');
+    expect(html).toContain('text-emphasis:open circle;text-emphasis-position:over right');
+    const runs = parse(html)[0]?.runs ?? [];
+    expect(runs.map((r) => [r.text, r.patch.emphasis])).toEqual([
+      ['重', 'dot'],
+      ['圈', 'circle'],
+      ['素', null],
+    ]);
+    const web = parse('<p><span style="text-emphasis:filled sesame">点</span></p>')[0]?.runs ?? [];
+    expect(web[0]?.patch).not.toHaveProperty('emphasis');
   });
 
   it('网页 HTML 只带开关且只加不减，字体字号颜色对齐一律不带；块拆段、段内 <br> 是软换行、空白折叠', () => {

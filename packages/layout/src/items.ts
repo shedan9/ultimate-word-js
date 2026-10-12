@@ -21,7 +21,7 @@ import {
   punctPairCompressible,
 } from './break-class.ts';
 import type { CharItem, FragmentStyle, LayoutItem, ObjectItem } from './types.ts';
-import { em, SMALL_CAPS_SCALE, VERT_ALIGN_SCALE } from './uncalibrated.ts';
+import { EMPHASIS_DOT_BELOW_LANGS, em, SMALL_CAPS_SCALE, VERT_ALIGN_SCALE } from './uncalibrated.ts';
 
 /**
  * 宽度那一维的四条规则 —— 与 `ObjectRules` / `ScriptRules` 同理，留成接缝只为了让
@@ -495,6 +495,8 @@ function styleOf(props: ResolvedRunProps): FragmentStyle {
   };
   if (props.highlight !== 'none' && props.highlight !== '') style.highlight = props.highlight;
   if (props.shading !== undefined) style.shading = props.shading;
+  const emphasis = emphasisOf(props);
+  if (emphasis !== undefined) style.emphasis = emphasis;
   const rev = props.revision;
   if (rev !== undefined) {
     // Word「所有标记」的内嵌画法：字换成作者色，插入加下划线、删除加删除线，移动用双线。
@@ -507,6 +509,29 @@ function styleOf(props: ResolvedRunProps): FragmentStyle {
   }
   STYLE_CACHE.set(props, style);
   return style;
+}
+
+/**
+ * `w:em` → 画什么、画在哪一侧。`dot` 的上下看语言（规范只说「字上方的点」，中文版 Word 的着重号按钮写的
+ * 也是 `dot`，画在下方），`underDot` 总在下方，`comma`（芝麻点）与 `circle` 总在上方 —— 后两条照规范字面。
+ * 剪贴板写 CSS `text-emphasis` 也走这一个，复制出去的点与屏幕上同一侧
+ */
+export function emphasisOf(props: ResolvedRunProps): FragmentStyle['emphasis'] {
+  switch (props.emphasis) {
+    case 'none':
+      return undefined;
+    case 'underDot':
+      return { mark: 'dot', below: true };
+    case 'dot': {
+      const lang = props.langEastAsia.toLowerCase();
+      return {
+        mark: 'dot',
+        below: EMPHASIS_DOT_BELOW_LANGS.some((l) => lang === l || lang.startsWith(`${l}-`)),
+      };
+    }
+    default:
+      return { mark: props.emphasis, below: false };
+  }
 }
 
 /** 零散的单个字符（符号、连字符）：不走 `splitFontRuns`，单独问一次度量器 */

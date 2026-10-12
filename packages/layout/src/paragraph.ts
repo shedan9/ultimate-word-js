@@ -518,6 +518,11 @@ function fragmentsOf(
       current.text += ch;
       current.glyphX.push(x);
     }
+    // 着重号落在本字推进宽度的中线上（挤压过的标点按挤剩的宽度算，墨正好在那半边）；空白不画
+    if (item.style.emphasis !== undefined && !item.space) {
+      if (current.emphasisX === undefined) current.emphasisX = [];
+      current.emphasisX.push(x + (line.ws[k] as Twips) / 2);
+    }
     currentEnd = x + (line.ws[k] as Twips);
     current.width = currentEnd - current.x;
   }

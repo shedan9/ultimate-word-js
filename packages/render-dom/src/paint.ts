@@ -73,6 +73,9 @@ import {
   CHANGE_BAR_OFFSET_PT,
   CHANGE_BAR_WIDTH_PT,
   DOUBLE_STRIKE_GAP_EM,
+  EMPHASIS_ABOVE_EM,
+  EMPHASIS_BELOW_EM,
+  EMPHASIS_SIZE_EM,
   FOOTNOTE_SEPARATOR_STROKE_PT,
   LEADER_DOT_PITCH_EM,
   LEADER_FALLBACK_SIZE,
@@ -427,6 +430,8 @@ function paintLine(line: LineLayout, x0: Twips, y0: Twips, ctx: Ctx, out: REleme
     // 装饰先画：下划线在文字之下，画在后面会盖住字的下半截
     for (const d of decorations(frag, x0, baseline, ctx)) out.push(d);
     out.push(paintFragment(frag, x0, baseline, ctx));
+    const marks = emphasisMarks(frag, x0, baseline, ctx);
+    if (marks !== undefined) out.push(marks);
   }
   if (line.fragments.some((f) => f.style.revision !== undefined)) out.push(changeBar(y0, line.height, ctx));
 }
@@ -572,6 +577,43 @@ function decorations(frag: LineFragment, x0: Twips, baseline: Twips, ctx: Ctx): 
     }
   }
   return out;
+}
+
+/**
+ * 着重号（`w:em`）：每个字一个号，一个片段收成一个 `<g>`（一段几十个字，一字一个 `<g>` 没有必要）。
+ * x 由布局给（`LineFragment.emphasisX`，空白已经跳过），上下也由布局按语言定好了，这里只管形状 ——
+ * 点是实心圆、圈是空心圆、芝麻点（`comma`）是一个斜着的水滴。大小与离字多远都没有真值（`uncalibrated.ts`）。
+ * 跟着片段的基线走：上下标、`w:position` 抬起来的字，号也跟着抬
+ */
+function emphasisMarks(frag: LineFragment, x0: Twips, baseline: Twips, ctx: Ctx): RElement | undefined {
+  const emphasis = frag.style.emphasis;
+  const xs = frag.emphasisX;
+  if (emphasis === undefined || xs === undefined || xs.length === 0) return undefined;
+  const size = pt(frag.fontSize);
+  const r = (size * EMPHASIS_SIZE_EM) / 2;
+  const cy =
+    baselineOf(frag, baseline) + (emphasis.below ? size * EMPHASIS_BELOW_EM : -size * EMPHASIS_ABOVE_EM);
+  const color = cssColor(frag.style.color);
+  const marks = xs.map((x) => {
+    const cx = pt(x0 + x);
+    if (emphasis.mark === 'circle') {
+      return el('circle', {
+        cx: fmt(cx),
+        cy: fmt(cy),
+        r: fmt(r * 0.8),
+        fill: 'none',
+        stroke: color,
+        'stroke-width': fmt(r * 0.35),
+      });
+    }
+    if (emphasis.mark === 'comma') {
+      // 芝麻点「﹅」：上圆下尖、向左下撇，画成一个绕中心转过的水滴
+      const d = `M0 ${fmt(-r)}A${fmt(r * 0.7)} ${fmt(r * 0.7)} 0 1 1 0 ${fmt(r * 0.4)}L0 ${fmt(r * 1.2)}Z`;
+      return el('path', { d, transform: `translate(${fmt(cx)} ${fmt(cy)}) rotate(30)`, fill: color });
+    }
+    return el('circle', { cx: fmt(cx), cy: fmt(cy), r: fmt(r), fill: color });
+  });
+  return el('g', { class: ctx.cls('emphasis'), 'data-run': frag.runId }, marks);
 }
 
 /** 一条横线。用 `<rect>` 而不是 `<line>`：线宽以中心线为准，改成矩形省一次心算 */

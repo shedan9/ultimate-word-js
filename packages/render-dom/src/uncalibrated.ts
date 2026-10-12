@@ -47,6 +47,21 @@ export const SUPERSCRIPT_RAISE_EM = 0.45;
 export const SUBSCRIPT_DROP_EM = 0.14;
 
 /**
+ * 着重号（`w:em`）的大小与位置，都按**该片段的字号**算（em）：
+ * - `EMPHASIS_SIZE_EM`：点的直径（圈与芝麻点照这个尺寸变形）；
+ * - `EMPHASIS_BELOW_EM`：画在字下方时，点的**中心**在基线以下多少 —— 汉字的墨底约在基线下 0.12 em，
+ *   再空出一点缝；
+ * - `EMPHASIS_ABOVE_EM`：画在字上方时，点的中心在基线以上多少（汉字墨顶约 0.88 em）。
+ *
+ * 照 Word 界面的观感写的。它不改坐标（号不占宽，行盒也没撑高 —— 那一条见 `@uw/layout` 的
+ * `EMPHASIS_DOT_BELOW_LANGS`），L2 / L3 管不到。钉死办法同那一条：仿宋 16pt 一段全着重号导 PDF，
+ * 给真值抽取器补一路填充路径，读点的外接框（直径）与它的中心离基线多远。
+ */
+export const EMPHASIS_SIZE_EM = 0.14;
+export const EMPHASIS_BELOW_EM = 0.24;
+export const EMPHASIS_ABOVE_EM = 0.98;
+
+/**
  * 制表位前导符（目录里那排点）的画法。
  *
  * Word 画的是**一个个真实的字符**（`.` `-` `_`），我们画的是一条带 dash 图案的线 ——

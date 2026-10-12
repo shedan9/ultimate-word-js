@@ -271,6 +271,30 @@ describe('装饰', () => {
     expect(mark.attrs.fill).toBe('#ffff00');
   });
 
+  it('着重号画在字之后，每个号一个圆、跟着片段的基线；在下方时中心低于基线，在上方时高于', () => {
+    const below: FragmentStyle = { ...STYLE, emphasis: { mark: 'dot', below: true } };
+    const svg = buildPage(
+      paragraphPage(line({ fragments: [frag({ style: below, emphasisX: [160, 480] })] })),
+    );
+    const g = collect(svg, 'g').find((n) => n.attrs.class === 'uw-para') as RElement;
+    expect(g.children.map((c) => c.attrs.class)).toEqual(['uw-frag', 'uw-emphasis']);
+    const dots = collect(svg, 'circle');
+    // 版心原点不在这一层（`<g transform>`），x 只是片段内的中线：160 / 480 twips = 8 / 24pt
+    expect(dots.map((d) => d.attrs.cx)).toEqual(['8', '24']);
+    const text = collect(svg, 'text')[0] as RElement;
+    expect(Number(dots[0]?.attrs.cy)).toBeGreaterThan(Number(text.attrs.y));
+    const above: FragmentStyle = { ...STYLE, emphasis: { mark: 'circle', below: false } };
+    const svg2 = buildPage(paragraphPage(line({ fragments: [frag({ style: above, emphasisX: [160] })] })));
+    const ring = collect(svg2, 'circle')[0] as RElement;
+    expect(ring.attrs.fill).toBe('none');
+    expect(Number(ring.attrs.cy)).toBeLessThan(
+      Number((collect(svg2, 'text')[0] as RElement).attrs.y) - 16 * 0.8,
+    );
+    // 没有 emphasisX（全是空白）就什么都不画
+    const none = buildPage(paragraphPage(line({ fragments: [frag({ style: below })] })));
+    expect(collect(none, 'g').filter((n) => n.attrs.class === 'uw-emphasis')).toHaveLength(0);
+  });
+
   it('一行的背景先铺完再画字 —— 挤压让后一片伸进前一片时，不能盖住前一个字', () => {
     const style: FragmentStyle = { ...STYLE, highlight: 'green' };
     const l = line({ fragments: [frag({ style }), frag({ style, runId: 'r2', x: 600 })] });
