@@ -103,11 +103,12 @@ import type { LineSlot } from './paragraph.ts';
 import { layoutParagraph } from './paragraph.ts';
 import type { ParagraphLayoutCache } from './paragraph-cache.ts';
 import type { BlockLayout, RowLayout, TableLayout, TableRules } from './table.ts';
-import { layoutTable, TABLE_RULES } from './table.ts';
+import { contentHeightOf, layoutTable, TABLE_RULES } from './table.ts';
 import type { SplitRowOptions, TableSplitRules } from './table-split.ts';
 import { splitRow, TABLE_SPLIT_RULES } from './table-split.ts';
 import type { LineFloat, LineLayout, LineObject, ParagraphFrame, ParagraphLayout } from './types.ts';
 import {
+  FLOAT_IN_CELL_RELATIVE,
   FOOTNOTE_SEPARATOR_LINE_Y,
   FOOTNOTE_SEPARATOR_WIDTH,
   FOOTNOTE_SPLIT_MIN_LINES,
@@ -847,7 +848,9 @@ function currentPage(flow: Flow): PageLayout {
   // 页眉页脚里的环绕对象也让开正文（Word 里页眉的四周型 logo 伸进版心时正文绕着它走）
   for (const frame of [header, footer]) {
     if (frame === undefined) continue;
-    eachFloat(frame.blocks, frame.x, frame.y, page, (f, placed) => {
+    eachFloat(frame.blocks, frame.x, frame.y, page, (f, placed, inCell) => {
+      // 格子里的对象只让格子里的字（那一半没做，见 `placeFloats`），不让正文
+      if (inCell) return;
       const ex = wrapExclusion(f.anchor, placed, page.geometry.content);
       if (ex !== undefined) flow.wrap.exclusions.push(ex);
     });
@@ -1228,7 +1231,6 @@ function registerFloats(flow: Flow, lines: readonly LineLayout[], from: number):
       flow.wrap.seen.add(key);
       const placed = resolveFloat(f, page, {
         originX: content.x,
-        originY: content.y,
         paraTop: content.y + flow.y,
         lineTop: content.y + y,
         lineHeight: line.height,
@@ -1668,9 +1670,9 @@ function emitRows(
  * 所以 `registerFloats` 在分页途中按同一个 `resolveFloat` 先算一遍（`wrap.ts`）——
  * 两处用的是同一套参照框，这里算出来的才是画的位置。
  *
- * **表格单元格里的浮动对象没做**：格子的纸坐标要连着行高与合并区一起算，
- * 而公文里浮动对象几乎都锚在正文段落上。漏掉的那些不会消失得无声无息 ——
- * 它们仍然在 `LineLayout.floats` 里，将来接上就是多走一层遍历。
+ * **表格单元格里的**也在这里（`eachLine` 钻进表格，含嵌套表与重复表头）：审批表签字栏里的印章、
+ * 表格式页眉里的徽标都锚在格子里。原来只走段落，这些对象整个不画。格子里的参照框见
+ * `FLOAT_IN_CELL_RELATIVE`（没有真值）；格子里的字**不**让开它们，正文也不让（`currentPage`）。
  *
  * 参照物的对应关系已经实测，见 `FLOAT_ORIGIN_RULES`。
  */
@@ -1729,9 +1731,8 @@ function placeFloats(flow: Flow, page: PageLayout): void {
  * `page.floats`（带 `inline`）。内容区 = 外框减内边距，块从内容区顶往下摞，
  * 摞完按 `vAlign` 整体下移（装不下时不上移 —— 顶着上边往下溢出，溢出的那截被裁掉）。
  *
- * 不分页、不参与正文的任何一处几何，所以放在整份排完之后。内嵌文本框在表格单元格里的
- * 没收（格子的纸坐标要连着行高算，与格里的浮动对象同一个洞，见 `placeFloats`）——
- * 那些只剩外框。
+ * 不分页、不参与正文的任何一处几何，所以放在整份排完之后。表格单元格里的内嵌文本框同样收
+ * （`eachLine` 钻进格子；原来只剩外框）。
  */
 function attachTextBox(flow: Flow, page: PageLayout, f: PlacedFloat, ref: TextBoxRef): void {
   const content = flow.opts.textBoxes?.[ref.id];
@@ -1805,70 +1806,150 @@ function collectInlineTextBoxes(
   out: PlacedFloat[],
 ): void {
   if (flow.opts.textBoxes === undefined) return;
-  for (const block of blocks) {
-    if (block.kind !== 'paragraph') continue;
-    for (const placed of block.lines) {
-      for (const o of placed.line.objects ?? []) {
-        if (o.textBox === undefined && o.group === undefined) continue;
-        const f: PlacedFloat = {
-          runId: o.runId,
-          contentIndex: o.contentIndex,
-          x: originX + o.x,
-          // 基线 − 高 − raise，与 render-dom 画内嵌对象一致
-          y: originY + placed.y + placed.line.baseline - o.height - (o.raise ?? 0),
-          width: o.width,
-          height: o.height,
-          objectKind: o.objectKind,
-          behindDoc: false,
-          z: 0,
-          inline: true,
-        };
-        if (o.textBox !== undefined) {
-          attachTextBox(flow, page, f, o.textBox);
-          if (f.textBox !== undefined) out.push(f);
-        }
-        attachGroupTextBoxes(flow, page, f, o.group, out);
+  eachLine(blocks, originX, originY, (site) => {
+    for (const o of site.line.objects ?? []) {
+      if (o.textBox === undefined && o.group === undefined) continue;
+      const f: PlacedFloat = {
+        runId: o.runId,
+        contentIndex: o.contentIndex,
+        x: site.originX + o.x,
+        // 基线 − 高 − raise，与 render-dom 画内嵌对象一致
+        y: site.lineTop + site.line.baseline - o.height - (o.raise ?? 0),
+        width: o.width,
+        height: o.height,
+        objectKind: o.objectKind,
+        behindDoc: false,
+        z: 0,
+        inline: true,
+      };
+      if (o.textBox !== undefined) {
+        attachTextBox(flow, page, f, o.textBox);
+        if (f.textBox !== undefined) out.push(f);
       }
+      attachGroupTextBoxes(flow, page, f, o.group, out);
     }
-  }
+  });
 }
 
-/** 摆好的块里每个浮动对象连同它的纸坐标。页眉页脚开页时就摆好了，环绕禁区也走这一条（`currentPage`） */
+/**
+ * 摆好的块里每个浮动对象连同它的纸坐标。页眉页脚开页时就摆好了，环绕禁区也走这一条（`currentPage`）。
+ * `inCell`：锚点在表格单元格里
+ */
 function eachFloat(
   blocks: readonly PlacedBlock[],
   originX: Twips,
   originY: Twips,
   page: PageLayout,
-  visit: (f: LineFloat, placed: PlacedFloat) => void,
+  visit: (f: LineFloat, placed: PlacedFloat, inCell: boolean) => void,
+): void {
+  eachLine(blocks, originX, originY, (site) => {
+    for (const f of site.line.floats ?? []) visit(f, resolveFloat(f, page, site), site.cell !== undefined);
+  });
+}
+
+/** 一行在纸上的落点：行首 x、行顶、所在段落（这一片）的段顶；在表格单元格里时还有那一格 */
+interface LineSite extends FloatContext {
+  line: LineLayout;
+}
+
+/** 单元格的**文字区**（外框减四边边距），纸坐标 */
+interface CellBox {
+  x: Twips;
+  y: Twips;
+  width: Twips;
+  height: Twips;
+}
+
+/**
+ * 摆好的块里的每一行，连同纸坐标。**钻进表格**（嵌套表、重复表头、拆开的行都算）。
+ *
+ * 格子里的几何（格线以内起排、上边距、`w:vAlign` 的偏移、嵌套表的 `gridBelow`）与
+ * layout-index.ts 的 `collectCell` / render-dom 的 paint.ts 必须一字不差 —— 三处说的是同一个字摆在哪，
+ * 对象跟着字走。`vMerge="continue"` 的格子没有内容，跳过；合并区的 vAlign 按首行的行高算，同另外两处
+ */
+function eachLine(
+  blocks: readonly PlacedBlock[],
+  originX: Twips,
+  originY: Twips,
+  visit: (site: LineSite) => void,
 ): void {
   for (const block of blocks) {
-    if (block.kind !== 'paragraph') continue;
-    for (const placed of block.lines) {
-      const floats = placed.line.floats;
-      if (floats === undefined) continue;
-      for (const f of floats) {
-        visit(
-          f,
-          resolveFloat(f, page, {
-            originX,
-            originY,
-            paraTop: originY + block.y,
-            lineTop: originY + placed.y,
-            lineHeight: placed.line.height,
-          }),
-        );
+    if (block.kind === 'paragraph') {
+      const paraTop = originY + block.y;
+      for (const placed of block.lines) {
+        const lineTop = originY + placed.y;
+        visit({ line: placed.line, originX, lineTop, lineHeight: placed.line.height, paraTop });
       }
+      continue;
     }
+    for (const placed of block.rows) {
+      eachRowLine(placed.row, originX + block.x, originY + placed.y, placed.height, visit);
+    }
+  }
+}
+
+function eachRowLine(
+  row: RowLayout,
+  tableX: Twips,
+  rowTop: Twips,
+  rowHeight: Twips,
+  visit: (site: LineSite) => void,
+): void {
+  // 行的上边那条格线占着高度，格内内容从格线**以内**起排（`RowLayout.gridAbove`，实测）
+  const top = rowTop + row.gridAbove;
+  const height = rowHeight - row.gridAbove;
+  for (const cell of row.cells) {
+    if (cell.vMerge === 'continue') continue;
+    const box: CellBox = {
+      x: tableX + cell.x + cell.paddingLeft,
+      y: top + cell.paddingTop,
+      width: cell.contentWidth,
+      height: Math.max(0, height - cell.paddingTop - cell.paddingBottom),
+    };
+    const slack = box.height - contentHeightOf(cell.blocks);
+    let y = box.y;
+    if (cell.verticalAlign === 'center') y += Math.max(0, slack / 2);
+    else if (cell.verticalAlign === 'bottom') y += Math.max(0, slack);
+    eachStackLine(cell.blocks, box.x, y, box, visit);
+  }
+}
+
+/** 一摞块（格内的段落 / 嵌套表格）从 `y0` 往下排。累加规则与 `contentHeightOf` 一致 */
+function eachStackLine(
+  blocks: readonly BlockLayout[],
+  x0: Twips,
+  y0: Twips,
+  cell: CellBox,
+  visit: (site: LineSite) => void,
+): void {
+  let y = y0;
+  for (const b of blocks) {
+    if (b.kind === 'table') {
+      for (const row of b.layout.rows) {
+        eachRowLine(row, x0 + b.layout.x, y, row.height, visit);
+        y += row.height;
+      }
+      y += b.layout.gridBelow;
+      continue;
+    }
+    y += b.layout.spaceBefore;
+    const paraTop = y;
+    for (const line of b.layout.lines) {
+      visit({ line, originX: x0, lineTop: y, lineHeight: line.height, paraTop, cell });
+      y += line.height;
+    }
+    y += b.layout.spaceAfter;
   }
 }
 
 /** 锚点周围那几个「参照物」的纸坐标。`page` / `margin` 之外的四种都要它 */
 interface FloatContext {
   originX: Twips;
-  originY: Twips;
   paraTop: Twips;
   lineTop: Twips;
   lineHeight: Twips;
+  /** 锚点所在的格子。在格子里、`layoutInCell` 开着时，版心那几个参照框换成它（`FLOAT_IN_CELL_RELATIVE`） */
+  cell?: CellBox;
 }
 
 function resolveFloat(f: LineFloat, page: PageLayout, ctx: FloatContext): PlacedFloat {
@@ -1897,7 +1978,15 @@ interface AxisBox {
   size: Twips;
 }
 
+/** 锚在格子里、`layoutInCell` 开着、参照物在 `FLOAT_IN_CELL_RELATIVE` 里时的那一格 */
+function cellFrame(f: LineFloat, ctx: FloatContext, axis: 'h' | 'v'): CellBox | undefined {
+  if (ctx.cell === undefined || f.anchor.layoutInCell === false) return undefined;
+  return FLOAT_IN_CELL_RELATIVE[axis].includes(f.anchor[axis].relativeFrom) ? ctx.cell : undefined;
+}
+
 function hBox(f: LineFloat, page: PageLayout, ctx: FloatContext): AxisBox {
+  const cell = cellFrame(f, ctx, 'h');
+  if (cell !== undefined) return { start: cell.x, size: cell.width };
   const g = page.geometry;
   const content = g.content;
   const rightMargin: AxisBox = {
@@ -1928,6 +2017,8 @@ function hBox(f: LineFloat, page: PageLayout, ctx: FloatContext): AxisBox {
 }
 
 function vBox(f: LineFloat, page: PageLayout, ctx: FloatContext): AxisBox {
+  const cell = cellFrame(f, ctx, 'v');
+  if (cell !== undefined) return { start: cell.y, size: cell.height };
   const g = page.geometry;
   const content = g.content;
   const topMargin: AxisBox = { start: 0, size: content.y };

@@ -10,10 +10,23 @@
 import type { DrawingAnchor, ResolvedBlock, ResolvedBody, SectionProps } from '@uw/model';
 import { DEFAULT_SECTION_PROPS, DEFAULT_SETTINGS } from '@uw/model';
 import { describe, expect, it } from 'vitest';
-import type { LayoutDocumentOptions } from './page.ts';
+import type { LayoutDocumentOptions, PlacedTable } from './page.ts';
 import { layoutDocument } from './page.ts';
 import { layoutParagraph } from './paragraph.ts';
-import { fakeMeasurer, NO_GRID, para, paraProps, run, runOf, SIZE_5 } from './test-fixtures.ts';
+import {
+  cell,
+  cellProps,
+  fakeMeasurer,
+  NO_GRID,
+  para,
+  paraProps,
+  row,
+  rowProps,
+  run,
+  runOf,
+  SIZE_5,
+  table,
+} from './test-fixtures.ts';
 
 const EA_LINE = SIZE_5 * 1.3;
 const TEN = '一二三四五六七八九十';
@@ -270,5 +283,116 @@ describe('浮动对象的纸坐标', () => {
       [1, true],
       [5, false],
     ]);
+  });
+});
+
+/**
+ * 锚在表格单元格里的浮动对象（审批表里的印章、表格式页眉里的徽标）。原来 `placeFloats` 只走段落，
+ * 这些对象整个不画。格子里哪些参照物换成格子没有真值（`FLOAT_IN_CELL_RELATIVE`），
+ * 这里钉的是「格子的文字区算对了」与「换不换」两件事。期望值从摆好的表格几何里取，
+ * 与 layout-index / paint.ts 同一套式子。
+ */
+describe('表格单元格里的浮动对象', () => {
+  /** 纸够高：前面一段、后面一张 2×2 的表，右下格里放 `inCell` */
+  function layoutWith(inCell: ResolvedBlock[], over: Partial<Parameters<typeof cell>[1]> = {}) {
+    const grid = [1000, 1100];
+    const t = table(grid, [
+      row([cell([para([run('一')])]), cell([para([run('二')])])]),
+      row([cell([para([run('三')]), para([run('四')])]), cell(inCell, over)]),
+    ]);
+    const doc = layoutDocument(
+      body([para([run(TEN)]), t], sect({ page: { width: 3300, height: 6000, orientation: 'portrait' } })),
+      opts(),
+    );
+    const page = doc.pages[0];
+    const placed = page?.blocks[1] as PlacedTable;
+    const r = placed.rows[1];
+    const c = r?.row.cells[1];
+    if (page === undefined || r === undefined || c === undefined) throw new Error('表没排出来');
+    // 格子的文字区：表左 + 格左 + 左边距；格线以内 + 上边距
+    const left = 600 + placed.x + c.x + c.paddingLeft;
+    const top = 600 + r.y + r.row.gridAbove + c.paddingTop;
+    return { floats: page.floats ?? [], left, top, cell: c, row: r };
+  }
+
+  it('column / paragraph：从格子的文字区与格里那一段的段顶起算，不再飞到版心左边', () => {
+    const a = anchorOf({
+      h: { relativeFrom: 'column', offset: 100 },
+      v: { relativeFrom: 'paragraph', offset: 50 },
+    });
+    const { floats, left, top } = layoutWith([para([run('甲')]), para([run('乙'), pic(200, 100, a)])]);
+    expect(floats).toHaveLength(1);
+    expect(floats[0]?.x).toBe(left + 100);
+    // 锚在格里第二段：段顶 = 文字区顶 + 第一段一行
+    expect(floats[0]?.y).toBe(top + EA_LINE + 50);
+    // 真的是第二行的格子，不是退回到了版心
+    expect(left).toBeGreaterThan(600 + 1000);
+  });
+
+  it('layoutInCell 开着时 page / margin 也换成格子；关掉照页面算', () => {
+    const a = anchorOf({
+      h: { relativeFrom: 'page', offset: 300 },
+      v: { relativeFrom: 'margin', offset: 40 },
+    });
+    const on = layoutWith([para([run('甲'), pic(200, 100, a)])]);
+    expect(on.floats[0]).toMatchObject({ x: on.left + 300, y: on.top + 40 });
+    const off = layoutWith([para([run('甲'), pic(200, 100, { ...a, layoutInCell: false })])]);
+    expect(off.floats[0]).toMatchObject({ x: 300, y: 600 + 40 });
+  });
+
+  it('页边距框在格子里没有对应物，照页面算；align 按文字区的宽算', () => {
+    const a = anchorOf({
+      h: { relativeFrom: 'leftMargin', offset: 0 },
+      v: { relativeFrom: 'page', offset: 0 },
+    });
+    const { floats, top } = layoutWith([para([run('甲'), pic(200, 100, a)])]);
+    expect(floats[0]).toMatchObject({ x: 0, y: top });
+
+    const r = anchorOf({
+      h: { relativeFrom: 'column', align: 'right' },
+      v: { relativeFrom: 'paragraph', offset: 0 },
+    });
+    const right = layoutWith([para([run('甲'), pic(200, 100, r)])]);
+    expect(right.floats[0]?.x).toBe(right.left + right.cell.contentWidth - 200);
+  });
+
+  it('w:vAlign 把格里的字往下挪时，锚在段落上的对象跟着挪', () => {
+    const a = anchorOf({
+      h: { relativeFrom: 'column', offset: 0 },
+      v: { relativeFrom: 'paragraph', offset: 0 },
+    });
+    // 左边那格两段，右边这格一段贴底：段顶 = 文字区顶 + （两行 − 一行）
+    const { floats, top } = layoutWith([para([run('甲'), pic(200, 100, a)])], {
+      props: cellProps({ verticalAlign: 'bottom' }),
+    });
+    expect(floats[0]?.y).toBe(top + EA_LINE);
+  });
+
+  it('嵌套表格里的也找得到：外格文字区 + 内表 x + 内格 x + 边距', () => {
+    const a = anchorOf({
+      h: { relativeFrom: 'column', offset: 0 },
+      v: { relativeFrom: 'paragraph', offset: 0 },
+    });
+    const inner = table(
+      [400, 500],
+      [row([cell([para([run('内')])]), cell([para([run('丙'), pic(10, 10, a)])])])],
+    );
+    const { floats, left, top } = layoutWith([inner]);
+    expect(floats).toHaveLength(1);
+    // 内表左边相对外格文字区的 x 由 tblInd / 边距定，这里只断言它落在外格之内、且比外格文字区再往右一个内格
+    expect(floats[0]?.x).toBeGreaterThan(left + 400);
+    expect(floats[0]?.y).toBe(top);
+  });
+
+  it('重复的表头行里的对象每页都画一份', () => {
+    const a = anchorOf({
+      h: { relativeFrom: 'column', offset: 0 },
+      v: { relativeFrom: 'paragraph', offset: 0 },
+    });
+    const head = row([cell([para([run('头'), pic(10, 10, a)])])], { props: rowProps({ header: true }) });
+    const rows = [head, ...Array.from({ length: 6 }, () => row([cell([para([run('行')])])]))];
+    const doc = layoutDocument(body([table([2100], rows)]), opts());
+    expect(doc.pages.length).toBeGreaterThan(1);
+    for (const page of doc.pages) expect(page.floats).toHaveLength(1);
   });
 });

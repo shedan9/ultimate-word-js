@@ -231,3 +231,97 @@ describe('四周型环绕的 docx 端到端', () => {
     expect(Math.max(...xs)).toBeLessThan(imageLeftPt);
   });
 });
+
+/**
+ * 锚在表格单元格里的浮动图：审批表签字栏里的印章、表格式页眉里的徽标。原来只走段落，
+ * 这两张图解析得出、字节也收了，**一张都不画**。几何的「换不换成格子」没有真值
+ * （`@uw/layout` 的 `FLOAT_IN_CELL_RELATIVE`），这里证链没断、落点在那一格里。
+ */
+describe('表格单元格里的浮动图 docx 端到端', () => {
+  // 80 × 80pt，浮于文字上方，相对栏 / 段落各偏 10pt —— Word 在格子里插图后改成浮动就是这么写的
+  const seal = (relId: string) => `<w:r><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0"
+      simplePos="0" behindDoc="0" relativeHeight="4" layoutInCell="1" allowOverlap="1" locked="0">
+    <wp:simplePos x="0" y="0"/>
+    <wp:positionH relativeFrom="column"><wp:posOffset>127000</wp:posOffset></wp:positionH>
+    <wp:positionV relativeFrom="paragraph"><wp:posOffset>127000</wp:posOffset></wp:positionV>
+    <wp:extent cx="1016000" cy="1016000"/>
+    <wp:wrapNone/>
+    <wp:docPr id="3" name="印章" descr="印章"/>
+    <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+      <pic:pic><pic:blipFill><a:blip r:embed="${relId}"/></pic:blipFill></pic:pic>
+    </a:graphicData></a:graphic>
+  </wp:anchor></w:drawing></w:r>`;
+  const tbl = (inCell: string) => `<w:tbl>
+    <w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr>
+    <w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="5000"/></w:tblGrid>
+    <w:tr><w:tc><w:p><w:r><w:t>签发人</w:t></w:r></w:p></w:tc><w:tc><w:p>${inCell}<w:r><w:t>（盖章）</w:t></w:r></w:p></w:tc></w:tr>
+  </w:tbl>`;
+  const files: Record<string, Uint8Array> = {
+    '[Content_Types].xml': encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+        <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+        <Default Extension="xml" ContentType="application/xml"/>
+        <Default Extension="png" ContentType="image/png"/>
+        <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+        <Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>
+      </Types>`,
+    ),
+    '_rels/.rels': encoder.encode(
+      rels(`<Relationship Id="rId1" Type="${OFFICE_REL}/officeDocument" Target="word/document.xml"/>`),
+    ),
+    'word/document.xml': encoder.encode(`<w:document><w:body>
+      <w:p><w:r><w:t>正文第一段</w:t></w:r></w:p>
+      ${tbl(seal('rId1'))}
+      <w:p/>
+      <w:sectPr>
+        <w:headerReference w:type="default" r:id="rId9"/>
+        <w:pgSz w:w="11906" w:h="16838"/>
+        <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>
+        <w:docGrid w:type="default"/>
+      </w:sectPr>
+    </w:body></w:document>`),
+    'word/_rels/document.xml.rels': encoder.encode(
+      rels(
+        `<Relationship Id="rId1" Type="${OFFICE_REL}/image" Target="media/body.png"/>` +
+          `<Relationship Id="rId9" Type="${OFFICE_REL}/header" Target="header1.xml"/>`,
+      ),
+    ),
+    'word/header1.xml': encoder.encode(`<w:hdr>${tbl(seal('rId1'))}<w:p/></w:hdr>`),
+    'word/_rels/header1.xml.rels': encoder.encode(
+      rels(`<Relationship Id="rId1" Type="${OFFICE_REL}/image" Target="media/header.png"/>`),
+    ),
+    'word/media/body.png': PNG,
+    'word/media/header.png': new Uint8Array([...PNG, 1]),
+  };
+  const doc = loadDocument(OpcPackage.open(zipSync(files)), createDiagnosticSink());
+  const registry = new FontRegistry();
+  for (const pack of loadBundledPacks()) registry.registerMetrics(pack);
+  const measurer = createTextMeasurer(registry, {
+    candidates: (family) => fontNameCandidates(doc.fonts, family),
+  });
+  const layout = layoutDocument(doc.resolved, {
+    measurer,
+    settings: doc.cascade.settings,
+    headerFooters: doc.headerFooters,
+  });
+  const page = layout.pages[0];
+
+  it('正文与页眉表格里的两枚印章都进了 page.floats，各拿到自己的字节画出来', () => {
+    expect(page?.floats).toHaveLength(2);
+    const root = buildDocument(layout, { imageHref: imageHrefResolver(doc.images) });
+    const hrefs = collect(root, 'image').map((i) => i.attrs.href);
+    expect(hrefs).toHaveLength(2);
+    expect(new Set(hrefs).size).toBe(2);
+  });
+
+  it('落点在右边那一格里：格子文字区左边 + 10pt，不是版心左边 + 10pt', () => {
+    const table = page?.blocks.find((b) => b.kind === 'table');
+    const content = page?.geometry.content;
+    if (table?.kind !== 'table' || content === undefined) throw new Error('表没排出来');
+    const c = table.rows[0]?.row.cells[1];
+    const textLeft = content.x + table.x + (c?.x ?? 0) + (c?.paddingLeft ?? 0);
+    const body = page?.floats?.find((f) => f.y > content.y);
+    expect(body?.x).toBeCloseTo(textLeft + 200, 3);
+    expect(body?.x).toBeGreaterThan(content.x + 4000);
+  });
+});

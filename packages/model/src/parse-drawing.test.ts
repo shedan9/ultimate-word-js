@@ -171,6 +171,16 @@ describe('w:drawing', () => {
     expect(anchorWith('<wp:wrapSquare wrapText="nonsense"/>')?.wrapText).toBeUndefined();
     expect(anchorWith('<wp:wrapTopAndBottom/>')?.wrapText).toBeUndefined();
   });
+
+  it('layoutInCell 只在显式关掉时记下来（Word 几乎都写 1）', () => {
+    const anchorWith = (attrs: string) =>
+      objects(
+        `<w:p><w:r><w:drawing><wp:anchor ${attrs}><wp:extent cx="635" cy="635"/></wp:anchor></w:drawing></w:r></w:p>`,
+      )[0]?.anchor;
+    expect(anchorWith('layoutInCell="0"')?.layoutInCell).toBe(false);
+    expect(anchorWith('layoutInCell="1"')).not.toHaveProperty('layoutInCell');
+    expect(anchorWith('')).not.toHaveProperty('layoutInCell');
+  });
 });
 
 describe('w:pict（VML）', () => {
@@ -187,6 +197,16 @@ describe('w:pict（VML）', () => {
     expect(obj?.height).toBeCloseTo(1133.86, 1); // 2cm
     expect(obj?.alt).toBe('印章');
     expect(obj?.image?.relId).toBe('rId8');
+  });
+
+  it('o:allowincell="f" 关掉「按格子定位」，缺省开着', () => {
+    const anchorWith = (attrs: string) =>
+      objects(
+        `<w:p><w:r><w:pict><v:shape style="position:absolute;width:10pt;height:10pt" ${attrs}/></w:pict></w:r></w:p>`,
+      )[0]?.anchor;
+    expect(anchorWith('o:allowincell="f"')?.layoutInCell).toBe(false);
+    expect(anchorWith('o:allowincell="t"')).not.toHaveProperty('layoutInCell');
+    expect(anchorWith('')).not.toHaveProperty('layoutInCell');
   });
 
   it('不带单位的数字按 px 算（CSS 的默认单位），不是 pt', () => {

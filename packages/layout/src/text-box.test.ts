@@ -5,9 +5,9 @@
 import type { DrawingAnchor, ResolvedBlock, ResolvedBody, SectionProps, TextBoxRef } from '@uw/model';
 import { DEFAULT_SECTION_PROPS, DEFAULT_SETTINGS } from '@uw/model';
 import { describe, expect, it } from 'vitest';
-import type { LayoutDocumentOptions } from './page.ts';
+import type { LayoutDocumentOptions, PlacedTable } from './page.ts';
 import { layoutDocument } from './page.ts';
-import { fakeMeasurer, NO_GRID, para, run, runOf, SIZE_5 } from './test-fixtures.ts';
+import { cell, fakeMeasurer, NO_GRID, para, row, run, runOf, SIZE_5, table } from './test-fixtures.ts';
 
 const EA_LINE = SIZE_5 * 1.3;
 
@@ -105,6 +105,17 @@ describe('文本框的内容', () => {
     expect(f?.textBox?.x).toBe(600 + SIZE_5 + 100);
     // 外框没有带过来：内嵌的外框由行画
     expect(f?.shape).toBeUndefined();
+  });
+
+  it('表格单元格里的内嵌文本框同样收内容（原来只剩外框），x 从格子的文字区起算', () => {
+    const t = table([1000, 1100], [row([cell([para([run('一')])]), cell([para([box(400, 300, ref())])])])]);
+    const doc = layoutDocument(body([t]), opts());
+    const placed = doc.pages[0]?.blocks[0] as PlacedTable;
+    const c = placed.rows[0]?.row.cells[1];
+    const [f] = doc.pages[0]?.floats ?? [];
+    expect(f?.inline).toBe(true);
+    expect(f?.x).toBe(600 + placed.x + (c?.x ?? 0) + (c?.paddingLeft ?? 0));
+    expect(f?.textBox?.blocks).toHaveLength(2);
   });
 
   it('没传内容（或内容里没有这个 id）只剩外框，不报错', () => {

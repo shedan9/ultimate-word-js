@@ -300,3 +300,26 @@ export const WRAP_BOTH_SIDES_AS = 'largest';
  * 再把框往下拖 5pt 做一份，基线间距不变、首行相对框顶的位置变了，就是「相位随版心」。
  */
 export const TEXT_BOX_SNAPS_TO_GRID = false;
+
+/**
+ * 锚在表格单元格里的浮动对象（`layoutInCell` 开着 —— Word 界面里「表格单元格中的版式」，几乎总是开着），
+ * 哪些参照物换成**那一格的文字区**（外框减四边边距）。
+ *
+ * - `column` / `margin`：版心在格子里的对应物就是格子，这一条把握最大 —— 在格子里插图、改成「浮于文字上方」，
+ *   Word 写的是 `positionH relativeFrom="column"` + `positionV relativeFrom="paragraph"`，按版心算会飞到表格左边去；
+ * - `page`：Word 的老问题「图明明设了相对页面，却跟着表格走」，解法就是关掉这个开关 —— 说明开着时页面也被换成了格子。
+ *   这一条是凭这个现象推的；
+ * - 页边距那四种（`leftMargin` / `topMargin` …）与 `inside` / `outside` 在格子里没有对应物，照页面算；
+ * - `paragraph` / `line` / `character` 本来就跟着锚点，不用换。
+ *
+ * 取的是**文字区**而不是格子外框：版心也是「去掉页边距之后」的那一块。可能取外框（差一个单元格边距，默认 5.4pt）。
+ *
+ * 钉死办法：一张 2×2 的表，左右边距各设 20pt（与外框分得开），右下格里插四张尺寸各不相同的图（靠尺寸认人），
+ * 横向分别取 column / margin / page / leftMargin、偏移一律 0，纵向同样四种；再把 `layoutInCell` 关掉做一份。
+ * 导 PDF 读 `truth.json` 的 `pages[].images[]`：x 落在格子左边 + 20pt 是文字区、落在格子左边是外框、
+ * 落在 0 是页面没换。
+ */
+export const FLOAT_IN_CELL_RELATIVE: { readonly h: readonly string[]; readonly v: readonly string[] } = {
+  h: ['column', 'margin', 'page'],
+  v: ['margin', 'page'],
+};

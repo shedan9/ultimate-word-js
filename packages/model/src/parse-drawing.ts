@@ -251,6 +251,7 @@ function anchorOf(anchor: XmlElement): DrawingAnchor {
   };
   const side = wrapTextOf(anchor);
   if (side !== undefined) out.wrapText = side;
+  if (attrOnOff(anchor, 'layoutInCell') === false) out.layoutInCell = false;
   // simplePos="1" 时规范说忽略 positionH / V，改用这一对绝对坐标（相对纸左上角）
   if (attrOnOff(anchor, 'simplePos') === true) {
     const simple = child(anchor, 'wp:simplePos');
@@ -967,6 +968,9 @@ function vmlAnchor(
   };
   const wrapText = side === undefined ? undefined : VML_WRAP_SIDE[side];
   if (wrapText !== undefined) out.wrapText = wrapText;
+  // VML 的布尔写 `f` / `t`（也见过 `false`），`attrOnOff` 不认 `f`
+  const inCell = attr(shape, 'o:allowincell');
+  if (inCell === 'f' || inCell === 'false' || inCell === '0') out.layoutInCell = false;
   return out;
 }
 

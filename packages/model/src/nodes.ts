@@ -321,6 +321,11 @@ export interface DrawingAnchor {
   v: AnchorPos;
   /** 与正文的间距（EMU 已换算成 twips）。`wrap: 'none'` 用不上；方形 / 上下型环绕让开文字时把外框按它往外扩 */
   dist: { top: Twips; bottom: Twips; left: Twips; right: Twips };
+  /**
+   * 锚在表格单元格里时**不**按格子定位（`wp:anchor@layoutInCell="0"`、VML 的 `o:allowincell="f"`）。
+   * 只在显式关掉时出现：Word 写的几乎都是 1，VML 缺省也是开着的。锚点不在格子里时没有意义
+   */
+  layoutInCell?: false;
 }
 
 /**
