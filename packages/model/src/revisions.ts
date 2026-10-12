@@ -19,9 +19,12 @@
  * 排版、命中测试、可选文本层各自走通了，「看不见的字不算」在每一处都对；
  * 修订再开一条路，就得在每一处再学一遍。
  *
- * 没做（写下来免得以为做了）：段落标记的修订（`w:pPr/w:rPr/w:del` —— 最终状态下这一段该与
- * 下一段合成一段，现在仍是两段）、表格行的增删（`w:trPr/w:ins|del`）、格式修订
- * （`w:rPrChange` / `w:pPrChange`，显示的是改后的格式，没有标记）、批注框。
+ * **段落标记与整行**的修订（`ParagraphNode.markRevision` / `TableRowNode.revision`，2026-10-12）改的是结构不是格式，
+ * 也在级联那一步折（resolve-body.ts 的 `blockList` / `table`）：这一版里不存在的段落标记让本段并进下一段，
+ * 不存在的行整行不进树。「所有标记」下两者照常显示 —— Word 给被删的行涂底色、在段落标记处画 ¶，都没做。
+ *
+ * 没做（写下来免得以为做了）：格式修订（`w:rPrChange` / `w:pPrChange`，显示的是改后的格式，没有标记）、
+ * 批注框、「所有标记」下行与段落标记的标记画法、单元格级的修订（`w:tcPr/w:cellIns|cellDel`）。
  */
 import type { Body, DocumentBody, NodeId, PropSet, RunNode, RunRevision } from './nodes.ts';
 import { walkParagraphs } from './nodes.ts';
@@ -74,6 +77,9 @@ export function revisionAuthors<S extends PropSet>(bodies: readonly DocumentBody
     for (const p of walkParagraphs(body)) {
       for (const r of p.runs) if (r.revision !== undefined) seen.add(r.revision.author ?? '');
     }
+    // 只改了段落标记 / 整行的作者（「所有标记」下目前不着色，留着让配色顺序与将来画出来的一致）
+    for (const p of walkParagraphs(body))
+      if (p.markRevision !== undefined) seen.add(p.markRevision.author ?? '');
   }
   return [...seen];
 }
@@ -84,6 +90,14 @@ export function revisionDisplay(view: RevisionView, authors: readonly string[]):
     colors[a] = REVISION_AUTHOR_COLORS[i % REVISION_AUTHOR_COLORS.length] as string;
   });
   return { view, colors };
+}
+
+/** 这一版里它**不存在**：最终状态下被删的、原始状态下插入的。「所有标记」下两者都在 */
+export function revisionHidden(revision: RunRevision | undefined, display: RevisionDisplay): boolean {
+  if (revision === undefined) return false;
+  return display.view === 'final'
+    ? revision.kind === 'delete'
+    : display.view === 'original' && revision.kind === 'insert';
 }
 
 /**

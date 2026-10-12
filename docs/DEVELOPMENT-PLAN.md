@@ -1044,6 +1044,19 @@ await view.toPNG(2);     // 第 3 页（页序号从 0 起，与 scrollTo({ page
   - 未做：段落标记的修订（`w:pPr/w:rPr/w:del` —— 最终状态下该与下一段合成一段）、表格行的增删（`w:trPr/w:ins|del`）、
     格式修订（`w:rPrChange` / `w:pPrChange`）、批注框、「简单标记」的红竖线、接受 / 拒绝（非目标）、
     `markup` 下复制会带上被删的字
+- ✅ **段落标记与整行的修订**（2026-10-12）：修订显示那一条留下的两个**会改版式**的洞 —— 最终状态下被删的段落标记
+  仍排成两段、被删的行字藏了但空行连格线照样占着高度（整段删掉的那一段也留一个空行）。
+  - `@uw/model`：`w:pPr/w:rPr/w:ins|del|move*` → `ParagraphNode.markRevision`，`w:trPr/w:ins|del` → `TableRowNode.revision`
+    （只在可编辑的树上）。**在级联那一步折结构**（`resolve-body.ts` 的 `blockList` / `table`）：这一版里不存在的段落标记
+    让本段的 run 并进下一段、用**下一段**的段落属性与 id（属性住在标记上，本段的标记没了，字就归下一个标记管；
+    整段删除因此不改下一段的格式 —— 取本段属性的话下一段平白换了样子）；被并掉的段落不计数（`Pass.counters` 缺席）；
+    下一块是表格或到头了不并。行折掉就不进树，行号 / 隔行带按剩下的数，`reopenMerges()` 把断了头的 `continue` 改成 `restart`。
+    布局、渲染、索引一行没改。事务：拆段时原标记归**后段**（前段的是这一下新打的），合段留后段的；插行本来就不抄 revision
+  - `@uw/serialize`：新段落 / 新行以原有的为模板抄 XML，模板的标记是「已删除」的话照抄出来就成了被删的 ——
+    `#syncRevisionMark()` 把 `w:pPr/w:rPr` 与 `w:trPr` 里的修订标记对齐模型（一样就连 `w:id` 原样留着）
+  - 判据：model 7 项（合段 / 整段删 / 插入段 / 编号不计数 / 表格前不并 / 删行 / 断头合并 + 拆合段）、serialize 2 项、门面 1 项；
+    浏览器回归全过。⚠️ 「只删了标记、两段都有字」时合并段取谁的段落属性没有真值，钉死办法写在 `blockList` 的注释里
+  - 未做：「所有标记」下被删行的底色与 ¶、单元格级修订、`revisions()` 不单列段落标记与整行
 - ✅ **批注（只读）**（2026-10-12，`@uw/model` 的 `comments.ts`）：原来 `w:commentRangeStart` / `End` / `w:commentReference`
   在解析时一律跳过、`comments.xml` 根本不读 —— 审阅过的周报打开来看不到任何批注。
   - `@uw/model`：批注范围压平成 run 上的标记（`RunNode.comments`，**数组** —— 批注能交叠，不像内容控件那样嵌套），

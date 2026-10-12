@@ -319,6 +319,15 @@ export interface ParagraphNode<S extends PropSet> {
    * 前面插了几页字、目录页码照样找得到它。只挂在可编辑的那棵树上，级联树不带（见 bookmarks.ts）。
    */
   bookmarks?: string[];
+  /**
+   * **段落标记**自己的修订（`w:pPr/w:rPr/w:ins|w:del|w:moveTo|w:moveFrom`）。
+   *
+   * 段落标记是一个字：删掉它，这一段就与下一段接成一段；修订模式下插一段新的，新段落的标记是「插入」。
+   * 所以最终状态下被删的标记、原始状态下插入的标记，都让本段**并进下一段**（级联那一步做，见 resolve-body.ts）。
+   * 只在可编辑的树上：级联树上它已经折成「并没并」，布局不必再认一遍。
+   * 拆段时它跟着**后段**走（原来那个标记在段末），合段时取后段的（前段的标记被删掉了）
+   */
+  markRevision?: RunRevision;
 }
 
 export interface TableNode<S extends PropSet> {
@@ -353,6 +362,12 @@ export interface TableRowNode<S extends PropSet> {
    */
   propsEx?: TableProps;
   cells: TableCellNode<S>[];
+  /**
+   * 整行的修订（`w:trPr/w:ins|w:del`）：修订模式下插的行 / 删的行。最终状态下被删的行、原始状态下插入的行
+   * **整行不进级联树**（resolve-body.ts）—— 只把格里的字折成 hidden 的话，空行连格线照样占着高度。
+   * 只在可编辑的树上；插行时**不抄**（照着一行被删的行插出来的新行不是「被删的」）
+   */
+  revision?: RunRevision;
 }
 
 export interface TableCellNode<S extends PropSet> {

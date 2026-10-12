@@ -168,3 +168,140 @@ describe('编辑护栏', () => {
     expect(rangeEditable(body, range)).toBe(false);
   });
 });
+
+describe('段落标记与整行的修订（结构在级联那一步折）', () => {
+  const NUMBERING = `<w:numbering ${W_NS}>
+    <w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum>
+    <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>`;
+  const del = (id: number) => `<w:del w:id="${id}" w:author="张三" w:date="2026-10-01T08:00:00Z"/>`;
+  const ins = (id: number) => `<w:ins w:id="${id}" w:author="李四"/>`;
+
+  function resolveXml(xml: string, view: RevisionView): { body: Body; resolved: ResolvedBody } {
+    const sink = createDiagnosticSink();
+    const ctx: CascadeContext = {
+      styles: parseStyles(parseXml(`<w:styles ${W_NS}/>`), sink),
+      theme: EMPTY_THEME,
+      settings: DEFAULT_SETTINGS,
+      numbering: parseNumbering(parseXml(NUMBERING), sink),
+    };
+    const body = parseBody(
+      parseXml(`<w:document ${W_NS}><w:body>${xml}<w:sectPr/></w:body></w:document>`),
+      sink,
+    );
+    return {
+      body,
+      resolved: resolveBody(ctx, body, { revisions: revisionDisplay(view, revisionAuthors([body])) }),
+    };
+  }
+
+  /** 每一块：段落写「id:对齐:看得见的字」，表格写行数 */
+  function shape(r: ResolvedBody): string[] {
+    return (r.sections[0]?.blocks ?? []).map((b) =>
+      b.kind === 'table'
+        ? `table:${b.rows.length}`
+        : `${b.id}:${b.props.justification}:${b.props.numbering.label?.text ?? ''}${visible({ sections: [{ id: '', props: r.sections[0]?.props as never, blocks: [b] }] })}`,
+    );
+  }
+
+  it('最终状态下被删的段落标记：本段并进下一段，用下一段的段落属性与 id；所有标记 / 原始状态下仍是两段', () => {
+    const xml =
+      `<w:p><w:pPr><w:jc w:val="right"/><w:rPr>${del(1)}</w:rPr></w:pPr><w:r><w:t>甲</w:t></w:r></w:p>` +
+      `<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>乙</w:t></w:r></w:p>`;
+    const { body, resolved } = resolveXml(xml, 'final');
+    const [p1, p2] = [...walkParagraphs(body)];
+    expect(p1?.markRevision).toEqual({ kind: 'delete', author: '张三', date: '2026-10-01T08:00:00Z' });
+    expect(shape(resolved)).toEqual([`${p2?.id}:center:甲乙`]);
+    expect(shape(resolveXml(xml, 'markup').resolved)).toHaveLength(2);
+    expect(shape(resolveXml(xml, 'original').resolved)).toHaveLength(2);
+  });
+
+  it('整段删除（字与标记一起删）干干净净地消失，下一段格式不变；原始状态下插入的整段同理', () => {
+    const deleted =
+      `<w:p><w:pPr><w:jc w:val="right"/><w:rPr>${del(1)}</w:rPr></w:pPr><w:del w:id="2" w:author="张三"><w:r><w:delText>删掉的段</w:delText></w:r></w:del></w:p>` +
+      `<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>留下</w:t></w:r></w:p>`;
+    expect(shape(resolveXml(deleted, 'final').resolved).map((s) => s.split(':').slice(1).join(':'))).toEqual([
+      'center:留下',
+    ]);
+    const inserted =
+      `<w:p><w:pPr><w:rPr>${ins(1)}</w:rPr></w:pPr><w:ins w:id="2" w:author="李四"><w:r><w:t>新段</w:t></w:r></w:ins></w:p>` +
+      `<w:p><w:r><w:t>原有</w:t></w:r></w:p>`;
+    expect(shape(resolveXml(inserted, 'original').resolved).map((s) => s.split(':').at(-1))).toEqual([
+      '原有',
+    ]);
+    expect(shape(resolveXml(inserted, 'final').resolved)).toHaveLength(2);
+  });
+
+  it('并掉的段落不计数：被删的第 1 条之后，下一条显示 1.', () => {
+    const num = '<w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>';
+    const xml =
+      `<w:p><w:pPr>${num}<w:rPr>${del(1)}</w:rPr></w:pPr><w:del w:id="2" w:author="张三"><w:r><w:delText>甲</w:delText></w:r></w:del></w:p>` +
+      `<w:p><w:pPr>${num}</w:pPr><w:r><w:t>乙</w:t></w:r></w:p>` +
+      `<w:p><w:pPr>${num}</w:pPr><w:r><w:t>丙</w:t></w:r></w:p>`;
+    expect(shape(resolveXml(xml, 'final').resolved).map((s) => s.split(':').at(-1))).toEqual([
+      '1.乙',
+      '2.丙',
+    ]);
+    expect(shape(resolveXml(xml, 'markup').resolved).map((s) => s.split(':').at(-1))).toEqual([
+      '1.甲',
+      '2.乙',
+      '3.丙',
+    ]);
+  });
+
+  it('下一块是表格或这一列到头了就不并（表格前那个段落标记 Word 删不掉）', () => {
+    const xml =
+      `<w:p><w:pPr><w:rPr>${del(1)}</w:rPr></w:pPr><w:r><w:t>甲</w:t></w:r></w:p>` +
+      '<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>格</w:t></w:r></w:p></w:tc></w:tr></w:tbl>' +
+      `<w:p><w:pPr><w:rPr>${del(2)}</w:rPr></w:pPr><w:r><w:t>末</w:t></w:r></w:p>`;
+    expect(shape(resolveXml(xml, 'final').resolved).map((s) => s.split(':').at(-1))).toEqual([
+      '甲',
+      '1',
+      '末',
+    ]);
+  });
+
+  it('整行修订：最终状态下被删的行不进树，原始状态下插入的行不进树；行全没了整张表不出', () => {
+    const row = (text: string, rev = '') =>
+      `<w:tr>${rev ? `<w:trPr>${rev}</w:trPr>` : ''}<w:tc><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:tc></w:tr>`;
+    const tbl = (rows: string) =>
+      `<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>${rows}</w:tbl><w:p/>`;
+    const xml = tbl(row('一') + row('二', del(1)) + row('三', ins(2)));
+    const rowsOf = (view: RevisionView) => shape(resolveXml(xml, view).resolved)[0];
+    expect(rowsOf('final')).toBe('table:2');
+    expect(rowsOf('original')).toBe('table:2');
+    expect(rowsOf('markup')).toBe('table:3');
+    expect(shape(resolveXml(tbl(row('二', del(1))), 'final').resolved)).toHaveLength(1);
+  });
+
+  it('删掉合并区的首行：下一行的 continue 改成 restart，内容照常显示', () => {
+    const cell = (merge: string, text: string) =>
+      `<w:tc><w:tcPr><w:vMerge${merge ? ` w:val="${merge}"` : ''}/></w:tcPr><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:tc>`;
+    const xml =
+      `<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:trPr>${del(1)}</w:trPr>${cell('restart', '首')}</w:tr>` +
+      `<w:tr>${cell('', '')}</w:tr><w:tr>${cell('', '')}</w:tr></w:tbl><w:p/>`;
+    const t = resolveXml(xml, 'final').resolved.sections[0]?.blocks[0];
+    if (t?.kind !== 'table') throw new Error('表格不见了');
+    expect(t.rows.map((r) => r.cells[0]?.vMerge)).toEqual(['restart', 'continue']);
+  });
+
+  it('拆段：原段落标记归后段，前段的标记是新打的；合段：留下的是后段的标记', () => {
+    const { body } = resolveXml(
+      `<w:p><w:pPr><w:rPr>${del(1)}</w:rPr></w:pPr><w:r><w:t>甲乙</w:t></w:r></w:p><w:p><w:r><w:t>丙</w:t></w:r></w:p>`,
+      'final',
+    );
+    const editor = createTextEditor(body);
+    const first = [...walkParagraphs(editor.body)][0];
+    editor.tx((t) => void t.splitParagraph({ nodeId: first?.runs[0]?.id ?? '', contentIndex: 0, offset: 1 }));
+    const [a, b, c] = [...walkParagraphs(editor.body)];
+    expect([a?.markRevision?.kind, b?.markRevision?.kind, c?.markRevision]).toEqual([
+      undefined,
+      'delete',
+      undefined,
+    ]);
+    // 合 a、b：删掉的是 a 的标记，留下 b 的（被删的）；再合 b、c：留下 c 的（没有修订）
+    editor.tx((t) => void t.joinParagraph(a?.id ?? ''));
+    expect([...walkParagraphs(editor.body)][0]?.markRevision?.kind).toBe('delete');
+    editor.tx((t) => void t.joinParagraph(a?.id ?? ''));
+    expect([...walkParagraphs(editor.body)][0]?.markRevision).toBeUndefined();
+  });
+});

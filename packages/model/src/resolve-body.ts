@@ -33,12 +33,13 @@ import type {
   ResolvedTableCell,
   ResolvedTableRow,
   Table,
+  TableRow,
 } from './nodes.ts';
 import type { NumberingCounters } from './numbering-counter.ts';
 import { createNumberingCounters } from './numbering-counter.ts';
 import type { ResolvedParaProps, ResolvedRunProps } from './props.ts';
 import type { RevisionDisplay } from './revisions.ts';
-import { applyRevision, DEFAULT_REVISION_DISPLAY } from './revisions.ts';
+import { applyRevision, DEFAULT_REVISION_DISPLAY, revisionHidden } from './revisions.ts';
 import { extendStyleSheet } from './styles.ts';
 
 /**
@@ -50,7 +51,8 @@ import { extendStyleSheet } from './styles.ts';
  */
 interface Pass {
   ctx: CascadeContext;
-  counters: NumberingCounters;
+  /** 缺席 = 这一段不计数（标记被修订折掉、并进下一段的段落：它的编号不该把后面的「第几」往后推） */
+  counters: NumberingCounters | undefined;
   hyperlinks: ReadonlyMap<NodeId, FieldHyperlink> | undefined;
   /** 跨调用的备忘；缺席 = 每段都重算（加载那一趟与低层调用） */
   memo: WeakMap<Paragraph, MemoEntry> | undefined;
@@ -175,7 +177,7 @@ export function resolveBody(
     sections: body.sections.map((s): ResolvedSection => {
       // 节属性本来就是解析完的纯数据，直接带过来；克隆是为了断开与可编辑树的共享，
       // 否则编辑那边改一个页边距，已经发给 Worker 的这棵树会跟着变（或者反过来）
-      return { id: s.id, props: structuredClone(s.props), blocks: s.blocks.map((b) => block(pass, b)) };
+      return { id: s.id, props: structuredClone(s.props), blocks: blockList(pass, s.blocks) };
     }),
   };
 }
@@ -200,11 +202,39 @@ export function resolveBlocks(
     layersKey: '',
     revisions: opts.revisions ?? DEFAULT_REVISION_DISPLAY,
   };
-  return blocks.map((b) => block(pass, b));
+  return blockList(pass, blocks);
 }
 
-function block(pass: Pass, b: Block): ResolvedBlock {
-  return b.kind === 'paragraph' ? paragraph(pass, b) : table(pass, b);
+/**
+ * 一列块（节、单元格、页眉页脚里那一列）。修订在这一层折结构：
+ *
+ * - **段落标记**在这一版里不存在（最终状态下被删、原始状态下是插入的）的段落，它的 run 并进**下一段**，
+ *   用下一段的段落属性 —— 段落属性住在段落标记上，本段的标记没了，这些字就归下一个标记管。
+ *   整段被删（字与标记一起删）是最常见的情形，这条规则下它干干净净地消失，下一段照旧；
+ *   要是取本段的属性，下一段就平白换了格式。⚠️ 「只删了标记、两段都有字」时合并段取谁的属性**没有真值**
+ *   （本机没有 Word）；钉死办法：两段不同对齐 / 缩进，删掉中间的标记（修订模式），最终状态导 PDF 看合并段的版式。
+ *   下一块是表格或这一列到头了就不并 —— 表格前那个段落标记 Word 本来就删不掉
+ * - 被折掉的段落**不计数**：它的编号不显示，也不该把后面的「第几」往后推
+ * - 整行修订折掉的行由 `table()` 跳过，行全没了整张表不出
+ */
+function blockList(pass: Pass, blocks: readonly Block[]): ResolvedBlock[] {
+  const out: ResolvedBlock[] = [];
+  let carried: ResolvedRun[] = [];
+  blocks.forEach((b, i) => {
+    if (b.kind === 'table') {
+      const t = table(pass, b);
+      if (t !== undefined) out.push(t);
+      return;
+    }
+    if (blocks[i + 1]?.kind === 'paragraph' && revisionHidden(b.markRevision, pass.revisions)) {
+      carried.push(...resolveParagraph({ ...pass, counters: undefined }, b).runs);
+      return;
+    }
+    const p = paragraph(pass, b);
+    out.push(carried.length ? { ...p, runs: [...carried, ...p.runs] } : p);
+    carried = [];
+  });
+  return out;
 }
 
 function paragraph(pass: Pass, p: Paragraph): ResolvedParagraph {
@@ -274,17 +304,22 @@ function resolveParagraph(pass: Pass, p: Paragraph): ResolvedParagraph {
  * 表格里的段落**参与同一条编号计数**：Word 里单元格中的列表和正文里的列表
  * 共用一个编号实例时是连着数的。所以递归下去的是同一个 `pass.counters`。
  */
-function table(pass: Pass, t: Table): ResolvedTable {
+function table(pass: Pass, t: Table): ResolvedTable | undefined {
   const props = resolveTableProps(pass.ctx, t.props);
-  const rowCount = t.rows.length;
-  const colCount = gridColumnCount(t.grid, t.rows);
+  // 这一版里不存在的行（最终状态下被删 / 原始状态下插入）不进树；行号、隔行带按剩下的行数 ——
+  // 这一版就是「接受 / 拒绝之后」的样子，Word 接受之后隔行带也是重新数的
+  const kept = t.rows.filter((r) => !revisionHidden(r.revision, pass.revisions));
+  if (kept.length === 0) return undefined;
+  const rows = kept.length === t.rows.length ? t.rows : reopenMerges(kept);
+  const rowCount = rows.length;
+  const colCount = gridColumnCount(t.grid, rows);
 
   return {
     kind: 'table',
     id: t.id,
     props,
     grid: [...t.grid],
-    rows: t.rows.map((r, rowIndex): ResolvedTableRow => {
+    rows: rows.map((r, rowIndex): ResolvedTableRow => {
       // 本行的 `w:tblPrEx` 盖在表级结果上，只影响这一行的行 / 格（见 applyRowExceptions）
       const rowTable = r.propsEx === undefined ? props : applyRowExceptions(props, r.propsEx);
       const resolvedRow = resolveRowProps(pass.ctx, rowTable, t.props, r.props, {
@@ -317,10 +352,34 @@ function table(pass: Pass, t: Table): ResolvedTable {
             props: cellProps,
             gridSpan: c.gridSpan,
             vMerge: c.vMerge,
-            blocks: c.blocks.map((b) => block(inner, b)),
+            blocks: blockList(inner, c.blocks),
           };
         }),
       };
     }),
   };
+}
+
+/**
+ * 删掉几行之后，纵向合并可能断了头：被删的那一行是合并区的 `restart`，下一行还写着 `continue` ——
+ * `continue` 的格不显示内容、等着上面那格占位，上面却没有了。按网格列认（不按格下标，与 table-edit.ts 同理），
+ * 上一行同一列没有合并区的 `continue` 改成 `restart`。只造新对象，不碰可编辑的树
+ */
+function reopenMerges(rows: readonly TableRow[]): TableRow[] {
+  let above = new Set<number>();
+  return rows.map((r) => {
+    const here = new Set<number>();
+    let col = r.props.gridBefore ?? 0;
+    let changed = false;
+    const cells = r.cells.map((c) => {
+      const at = col;
+      col += c.gridSpan;
+      if (c.vMerge !== 'none') here.add(at);
+      if (c.vMerge !== 'continue' || above.has(at)) return c;
+      changed = true;
+      return { ...c, vMerge: 'restart' as const };
+    });
+    above = here;
+    return changed ? { ...r, cells } : r;
+  });
 }

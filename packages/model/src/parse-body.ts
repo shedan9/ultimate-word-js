@@ -508,6 +508,9 @@ function parseParagraph(ctx: Ctx, p: XmlElement, props: ParaProps): Paragraph {
   const paragraph: Paragraph = { kind: 'paragraph', id, props, runs };
   if (ctx.blockControl !== undefined) paragraph.contentControl = ctx.blockControl;
   if (bookmarks.length) paragraph.bookmarks = bookmarks;
+  const pPr = child(p, 'w:pPr');
+  const markRevision = revisionIn(pPr === undefined ? undefined : child(pPr, 'w:rPr'));
+  if (markRevision !== undefined) paragraph.markRevision = markRevision;
   ctx.lastParagraph = paragraph;
   return paragraph;
 }
@@ -626,6 +629,16 @@ function revisionOf(el: XmlElement): RunRevision {
   if (author !== undefined) out.author = author;
   if (date !== undefined) out.date = date;
   return out;
+}
+
+/**
+ * 属性容器里的修订标记 —— 段落标记的 `w:pPr/w:rPr`、表格行的 `w:trPr`。与包着 run 的修订容器同一张表，
+ * 只是这里它们是**空元素**（带 id / 作者 / 时间），说的是「这个段落标记 / 这一行」被插入或删除了
+ */
+function revisionIn(props: XmlElement | undefined): RunRevision | undefined {
+  if (props === undefined) return undefined;
+  const el = children(props).find((c) => REVISIONS[c.name] !== undefined);
+  return el === undefined ? undefined : revisionOf(el);
 }
 
 const BREAK_TYPES = ['page', 'column'] as const;
@@ -797,6 +810,8 @@ function parseRow(ctx: Ctx, tr: XmlElement): TableRow {
   // 里面的 `w:tblPrExChange`（修订痕迹）不在解析表里，自动被忽略
   const ex = child(tr, 'w:tblPrEx');
   if (ex !== undefined) row.propsEx = parseTableProps(ex);
+  const revision = revisionIn(child(tr, 'w:trPr'));
+  if (revision !== undefined) row.revision = revision;
   return row;
 }
 

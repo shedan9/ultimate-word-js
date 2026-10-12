@@ -940,4 +940,44 @@ describe('修订（w:ins / w:del 压平成 run 上的标记之后）', () => {
     expect(paragraphs(again.body)).toHaveLength(1);
     expect(runOf(again.body, 'insert')?.revision).toEqual({ kind: 'insert', author: '李四' });
   });
+
+  it('拆一段段落标记被删的段落：前段不带原标记的修订、后段带着（w:id 原样），重新加载一致', () => {
+    const { out, again } = roundTrip(
+      docx(
+        '<w:p><w:pPr><w:jc w:val="center"/><w:rPr><w:del w:id="5" w:author="张三"/></w:rPr></w:pPr><w:r><w:t>甲乙</w:t></w:r></w:p><w:p><w:r><w:t>丙</w:t></w:r></w:p>',
+      ),
+      (t, body) => {
+        t.splitParagraph(textPosition(body) as DocPosition);
+      },
+    );
+    const xml = xmlOf(out);
+    expect(xml.match(/<w:del w:id="5" w:author="张三"\/>/g)).toHaveLength(1);
+    expect(xml).not.toMatch(/<w:del w:id="(?!5)/);
+    expect(paragraphs(again.body).map((p) => [p.props.justification, p.markRevision?.kind])).toEqual([
+      ['center', undefined],
+      ['center', 'delete'],
+      [undefined, undefined],
+    ]);
+  });
+
+  it('照着被删的行插一行：新行不抄 w:trPr 里的 w:del，其余行属性照抄', () => {
+    const { out, again } = roundTrip(
+      docx(
+        '<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>' +
+          '<w:tr><w:trPr><w:cantSplit/><w:del w:id="3" w:author="张三"/></w:trPr><w:tc><w:p><w:r><w:t>旧行</w:t></w:r></w:p></w:tc></w:tr>' +
+          '</w:tbl><w:p/>',
+      ),
+      (t, body) => {
+        t.insertRow(textPosition(body) as DocPosition, 'below');
+      },
+    );
+    expect(xmlOf(out).match(/<w:trPr>/g)).toHaveLength(2);
+    expect(xmlOf(out).match(/<w:del /g)).toHaveLength(1);
+    const rows = again.body.sections[0]?.blocks[0];
+    if (rows?.kind !== 'table') throw new Error('表格不见了');
+    expect(rows.rows.map((r) => [r.props.cantSplit, r.revision?.kind])).toEqual([
+      [true, 'delete'],
+      [true, undefined],
+    ]);
+  });
 });

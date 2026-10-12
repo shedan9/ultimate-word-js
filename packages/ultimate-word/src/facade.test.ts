@@ -978,17 +978,18 @@ describe('修订的显示', () => {
   const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 
   /** 正文一处删除 + 一处插入（两位作者），页眉里也有一处插入 + 删除 —— 换视图要连页眉一起换 */
-  function revisedDocx(): Uint8Array {
+  function revisedDocx(bodyXml?: string): Uint8Array {
     const enc = new TextEncoder();
     const ct = (part: string, type: string) =>
       `<Override PartName="/word/${part}" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.${type}+xml"/>`;
     const rel = (id: string, type: string, target: string) =>
       `<Relationship Id="${id}" Type="${R}/${type}" Target="${target}"/>`;
     const body =
+      bodyXml ??
       '<w:p><w:r><w:t>原文</w:t></w:r>' +
-      '<w:del w:id="1" w:author="张三" w:date="2026-10-01T08:00:00Z"><w:r><w:delText>删掉</w:delText></w:r></w:del>' +
-      '<w:ins w:id="2" w:author="李四" w:date="2026-10-02T08:00:00Z"><w:r><w:t>新增</w:t></w:r></w:ins>' +
-      '<w:r><w:t>结尾</w:t></w:r></w:p>';
+        '<w:del w:id="1" w:author="张三" w:date="2026-10-01T08:00:00Z"><w:r><w:delText>删掉</w:delText></w:r></w:del>' +
+        '<w:ins w:id="2" w:author="李四" w:date="2026-10-02T08:00:00Z"><w:r><w:t>新增</w:t></w:r></w:ins>' +
+        '<w:r><w:t>结尾</w:t></w:r></w:p>';
     const header =
       '<w:p><w:ins w:id="3" w:author="李四"><w:r><w:t>新眉</w:t></w:r></w:ins>' +
       '<w:del w:id="4" w:author="李四"><w:r><w:delText>旧眉</w:delText></w:r></w:del></w:p>';
@@ -1063,6 +1064,31 @@ describe('修订的显示', () => {
 
     d.setRevisionView('original');
     expect(painted(d)).toMatchObject({ body: '原文删掉结尾', header: '旧眉' });
+  });
+
+  it('段落标记被删：最终状态排成一段、能在并进来的字里打字，所有标记下是两段；被删的行最终状态不占位', async () => {
+    const d = await UltimateWord.load(
+      revisedDocx(
+        '<w:p><w:pPr><w:rPr><w:del w:id="1" w:author="张三"/></w:rPr></w:pPr><w:r><w:t>前半</w:t></w:r></w:p>' +
+          '<w:p><w:r><w:t>后半</w:t></w:r></w:p>' +
+          '<w:tbl><w:tblGrid><w:gridCol w:w="3000"/></w:tblGrid>' +
+          '<w:tr><w:tc><w:p><w:r><w:t>留行</w:t></w:r></w:p></w:tc></w:tr>' +
+          '<w:tr><w:trPr><w:del w:id="2" w:author="张三"/></w:trPr><w:tc><w:p><w:del w:id="3" w:author="张三"><w:r><w:delText>删行</w:delText></w:r></w:del></w:p></w:tc></w:tr>' +
+          '</w:tbl><w:p/>',
+      ),
+    );
+    const shape = () =>
+      d.layout.pages[0]?.blocks.map((b) =>
+        b.kind === 'paragraph' ? b.lines.length : `rows:${b.rows.length}`,
+      );
+    expect(shape()).toEqual([1, 'rows:1', 1]);
+    expect(painted(d).body).toBe('前半后半');
+    const [hit] = d.find('前半');
+    if (hit === undefined) throw new Error('找不到「前半」');
+    d.tx((t) => void t.insertText(hit.end, '甲'));
+    expect(painted(d).body).toBe('前半甲后半');
+    d.setRevisionView('markup');
+    expect(shape()).toEqual([1, 1, 'rows:2', 1]);
   });
 
   it('LoadOptions.revisions 指定初始视图；修订列表与视图无关；视图下照常编辑', async () => {

@@ -36,7 +36,7 @@ import type {
 } from '@uw/model';
 import type { XmlDocument, XmlElement, XmlNode } from '@uw/ooxml';
 import { child } from '@uw/ooxml';
-import { PPR_ORDER, patchParaProps, patchRunProps } from './props-writer.ts';
+import { PPR_ORDER, patchParaProps, patchRunProps, RPR_ORDER } from './props-writer.ts';
 import { el, insertOrdered, patchAttrs, same, withoutChildren } from './xml-edit.ts';
 
 /** run 外面那几层会压平进 run 的容器（parse-body.ts 的 `collectRuns`） */
@@ -60,6 +60,17 @@ const REVISION_CONTAINERS: Readonly<Record<string, Pick<NonNullable<Run['revisio
   'w:moveTo': { kind: 'insert', move: true },
   'w:moveFrom': { kind: 'delete', move: true },
 };
+
+function revisionOf(node: XmlElement): Run['revision'] {
+  const rev = REVISION_CONTAINERS[node.name];
+  if (rev === undefined) return undefined;
+  const revision: NonNullable<Run['revision']> = { ...rev };
+  const author = node.attrs['w:author'];
+  const date = node.attrs['w:date'];
+  if (author !== undefined) revision.author = author;
+  if (date !== undefined) revision.date = date;
+  return revision;
+}
 
 /** 重新生成 run 内容时丢掉的：Word 的分页缓存，内容一改就过期了，留着反而误导 */
 const STALE_IN_RUN = new Set(['w:lastRenderedPageBreak']);
@@ -254,6 +265,18 @@ class BodyWriter {
     if (wantSect !== undefined) {
       pPr = { ...(pPr ?? el('w:pPr')), children: insertOrdered(pPr?.children ?? [], wantSect, PPR_ORDER) };
     }
+    {
+      const rPr = pPr === undefined ? undefined : child(pPr, 'w:rPr');
+      const synced = this.#syncRevisionMark(rPr, 'w:rPr', p.markRevision, RPR_ORDER);
+      if (synced !== rPr) {
+        const rest = (pPr?.children ?? []).filter((c) => c !== rPr);
+        const children = synced === undefined ? rest : insertOrdered(rest, synced, PPR_ORDER);
+        pPr =
+          children.length === 0 && Object.keys(pPr?.attrs ?? {}).length === 0
+            ? undefined
+            : { ...(pPr ?? el('w:pPr')), children };
+      }
+    }
 
     const runs = cursor(p.runs);
     const home = new Set<NodeId>();
@@ -382,20 +405,39 @@ class BodyWriter {
       return id === undefined ? marks : { ...marks, field: { id, instr: node.attrs['w:instr'] ?? '' } };
     }
     if (node.name === 'w:sdt') return { ...marks, control: this.#idOf.get(node) };
-    const rev = REVISION_CONTAINERS[node.name];
-    if (rev !== undefined) {
-      const revision: NonNullable<Run['revision']> = { ...rev };
-      const author = node.attrs['w:author'];
-      const date = node.attrs['w:date'];
-      if (author !== undefined) revision.author = author;
-      if (date !== undefined) revision.date = date;
-      return { ...marks, revision };
-    }
-    return marks;
+    const revision = revisionOf(node);
+    return revision === undefined ? marks : { ...marks, revision };
   }
 
   /** 搬到别处的修订重新包一层容器。id 接着原文里修订的最大 id 往下编 */
   #revisionContainer(revision: NonNullable<Run['revision']>, children: XmlNode[]): XmlElement {
+    return this.#revisionElement(revision, children);
+  }
+
+  /**
+   * 属性容器（段落标记的 `w:pPr/w:rPr`、行的 `w:trPr`）里的修订标记对齐模型：一样就原样留着（连 `w:id`），
+   * 不一样就去掉旧的、按需补一个新的。为什么要管：新段落 / 新行以原有的段落、行为模板抄 XML，
+   * 模板的标记是「已删除」的话，照抄出来的新段落在 Word 里就成了被删的 —— 拆段时前段的标记是这一下新打的，
+   * 也不该带着原标记的修订
+   */
+  #syncRevisionMark(
+    container: XmlElement | undefined,
+    name: string,
+    want: Run['revision'],
+    order: readonly string[],
+  ): XmlElement | undefined {
+    const marks = container?.children.filter(
+      (c): c is XmlElement => c.kind === 'element' && REVISION_CONTAINERS[c.name] !== undefined,
+    );
+    const have = marks?.[0] === undefined ? undefined : revisionOf(marks[0]);
+    if (same(have, want) && (marks?.length ?? 0) <= 1) return container;
+    const rest = (container?.children ?? []).filter((c) => !marks?.includes(c as XmlElement));
+    const children = want === undefined ? rest : insertOrdered(rest, this.#revisionElement(want, []), order);
+    if (children.length === 0 && Object.keys(container?.attrs ?? {}).length === 0) return undefined;
+    return { ...(container ?? el(name)), children };
+  }
+
+  #revisionElement(revision: NonNullable<Run['revision']>, children: XmlNode[]): XmlElement {
     if (this.#revisionId === undefined) {
       let max = -1;
       const walk = (node: XmlElement) => {
@@ -856,10 +898,16 @@ class BodyWriter {
   #newRow(row: TableRow, templates: ReadonlyMap<NodeId, TableRow>): XmlElement {
     const tplRow = templates.get(row.id);
     const tplSrc = tplRow === undefined ? undefined : this.#in.sources.nodes.get(tplRow.id);
-    const head =
+    const head = (
       tplSrc?.children.filter(
         (c): c is XmlElement => c.kind === 'element' && (c.name === 'w:tblPrEx' || c.name === 'w:trPr'),
-      ) ?? [];
+      ) ?? []
+    ).flatMap((c) => {
+      if (c.name !== 'w:trPr') return [c];
+      // 照着被删的行插出来的新行不是「被删的」（模型里新行不带 revision，table-edit.ts）
+      const trPr = this.#syncRevisionMark(c, 'w:trPr', row.revision, TRPR_ORDER);
+      return trPr === undefined ? [] : [trPr];
+    });
     const cells = row.cells.map((_, i) => this.#newCell(row, i, tplRow ?? row));
     const attrs = Object.fromEntries(
       Object.entries(tplSrc?.attrs ?? {}).filter(([k]) => k !== 'w14:paraId' && k !== 'w14:textId'),

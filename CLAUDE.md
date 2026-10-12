@@ -38,7 +38,10 @@ STYLEREF 正文里往前找、页眉里**先找本页**再往前，后者进页�
 与 `w:vanish` 同一条路，查找 / 复制 / 排版 / 命中测试都不用改；`markup` 带 `ResolvedRunProps.revision`（作者色），
 布局 `styleOf` 折成颜色 + 下划线 / 删除线，渲染只补页边改动竖线。门面 `LoadOptions.revisions` / `setRevisionView()` /
 `revisions()`；回写把修订当压平容器（新打的字落在修订外、被删 run 写 `w:delText`）。往被删除的修订里插字事务拒绝。
-作者配色与竖线没有真值；段落标记 / 表格行的修订、格式修订、接受拒绝没做。
+作者配色与竖线没有真值；格式修订、接受拒绝没做。
+**段落标记与整行的修订**（2026-10-12）同样在级联折（`resolve-body.ts` 的 `blockList` / `table`）：这一版里不存在的段落标记
+（`ParagraphNode.markRevision`）让本段并进下一段、用**下一段**的属性与 id、不计编号；不存在的行（`TableRowNode.revision`）
+不进树、断头的纵向合并重新起头。拆段时原标记归后段；回写 `#syncRevisionMark()` 防新段 / 新行抄到「已删除」。合并段取谁的属性没有真值。
 **批注（只读）**（2026-10-12，`@uw/model` 的 `comments.ts`）：范围压平成 run 上的 `comments` 标记（**数组**，批注能交叠），
 界桩在 `parse-body.ts` 的 `skipped()` 里开合（哪一层都可能出现，跨段跨表一直开着），引用标记所在的空 run 也标上；
 内容摊进 `LoadedDocument.comments`，回复 / 已解决读 `commentsExtended.xml`（按末段 `w14:paraId` 认）。门面 `doc.comments()`；

@@ -812,8 +812,10 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
                 length: c?.kind === 'text' ? c.text.length : 1,
               });
             }
+            // 原来那个段落标记在段末，归后段；前段的标记是这一下回车新打的，不带原标记的修订
+            const { markRevision: _moved, ...front } = paragraph;
             replaceParagraphs(paragraph.id, 1, [
-              { ...paragraph, runs: [...paragraph.runs.slice(0, runIndex), left] },
+              { ...front, runs: [...paragraph.runs.slice(0, runIndex), left] },
               next,
             ]);
             structural([paragraph.id, next.id], moves);
@@ -843,7 +845,10 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
               });
             if (!next.runs.length)
               moves.push({ from: { nodeId: next.id, contentIndex: 0, offset: 0 }, to: boundary, length: 0 });
-            const joined: Paragraph = { ...paragraph, runs: [...paragraph.runs, ...next.runs] };
+            const { markRevision: _deleted, ...head } = paragraph;
+            const joined: Paragraph = { ...head, runs: [...paragraph.runs, ...next.runs] };
+            // 合段删掉的是前段的标记，留下的是后段的 —— 它的修订跟着留下
+            if (next.markRevision !== undefined) joined.markRevision = next.markRevision;
             // 后段的书签跟着它的字并进来，否则指着它的目录页码就找不到目标了
             if (next.bookmarks?.length)
               joined.bookmarks = [...(paragraph.bookmarks ?? []), ...next.bookmarks];
