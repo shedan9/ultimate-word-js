@@ -11,6 +11,7 @@ import type { CascadeContext } from './cascade.ts';
 import type { Body, ResolvedBody, ResolvedRun } from './nodes.ts';
 import { walkParagraphs } from './nodes.ts';
 import { parseNumbering } from './numbering.ts';
+import { buildRunOrder, compareDocPositions, rangeOfNode } from './order.ts';
 import { parseBody } from './parse-body.ts';
 import { createResolveCache, resolveBody } from './resolve-body.ts';
 import type { RevisionView } from './revisions.ts';
@@ -32,7 +33,7 @@ const DOC = `
   </w:p>
   <w:p><w:ins w:id="3" w:author="张三"><w:r><w:t>第二段</w:t></w:r></w:ins></w:p>`;
 
-function setup() {
+function setup(xml = DOC) {
   const sink = createDiagnosticSink();
   const ctx: CascadeContext = {
     styles: parseStyles(parseXml(`<w:styles ${W_NS}/>`), sink),
@@ -41,7 +42,7 @@ function setup() {
     numbering: parseNumbering(undefined, sink),
   };
   const body: Body = parseBody(
-    parseXml(`<w:document ${W_NS}><w:body>${DOC}<w:sectPr/></w:body></w:document>`),
+    parseXml(`<w:document ${W_NS}><w:body>${xml}<w:sectPr/></w:body></w:document>`),
     sink,
   );
   const authors = revisionAuthors([body]);
@@ -109,6 +110,14 @@ describe('三种视图折进级联结果', () => {
 });
 
 describe('修订列表', () => {
+  const mark = (kind: 'ins' | 'del', author: string) => `<w:${kind} w:id="1" w:author="${author}"/>`;
+  const p = (text: string, revision = '') =>
+    `<w:p>${revision ? `<w:pPr><w:rPr>${revision}</w:rPr></w:pPr>` : ''}<w:r><w:t>${text}</w:t></w:r></w:p>`;
+  const cell = (blocks: string) => `<w:tc>${blocks}</w:tc>`;
+  const row = (cells: string, revision = '') =>
+    `<w:tr>${revision ? `<w:trPr>${revision}</w:trPr>` : ''}${cells}</w:tr>`;
+  const table = (rows: string) => `<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>${rows}</w:tbl>`;
+
   it('同一段里相邻、作者 / 时间 / 种类相同的 run 合成一处，范围从首 run 头到末 run 尾', () => {
     const { body } = setup();
     const list = listRevisions(body);
@@ -121,6 +130,111 @@ describe('修订列表', () => {
     const p = [...walkParagraphs(body)][0];
     expect(ins?.range.start.nodeId).toBe(p?.runs[2]?.id);
     expect(ins?.range.end).toEqual({ nodeId: p?.runs[3]?.id, contentIndex: 0, offset: 2 });
+    expect(list.every((span) => span.target === 'text' && span.rowId === undefined)).toBe(true);
+  });
+
+  it('文字与段落标记分别列出：同一作者删掉整段也不能吞掉段落标记，范围折叠在本段末尾', () => {
+    const { body } = setup(
+      `<w:p><w:pPr><w:rPr>${mark('del', '张三')}</w:rPr></w:pPr>` +
+        '<w:del w:id="2" w:author="张三"><w:r><w:delText>删段</w:delText></w:r></w:del></w:p>' +
+        p('下段'),
+    );
+    const list = listRevisions(body);
+    const first = [...walkParagraphs(body)][0];
+    expect(list.map(({ target, kind, text }) => ({ target, kind, text }))).toEqual([
+      { target: 'text', kind: 'delete', text: '删段' },
+      { target: 'paragraph-mark', kind: 'delete', text: '\n' },
+    ]);
+    expect(list[1]?.paragraphId).toBe(first?.id);
+    expect(list[1]?.range).toEqual({ start: list[0]?.range.end, end: list[0]?.range.end });
+    expect(list[1]?.rowId).toBeUndefined();
+  });
+
+  it('空段落标记也可定位，移动修订的作者 / 时间 / move 保留', () => {
+    const { body } = setup(
+      '<w:p><w:pPr><w:rPr><w:moveTo w:id="1" w:author="张三" w:date="2026-10-01T08:00:00Z"/></w:rPr></w:pPr></w:p>',
+    );
+    const first = [...walkParagraphs(body)][0];
+    expect(listRevisions(body)).toEqual([
+      {
+        target: 'paragraph-mark',
+        kind: 'insert',
+        move: true,
+        author: '张三',
+        date: '2026-10-01T08:00:00Z',
+        paragraphId: first?.id,
+        text: '\n',
+        range: rangeOfNode(first as NonNullable<typeof first>),
+      },
+    ]);
+  });
+
+  it('整行修订单列在文字前，摘要保留已删文字并以制表位分格、换行分段；范围含首末空段', () => {
+    const { body } = setup(
+      table(
+        row(
+          cell(`<w:p/>${p('甲')}`) +
+            cell(
+              '<w:p><w:del w:id="2" w:author="李四"><w:r><w:delText>乙</w:delText></w:r></w:del></w:p><w:p/>',
+            ),
+          mark('del', '张三'),
+        ),
+      ),
+    );
+    const tbl = body.sections[0]?.blocks[0];
+    if (tbl?.kind !== 'table' || tbl.rows[0] === undefined) throw new Error('缺少表格行');
+    const list = listRevisions(body);
+    const paragraphs = [...walkParagraphs(body)];
+    expect(list.map(({ target, author, text }) => ({ target, author, text }))).toEqual([
+      { target: 'row', author: '张三', text: '\n甲\t乙\n' },
+      { target: 'text', author: '李四', text: '乙' },
+    ]);
+    expect(list[0]).toMatchObject({
+      rowId: tbl.rows[0].id,
+      paragraphId: paragraphs[0]?.id,
+      range: rangeOfNode(tbl.rows[0]),
+    });
+    const order = buildRunOrder(body);
+    for (const span of list) expect(compareDocPositions(order, span.range.start, span.range.end)).toBe(-1);
+  });
+
+  it('嵌套表格的修订行递归列出，外行的范围与摘要覆盖内表，空格的行也不丢', () => {
+    const inner = table(row(cell(p('内甲')) + cell(p('内乙')), mark('ins', '李四')));
+    const { body } = setup(
+      table(row(cell(inner + p('外尾')), mark('del', '张三')) + row(cell('<w:p/>'), mark('ins', '王五'))),
+    );
+    const list = listRevisions(body);
+    expect(list.map(({ target, text, author }) => ({ target, text, author }))).toEqual([
+      { target: 'row', text: '内甲\t内乙\n外尾', author: '张三' },
+      { target: 'row', text: '内甲\t内乙', author: '李四' },
+      { target: 'row', text: '', author: '王五' },
+    ]);
+    expect(list[0]?.range.start).toEqual(list[1]?.range.start);
+    expect(list[0]?.rowId).not.toBe(list[1]?.rowId);
+    expect(list[2]?.range.start).toEqual(list[2]?.range.end);
+    expect(revisionAuthors([body])).toEqual(['张三', '李四', '王五']);
+  });
+
+  it('作者按行首、文字、段尾标记的顺序去重，正文后接其他部件；纯结构修订也有作者色', () => {
+    const { body, resolve } = setup(
+      p('首段', mark('del', '标记作者')) +
+        table(row(cell(p('格', mark('ins', '格标记作者'))), mark('del', '行作者'))) +
+        '<w:p><w:ins w:id="2" w:author="文字作者"><w:r><w:t>字</w:t></w:r></w:ins></w:p>' +
+        p('末段', mark('ins', '行作者')),
+    );
+    const other = setup(p('页眉', mark('ins', '页眉作者'))).body;
+    const authors = revisionAuthors([body, other]);
+    expect(authors).toEqual(['标记作者', '行作者', '格标记作者', '文字作者', '页眉作者']);
+    expect(revisionDisplay('markup', authors).colors.行作者).toBe(REVISION_AUTHOR_COLORS[1]);
+    expect(
+      runs(resolve('markup')).find((r) => r.revision?.author === '文字作者')?.props.revision?.color,
+    ).toBe(REVISION_AUTHOR_COLORS[3]);
+  });
+
+  it('异常行没有任何段落时不返回无效范围，作者仍收集；缺作者的结构修订记为空串', () => {
+    const { body } = setup(table(row('', '<w:del w:id="1"/>')));
+    expect(listRevisions(body)).toEqual([]);
+    expect(revisionAuthors([body])).toEqual(['']);
   });
 });
 

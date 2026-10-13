@@ -92,14 +92,16 @@ interface LoadOptions {
 ```ts
 doc.revisionView;                 // 'final' | 'markup' | 'original'
 doc.setRevisionView('markup');    // 重新级联 + 重排，挂着的视图自己刷新
-doc.revisions();                  // RevisionSpan[]：谁、何时、插 / 删了什么、在哪儿（DocRange）
+doc.revisions();                  // RevisionSpan[]：正文中谁、何时、插 / 删了什么、在哪儿（DocRange）
 
 interface RevisionSpan {
+  target: 'text' | 'paragraph-mark' | 'row';
   kind: 'insert' | 'delete';
   move?: true;                    // w:moveTo / w:moveFrom
   author?: string;
   date?: string;                  // 原样的 ISO 串
-  paragraphId: NodeId;
+  paragraphId: NodeId;            // 整行修订取本行第一个段落
+  rowId?: NodeId;                 // 只在 target: 'row' 时带
   text: string;
   range: DocRange;
 }
@@ -117,14 +119,19 @@ interface RevisionSpan {
 - 换视图**不是**模型修改：不进撤销栈、不派发 `document:change`，只派发 `layout:done`。
   查找跟着视图走（最终状态下被删的字搜不到，`markup` 下搜得到）；`revisions()` 与视图无关。
 - 作者配色按作者在文档里**第一次出现**的顺序轮配（正文在前），色值与 Word 的「按作者」没对过真值。
+- **结构修订的列表与定位**（2026-10-13）：`target` 分文字 / 段落标记 / 整行，结构记录与格里的文字记录分别列出。
+  段落标记排在本段文字后，`text` 为 `\n`，`range` 折叠在本段末尾；空段落用段落 id 定位。
+  整行排在行内文字前，`rowId` 可交给 `doc.rangeOf()`，`range` 覆盖全部格（含嵌套表格与首末空段），
+  `text` 以 `\t` 分格、`\n` 分段 / 分嵌套表格的行，保留被删文字。没有任何段落的异常空行不列范围。
+  作者也按行首 → 文字 → 段尾收集，纯结构修订参与配色。列表来自原始正文树，三种视图相同；
+  当前视图隐藏的修订范围不保证能被 `view.scrollTo()` / `overlay()` 定位（返回失败或不显示）。
 - **段落标记与整行的修订**（2026-10-12）：这一版里不存在的段落标记（最终状态下被删 / 原始状态下插入）让本段
   **并进下一段**、用下一段的段落属性 —— 整段删掉的那一段因此干干净净地消失，下一段格式不变；被并掉的段落不计编号。
   这一版里不存在的行整行不排（只把格里的字藏起来的话，空行连格线照样占高度），行号与隔行带按剩下的行数，
   删掉合并区首行时下一行接着起头。下一块是表格时不并。「所有标记」下两者照常显示。
   ⚠️ 只删了标记、两段都有字时合并段取后一段的段落属性**没对过 Word**。
 - 没做：格式修订（`w:rPrChange`，显示改后的格式、不标记）、批注框、「简单标记」的那条红竖线、
-  「所有标记」下被删行的底色与段落标记处的 ¶、单元格级修订（`w:cellIns` / `w:cellDel`）；
-  `revisions()` 不单列段落标记与整行（行里的字通常也包在 `w:del` 里，照样列得出来）。
+  「所有标记」下被删行的底色与段落标记处的 ¶、单元格级修订（`w:cellIns` / `w:cellDel`）。
 
 ### 3.2 批注 🟢（2026-10-12，读 + 增删改 / 回复 / 解决）
 

@@ -26,9 +26,19 @@
  * 没做（写下来免得以为做了）：格式修订（`w:rPrChange` / `w:pPrChange`，显示的是改后的格式，没有标记）、
  * 批注框、「所有标记」下行与段落标记的标记画法、单元格级的修订（`w:tcPr/w:cellIns|cellDel`）。
  */
-import type { Body, DocumentBody, NodeId, PropSet, RunNode, RunRevision } from './nodes.ts';
-import { walkParagraphs } from './nodes.ts';
-import { contentLength, runEnd, runStart } from './order.ts';
+import type {
+  BlockNode,
+  Body,
+  DocumentBody,
+  NodeId,
+  ParagraphNode,
+  PropSet,
+  RunNode,
+  RunRevision,
+  TableRowNode,
+} from './nodes.ts';
+import { walkBlocks } from './nodes.ts';
+import { contentLength, rangeOfNode, runEnd, runStart } from './order.ts';
 import type { DocRange } from './position.ts';
 import type { ResolvedRunProps, RevisionMark } from './props.ts';
 
@@ -74,14 +84,34 @@ export const REVISION_AUTHOR_COLORS: readonly string[] = [
 export function revisionAuthors<S extends PropSet>(bodies: readonly DocumentBody<S>[]): string[] {
   const seen = new Set<string>();
   for (const body of bodies) {
-    for (const p of walkParagraphs(body)) {
-      for (const r of p.runs) if (r.revision !== undefined) seen.add(r.revision.author ?? '');
+    for (const section of body.sections) {
+      for (const node of revisionNodes(section.blocks)) {
+        if (node.kind === 'row') {
+          if (node.revision !== undefined) seen.add(node.revision.author ?? '');
+        } else {
+          for (const r of node.runs) if (r.revision !== undefined) seen.add(r.revision.author ?? '');
+          if (node.markRevision !== undefined) seen.add(node.markRevision.author ?? '');
+        }
+      }
     }
-    // 只改了段落标记 / 整行的作者（「所有标记」下目前不着色，留着让配色顺序与将来画出来的一致）
-    for (const p of walkParagraphs(body))
-      if (p.markRevision !== undefined) seen.add(p.markRevision.author ?? '');
   }
   return [...seen];
+}
+
+/** 行的修订在行首，段落标记在段尾；两处都与文字走同一份文档序，不能另扫一遍排到全文末尾 */
+function* revisionNodes<S extends PropSet>(
+  blocks: readonly BlockNode<S>[],
+): Generator<ParagraphNode<S> | TableRowNode<S>> {
+  for (const block of blocks) {
+    if (block.kind === 'paragraph') {
+      yield block;
+    } else {
+      for (const row of block.rows) {
+        yield row;
+        for (const cell of row.cells) yield* revisionNodes(cell.blocks);
+      }
+    }
+  }
 }
 
 export function revisionDisplay(view: RevisionView, authors: readonly string[]): RevisionDisplay {
@@ -126,12 +156,16 @@ export function applyRevision(
   }
 }
 
-/** 一处修订：同一段里相邻、作者 / 时间 / 种类都相同的 run 合成一处 */
+/** 一处修订：文字、段落标记与整行各自列出，不能因作者相同就把结构修订吞进文字修订 */
 export interface RevisionSpan extends RunRevision {
-  /** 所在段落 */
+  target: 'text' | 'paragraph-mark' | 'row';
+  /** 所在段落；整行修订取本行的第一个段落（包括嵌套表格与空段落） */
   paragraphId: NodeId;
-  /** 修订里的文字：制表位 / 换行写成 `\t` / `\n`、对象写 U+FFFC，域界桩与指令不算 */
+  /** 只在整行修订上带，范围覆盖本行全部单元格 */
+  rowId?: NodeId;
+  /** 文字照 runText；段落标记写 \n；整行以 \t 分格、\n 分段 / 分嵌套表格的行 */
   text: string;
+  /** 段落标记没有字符位置，以本段末尾的折叠范围表示；隐藏修订的范围不保证能在当前视图定位 */
   range: DocRange;
 }
 
@@ -139,28 +173,80 @@ export interface RevisionSpan extends RunRevision {
  * 全文的修订，文档序。给「修订面板」用：谁、什么时候、插了 / 删了什么、在哪儿。
  *
  * 吃**可编辑的那棵树**，不吃级联树：级联树上最终状态里被删的 run 也还在（只是 hidden），
- * 但这里要的是「文件里记着什么」，与这一刻显示哪一版无关。
+ * 但这里要的是「文件里记着什么」，与这一刻显示哪一版无关。整行修订在格里的文字修订前列出，
+ * 段落标记在本段的文字修订后列出。没有任何段落的异常空行没有可定位范围，不列（作者仍收）。
  */
 export function listRevisions(body: Body): RevisionSpan[] {
   const out: RevisionSpan[] = [];
-  for (const p of walkParagraphs(body)) {
-    let open: RevisionSpan | undefined;
-    for (const r of p.runs) {
-      const rev = r.revision;
-      if (rev === undefined) {
-        open = undefined;
+  for (const section of body.sections) {
+    for (const node of revisionNodes(section.blocks)) {
+      if (node.kind === 'row') {
+        if (node.revision === undefined) continue;
+        const range = rangeOfNode(node);
+        const first = node.cells
+          .flatMap((cell) => [...walkBlocks(cell.blocks)])
+          .find((block) => block.kind === 'paragraph');
+        if (range !== undefined && first !== undefined) {
+          out.push({
+            ...node.revision,
+            target: 'row',
+            rowId: node.id,
+            paragraphId: first.id,
+            text: node.cells.map((cell) => blocksText(cell.blocks)).join('\t'),
+            range,
+          });
+        }
         continue;
       }
-      if (open !== undefined && sameRevision(open, rev)) {
-        open.text += runText(r);
-        open.range = { start: open.range.start, end: runEnd(r) };
-        continue;
-      }
-      open = { ...rev, paragraphId: p.id, text: runText(r), range: { start: runStart(r), end: runEnd(r) } };
-      out.push(open);
+      paragraphRevisions(node, out);
     }
   }
   return out;
+}
+
+function paragraphRevisions<S extends PropSet>(p: ParagraphNode<S>, out: RevisionSpan[]): void {
+  let open: RevisionSpan | undefined;
+  for (const r of p.runs) {
+    const rev = r.revision;
+    if (rev === undefined) {
+      open = undefined;
+      continue;
+    }
+    if (open !== undefined && sameRevision(open, rev)) {
+      open.text += runText(r);
+      open.range = { start: open.range.start, end: runEnd(r) };
+      continue;
+    }
+    open = {
+      ...rev,
+      target: 'text',
+      paragraphId: p.id,
+      text: runText(r),
+      range: { start: runStart(r), end: runEnd(r) },
+    };
+    out.push(open);
+  }
+  if (p.markRevision !== undefined) {
+    const range = rangeOfNode(p);
+    if (range === undefined) return;
+    out.push({
+      ...p.markRevision,
+      target: 'paragraph-mark',
+      paragraphId: p.id,
+      text: '\n',
+      range: { start: { ...range.end }, end: { ...range.end } },
+    });
+  }
+}
+
+/** 行摘要读原始树：最终状态会隐藏的文字也要列出来，不能借 paragraphText 跳过被删的 run */
+function blocksText<S extends PropSet>(blocks: readonly BlockNode<S>[]): string {
+  return blocks
+    .map((block) => {
+      if (block.kind === 'paragraph') return block.runs.map(runText).join('');
+      return block.rows.map((row) => row.cells.map((cell) => blocksText(cell.blocks)).join('\t')).join('\n');
+    })
+    .join('\n');
 }
 
 function sameRevision(a: RunRevision, b: RunRevision): boolean {

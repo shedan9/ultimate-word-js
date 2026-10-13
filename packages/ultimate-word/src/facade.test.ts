@@ -1108,6 +1108,60 @@ describe('修订的显示', () => {
     expect(painted(d).colors.slice(0, 3)).toEqual(before.slice(0, 3));
   });
 
+  it('纯结构修订也列出：被删标记与整行不依赖字上的 w:del，三种视图与导出再加载的记录相同', async () => {
+    const d = await UltimateWord.load(
+      revisedDocx(
+        '<w:p><w:pPr><w:rPr><w:del w:id="1" w:author="标记作者"/></w:rPr></w:pPr><w:r><w:t>前段</w:t></w:r></w:p>' +
+          '<w:p><w:r><w:t>后段</w:t></w:r></w:p>' +
+          '<w:tbl><w:tblGrid><w:gridCol w:w="1500"/><w:gridCol w:w="1500"/></w:tblGrid>' +
+          '<w:tr><w:trPr><w:del w:id="2" w:author="行作者"/></w:trPr>' +
+          '<w:tc><w:p><w:r><w:t>甲格</w:t></w:r></w:p></w:tc><w:tc><w:p/></w:tc></w:tr></w:tbl><w:p/>',
+      ),
+    );
+    const summary = (doc: UwDocument) =>
+      doc.revisions().map(({ target, kind, author, text }) => ({ target, kind, author, text }));
+    const expected = [
+      { target: 'paragraph-mark', kind: 'delete', author: '标记作者', text: '\n' },
+      { target: 'row', kind: 'delete', author: '行作者', text: '甲格\t' },
+    ];
+    const list = d.revisions();
+    expect(summary(d)).toEqual(expected);
+    for (const view of ['markup', 'original', 'final'] as const) {
+      d.setRevisionView(view);
+      expect(d.revisions()).toEqual(list);
+    }
+    const row = list[1];
+    if (row === undefined) throw new Error('缺少整行修订');
+    expect(row.range).toEqual(d.rangeOf(row.rowId ?? ''));
+    expect(d.compare(row.range.start, row.range.end)).toBe(-1);
+    expect(summary(await UltimateWord.load(await d.toDocx()))).toEqual(expected);
+  });
+
+  it('段落标记的定位随拆段移动、随撤销恢复；编辑后导出不会复制出第二条修订', async () => {
+    const d = await UltimateWord.load(
+      revisedDocx(
+        '<w:p><w:pPr><w:rPr><w:ins w:id="1" w:author="张三"/></w:rPr></w:pPr><w:r><w:t>甲乙</w:t></w:r></w:p>',
+      ),
+    );
+    const before = d.revisions();
+    const [hit] = d.find('甲');
+    if (hit === undefined) throw new Error('缺少拆段位置');
+    d.tx((t) => void t.splitParagraph(hit.end));
+    const after = d.revisions();
+    expect(after).toHaveLength(1);
+    expect(after[0]?.target).toBe('paragraph-mark');
+    expect(after[0]?.paragraphId).not.toBe(before[0]?.paragraphId);
+    const end = d.rangeOf(after[0]?.paragraphId ?? '')?.end;
+    expect(after[0]?.range).toEqual({ start: end, end });
+    const loaded = await UltimateWord.load(await d.toDocx());
+    expect(loaded.revisions()).toHaveLength(1);
+    expect(loaded.revisions()[0]).toMatchObject({ target: 'paragraph-mark', kind: 'insert', author: '张三' });
+    d.undo();
+    expect(d.revisions()).toEqual(before);
+    d.redo();
+    expect(d.revisions()).toEqual(after);
+  });
+
   it('替换跳过首字落在被删除修订里的命中，不让整批回滚', async () => {
     const d = await UltimateWord.load(revisedDocx(), { revisions: 'markup' });
     expect(d.replaceAll(/删掉|结尾/, '改')).toEqual({ replaced: 1, skipped: 1 });
