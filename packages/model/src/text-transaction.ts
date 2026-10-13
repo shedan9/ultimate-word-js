@@ -20,8 +20,10 @@ import {
 import type { CommentContent } from './comments.ts';
 import {
   contentControlSpans,
+  formatContentControlDate,
   isContentControlLocked,
   rangeOfContentControl,
+  textOfContentControl,
   withinContentControl,
 } from './content-control.ts';
 import { scanFields } from './fields.ts';
@@ -175,6 +177,8 @@ export interface TextTransaction {
    * 锁了内容、含修订或域的控件拒绝；状态与符号未变时不产生撤销单元。
    */
   setContentControlChecked(id: NodeId, checked: boolean): DocRange;
+  /** 按模板 dateFormat 填入 YYYY-MM-DD 日历日，同步 fullDate；支持公历、中英文，锁与异常内容拒绝。 */
+  setContentControlDate(id: NodeId, date: string): DocRange;
   /**
    * 把一个域（`field` = begin 界桩所在的 run）的结果区整个换成这几段，返回新结果的范围 ——
    * 「更新目录」靠它（草稿出自 toc.ts 的 `planTableOfContents`）。界桩与指令原样留着（id 不变，
@@ -1490,6 +1494,56 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             return range;
           });
         },
+        setContentControlDate(id, date) {
+          return command(() => {
+            flush();
+            const control = draft.contentControls?.[id];
+            if (control === undefined) throw new RangeError(`文档中没有内容控件：${id}`);
+            const value = formatContentControlDate(control, date);
+            if (isContentControlLocked(draft.contentControls ?? {}, id))
+              throw new Error('内容控件锁定了内容');
+            const span = contentControlSpans(draft).find((s) => s.control.id === id);
+            const range = span === undefined ? undefined : rangeOfContentControl(span);
+            if (span === undefined || range === undefined) throw new Error('日期控件里没有可写的位置');
+            if (
+              span.paragraphs.length !== 1 ||
+              span.runs.length > 1 ||
+              span.runs.some(
+                (r) =>
+                  r.revision !== undefined ||
+                  entries.get(r.id)?.protected ||
+                  (r.contentControl ?? span.paragraphs[0]?.contentControl) !== id ||
+                  r.content.some((c) => c.kind !== 'text'),
+              )
+            )
+              throw new Error('日期控件必须是单段、单 run、无修订的文字');
+            const sameText = textOfContentControl(span) === value.text;
+            if (sameText && control.date?.fullDate === value.fullDate && !control.showingPlaceholder)
+              return range;
+            const filled =
+              sameText && !control.showingPlaceholder
+                ? range
+                : transaction.fillContentControl(id, value.text);
+            flush();
+            const { dataBound: _dataBound, ...unbound } = draft.contentControls?.[id] ?? control;
+            draft = {
+              ...draft,
+              contentControls: {
+                ...draft.contentControls,
+                [id]: {
+                  ...unbound,
+                  showingPlaceholder: false,
+                  date: { ...control.date, fullDate: value.fullDate },
+                },
+              },
+            };
+            structural(
+              span.paragraphs.map((p) => p.id),
+              [],
+            );
+            return filled;
+          });
+        },
         fillContentControl(id, text) {
           return command(() => {
             if (typeof text !== 'string') throw new TypeError('fillContentControl 需要字符串');
@@ -1514,7 +1568,8 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             const span = contentControlSpans(draft).find((s) => s.control.id === id);
             const range = span === undefined ? undefined : rangeOfContentControl(span);
             if (range === undefined) throw new Error('内容控件里没有可写的位置');
-            const start = transaction.deleteRange(range);
+            // 空块级控件的范围落在段落上；先建文字槽，后续清理与返回范围才能使用同一个 run 锚点。
+            const start = materialize(transaction.deleteRange(range));
             let at = start;
             for (const piece of text.split(/(\r\n|\r|\n|\t)/)) {
               if (piece === '') continue;
@@ -1558,6 +1613,14 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
                 },
               };
               // 值与占位文字恰好相同时上面一条变更都没有，标记变了也得成一个撤销单元
+              structural([host.id], []);
+            }
+            // 任意字符串无法反推出日历日；保留旧 fullDate 会让文字与 Word 日期选择器互相矛盾。
+            if (control.date?.fullDate !== undefined) {
+              flush();
+              const current = draft.contentControls?.[id] ?? control;
+              const { fullDate: _fullDate, ...date } = control.date;
+              draft = { ...draft, contentControls: { ...draft.contentControls, [id]: { ...current, date } } };
               structural([host.id], []);
             }
             return filled;

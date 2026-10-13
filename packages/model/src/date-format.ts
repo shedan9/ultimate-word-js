@@ -6,14 +6,14 @@
  * 离线工具也能给一个固定的时刻复现同一份布局。
  *
  * 格式串的记号照 ECMA-376 §17.16.4.1，**区分大小写**：`M` 是月、`m` 是分，`H` 是 24 小时、
- * `h` 是 12 小时；单引号里的原样照抄，其余不认识的字符（`年` `/` `-` `:`）也原样照抄。
+ * `h` 是 12 小时；单 / 双引号里的原样照抄，其余不认识的字符（`年` `/` `-` `:`）也原样照抄。
  *
  * ── 未标定（没有 Word 样本）──────────────────────────────────────────────────
  * 1. 中文版 Word「日期和时间」对话框里「二〇二六年九月二十九日」那一项写出来的是
  *    `\@ "EEEE年O月A日"`：`E` 系列 = 年份逐位念（〇一二…）、`O` = 月、`A` = 日（中文计数）。
  *    这三个字母不在规范里，读法按对话框里的预览写的
  * 2. `MMMM` / `MMM` / `dddd` / `ddd` 的**语言**：Word 按域所在 run 的语言出（中文版「九月」「星期二」），
- *    这里按格式串里有没有汉字猜 —— 中文格式串里几乎总带「年」「月」
+ *    未传 language 时按格式串里有没有汉字猜；日期控件可从 w:lid 显式传入中英文语言
  * 钉死办法：一份 docx，放 `DATE \@` 的十几种写法（含 `EEEE年O月A日`、`dddd`、`MMMM`、中英文 run），
  * 更新后读 `document.xml` 里的结果文字 —— 结果就存在文件里，不必导 PDF。
  */
@@ -77,17 +77,17 @@ const pad2 = (n: number) => String(n).padStart(2, '0');
  *
  * 认不出的记号不会抛：它们原样留在结果里（与 Word 一样 —— 格式串里的汉字、标点本来就是这么进结果的）。
  */
-export function formatDateTime(t: DateTimeParts, picture: string): string {
-  const chinese = /[一-鿿]/u.test(picture);
+export function formatDateTime(t: DateTimeParts, picture: string, language?: string): string {
+  const chinese = language === undefined ? /[一-鿿]/u.test(picture) : /^zh(-|$)/i.test(language);
   let out = '';
   let i = 0;
   while (i < picture.length) {
     const ch = picture.charAt(i);
-    if (ch === "'") {
-      // 单引号里的原样照抄；`''` 是一个单引号本身
-      const close = picture.indexOf("'", i + 1);
+    if (ch === "'" || ch === '"') {
+      // 引号里的原样照抄；连续两个相同引号表示该引号本身
+      const close = picture.indexOf(ch, i + 1);
       if (close === i + 1) {
-        out += "'";
+        out += ch;
         i += 2;
         continue;
       }
@@ -121,7 +121,7 @@ function tokenText(t: DateTimeParts, ch: string, n: number, chinese: boolean): s
     case 'y':
     case 'Y':
       // `yy` 两位，其余一律四位 —— Word 对 `y` / `yyy` 的处理没有说法，给全年最不会误导
-      return n === 2 ? pad2(t.year % 100) : String(t.year);
+      return n === 2 ? pad2(t.year % 100) : String(t.year).padStart(4, '0');
     case 'M':
       if (n >= 4) return chinese ? `${chineseCount(t.month)}月` : (EN_MONTHS[t.month - 1] ?? '');
       if (n === 3) return chinese ? `${chineseCount(t.month)}月` : (EN_MONTHS[t.month - 1] ?? '').slice(0, 3);

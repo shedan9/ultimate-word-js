@@ -14,6 +14,7 @@
 import type { Body, ContentControlType, DocRange, NodeId, TextChangeSet, TextTransaction } from '@uw/model';
 import {
   contentControlSpans,
+  formatContentControlDate,
   isContentControlLocked,
   rangeOfContentControl,
   textOfContentControl,
@@ -31,6 +32,8 @@ export interface BindingInfo {
   value: string;
   /** 复选框的勾选状态；value 仍是显示符号，避免把文字接口改成混合类型 */
   checked?: boolean;
+  /** 日期选择器的 OOXML 日期时间值；value 仍是模板格式化后的显示文字 */
+  fullDate?: string;
   /** 里面还是占位文字（`w:showingPlcHdr`），还没人填过 */
   placeholder: boolean;
   /** 锁了内容（`w:lock` 为 contentLocked / sdtContentLocked），填不进去 */
@@ -46,8 +49,13 @@ interface BindingsHost {
   tx: (callback: (tx: TextTransaction) => undefined) => TextChangeSet | undefined;
 }
 
-/** 文字控件填字符串，复选框填布尔值；不能把字符串 "false" 当作未勾选 */
-export type BindingValue = string | boolean;
+/** 日历日用明确的对象区分显示文字，JSON 数据不受 Date 可变性与本机时区影响。 */
+export interface DateBindingValue {
+  date: string;
+}
+
+/** 文字填字符串，复选框填布尔值，日期填 { date: 'YYYY-MM-DD' }。 */
+export type BindingValue = string | boolean | DateBindingValue;
 
 /** 能填文字的类型；复选框走独立的状态命令，图片与文档部件（目录外壳）只列出 */
 const FILLABLE: ReadonlySet<ContentControlType> = new Set([
@@ -83,6 +91,7 @@ export class Bindings {
       if (c.alias !== undefined) info.alias = c.alias;
       if (c.items !== undefined) info.options = c.items.map((i) => i.text);
       if (c.checkbox !== undefined) info.checked = c.checkbox.checked;
+      if (c.date?.fullDate !== undefined) info.fullDate = c.date.fullDate;
       return info;
     });
   }
@@ -92,20 +101,23 @@ export class Bindings {
    * 静默不填，是模板填充里最难发现的一类错。换行写成软换行、`\t` 写成制表位
    */
   set(key: string, value: BindingValue): this {
-    if (typeof value !== 'string' && typeof value !== 'boolean')
-      throw new TypeError(`坑位「${key}」的值必须是字符串或布尔值`);
+    const dateValue = value !== null && typeof value === 'object' && typeof value.date === 'string';
+    if (typeof value !== 'string' && typeof value !== 'boolean' && !dateValue)
+      throw new TypeError(`坑位「${key}」的值必须是字符串、布尔值或日期对象`);
     const targets = this.#spans().filter((s) => s.key === key);
     if (!targets.length) throw new RangeError(`文档里没有坑位：${key}`);
     for (const { span } of targets) {
       const type = span.control.type;
       if (type === 'checkbox') {
         if (typeof value !== 'boolean') throw new TypeError(`坑位「${key}」是 checkbox 控件，需要布尔值`);
+      } else if (type === 'date' && dateValue) {
+        formatContentControlDate(span.control, (value as DateBindingValue).date);
       } else {
         if (!FILLABLE.has(type)) throw new Error(`坑位「${key}」是 ${type} 控件，不能填写`);
         if (typeof value !== 'string') throw new TypeError(`坑位「${key}」是 ${type} 控件，需要字符串`);
       }
     }
-    this.#pending.set(key, value);
+    this.#pending.set(key, dateValue ? Object.freeze({ date: (value as DateBindingValue).date }) : value);
     return this;
   }
 
@@ -148,7 +160,8 @@ export class Bindings {
     const change = this.#host.tx((t) => {
       for (const [id, value] of jobs) {
         if (typeof value === 'boolean') t.setContentControlChecked(id, value);
-        else t.fillContentControl(id, value);
+        else if (typeof value === 'string') t.fillContentControl(id, value);
+        else t.setContentControlDate(id, value.date);
       }
       return undefined;
     });

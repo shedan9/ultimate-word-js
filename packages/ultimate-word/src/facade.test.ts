@@ -322,6 +322,58 @@ describe('doc.bindings', () => {
     expect(d.bindings.list().map((b) => b.value)).toEqual(['单击输入', '某日', '单击输入', '一般', '☐']);
   });
 
+  it('日期对象按各自模板格式填同名控件，冻结 pending 值，混合填写同撤销且可导出再加载', async () => {
+    const extra = `<w:p>${control('issued', '某日', '<w:date><w:dateFormat w:val="yyyy年M月d日"/><w:lid w:val="zh-CN"/></w:date>')}${control('issued', 'another', '<w:date><w:dateFormat w:val="dddd, MMMM d, yyyy"/><w:lid w:val="en-US"/></w:date>')}</w:p>`;
+    const d = await UltimateWord.load(template(extra));
+    const value = { date: '2026-10-13' };
+    d.bindings.setMany({ applicant: '张三', agree: true, issued: value });
+    value.date = '2020-01-01';
+    expect(d.bindings.pending.get('issued')).toEqual({ date: '2026-10-13' });
+    expect(Object.isFrozen(d.bindings.pending.get('issued'))).toBe(true);
+    expect(d.bindings.apply()).toBeDefined();
+    const dates = d.bindings.list().filter((b) => b.key === 'issued');
+    expect(dates.map((b) => b.value)).toEqual(['2026年10月13日', 'Tuesday, October 13, 2026']);
+    expect(dates.map((b) => b.fullDate)).toEqual(['2026-10-13T00:00:00Z', '2026-10-13T00:00:00Z']);
+    d.undo();
+    expect(
+      d.bindings
+        .list()
+        .filter((b) => b.key === 'issued')
+        .map((b) => b.value),
+    ).toEqual(['某日', 'another']);
+    expect(d.bindings.list().find((b) => b.key === 'applicant')?.value).toBe('单击输入');
+    expect(d.bindings.list().find((b) => b.key === 'agree')?.checked).toBe(false);
+    d.redo();
+    const again = await UltimateWord.load(await d.toDocx());
+    expect(
+      again.bindings
+        .list()
+        .filter((b) => b.key === 'issued')
+        .map((b) => [b.value, b.fullDate]),
+    ).toEqual(dates.map((b) => [b.value, b.fullDate]));
+    d.bindings.set('issued', { date: '2026-10-13' });
+    expect(d.bindings.apply()).toBeUndefined();
+  });
+
+  it('日期对象验证全部同名控件；批量日期填写失败时回滚并保留 pending', async () => {
+    const pr = '<w:date><w:dateFormat w:val="yyyy-MM-dd"/></w:date>';
+    const d = await UltimateWord.load(template(`<w:p>${control('issued', '某日', pr)}</w:p>`));
+    expect(() => d.bindings.set('issued', { date: '2026-02-29' })).toThrow(/日期/);
+    expect(() => d.bindings.set('applicant', { date: '2026-10-13' })).toThrow(/字符串/);
+    expect(d.bindings.pending.size).toBe(0);
+    const mixed = await UltimateWord.load(
+      template(`<w:p>${control('issued', '某日', pr)}${control('issued', '文字', '<w:text/>')}</w:p>`),
+    );
+    expect(() => mixed.bindings.set('issued', { date: '2026-10-13' })).toThrow(/字符串/);
+    expect(mixed.bindings.pending.size).toBe(0);
+    d.bindings.setMany({ issued: { date: '2026-10-13' }, level: '没有的选项' });
+    expect(() => d.bindings.apply()).toThrow();
+    expect(d.bindings.list().find((b) => b.key === 'issued')?.value).toBe('某日');
+    expect(d.bindings.list().find((b) => b.key === 'issued')?.fullDate).toBeUndefined();
+    expect(d.bindings.pending.get('issued')).toEqual({ date: '2026-10-13' });
+    expect(d.canUndo).toBe(false);
+  });
+
   it('名字拼错、复选框在 set 时就抛；下拉框没有的选项在 apply 时整批回滚、值留着', async () => {
     const d = await UltimateWord.load(template());
     expect(() => d.bindings.set('aplicant', '张三')).toThrow(/没有坑位/);

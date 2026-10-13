@@ -418,6 +418,7 @@ view.scrollTo(target: DocPosition | DocRange | { page: number }, options?: {
 doc.bindings.list(): BindingInfo[];              // 文档里有哪些坑位（按文档序，含现值 / 是否占位 / 下拉选项 / range）
 doc.bindings.set('applicant', '张三');            // 名字不存在就抛；返回 this，可链式
 doc.bindings.set('agree', true);                 // 复选框填布尔值；list() 的 checked 返回当前状态
+doc.bindings.set('issued', { date: '2026-10-13' }); // 日期控件按模板格式显示，并同步 fullDate
 doc.bindings.setMany({ applicant: '张三', date: '2026-08-13' });   // → { skipped: string[] }
 doc.bindings.apply();                            // 一次性提交 → 一个事务、一次重排、一个撤销单元
 doc.bindings.pending / discard();                // 还没提交的值 / 丢掉它们
@@ -437,10 +438,10 @@ doc.bindings.pending / discard();                // 还没提交的值 / 丢掉�
 >   只改内容等于白填；去绑定比改 customXml 稳（不必解析 XPath 与前缀映射）。
 > - 「增量重排」目前是段落缓存那一档（§10.3），与普通事务相同。
 > - 只认**正文**里包着 run（行内）或包着段落 / 表格（块级）的控件；页眉页脚里的、以及包着整行 / 整格的
->   （重复区块的外壳）照旧是透明容器。日期控件只换文字，不改 `w:date w:fullDate`。
+>   （重复区块的外壳）照旧是透明容器。
 > - 低层入口：`@uw/model` 的 `contentControlSpans(body)` 与事务命令 `tx.fillContentControl(id, text)`（§10.1）。
 
-**复选框**（2026-10-13）：`set` / `setMany` 的值类型是 `BindingValue = string | boolean`，复选框必须填布尔值，
+**复选框**（2026-10-13）：`set` / `setMany` 的值类型是 `BindingValue = string | boolean | DateBindingValue`，复选框必须填布尔值，
 文字坑位必须填字符串（`'false'` 不会被转换成未勾选）。同名复选框一起设置，各自使用模板中的符号与字体；
 同名坑位混合了文字与复选框时，类型检查失败，不留下该名字的待提交值。
 `BindingInfo.value` 保持字符串，复选框额外带 `checked: boolean`；`pending` 为 `ReadonlyMap<string, BindingValue>`。
@@ -451,6 +452,16 @@ doc.bindings.pending / discard();                // 还没提交的值 / 丢掉�
 默认显示 ☒ / ☐。只接受单个无修订的文字或符号作为内容；带域 / 修订的控件，以及多字符 / 多段落的异常控件拒绝，整批回滚。
 鼠标点击控件从 `click:element` 返回 `kind: 'contentControl'`（§11），宿主可按 `control.id` 调用事务切换；
 视图自身不自动改值，宿主决定预览 / 编辑态的行为。
+
+**日期控件**（2026-10-13）：`DateBindingValue = { date: string }` 中的值必须是有效的 `YYYY-MM-DD` 日历日，
+支持 0001–9999 年、校验闰年与月日，不按本机时区换算。显示按模板的 `w:dateFormat` 格式化，
+`w:lid` 指定中英文月名 / 星期，日期属性同步为 `w:fullDate="YYYY-MM-DDT00:00:00Z"`；
+`BindingInfo.fullDate` 返回该属性，`value` 仍为显示文字。格式语义与 DATE 域共用，依据[微软日期格式说明](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.wordprocessing.dateformat)。
+同名日期控件按各自模板格式显示，所有目标先校验再攒值，日期对象复制并冻结，避免调用方改对象影响待提交值。
+填写、占位格式、解除绑定、撤销 / 重做与导出同进同退；显示只含年月时，日改变也会回写属性。
+仍可填字符串来直接指定显示文字，**旧 fullDate 会清掉**（原先只换文字、保留旧日期，会造成日期选择器与显示矛盾）。
+目前只支持显式 dateFormat、公历（未写 calendar 或 `gregorian`）、中英文 lid；其他语言 / 历法、缺格式以及多段 / 多 run /
+域 / 修订 / 嵌套控件的内容明确拒绝。日期输入面板由宿主提供，Word 打开无修复提示待人工验收。
 
 底层走 OOXML 原生的**内容控件 `w:sdt`**，所以：填完导回 docx，在 Word 里打开
 坑位仍然是坑位，可以继续用 Word 编辑——而不是变成一段死文本。
@@ -586,6 +597,9 @@ editor.breakHistory(); // 光标移动、焦点切换等输入边界中断合并
 - `t.setContentControlChecked(id, checked)`（2026-10-13）设置复选框布尔状态，返回原内容的范围。
   换上该状态的自定义符号 / 字体（缺席时用规范默认值），保留 run 格式、id 与片段下标，状态与符号是同一个撤销单元。
   自身 / 外层内容锁、修订、域或不符合单字符结构的控件拒绝；相同状态与符号不产生变更。
+- `t.setContentControlDate(id, date)`（2026-10-13）接受 `YYYY-MM-DD`，按模板显示并同步 fullDate，返回显示内容范围。
+  限制见 §9；自身 / 外层内容锁拒绝。显示与属性都相同且非占位时不记变更；空块级日期控件会创建文字槽。
+  自由文字命令 `fillContentControl` 清除旧 fullDate，避免日期与文字冲突。
 - 默认最多 100 个撤销单元。只有显式 `origin: 'input'` 的单次纯插入、位置紧接上次末端、
   间隔不超过 1000ms 才合并；默认命令、超时、`breakHistory()`、undo/redo 都打断合并。
   `historyLimit: 0` 关闭历史，`mergeDelay: 0` 关闭合并。每次提交的变更集仍只含本次修改。

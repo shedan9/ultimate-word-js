@@ -14,7 +14,7 @@ body { margin: 0; font: 14px/1.5 system-ui; }
 // find → decorate → rectsOf 通到屏幕），字摆在哪由 Vitest 里的真值断言负责
 import { UltimateWord } from 'ultimate-word';
 import fixtureUrl from '../../fidelity/fixtures/gongwen-01.docx?url';
-import { controlDocx, linkDocx } from './list-fixture.ts';
+import { controlDocx, dateControlDocx, linkDocx } from './list-fixture.ts';
 
 const host = document.querySelector('#host');
 const second = document.querySelector('#second');
@@ -219,6 +219,30 @@ try {
   editClick();
   assert(editClicks.length === 1, '编辑态拖选不报告控件点击');
   editTemplate.dispose();
+  const dateDoc = await UltimateWord.load(dateControlDocx());
+  const dateView = dateDoc.mount('#host', { virtualize: false });
+  await frame();
+  const dateHits = [];
+  dateView.on('click:element', (e) => dateHits.push(e));
+  dateDoc.bindings.set('issued', { date: '2026-10-13' }).apply();
+  await frame();
+  const dateRange = dateDoc.find('2026年10月13日')[0];
+  assert(dateRange !== undefined && dateView.rectsOf(dateRange).length > 0, '日期填写后显示文字可查找与定位');
+  assert(dateView.root.textContent.includes('2026年10月13日'), '日期显示同步到常驻文字层');
+  const dateRect = dateView.rectsOf(dateRange)[0];
+  const dx = dateRect.x + dateRect.width / 2;
+  const dy = dateRect.y + dateRect.height / 2;
+  document.elementFromPoint(dx, dy).dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: dx, clientY: dy }));
+  assert(dateHits.at(-1).control.date.fullDate === '2026-10-13T00:00:00Z', '日期点击事件给当前日期属性');
+  dateDoc.undo();
+  await frame();
+  assert(dateDoc.find('某日').length === 1 && dateDoc.bindings.list()[0].fullDate === undefined, '日期撤销恢复占位文字与属性');
+  dateDoc.redo();
+  await frame();
+  assert(dateDoc.find('2026年10月13日').length === 1 && dateDoc.bindings.list()[0].fullDate === '2026-10-13T00:00:00Z', '日期重做同步文字与属性');
+  const dateAgain = await UltimateWord.load(await dateDoc.toDocx());
+  assert(dateAgain.bindings.list()[0].fullDate === '2026-10-13T00:00:00Z' && dateAgain.find('2026年10月13日').length === 1, '浏览器导出再加载保留日期');
+  dateView.dispose();
   result.textContent = `PASS: ${passed} browser assertions`;
 } catch (error) {
   result.textContent = `FAIL after ${passed}: ${error.message}`;

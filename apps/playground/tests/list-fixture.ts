@@ -64,6 +64,15 @@ export function listDocx(): Uint8Array {
   );
 }
 
+/** 日期模板：点击事件应读到填写后的元数据，显示文字与撤销 / 回写同进同退。 */
+export function dateControlDocx(): Uint8Array {
+  return docxOf(
+    '<w:p><w:sdt><w:sdtPr><w:tag w:val="issued"/><w:showingPlcHdr/>' +
+      '<w:date><w:dateFormat w:val="yyyy年M月d日"/><w:lid w:val="zh-CN"/><w:calendar w:val="gregorian"/></w:date>' +
+      '</w:sdtPr><w:sdtContent><w:r><w:t>某日</w:t></w:r></w:sdtContent></w:sdt></w:p>',
+  );
+}
+
 /** 表格 Tab 导航回归用：一段正文 + 2×2 表格（第二行首格带列表段落，Tab 要跳格而不是降级）。 */
 export function tableDocx(): Uint8Array {
   const cell = (inner: string) => `<w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr>${inner}</w:tc>`;

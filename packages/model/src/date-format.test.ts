@@ -24,6 +24,13 @@ describe('formatDateTime', () => {
     expect(formatDateTime({ ...T, hour: 12 }, 'hh AM/PM')).toBe('12 PM');
   });
 
+  it('日期控件可用双引号包字面文字，显式语言优先于格式串猜测', () => {
+    expect(formatDateTime(T, 'yyyy"年"M"月"d"日"')).toBe('2026年9月29日');
+    expect(formatDateTime(T, 'dddd MMMM', 'zh-CN')).toBe('星期二 九月');
+    expect(formatDateTime(T, 'dddd yyyy年M月d日', 'en-US')).toBe('Tuesday 2026年9月29日');
+    expect(formatDateTime(T, 'h""mm')).toBe('8"05');
+  });
+
   it('月名与星期：英文格式串出英文，带汉字的出中文', () => {
     expect(formatDateTime(T, 'dddd, MMMM d, yyyy')).toBe('Tuesday, September 29, 2026');
     expect(formatDateTime(T, 'ddd MMM')).toBe('Tue Sep');

@@ -379,6 +379,57 @@ describe('模型不认识的 XML 留在文件里', () => {
 });
 
 describe('内容控件', () => {
+  const dateControl = (format = 'yyyy年M月d日', text = '某日') =>
+    `<w:sdt><w:sdtPr><w:tag w:val="date"/><w:dataBinding w:xpath="/date"/><w:date w:fullDate="2020-01-01T00:00:00Z" x:keep="yes"><w:dateFormat w:val="${format}"/><w:lid w:val="zh-CN"/><w:storeMappedDataAs w:val="date"/><w:calendar w:val="gregorian"/><x:unknown/></w:date></w:sdtPr><w:sdtContent><w:r><w:t>${text}</w:t></w:r></w:sdtContent></w:sdt>`;
+
+  it('日期的显示与 fullDate 一起回写，格式、历法、数据存储设置与未知属性保留', () => {
+    const { out, again } = roundTrip(docx(`<w:p>${dateControl()}</w:p>`), (t, body) => {
+      t.setContentControlDate(idOf(body, 'date'), '2026-10-13');
+    });
+    const xml = decoder.decode(unzip(out).get('word/document.xml'));
+    expect(xml).toContain('w:fullDate="2026-10-13T00:00:00Z"');
+    expect(xml).toContain('x:keep="yes"');
+    expect(xml).toContain('<x:unknown/>');
+    expect(xml).toContain('<w:storeMappedDataAs w:val="date"/>');
+    expect(xml).toContain('<w:calendar w:val="gregorian"/>');
+    expect(xml).not.toContain('dataBinding');
+    expect(paragraphText(paragraphs(again.body)[0] as Paragraph)).toBe('2026年10月13日');
+    expect(again.body.contentControls?.[idOf(again.body, 'date')]?.date?.fullDate).toBe(
+      '2026-10-13T00:00:00Z',
+    );
+    const textOnly = roundTrip(out, (t, body) => {
+      t.fillContentControl(idOf(body, 'date'), '待定');
+    });
+    const textXml = decoder.decode(unzip(textOnly.out).get('word/document.xml'));
+    expect(textXml).not.toContain('fullDate');
+    expect(textXml).toContain('<w:dateFormat w:val="yyyy年M月d日"/>');
+    expect(
+      textOnly.again.body.contentControls?.[idOf(textOnly.again.body, 'date')]?.date?.fullDate,
+    ).toBeUndefined();
+  });
+
+  it('仅日期属性改变时穿过表格原文复用捷径；撤销恢复所有原始部件', () => {
+    const bytes = docx(
+      `<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p>${dateControl('yyyy年', '2020年')}</w:p></w:tc></w:tr></w:tbl><w:p/>`,
+    );
+    const { pkg, loaded } = load(bytes);
+    const editor = createTextEditor(loaded.body);
+    const before = editor.body;
+    editor.tx((t) => {
+      t.setContentControlDate(idOf(before, 'date'), '2020-10-13');
+    });
+    expect(editor.body.sections).toEqual(before.sections);
+    const out = serializeDocx(pkg, editor.body);
+    const xml = decoder.decode(unzip(out).get('word/document.xml'));
+    expect(xml).toContain('w:fullDate="2020-10-13T00:00:00Z"');
+    expect(xml).not.toContain('dataBinding');
+    const again = load(out).loaded.body;
+    expect(again.contentControls?.[idOf(again, 'date')]?.date?.fullDate).toBe('2020-10-13T00:00:00Z');
+    editor.undo();
+    const restored = unzip(serializeDocx(pkg, editor.body));
+    for (const [part, content] of unzip(bytes)) expect(restored.get(part)).toEqual(content);
+  });
+
   const checkbox = (pr = '', content = '<w:r><w:t>☐</w:t></w:r>', extra = '') =>
     `<w:sdt><w:sdtPr><w:tag w:val="agree"/>${extra}<w14:checkbox>${pr}</w14:checkbox></w:sdtPr><w:sdtContent>${content}</w:sdtContent></w:sdt>`;
   const FORM =

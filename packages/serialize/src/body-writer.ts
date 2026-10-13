@@ -512,7 +512,7 @@ class BodyWriter {
   }
 
   /**
-   * 内容控件的外壳：内容或状态变了才去掉 `STALE_WHEN_FILLED`，勾选状态单独补 w14:checked。
+   * 内容控件的外壳：内容或状态变了才去掉 `STALE_WHEN_FILLED`，勾选与日期属性单独补。
    * 内容变没变按**元素身份**比：没改的节点吐回的就是原元素；仅状态变了也要解除绑定，避免重开被旧值覆盖
    */
   #sdt(node: XmlElement, content: XmlElement, children: XmlNode[]): XmlElement {
@@ -520,11 +520,13 @@ class BodyWriter {
     const now = id === undefined ? undefined : this.#in.body.contentControls?.[id];
     const was = id === undefined ? undefined : this.#in.originalBody.contentControls?.[id];
     const checkedChanged = now?.checkbox !== undefined && now.checkbox.checked !== was?.checkbox?.checked;
+    const dateChanged = now?.date !== undefined && now.date.fullDate !== was?.date?.fullDate;
     const changed =
       children.length !== content.children.length ||
       children.some((c, i) => c !== content.children[i]) ||
       (was?.showingPlaceholder === true && now?.showingPlaceholder === false) ||
-      checkedChanged;
+      checkedChanged ||
+      dateChanged;
     const inner = { ...content, children };
     return {
       ...node,
@@ -553,6 +555,19 @@ class BodyWriter {
               pr = {
                 ...pr,
                 children: pr.children.map((n) => (n === checkbox ? { ...checkbox, children } : n)),
+              };
+            }
+          }
+          if (dateChanged) {
+            const date = child(pr, 'w:date');
+            if (date !== undefined) {
+              const attrs: Record<string, string> = {};
+              if (now?.date?.fullDate !== undefined) attrs['w:fullDate'] = now.date.fullDate;
+              pr = {
+                ...pr,
+                children: pr.children.map((n) =>
+                  n === date ? { ...date, attrs: patchAttrs(date.attrs, ['w:fullDate'], attrs) } : n,
+                ),
               };
             }
           }

@@ -120,6 +120,156 @@ describe('内容控件的解析', () => {
   });
 });
 
+describe('setContentControlDate', () => {
+  const dateControl = (pr = '', content = '<w:r><w:t>某日</w:t></w:r>', extra = '') =>
+    `<w:sdt><w:sdtPr><w:tag w:val="date"/>${extra}<w:date ${pr}><w:dateFormat w:val="yyyy年M月d日"/><w:lid w:val="zh-CN"/><w:calendar w:val="gregorian"/></w:date></w:sdtPr><w:sdtContent>${content}</w:sdtContent></w:sdt>`;
+  const idOf = (body: Body) =>
+    contentControlSpans(body).find((s) => s.control.tag === 'date')?.control.id as string;
+
+  it('解析日期属性；填入日历日同步显示、元数据与占位格式，撤销重做同进同退', () => {
+    const editor = createTextEditor(
+      parse(
+        `<w:p>${dateControl(
+          'w:fullDate="2020-01-02T08:00:00+08:00"',
+          '<w:r><w:rPr><w:rStyle w:val="PlaceholderText"/></w:rPr><w:t>某日</w:t></w:r>',
+          '<w:rPr><w:b/></w:rPr><w:showingPlcHdr/><w:dataBinding w:xpath="/date"/>',
+        )}</w:p>`,
+      ),
+    );
+    const before = editor.body;
+    const id = idOf(before);
+    expect(before.contentControls?.[id]?.date).toEqual({
+      fullDate: '2020-01-02T08:00:00+08:00',
+      format: 'yyyy年M月d日',
+      language: 'zh-CN',
+      calendar: 'gregorian',
+    });
+    let range: ReturnType<typeof rangeOfContentControl>;
+    editor.tx((t) => {
+      range = t.setContentControlDate(id, '2024-02-29');
+    });
+    const after = editor.body;
+    const span = contentControlSpans(after)[0] as NonNullable<ReturnType<typeof contentControlSpans>[number]>;
+    expect(values(after)).toEqual({ date: '2024年2月29日' });
+    expect(span.runs).toHaveLength(1);
+    expect(span.runs[0]?.props).toEqual({ bold: true });
+    expect(span.control.date?.fullDate).toBe('2024-02-29T00:00:00Z');
+    expect(span.control.showingPlaceholder).toBe(false);
+    expect(span.control.dataBound).toBeUndefined();
+    expect(range).toEqual(rangeOfContentControl(span));
+    expect(
+      editor.tx((t) => {
+        t.setContentControlDate(id, '2024-02-29');
+      }),
+    ).toBeUndefined();
+    expect(editor.body).toBe(after);
+    editor.undo();
+    expect(editor.body).toBe(before);
+    editor.redo();
+    expect(editor.body).toBe(after);
+  });
+
+  it('显示不含日时，只改 fullDate 也提交；自由文字填写清除旧日期，空块级控件可填', () => {
+    const xml = dateControl('w:fullDate="2026-10-01T00:00:00Z"', '<w:r><w:t>2026年10月</w:t></w:r>').replace(
+      'yyyy年M月d日',
+      'yyyy年M月',
+    );
+    const editor = createTextEditor(parse(`<w:p>${xml}</w:p>`));
+    const before = editor.body;
+    const id = idOf(before);
+    editor.tx((t) => {
+      t.setContentControlDate(id, '2026-10-13');
+    });
+    expect(editor.body.sections).toEqual(before.sections);
+    expect(editor.body.contentControls?.[id]?.date?.fullDate).toBe('2026-10-13T00:00:00Z');
+    editor.tx((t) => {
+      t.fillContentControl(id, '待定');
+    });
+    expect(values(editor.body)).toEqual({ date: '待定' });
+    expect(editor.body.contentControls?.[id]?.date?.fullDate).toBeUndefined();
+    editor.undo();
+    expect(editor.body.contentControls?.[id]?.date?.fullDate).toBe('2026-10-13T00:00:00Z');
+    const empty = createTextEditor(parse(dateControl('', '<w:p/>')));
+    empty.tx((t) => {
+      t.setContentControlDate(idOf(empty.body), '0001-01-01');
+    });
+    expect(values(empty.body)).toEqual({ date: '0001年1月1日' });
+  });
+
+  it.each([
+    '2026-02-29',
+    '2024-02-30',
+    '2026-00-01',
+    '2026-13-01',
+    '0000-01-01',
+    '2026-1-1',
+    '2026-10-13T00:00:00Z',
+  ])('拒绝非法日历日 %s，先前文字修改也原子回滚', (value) => {
+    const editor = createTextEditor(parse(`<w:p><w:r><w:t>外</w:t></w:r>${dateControl()}</w:p>`));
+    const before = editor.body;
+    expect(() =>
+      editor.tx((t) => {
+        t.insertText(
+          { nodeId: paragraphs(before)[0]?.runs[0]?.id as string, contentIndex: 0, offset: 1 },
+          '改',
+        );
+        t.setContentControlDate(idOf(before), value);
+      }),
+    ).toThrow(/日期/);
+    expect(editor.body).toBe(before);
+    expect(editor.canUndo).toBe(false);
+  });
+
+  it('内容锁沿父链生效；修订、域、多段、多 run 与嵌套内容拒绝', () => {
+    for (const content of [
+      '<w:ins><w:r><w:t>某日</w:t></w:r></w:ins>',
+      '<w:fldSimple w:instr="DATE"><w:r><w:t>某日</w:t></w:r></w:fldSimple>',
+      '<w:p><w:r><w:t>某</w:t></w:r></w:p><w:p><w:r><w:t>日</w:t></w:r></w:p>',
+      '<w:r><w:t>某</w:t></w:r><w:r><w:t>日</w:t></w:r>',
+      '<w:sdt><w:sdtContent><w:r><w:t>某日</w:t></w:r></w:sdtContent></w:sdt>',
+    ]) {
+      const editor = createTextEditor(
+        parse(
+          content.startsWith('<w:p>') ? dateControl('', content) : `<w:p>${dateControl('', content)}</w:p>`,
+        ),
+      );
+      const before = editor.body;
+      expect(() =>
+        editor.tx((t) => {
+          t.setContentControlDate(idOf(before), '2026-10-13');
+        }),
+      ).toThrow();
+      expect(editor.body).toBe(before);
+    }
+    const editor = createTextEditor(
+      parse(
+        `<w:sdt><w:sdtPr><w:lock w:val="contentLocked"/></w:sdtPr><w:sdtContent><w:p>${dateControl()}</w:p></w:sdtContent></w:sdt>`,
+      ),
+    );
+    const before = editor.body;
+    expect(() =>
+      editor.tx((t) => {
+        t.setContentControlDate(idOf(before), '2026-10-13');
+      }),
+    ).toThrow(/锁定/);
+    expect(editor.body).toBe(before);
+  });
+
+  it.each([
+    ['w:val="gregorian"', 'w:val="hijri"', /历法/],
+    ['w:val="zh-CN"', 'w:val="fr-FR"', /语言/],
+    ['<w:dateFormat w:val="yyyy年M月d日"/>', '', /dateFormat/],
+    ['<w:date ', '<w:text ', /不是日期/],
+  ])('不支持的日期设置明确拒绝', (from, to, error) => {
+    const editor = createTextEditor(parse(`<w:p>${dateControl().replace(from, to)}</w:p>`));
+    expect(() =>
+      editor.tx((t) => {
+        t.setContentControlDate(idOf(editor.body), '2026-10-13');
+      }),
+    ).toThrow(error);
+  });
+});
+
 describe('setContentControlChecked', () => {
   const checkbox = (pr = '', content = '<w:r><w:rPr><w:b/></w:rPr><w:t>☐</w:t></w:r>', extra = '') =>
     `<w:sdt><w:sdtPr><w:tag w:val="agree"/>${extra}<w14:checkbox>${pr}</w14:checkbox></w:sdtPr><w:sdtContent>${content}</w:sdtContent></w:sdt>`;

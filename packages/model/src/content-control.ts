@@ -14,6 +14,7 @@
  */
 import type { XmlElement } from '@uw/ooxml';
 import { attr, child, children } from '@uw/ooxml';
+import { formatDateTime } from './date-format.ts';
 import type { DocumentBody, NodeId, ParagraphNode, PropSet, RunNode } from './nodes.ts';
 import { walkBlocks } from './nodes.ts';
 import { runEnd, runStart } from './order.ts';
@@ -53,6 +54,14 @@ export interface ContentControlCheckbox {
   uncheckedState: CheckboxSymbol;
 }
 
+/** 日期属性保持纯数据；fullDate 是 OOXML 的日期时间串，显示文字仍在成员 run 上。 */
+export interface ContentControlDate {
+  fullDate?: string;
+  format?: string;
+  language?: string;
+  calendar?: string;
+}
+
 export interface ContentControl {
   id: NodeId;
   /** `w:tag`：给程序看的名字，模板填充按它认坑位 */
@@ -81,6 +90,7 @@ export interface ContentControl {
   multiLine?: boolean;
   /** w14:checkbox 的状态与自定义符号；只改显示文字不会改变 Word 里的勾选状态 */
   checkbox?: ContentControlCheckbox;
+  date?: ContentControlDate;
   /**
    * 有没有 `w:dataBinding`（绑到 customXml 部件的某个 XPath）。
    * 绑定的控件在 Word 打开时**会被 customXml 里的值盖掉** —— 只改 `sdtContent` 等于白填，
@@ -133,6 +143,17 @@ export function parseContentControl(
         const text = attr(li, 'w:displayText') ?? attr(li, 'w:value') ?? '';
         return { text, value: attr(li, 'w:value') ?? text };
       });
+    } else if (t === 'date') {
+      const date: ContentControlDate = {};
+      const fullDate = attr(e, 'w:fullDate');
+      const format = attrOf(child(e, 'w:dateFormat'), 'w:val');
+      const language = attrOf(child(e, 'w:lid'), 'w:val');
+      const calendar = attrOf(child(e, 'w:calendar'), 'w:val');
+      if (fullDate !== undefined) date.fullDate = fullDate;
+      if (format !== undefined) date.format = format;
+      if (language !== undefined) date.language = language;
+      if (calendar !== undefined) date.calendar = calendar;
+      out.date = date;
     } else if (t === 'checkbox') {
       const checked = child(e, 'w14:checked');
       out.checkbox = {
@@ -158,6 +179,49 @@ export function parseContentControl(
   if (rPr !== undefined) out.runProps = parseRunProps(rPr);
   if (child(pr, 'w:dataBinding') !== undefined) out.dataBound = true;
   return out;
+}
+
+/**
+ * 日期填充值是日历日（YYYY-MM-DD），不经本机时区换算，避免同一份数据在两地填出不同日期。
+ * dateFormat 按 §17.16.4.1 与 DATE 域共用格式器；缺格式时规范要求从语言取默认，尚未实现，明确拒绝。
+ * https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.wordprocessing.dateformat
+ */
+export function formatContentControlDate(
+  control: ContentControl,
+  value: string,
+): { text: string; fullDate: string } {
+  if (control.type !== 'date' || control.date === undefined) throw new Error('内容控件不是日期控件');
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value))
+    throw new TypeError('日期值必须是 YYYY-MM-DD 字符串');
+  const fullDate = `${value}T00:00:00Z`;
+  const date = new Date(fullDate);
+  if (
+    value.startsWith('0000') ||
+    !Number.isFinite(date.getTime()) ||
+    date.toISOString().slice(0, 10) !== value
+  )
+    throw new RangeError(`无效的日历日期：${value}`);
+  const { format, calendar, language } = control.date;
+  if (!format) throw new Error('日期控件缺少 dateFormat，无法确定显示格式');
+  if (calendar !== undefined && calendar !== 'gregorian') throw new Error(`不支持日期历法：${calendar}`);
+  if (language !== undefined && !/^(zh|en)(-|$)/i.test(language))
+    throw new Error(`不支持日期语言：${language}`);
+  return {
+    fullDate,
+    text: formatDateTime(
+      {
+        year: date.getUTCFullYear(),
+        month: date.getUTCMonth() + 1,
+        day: date.getUTCDate(),
+        hour: 0,
+        minute: 0,
+        second: 0,
+        weekday: date.getUTCDay(),
+      },
+      format,
+      language,
+    ),
+  };
 }
 
 /**
