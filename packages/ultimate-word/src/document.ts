@@ -19,6 +19,7 @@ import type { DocumentLayout } from '@uw/layout';
 import { indentCharUnit, paragraphPageNumbers } from '@uw/layout';
 import type {
   CommentSpan,
+  ContentControlSpan,
   DirectProps,
   DocPosition,
   DocRange,
@@ -41,11 +42,13 @@ import {
   bookmarkTargets,
   buildRunOrder,
   compareDocPositions,
+  contentControlSpans,
   createTextEditor,
   expandReplacement,
   findMatches,
   findText,
   fragmentOfRange,
+  isContentControlLocked,
   listComments,
   listRevisions,
   paragraphStyleNames,
@@ -53,6 +56,7 @@ import {
   planTableOfContents,
   queryNodes,
   rangeEditable,
+  rangeOfContentControl,
   rangeOfNode,
   runPropsAtInsertion,
   runPropsOfRange,
@@ -168,6 +172,8 @@ export class UwDocument {
   readonly #views = new Set<(layout: DocumentLayout) => void>();
   #order: RunOrder | undefined;
   #nodes: Map<NodeId, DocNode> | undefined;
+  #nodeControls: Map<NodeId, NodeId> | undefined;
+  #controlSpans: Map<NodeId, ContentControlSpan<DirectProps>> | undefined;
   #resolvedRuns: Map<NodeId, ResolvedRun> | undefined;
   #imageHref: ((id: string) => string | undefined) | undefined;
   /** 模板填充（api.md §9）：按内容控件的 tag 填值，`apply()` 一次提交 */
@@ -345,6 +351,8 @@ export class UwDocument {
     this.#fieldValues = result.values;
     this.#order = undefined;
     this.#nodes = undefined;
+    this.#nodeControls = undefined;
+    this.#controlSpans = undefined;
     this.#resolvedRuns = undefined;
     const fresh: Diagnostic[] = [];
     for (const d of result.diagnostics ?? []) {
@@ -567,9 +575,8 @@ export class UwDocument {
   }
 
   /**
-   * 点到的位置落在什么「元素」上（`click:element` 的数据）。现在只认超链接：
-   * 图片的绘制层不接指针事件、布局索引里也没有对象的矩形；内容控件（run 上的标记）
-   * 还没接 —— 点坑位要答哪一层控件（嵌套时）还没定。
+   * 超链接优先，其次是最内层内容控件（run 标记优先于段落标记）。
+   * 控件不是真节点，range 从成员现算；缓存随事务与历史跳转一起丢掉，避免报告旧符号或旧范围。
    */
   #elementAt(position: DocPosition): ElementHit | undefined {
     if (this.#resolvedRuns === undefined) {
@@ -581,7 +588,22 @@ export class UwDocument {
     }
     const link = this.#resolvedRuns.get(position.nodeId)?.hyperlink;
     const node = this.#nodeById(position.nodeId);
-    if (link === undefined || node === undefined) return undefined;
+    if (node === undefined) return undefined;
+    if (link === undefined) {
+      const id = this.#nodeControls?.get(node.id);
+      if (id === undefined) return undefined;
+      if (this.#controlSpans === undefined)
+        this.#controlSpans = new Map(contentControlSpans(this.#loaded.body).map((s) => [s.control.id, s]));
+      const span = this.#controlSpans.get(id);
+      if (span === undefined) return undefined;
+      return {
+        kind: 'contentControl',
+        node,
+        control: span.control,
+        range: rangeOfContentControl(span),
+        locked: isContentControlLocked(this.#loaded.body.contentControls ?? {}, id),
+      };
+    }
     // 容器那条路给的是关系 id，外部关系的 Target 原文就是 URL；书签锚点拼成 `#名字`
     let href = link.url;
     if (href === undefined && link.relId !== undefined && this.#pkg !== undefined) {
@@ -597,11 +619,18 @@ export class UwDocument {
   #nodeById(id: NodeId): DocNode | undefined {
     if (this.#nodes === undefined) {
       const map = new Map<NodeId, DocNode>();
+      const controls = new Map<NodeId, NodeId>();
       for (const section of this.#loaded.body.sections) {
         for (const block of walkBlocks(section.blocks)) {
           map.set(block.id, block);
-          if (block.kind === 'paragraph') for (const run of block.runs) map.set(run.id, run);
-          else {
+          if (block.kind === 'paragraph') {
+            if (block.contentControl !== undefined) controls.set(block.id, block.contentControl);
+            for (const run of block.runs) {
+              map.set(run.id, run);
+              const id = run.contentControl ?? block.contentControl;
+              if (id !== undefined) controls.set(run.id, id);
+            }
+          } else {
             for (const row of block.rows) {
               map.set(row.id, row);
               for (const cell of row.cells) map.set(cell.id, cell);
@@ -610,6 +639,7 @@ export class UwDocument {
         }
       }
       this.#nodes = map;
+      this.#nodeControls = controls;
     }
     return this.#nodes.get(id);
   }

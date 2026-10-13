@@ -36,7 +36,7 @@ const SECT_PR = `<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>
 
 /** 最小的 docx：一个正文部件 + 编号部件；`extraRels` 追加进正文的关系表（超链接用）。 */
 function docxOf(blocks: string, extraRels = ''): Uint8Array {
-  const body = `<w:document xmlns:w="${W_NS}" xmlns:r="${OFFICE_REL}"><w:body>${blocks}${SECT_PR}</w:body></w:document>`;
+  const body = `<w:document xmlns:w="${W_NS}" xmlns:r="${OFFICE_REL}" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"><w:body>${blocks}${SECT_PR}</w:body></w:document>`;
   return zipSync({
     '[Content_Types].xml': encoder.encode(
       `<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
@@ -93,5 +93,22 @@ export function linkDocx(): Uint8Array {
     `<w:p><w:r><w:t>请访问</w:t></w:r><w:hyperlink r:id="rId9"><w:r><w:t>官方网站</w:t></w:r></w:hyperlink></w:p>
       <w:p><w:hyperlink w:anchor="附件"><w:r><w:t>跳到附件</w:t></w:r></w:hyperlink></w:p>${paragraph('普通正文')}`,
     `<Relationship Id="rId9" Type="${OFFICE_REL}/hyperlink" Target="https://example.com/" TargetMode="External"/>`,
+  );
+}
+
+/** 坑位点击用：行内 / 块级、嵌套内容锁、空段、表格与控件里的超链接。 */
+export function controlDocx(): Uint8Array {
+  const run = (text: string) => `<w:r><w:t>${text}</w:t></w:r>`;
+  const control = (tag: string, content: string, props = '<w:text/>') =>
+    `<w:sdt><w:sdtPr>${tag ? `<w:tag w:val="${tag}"/>` : ''}${props}</w:sdtPr><w:sdtContent>${content}</w:sdtContent></w:sdt>`;
+  return docxOf(
+    `<w:p>${control('applicant', run('申请人'))}${run('普通文字')}</w:p>
+    ${control('outer', `<w:p>${run('外层文字')}${control('inner', run('内层文字'))}</w:p>`, '<w:lock w:val="contentLocked"/>')}
+    <w:p>${control('agree', run('☐'), '<w14:checkbox/>')}</w:p>
+    ${control('empty', '<w:p/>')}
+    ${control('table', '<w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>格内文字</w:t></w:r></w:p></w:tc></w:tr></w:tbl>')}
+    <w:p>${control('', run('无名控件'))}</w:p>
+    <w:p>${control('linked', `<w:hyperlink w:anchor="附件">${run('控件内链接')}</w:hyperlink>`, '')}</w:p>
+    <w:p>${control('shell', run('外壳锁'), '<w:text/><w:lock w:val="sdtLocked"/>')}</w:p>`,
   );
 }

@@ -449,7 +449,8 @@ doc.bindings.pending / discard();                // 还没提交的值 / 丢掉�
 符号相同但状态不同也记一次修改，状态与符号都没变时不重排、不增加撤销单元。
 符号 / 字体按[微软的复选框格式定义](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.office2010.word.sdtcontentcheckbox)读取，
 默认显示 ☒ / ☐。只接受单个无修订的文字或符号作为内容；带域 / 修订的控件，以及多字符 / 多段落的异常控件拒绝，整批回滚。
-目前通过模板 API 设置，鼠标点击控件切换状态尚未接入。
+鼠标点击控件从 `click:element` 返回 `kind: 'contentControl'`（§11），宿主可按 `control.id` 调用事务切换；
+视图自身不自动改值，宿主决定预览 / 编辑态的行为。
 
 底层走 OOXML 原生的**内容控件 `w:sdt`**，所以：填完导回 docx，在 Word 里打开
 坑位仍然是坑位，可以继续用 Word 编辑——而不是变成一段死文本。
@@ -748,7 +749,7 @@ view.on('viewport:change', ({ visiblePages, zoom }) => {});
 | `document:change` | 事务提交后，紧挨在 `layout:done` 之前 | 标记「未保存」、协同同步 |
 | `diagnostic` | 编辑后重排新发现的内容问题（去重） | 收集上报 |
 | `selection:change` | 编辑态选区按值变化 | 联动工具栏 |
-| `click:element` | 点到超链接 | 弹出编辑面板、跳转 |
+| `click:element` | 点到超链接或内容控件 | 弹出填写面板、切换复选框、跳转 |
 | `viewport:change` | 看得见的页或倍率变化 | 同步缩略图高亮 |
 
 实现时定下 / 与原设想不同的几处：
@@ -762,11 +763,30 @@ view.on('viewport:change', ({ visiblePages, zoom }) => {});
   也不该挡住后面的监听者。
 - `selection:change` **只在编辑态**有：预览态原生文字层的划词对不上 `DocRange`。滚动与缩放不算变化，
   事务映射后的光标位移算。
-- `click:element` 现在**只认超链接**（`kind: 'hyperlink'`，`href` 是外部地址或 `#书签名`）：图片的绘制层不接指针事件、
-  布局索引里没有对象的矩形，内容控件解析时已经剥掉了 —— 所以 payload 先按 `kind` 分支，将来加种类不破坏调用方。
-  视图**不替宿主跳转**；拖选结束的那一下 click（选区没折叠）不算。
+- `click:element` 按 `kind` 分支：超链接（`'hyperlink'`）的 `href` 是外部地址或 `#书签名`；
+  内容控件（`'contentControl'`，2026-10-13）带 `control: ContentControl`、`range: DocRange | undefined` 与 `locked: boolean`。
+  `control` 含 id / tag / alias / 类型 / scope / parent / 占位标记，复选框状态在 `control.checkbox.checked`；无名字的控件也报告。
+  嵌套时给**最内层**控件，`locked` 看全部父链，`sdtLocked` 只锁外壳、不算内容锁。
+  `node` 是点击处的直接格式 run（空块级控件是段落），范围覆盖控件的全部成员；提交 / 撤销 / 重做后重新取当前数据。
+  控件内超链接优先报告为超链接，保留目录跳转；控件分支的 `href` 为 undefined，现有直接解构写法仍可用。
+  只认正文文字与空段落；图片的绘制层不接指针事件，布局索引里没有对象的矩形。
+  视图只报告事件，跳转 / 改值由宿主决定；右键与拖选结束的 click（原生或模型选区没折叠）不算。
 - `viewport:change` 的 `visiblePages` 来自虚拟化的 IntersectionObserver，是**真的看得见**的页（不含 overscan），
   异步到达；没有它（或 `virtualize: false`）时只在倍率变化时派发、`visiblePages` 为空。
+
+复选框按**被点击的控件 id**修改（同名坑位只改这一处；`bindings.set` 会一起改同名的全部控件）：
+
+```ts
+view.on('click:element', (hit) => {
+  if (hit.kind !== 'contentControl' || hit.locked) return;
+  const { control } = hit;
+  if (control.checkbox === undefined) return;
+  const checked = !control.checkbox.checked;
+  doc.tx((t) => { t.setContentControlChecked(control.id, checked); });
+});
+```
+
+每次切换是一个撤销单元，导出同步状态与符号；带修订或异常内容的控件仍由事务拒绝（§9）。
 
 ---
 

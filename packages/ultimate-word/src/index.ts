@@ -23,6 +23,7 @@ export type { Diagnostic, DiagnosticSeverity } from '@uw/core';
 export { UwError, UwErrorCode } from '@uw/core';
 export type { FontRegistry, FontStatus, MetricsPack } from '@uw/fonts';
 export type {
+  ContentControl,
   ContentControlType,
   DocPosition,
   DocRange,
@@ -58,7 +59,16 @@ export type {
 export { DOCX_MIME, UwDocument } from './document.ts';
 export type { FontsApi } from './fonts.ts';
 export type { LoadOptions, LoadSource } from './load.ts';
-export type { Disposable, ElementHit, UwView, ViewEvents, ViewOptions, ZoomSpec } from './view.ts';
+export type {
+  ContentControlHit,
+  Disposable,
+  ElementHit,
+  HyperlinkHit,
+  UwView,
+  ViewEvents,
+  ViewOptions,
+  ZoomSpec,
+} from './view.ts';
 
 const registry = createRegistry();
 

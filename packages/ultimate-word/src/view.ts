@@ -14,7 +14,7 @@
  */
 import { twipsToPx } from '@uw/core';
 import type { DocumentLayout } from '@uw/layout';
-import type { DirectProps, DocPosition, DocRange, QueryNode } from '@uw/model';
+import type { ContentControl, DirectProps, DocPosition, DocRange, QueryNode } from '@uw/model';
 import type { ClientPoint, ClientRect } from '@uw/view';
 import type {
   DecorationHandle,
@@ -66,15 +66,31 @@ export interface Disposable {
 }
 
 /**
- * 点到的是什么。现在只有超链接 —— 图片的绘制层不接指针事件、布局索引里没有对象的矩形，
- * 内容控件（`w:sdt`）解析时已经剥掉了；等它们有了再加 `kind`，所以先按 `kind` 分支。
+ * 按 kind 区分超链接与内容控件。两种同时存在时优先超链接，保留模板里的目录与链接跳转。
+ * 图片的绘制层不接指针事件、布局索引里没有对象的矩形，暂时不报。
  */
-export interface ElementHit {
+export type ElementHit = HyperlinkHit | ContentControlHit;
+
+export interface HyperlinkHit {
   kind: 'hyperlink';
   /** 超链接所在的 run（直接格式那棵树上的，与 `doc.query('run')` 同一份） */
   node: QueryNode<DirectProps>;
   /** 外部地址，或 `#书签名`（文档内跳转）；关系表里查不到时没有这一项 */
   href?: string;
+}
+
+export interface ContentControlHit {
+  kind: 'contentControl';
+  /** 点击处的 run；空块级控件是段落，与 doc.query() 来自同一棵直接格式树 */
+  node: QueryNode<DirectProps>;
+  /** 最内层控件，含 id / tag / alias / 类型与复选框状态；无名字的控件也报告 */
+  control: ContentControl;
+  /** 控件全部内容的范围，可以用于 decorate / scrollTo */
+  range: DocRange | undefined;
+  /** 包括外层继承的内容锁；sdtLocked 只锁外壳，不算内容锁 */
+  locked: boolean;
+  /** 保留现有监听者直接解构 href 的写法，控件没有跳转地址 */
+  href?: undefined;
 }
 
 export interface ViewEvents {
@@ -89,7 +105,7 @@ export interface ViewEvents {
    */
   'viewport:change': { visiblePages: readonly number[]; zoom: number };
   /**
-   * 点到超链接。视图**不替宿主跳转**：预览态打开新窗口、编辑态 Ctrl+点击才跳，是宿主的决定。
+   * 点到超链接或内容控件。跳转、打开填写面板、切换复选框状态都是宿主的决定。
    * 拖选结束时的那一下 click 不算（选区没有折叠）
    */
   'click:element': ElementHit & { position: DocPosition; originalEvent: MouseEvent };
