@@ -42,7 +42,7 @@ export type {
   ScrollOptions,
   ScrollTarget,
 } from '@uw/view/dom';
-export type { BindingInfo, Bindings } from './bindings.ts';
+export type { BindingInfo, Bindings, BindingValue } from './bindings.ts';
 export type {
   CommentOptions,
   CommentSpan,

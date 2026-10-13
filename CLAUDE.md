@@ -192,6 +192,12 @@ Ctrl/Cmd+Shift+= / Ctrl/Cmd+= 与对应 beforeinput。共享 `vertAlign`、互�
 嵌套靠 `parent`，`content-control.ts`）—— 不存起止位置，内容一编辑就得映射。`tx.fillContentControl(id, text)` 换内容、
 占位状态换上控件格式并清标记（随撤销走）；门面 `list` / `set`（名字错抛）/ `setMany`（跳过）/ `apply`（一个事务，倒序填让外层盖内层）。
 回写内容一变就去 `w:showingPlcHdr` 与 `w:dataBinding` —— **绑定的控件 Word 打开时会被 customXml 盖掉**，只改内容等于白填。
+**复选框模板填充已接入**（2026-10-13）：`doc.bindings.set('agree', true)` / `setMany` 收布尔值，文字坑位仍收字符串；
+`BindingInfo.value` 仍是显示文字，新增 `checked` 给复选框状态。`w14:checkbox` 的状态与两套符号 / 字体进模型，
+事务 `setContentControlChecked` 单字换单字（走既有 `symbol` / `w:sym`，id 与片段下标不动）、状态与符号同撤销。
+回写同时补 `w14:checked` 与显示符号，保留自定义符号 / 未知属性；**两种状态符号相同时**也穿过段落 / 表格的原文复用捷径补属性。
+填值解除绑定，锁看父链（文字填充同样补齐外层锁）；默认符号 / 字体来自 MS-DOCX 规范，不引入排版常数。
+模型新增 15 项 + 回写 3 项 + 门面 3 项覆盖布尔类型、锁、原子回滚、撤销 / 重做与导出再加载；鼠标点选与带修订的复选框填写未做。
 **run 级高亮与字符底纹已接入**（2026-09-28）：`w:highlight` / `w:shd` 从解析、级联一路到画与回写，
 `FragmentStyle` 只在有的时候带。每行先铺背景再画字（挤压让后一片伸进前一片），网点底纹按比例混色 ——
 中文版 Word「字符底纹」按钮写的是白底 `pct15`，只看 `fill` 等于没画。剪贴板照 Word 写 `mso-highlight`，

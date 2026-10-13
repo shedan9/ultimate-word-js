@@ -379,6 +379,8 @@ describe('模型不认识的 XML 留在文件里', () => {
 });
 
 describe('内容控件', () => {
+  const checkbox = (pr = '', content = '<w:r><w:t>☐</w:t></w:r>', extra = '') =>
+    `<w:sdt><w:sdtPr><w:tag w:val="agree"/>${extra}<w14:checkbox>${pr}</w14:checkbox></w:sdtPr><w:sdtContent>${content}</w:sdtContent></w:sdt>`;
   const FORM =
     '<w:p><w:r><w:t>申请人：</w:t></w:r><w:sdt><w:sdtPr><w:rPr><w:b/></w:rPr><w:tag w:val="applicant"/>' +
     '<w:showingPlcHdr/><w:dataBinding w:xpath="/root/applicant" w:storeItemID="{X}"/><w:text/></w:sdtPr>' +
@@ -390,6 +392,80 @@ describe('内容控件', () => {
 
   const idOf = (body: Body, tag: string) =>
     Object.values(body.contentControls ?? {}).find((c) => c.tag === tag)?.id as string;
+
+  it('复选框勾选后状态与自定义符号同时回写，字体与未知属性保留；取消勾选也一致', () => {
+    const original = docx(
+      `<w:p>${checkbox(
+        '<w14:checked w14:val="0" probe="keep"/><w14:checkedState w14:val="2611" w14:font="宋体" probe="custom"/>' +
+          '<w14:uncheckedState w14:val="2610" w14:font="宋体"/>',
+        '<w:r><w:rPr><w:b/></w:rPr><w:t>☐</w:t></w:r>',
+        '<w:alias w:val="同意"/><w:showingPlcHdr/><w:rPr><w:i/></w:rPr><w:dataBinding w:xpath="/agree"/>',
+      )}</w:p>`,
+    );
+    const { out, again } = roundTrip(original, (t, body) => {
+      t.setContentControlChecked(idOf(body, 'agree'), true);
+    });
+    const xml = decoder.decode(unzip(out).get('word/document.xml'));
+    expect(xml).toContain('<w14:checked probe="keep" w14:val="1"/>');
+    expect(xml).toContain('<w14:checkedState w14:val="2611" w14:font="宋体" probe="custom"/>');
+    expect(xml).toContain('<w:alias w:val="同意"/>');
+    expect(xml).toContain('<w:sym w:font="宋体" w:char="2611"/>');
+    expect(xml).not.toContain('showingPlcHdr');
+    expect(xml).not.toContain('dataBinding');
+    expect(again.body.contentControls?.[idOf(again.body, 'agree')]?.checkbox?.checked).toBe(true);
+    expect(paragraphs(again.body).map(paragraphText)).toEqual(['☑']);
+    const unchecked = roundTrip(out, (t, body) => {
+      t.setContentControlChecked(idOf(body, 'agree'), false);
+    });
+    expect(
+      unchecked.again.body.contentControls?.[idOf(unchecked.again.body, 'agree')]?.checkbox?.checked,
+    ).toBe(false);
+    expect(paragraphs(unchecked.again.body).map(paragraphText)).toEqual(['☐']);
+  });
+
+  it('缺省 checked 元素按 schema 顺序补在两个状态符号之前，默认勾选符号回写成 2612', () => {
+    const { out, again } = roundTrip(
+      docx(`<w:p>${checkbox('<w14:checkedState/><w14:uncheckedState/>')}</w:p>`),
+      (t, body) => {
+        t.setContentControlChecked(idOf(body, 'agree'), true);
+      },
+    );
+    const xml = decoder.decode(unzip(out).get('word/document.xml'));
+    expect(xml).toContain(
+      '<w14:checkbox><w14:checked w14:val="1"/><w14:checkedState/><w14:uncheckedState/></w14:checkbox>',
+    );
+    expect(xml).toContain('<w:sym w:font="MS Gothic" w:char="2612"/>');
+    expect(again.body.contentControls?.[idOf(again.body, 'agree')]?.checkbox?.checked).toBe(true);
+  });
+
+  it('同符号的状态变更穿过表格与段落的原文复用，解除绑定；撤销后部件逐字节回到原文', () => {
+    const sdt = checkbox(
+      '<w14:checked w14:val="0"/><w14:checkedState w14:val="2610" w14:font="宋体"/>' +
+        '<w14:uncheckedState w14:val="2610" w14:font="宋体"/>',
+      '<w:r><w:sym w:font="宋体" w:char="2610"/></w:r>',
+      '<w:dataBinding w:xpath="/agree"/>',
+    );
+    const bytes = docx(
+      `<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p>${sdt}</w:p></w:tc></w:tr></w:tbl><w:p/>`,
+    );
+    const { pkg, loaded } = load(bytes);
+    const editor = createTextEditor(loaded.body);
+    const before = editor.body;
+    editor.tx((t) => {
+      t.setContentControlChecked(idOf(before, 'agree'), true);
+    });
+    expect(editor.body.sections).toEqual(before.sections);
+    const out = serializeDocx(pkg, editor.body);
+    const xml = decoder.decode(unzip(out).get('word/document.xml'));
+    expect(xml).toContain('<w14:checked w14:val="1"/>');
+    expect(xml).not.toContain('dataBinding');
+    expect(xml.match(/<w:sym /g)).toHaveLength(1);
+    const again = load(out).loaded.body;
+    expect(again.contentControls?.[idOf(again, 'agree')]?.checkbox?.checked).toBe(true);
+    editor.undo();
+    const restored = unzip(serializeDocx(pkg, editor.body));
+    for (const [part, content] of unzip(bytes)) expect(restored.get(part)).toEqual(content);
+  });
 
   it('填值：外壳留着、去掉占位符标记与数据绑定，值换上控件的格式；没填的控件原样', () => {
     const { out, again } = roundTrip(docx(FORM), (t, body) => {

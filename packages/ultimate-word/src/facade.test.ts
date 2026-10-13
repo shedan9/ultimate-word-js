@@ -263,12 +263,12 @@ describe('doc.bindings', () => {
   const control = (tag: string, text: string, pr = '') =>
     `<w:sdt><w:sdtPr><w:tag w:val="${tag}"/>${pr}</w:sdtPr><w:sdtContent><w:r><w:t>${text}</w:t></w:r></w:sdtContent></w:sdt>`;
   /** 最小模板：两个同名坑位、一个占位状态的纯文本、一个下拉框、一个复选框 */
-  function template(): Uint8Array {
+  function template(extra = ''): Uint8Array {
     const enc = new TextEncoder();
     const body =
       `<w:p><w:r><w:t>申请人：</w:t></w:r>${control('applicant', '单击输入', '<w:showingPlcHdr/><w:text/>')}</w:p>` +
       `<w:p><w:r><w:t>日期：</w:t></w:r>${control('date', '某日')}<w:r><w:t>，签名：</w:t></w:r>${control('applicant', '单击输入', '<w:showingPlcHdr/><w:text/>')}</w:p>` +
-      `<w:p>${control('level', '一般', '<w:dropDownList><w:listItem w:displayText="紧急" w:value="1"/><w:listItem w:displayText="一般" w:value="2"/></w:dropDownList>')}${control('agree', '☐', '<w14:checkbox/>')}</w:p>`;
+      `<w:p>${control('level', '一般', '<w:dropDownList><w:listItem w:displayText="紧急" w:value="1"/><w:listItem w:displayText="一般" w:value="2"/></w:dropDownList>')}${control('agree', '☐', '<w14:checkbox/>')}</w:p>${extra}`;
     return zip(
       new Map([
         [
@@ -326,11 +326,13 @@ describe('doc.bindings', () => {
     const d = await UltimateWord.load(template());
     expect(() => d.bindings.set('aplicant', '张三')).toThrow(/没有坑位/);
     expect(() => d.bindings.set('agree', '☑')).toThrow(/checkbox/);
-    d.bindings.set('applicant', '张三').set('level', '特急');
+    d.bindings.set('applicant', '张三').set('level', '特急').set('agree', true);
     expect(() => d.bindings.apply()).toThrow();
     expect(d.find('张三')).toHaveLength(0);
     expect(d.canUndo).toBe(false);
     expect(d.bindings.pending.get('applicant')).toBe('张三');
+    expect(d.bindings.pending.get('agree')).toBe(true);
+    expect(d.bindings.list().find((b) => b.key === 'agree')?.checked).toBe(false);
     d.bindings.discard();
     expect(d.bindings.apply()).toBeUndefined();
   });
@@ -345,6 +347,95 @@ describe('doc.bindings', () => {
       ['李四', false],
       ['李四', false],
     ]);
+  });
+
+  it('复选框填布尔值，同名控件各用自己的符号；混合填写一次重排，撤销 / 重做与导出保持状态', async () => {
+    const d = await UltimateWord.load(
+      template(
+        `<w:p>${control('agree', '□', '<w14:checkbox><w14:checkedState w14:val="2611" w14:font="宋体"/><w14:uncheckedState w14:val="25A1" w14:font="宋体"/></w14:checkbox>')}</w:p>`,
+      ),
+    );
+    const states = (doc: UwDocument) =>
+      doc.bindings
+        .list()
+        .filter((b) => b.key === 'agree')
+        .map(({ checked, value }) => ({ checked, value }));
+    expect(states(d)).toEqual([
+      { checked: false, value: '☐' },
+      { checked: false, value: '□' },
+    ]);
+    let changes = 0;
+    let layouts = 0;
+    d.on('document:change', () => {
+      changes++;
+    });
+    d.on('layout:done', () => {
+      layouts++;
+    });
+    expect(d.bindings.setMany({ applicant: '张三', agree: true, unused: false })).toEqual({
+      skipped: ['unused'],
+    });
+    expect(d.bindings.pending.get('agree')).toBe(true);
+    expect(d.bindings.apply()).toBeDefined();
+    expect(changes).toBe(1);
+    expect(layouts).toBe(1);
+    expect(states(d)).toEqual([
+      { checked: true, value: '☒' },
+      { checked: true, value: '☑' },
+    ]);
+    expect(d.bindings.pending.size).toBe(0);
+    expect(states(await UltimateWord.load(await d.toDocx()))).toEqual(states(d));
+    d.bindings.set('agree', true);
+    expect(d.bindings.apply()).toBeUndefined();
+    expect(changes).toBe(1);
+    expect(layouts).toBe(1);
+    d.undo();
+    expect(states(d)).toEqual([
+      { checked: false, value: '☐' },
+      { checked: false, value: '□' },
+    ]);
+    d.redo();
+    expect(states(d)).toEqual([
+      { checked: true, value: '☒' },
+      { checked: true, value: '☑' },
+    ]);
+    d.bindings.set('agree', false).apply();
+    expect(states(d)).toEqual([
+      { checked: false, value: '☐' },
+      { checked: false, value: '□' },
+    ]);
+  });
+
+  it('复选框拒绝字符串，文字坑位拒绝布尔值；同名混合类型不会留下待提交值', async () => {
+    const d = await UltimateWord.load(template());
+    expect(() => d.bindings.set('agree', 'false')).toThrow(/布尔/);
+    expect(() => d.bindings.set('applicant', true)).toThrow(/字符串/);
+    expect(d.bindings.pending.size).toBe(0);
+    const mixed = await UltimateWord.load(template(`<w:p>${control('agree', '文字')}</w:p>`));
+    expect(() => mixed.bindings.set('agree', true)).toThrow(/字符串/);
+    expect(mixed.bindings.pending.size).toBe(0);
+  });
+
+  it('列表报告继承的内容锁，复选框与文字坑位都不能绕过外层锁，失败后保留待提交值', async () => {
+    const d = await UltimateWord.load(
+      template(
+        `<w:sdt><w:sdtPr><w:lock w:val="contentLocked"/></w:sdtPr><w:sdtContent><w:p>${control('lockedAgree', '☐', '<w14:checkbox/>')}${control('lockedName', '原名', '<w:text/>')}</w:p></w:sdtContent></w:sdt>`,
+      ),
+    );
+    const locked = d.bindings.list().filter((b) => b.key.startsWith('locked'));
+    expect(locked.map((b) => [b.key, b.locked])).toEqual([
+      ['lockedAgree', true],
+      ['lockedName', true],
+    ]);
+    d.bindings.set('lockedAgree', true);
+    expect(() => d.bindings.apply()).toThrow(/锁定/);
+    expect(d.bindings.pending.get('lockedAgree')).toBe(true);
+    expect(d.bindings.list().find((b) => b.key === 'lockedAgree')?.checked).toBe(false);
+    d.bindings.discard();
+    d.bindings.set('lockedName', '张三');
+    expect(() => d.bindings.apply()).toThrow(/锁定/);
+    expect(d.bindings.list().find((b) => b.key === 'lockedName')?.value).toBe('原名');
+    expect(d.canUndo).toBe(false);
   });
 });
 

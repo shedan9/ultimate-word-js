@@ -5,7 +5,7 @@
 import { createDiagnosticSink } from '@uw/core';
 import { parseXml } from '@uw/ooxml';
 import { describe, expect, it } from 'vitest';
-import { contentControlSpans, type rangeOfContentControl, textOfContentControl } from './content-control.ts';
+import { contentControlSpans, rangeOfContentControl, textOfContentControl } from './content-control.ts';
 import type { Body, Paragraph } from './nodes.ts';
 import { paragraphText, walkParagraphs } from './nodes.ts';
 import { parseBody } from './parse-body.ts';
@@ -30,6 +30,48 @@ const PLACEHOLDER =
   '</w:sdtContent></w:sdt>';
 
 describe('内容控件的解析', () => {
+  it.each([
+    ['', false],
+    ['<w14:checked/>', true],
+    ['<w14:checked w14:val="1"/>', true],
+    ['<w14:checked w14:val="true"/>', true],
+    ['<w14:checked w14:val="0"/>', false],
+    ['<w14:checked w14:val="false"/>', false],
+    ['<w14:checked w14:val="off"/>', false],
+  ])('复选框状态按 w14:val 解析：%s → %s', (checked, expected) => {
+    const body = parse(
+      `<w:p><w:sdt><w:sdtPr><w14:checkbox>${checked}</w14:checkbox></w:sdtPr><w:sdtContent><w:r><w:t>☐</w:t></w:r></w:sdtContent></w:sdt></w:p>`,
+    );
+    expect(contentControlSpans(body)[0]?.control.checkbox).toEqual({
+      checked: expected,
+      checkedState: { char: '☒', font: 'MS Gothic' },
+      uncheckedState: { char: '☐', font: 'MS Gothic' },
+    });
+  });
+
+  it('复选框自定义符号 / 字体保留，非法十六进制与代理码点回到默认符号', () => {
+    const parseState = (states: string) =>
+      contentControlSpans(
+        parse(
+          `<w:p><w:sdt><w:sdtPr><w14:checkbox>${states}</w14:checkbox></w:sdtPr><w:sdtContent><w:r><w:t>☐</w:t></w:r></w:sdtContent></w:sdt></w:p>`,
+        ),
+      )[0]?.control.checkbox;
+    expect(
+      parseState(
+        '<w14:checkedState w14:val="F0FE" w14:font="Wingdings"/><w14:uncheckedState w14:val="25a1" w14:font="宋体"/>',
+      ),
+    ).toMatchObject({
+      checkedState: { char: '\uF0FE', font: 'Wingdings' },
+      uncheckedState: { char: '□', font: '宋体' },
+    });
+    expect(
+      parseState('<w14:checkedState w14:val="oops"/><w14:uncheckedState w14:val="D800"/>'),
+    ).toMatchObject({
+      checkedState: { char: '☒', font: 'MS Gothic' },
+      uncheckedState: { char: '☐', font: 'MS Gothic' },
+    });
+  });
+
   it('行内控件：身份进控件表、run 带标记，块级控件标在段落上，嵌套靠 parent 串', () => {
     const body = parse(
       `<w:sdt><w:sdtPr><w:tag w:val="block"/><w:lock w:val="sdtLocked"/></w:sdtPr><w:sdtContent>` +
@@ -78,7 +120,179 @@ describe('内容控件的解析', () => {
   });
 });
 
+describe('setContentControlChecked', () => {
+  const checkbox = (pr = '', content = '<w:r><w:rPr><w:b/></w:rPr><w:t>☐</w:t></w:r>', extra = '') =>
+    `<w:sdt><w:sdtPr><w:tag w:val="agree"/>${extra}<w14:checkbox>${pr}</w14:checkbox></w:sdtPr><w:sdtContent>${content}</w:sdtContent></w:sdt>`;
+  const idOf = (body: Body) =>
+    contentControlSpans(body).find((s) => s.control.tag === 'agree')?.control.id as string;
+  const checkedOf = (body: Body) => body.contentControls?.[idOf(body)]?.checkbox?.checked;
+
+  it('切换状态与符号是同一撤销单元，保留 run 格式与位置；重复设置无修改', () => {
+    const editor = createTextEditor(parse(`<w:p><w:r><w:t>外</w:t></w:r>${checkbox()}</w:p>`));
+    const before = editor.body;
+    const id = idOf(before);
+    let range: ReturnType<typeof rangeOfContentControl>;
+    const change = editor.tx((t) => {
+      range = t.setContentControlChecked(id, true);
+    });
+    expect(change).toBeDefined();
+    expect(values(editor.body)).toEqual({ agree: '☒' });
+    expect(checkedOf(editor.body)).toBe(true);
+    const span = contentControlSpans(editor.body)[0];
+    expect(span?.runs[0]).toMatchObject({
+      id: contentControlSpans(before)[0]?.runs[0]?.id,
+      props: { bold: true },
+      content: [{ kind: 'symbol', char: '☒', font: 'MS Gothic' }],
+    });
+    expect(range).toEqual(rangeOfContentControl(span as NonNullable<typeof span>));
+    const after = editor.body;
+    expect(
+      editor.tx((t) => {
+        t.setContentControlChecked(id, true);
+      }),
+    ).toBeUndefined();
+    expect(editor.body).toBe(after);
+    editor.undo();
+    expect(editor.body).toBe(before);
+    editor.redo();
+    expect(editor.body).toBe(after);
+    editor.tx((t) => {
+      t.setContentControlChecked(id, false);
+    });
+    expect(values(editor.body)).toEqual({ agree: '☐' });
+    expect(checkedOf(editor.body)).toBe(false);
+  });
+
+  it('自定义符号用模板指定的字体，占位符样式换成控件格式，填写后解除数据绑定', () => {
+    const editor = createTextEditor(
+      parse(
+        `<w:p>${checkbox(
+          '<w14:checkedState w14:val="F0FE" w14:font="Wingdings"/>',
+          '<w:r><w:rPr><w:rStyle w:val="PlaceholderText"/></w:rPr><w:t>☐</w:t></w:r>',
+          '<w:rPr><w:i/></w:rPr><w:showingPlcHdr/><w:dataBinding w:xpath="/agree"/>',
+        )}</w:p>`,
+      ),
+    );
+    const id = idOf(editor.body);
+    editor.tx((t) => {
+      t.setContentControlChecked(id, true);
+    });
+    const span = contentControlSpans(editor.body)[0];
+    expect(span?.runs[0]?.content).toEqual([{ kind: 'symbol', char: '\uF0FE', font: 'Wingdings' }]);
+    expect(span?.runs[0]?.props).toEqual({ italic: true });
+    expect(span?.control).toMatchObject({ showingPlaceholder: false, checkbox: { checked: true } });
+    expect(span?.control.dataBound).toBeUndefined();
+  });
+
+  it('两种状态使用同一个符号时，仅状态改变也记录历史，不复制字符；无修改保持原树', () => {
+    const editor = createTextEditor(
+      parse(
+        `<w:p>${checkbox(
+          '<w14:checkedState w14:val="2610" w14:font="宋体"/><w14:uncheckedState w14:val="2610" w14:font="宋体"/>',
+          '<w:r><w:sym w:font="宋体" w:char="2610"/></w:r>',
+        )}</w:p>`,
+      ),
+    );
+    const before = editor.body;
+    const id = idOf(before);
+    expect(
+      editor.tx((t) => {
+        t.setContentControlChecked(id, false);
+      }),
+    ).toBeUndefined();
+    expect(editor.body).toBe(before);
+    expect(
+      editor.tx((t) => {
+        t.setContentControlChecked(id, true);
+      }),
+    ).toBeDefined();
+    expect(editor.body.sections).toEqual(before.sections);
+    expect(checkedOf(editor.body)).toBe(true);
+    editor.undo();
+    expect(editor.body).toBe(before);
+  });
+
+  it.each(['contentLocked', 'sdtContentLocked'])('自身或外层 %s 锁拒绝，sdtLocked 仍可填写', (lock) => {
+    for (const xml of [
+      `<w:p>${checkbox('', undefined, `<w:lock w:val="${lock}"/>`)}</w:p>`,
+      `<w:sdt><w:sdtPr><w:lock w:val="${lock}"/></w:sdtPr><w:sdtContent><w:p>${checkbox()}</w:p></w:sdtContent></w:sdt>`,
+    ]) {
+      const editor = createTextEditor(parse(xml));
+      const before = editor.body;
+      expect(() =>
+        editor.tx((t) => {
+          t.setContentControlChecked(idOf(before), true);
+        }),
+      ).toThrow(/锁定/);
+      expect(editor.body).toBe(before);
+    }
+    const unlocked = createTextEditor(
+      parse(`<w:p>${checkbox('', undefined, '<w:lock w:val="sdtLocked"/>')}</w:p>`),
+    );
+    unlocked.tx((t) => {
+      t.setContentControlChecked(idOf(unlocked.body), true);
+    });
+    expect(checkedOf(unlocked.body)).toBe(true);
+  });
+
+  it('拒绝多字符、修订、域及错误参数，先前命令也原子回滚', () => {
+    for (const content of [
+      '<w:r><w:t>多字</w:t></w:r>',
+      '<w:ins w:id="1" w:author="张三"><w:r><w:t>☐</w:t></w:r></w:ins>',
+      '<w:fldSimple w:instr="PAGE"><w:r><w:t>1</w:t></w:r></w:fldSimple>',
+    ]) {
+      const editor = createTextEditor(parse(`<w:p><w:r><w:t>外</w:t></w:r>${checkbox('', content)}</w:p>`));
+      const before = editor.body;
+      expect(() =>
+        editor.tx((t) => {
+          t.insertText(
+            { nodeId: paragraphs(before)[0]?.runs[0]?.id as string, contentIndex: 0, offset: 1 },
+            '改',
+          );
+          t.setContentControlChecked(idOf(before), true);
+        }),
+      ).toThrow(/单个无修订/);
+      expect(editor.body).toBe(before);
+      expect(editor.canUndo).toBe(false);
+    }
+    const editor = createTextEditor(parse(`<w:p>${checkbox()}</w:p>`));
+    expect(() =>
+      editor.tx((t) => {
+        t.setContentControlChecked(idOf(editor.body), 'true' as unknown as boolean);
+      }),
+    ).toThrow(/布尔/);
+    expect(() =>
+      editor.tx((t) => {
+        t.setContentControlChecked('missing', true);
+      }),
+    ).toThrow(/没有内容控件/);
+    const text = createTextEditor(parse(`<w:p>${PLACEHOLDER}</w:p>`));
+    expect(() =>
+      text.tx((t) => {
+        t.setContentControlChecked(contentControlSpans(text.body)[0]?.control.id as string, true);
+      }),
+    ).toThrow(/不是复选框/);
+  });
+});
+
 describe('fillContentControl', () => {
+  it('内层文字控件受外层内容锁约束，失败时不产生撤销单元', () => {
+    const editor = createTextEditor(
+      parse(
+        `<w:sdt><w:sdtPr><w:lock w:val="contentLocked"/></w:sdtPr><w:sdtContent><w:p>${PLACEHOLDER}</w:p></w:sdtContent></w:sdt>`,
+      ),
+    );
+    const before = editor.body;
+    const id = contentControlSpans(before).find((s) => s.control.tag === 'applicant')?.control.id as string;
+    expect(() =>
+      editor.tx((t) => {
+        t.fillContentControl(id, '张三');
+      }),
+    ).toThrow(/锁定/);
+    expect(editor.body).toBe(before);
+    expect(editor.canUndo).toBe(false);
+  });
+
   it('占位符控件：内容换成值、换上控件自己的格式、清掉占位标记，一次撤销全回去', () => {
     const editor = createTextEditor(parse(`<w:p><w:r><w:t>申请人：</w:t></w:r>${PLACEHOLDER}</w:p>`));
     const before = editor.body;

@@ -41,6 +41,18 @@ export type ContentControlType =
 /** `w:lock`：`sdtLocked` 不许删控件、`contentLocked` 不许改内容、`sdtContentLocked` 两样都不许 */
 export type ContentControlLock = 'sdtLocked' | 'contentLocked' | 'sdtContentLocked';
 
+/** 复选框的两种显示符号。字符码来自 w14:val（十六进制），字体属于符号而不是段落 */
+export interface CheckboxSymbol {
+  char: string;
+  font: string;
+}
+
+export interface ContentControlCheckbox {
+  checked: boolean;
+  checkedState: CheckboxSymbol;
+  uncheckedState: CheckboxSymbol;
+}
+
 export interface ContentControl {
   id: NodeId;
   /** `w:tag`：给程序看的名字，模板填充按它认坑位 */
@@ -67,6 +79,8 @@ export interface ContentControl {
   items?: { text: string; value: string }[];
   /** `w:text w:multiLine`：纯文本控件允不允许换行 */
   multiLine?: boolean;
+  /** w14:checkbox 的状态与自定义符号；只改显示文字不会改变 Word 里的勾选状态 */
+  checkbox?: ContentControlCheckbox;
   /**
    * 有没有 `w:dataBinding`（绑到 customXml 部件的某个 XPath）。
    * 绑定的控件在 Word 打开时**会被 customXml 里的值盖掉** —— 只改 `sdtContent` 等于白填，
@@ -119,6 +133,13 @@ export function parseContentControl(
         const text = attr(li, 'w:displayText') ?? attr(li, 'w:value') ?? '';
         return { text, value: attr(li, 'w:value') ?? text };
       });
+    } else if (t === 'checkbox') {
+      const checked = child(e, 'w14:checked');
+      out.checkbox = {
+        checked: checked !== undefined && !['0', 'false', 'off'].includes(attr(checked, 'w14:val') ?? ''),
+        checkedState: checkboxSymbol(child(e, 'w14:checkedState'), '☒'),
+        uncheckedState: checkboxSymbol(child(e, 'w14:uncheckedState'), '☐'),
+      };
     }
     break;
   }
@@ -137,6 +158,34 @@ export function parseContentControl(
   if (rPr !== undefined) out.runProps = parseRunProps(rPr);
   if (child(pr, 'w:dataBinding') !== undefined) out.dataBound = true;
   return out;
+}
+
+/**
+ * 默认符号与字体由 MS-DOCX §2.5.35–36 定义（不是新排版常数）：☒ / ☐、MS Gothic。
+ * https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.office2010.word.sdtcontentcheckbox
+ * 不合法的码点回到默认，避免 String.fromCodePoint 抛错、让整份文档加载失败。
+ */
+function checkboxSymbol(element: XmlElement | undefined, fallback: string): CheckboxSymbol {
+  const hex = attrOf(element, 'w14:val');
+  const code = hex !== undefined && /^[0-9a-f]{1,4}$/i.test(hex) ? Number.parseInt(hex, 16) : NaN;
+  const valid = code >= 0x20 && code < 0xfffe && (code < 0xd800 || code > 0xdfff);
+  return {
+    char: valid ? String.fromCodePoint(code) : fallback,
+    font: attrOf(element, 'w14:font') ?? 'MS Gothic',
+  };
+}
+
+/** 外层内容锁同样罩着内层控件；sdtLocked 只锁外壳，仍允许填值 */
+export function isContentControlLocked(
+  controls: Readonly<Record<NodeId, ContentControl>>,
+  id: NodeId,
+): boolean {
+  for (let current: NodeId | undefined = id, guard = 0; current !== undefined && guard < 64; guard++) {
+    const control: ContentControl | undefined = controls[current];
+    if (control?.lock === 'contentLocked' || control?.lock === 'sdtContentLocked') return true;
+    current = control?.parent;
+  }
+  return false;
 }
 
 /** `inner` 是不是 `target` 本身或在它里面（沿 parent 往外找） */

@@ -153,6 +153,8 @@ class BodyWriter {
   /** 元素 → 它解析出来的节点 id（`BodySources.nodes` 的反查） */
   readonly #idOf = new Map<XmlElement, NodeId>();
   readonly #orig = new Map<NodeId, Block | Run>();
+  /** 控件属性住在 Body 上；文字相同时仍须穿过原段落 / 表格的复用捷径，才能把状态补回 sdtPr */
+  readonly #changedControlBlocks = new Set<NodeId>();
   /** 非末节最后一段 → 它该带的 `w:sectPr`。末节的在 `w:body` 末尾，原样留着 */
   readonly #sectFor = new Map<NodeId, XmlElement>();
   /** 图片 / 符号 / 域界桩的源元素池：拆 run 之后它们搬进了新 run，得凭内容找回原元素 */
@@ -175,6 +177,22 @@ class BodyWriter {
   constructor(input: BodyWriteInput) {
     this.#in = input;
     for (const [id, e] of input.sources.nodes) this.#idOf.set(e, id);
+    const changedControls = new Set(
+      Object.values(input.body.contentControls ?? {})
+        .filter((c) => !same(c, input.originalBody.contentControls?.[c.id]))
+        .map((c) => c.id),
+    );
+    if (changedControls.size) {
+      const mark = (node: XmlElement): boolean => {
+        const id = this.#idOf.get(node);
+        let changed = id !== undefined && changedControls.has(id);
+        for (const c of node.children) if (c.kind === 'element') changed = mark(c) || changed;
+        if (changed && id !== undefined && (node.name === 'w:p' || node.name === 'w:tbl'))
+          this.#changedControlBlocks.add(id);
+        return changed;
+      };
+      mark(input.original.root);
+    }
     for (const section of input.originalBody.sections) collect(section.blocks, this.#orig);
     const sections = input.body.sections;
     for (let s = 0; s < sections.length - 1; s++) {
@@ -278,7 +296,8 @@ class BodyWriter {
     const wantSect = this.#sectFor.get(p.id);
     const srcPPr = src === undefined ? undefined : child(src, 'w:pPr');
     const srcSect = srcPPr === undefined ? undefined : child(srcPPr, 'w:sectPr');
-    if (src !== undefined && same(orig, p) && srcSect === wantSect) return src;
+    if (src !== undefined && same(orig, p) && srcSect === wantSect && !this.#changedControlBlocks.has(p.id))
+      return src;
 
     // 新段落以模板的 pPr 为底：属性没变就整个沿用，模板里我们不认识的格式也跟过来
     const base = src ?? (template === undefined ? undefined : this.#in.sources.nodes.get(template.id));
@@ -493,24 +512,52 @@ class BodyWriter {
   }
 
   /**
-   * 内容控件的外壳：`w:sdtPr` 原样，除非内容变了（或模型里清掉了占位符标记）——
-   * 那时去掉 `STALE_WHEN_FILLED`。内容变没变按**元素身份**比：没改的节点吐回的就是原元素
+   * 内容控件的外壳：内容或状态变了才去掉 `STALE_WHEN_FILLED`，勾选状态单独补 w14:checked。
+   * 内容变没变按**元素身份**比：没改的节点吐回的就是原元素；仅状态变了也要解除绑定，避免重开被旧值覆盖
    */
   #sdt(node: XmlElement, content: XmlElement, children: XmlNode[]): XmlElement {
     const id = this.#idOf.get(node);
     const now = id === undefined ? undefined : this.#in.body.contentControls?.[id];
     const was = id === undefined ? undefined : this.#in.originalBody.contentControls?.[id];
+    const checkedChanged = now?.checkbox !== undefined && now.checkbox.checked !== was?.checkbox?.checked;
     const changed =
       children.length !== content.children.length ||
       children.some((c, i) => c !== content.children[i]) ||
-      (was?.showingPlaceholder === true && now?.showingPlaceholder === false);
+      (was?.showingPlaceholder === true && now?.showingPlaceholder === false) ||
+      checkedChanged;
     const inner = { ...content, children };
     return {
       ...node,
       children: node.children.map((c) => {
         if (c === content) return inner;
-        if (changed && c.kind === 'element' && c.name === 'w:sdtPr')
-          return { ...c, children: withoutChildren(c.children, STALE_WHEN_FILLED) };
+        if (changed && c.kind === 'element' && c.name === 'w:sdtPr') {
+          let pr = { ...c, children: withoutChildren(c.children, STALE_WHEN_FILLED) };
+          if (checkedChanged) {
+            const checkbox = child(pr, 'w14:checkbox');
+            if (checkbox !== undefined) {
+              const old = child(checkbox, 'w14:checked');
+              const checked = {
+                ...(old ?? el('w14:checked')),
+                attrs: patchAttrs(old?.attrs ?? {}, ['w14:val'], {
+                  'w14:val': now?.checkbox?.checked ? '1' : '0',
+                }),
+              };
+              const children =
+                old === undefined
+                  ? insertOrdered(checkbox.children, checked, [
+                      'w14:checked',
+                      'w14:checkedState',
+                      'w14:uncheckedState',
+                    ])
+                  : checkbox.children.map((n) => (n === old ? checked : n));
+              pr = {
+                ...pr,
+                children: pr.children.map((n) => (n === checkbox ? { ...checkbox, children } : n)),
+              };
+            }
+          }
+          return pr;
+        }
         return c;
       }),
     };
@@ -748,7 +795,7 @@ class BodyWriter {
     const src = this.#in.sources.nodes.get(t.id);
     if (src === undefined) throw new Error(`回写时找不到表格 ${t.id} 的原文（编辑不会新建表格）`);
     const orig = this.#orig.get(t.id) as Table | undefined;
-    if (same(orig, t)) return src;
+    if (same(orig, t) && !this.#changedControlBlocks.has(t.id)) return src;
     const templates = this.#rowTemplates(t.rows);
     const cur = cursor(t.rows);
     const out = this.#tableChildren(src.children, cur, templates).map((n) => {

@@ -12,7 +12,12 @@
  * 「名字 → 控件」与「攒着一起提交」。
  */
 import type { Body, ContentControlType, DocRange, NodeId, TextChangeSet, TextTransaction } from '@uw/model';
-import { contentControlSpans, rangeOfContentControl, textOfContentControl } from '@uw/model';
+import {
+  contentControlSpans,
+  isContentControlLocked,
+  rangeOfContentControl,
+  textOfContentControl,
+} from '@uw/model';
 
 export interface BindingInfo {
   /** 坑位名：`w:tag`，没有 tag 时是 `w:alias`。同名的几个控件一起填 */
@@ -24,6 +29,8 @@ export interface BindingInfo {
   scope: 'inline' | 'block';
   /** 现在显示的文字（段落之间、软换行都是 `\n`）。占位状态下是占位文字 */
   value: string;
+  /** 复选框的勾选状态；value 仍是显示符号，避免把文字接口改成混合类型 */
+  checked?: boolean;
   /** 里面还是占位文字（`w:showingPlcHdr`），还没人填过 */
   placeholder: boolean;
   /** 锁了内容（`w:lock` 为 contentLocked / sdtContentLocked），填不进去 */
@@ -39,7 +46,10 @@ interface BindingsHost {
   tx: (callback: (tx: TextTransaction) => undefined) => TextChangeSet | undefined;
 }
 
-/** 能填文字的类型；复选框、图片、文档部件（目录外壳）只列出来，不能 `set` */
+/** 文字控件填字符串，复选框填布尔值；不能把字符串 "false" 当作未勾选 */
+export type BindingValue = string | boolean;
+
+/** 能填文字的类型；复选框走独立的状态命令，图片与文档部件（目录外壳）只列出 */
 const FILLABLE: ReadonlySet<ContentControlType> = new Set([
   'richText',
   'text',
@@ -50,7 +60,7 @@ const FILLABLE: ReadonlySet<ContentControlType> = new Set([
 
 export class Bindings {
   readonly #host: BindingsHost;
-  readonly #pending = new Map<string, string>();
+  readonly #pending = new Map<string, BindingValue>();
 
   constructor(host: BindingsHost) {
     this.#host = host;
@@ -66,12 +76,13 @@ export class Bindings {
         scope: c.scope,
         value: textOfContentControl(span),
         placeholder: c.showingPlaceholder,
-        locked: c.lock === 'contentLocked' || c.lock === 'sdtContentLocked',
+        locked: isContentControlLocked(this.#host.body().contentControls ?? {}, c.id),
         range: rangeOfContentControl(span),
       };
       if (c.tag !== undefined) info.tag = c.tag;
       if (c.alias !== undefined) info.alias = c.alias;
       if (c.items !== undefined) info.options = c.items.map((i) => i.text);
+      if (c.checkbox !== undefined) info.checked = c.checkbox.checked;
       return info;
     });
   }
@@ -80,12 +91,20 @@ export class Bindings {
    * 记下一个坑位的值，`apply()` 时才写进文档。**名字不存在就抛** —— 拼错字段名
    * 静默不填，是模板填充里最难发现的一类错。换行写成软换行、`\t` 写成制表位
    */
-  set(key: string, value: string): this {
-    if (typeof value !== 'string') throw new TypeError(`坑位「${key}」的值必须是字符串`);
+  set(key: string, value: BindingValue): this {
+    if (typeof value !== 'string' && typeof value !== 'boolean')
+      throw new TypeError(`坑位「${key}」的值必须是字符串或布尔值`);
     const targets = this.#spans().filter((s) => s.key === key);
     if (!targets.length) throw new RangeError(`文档里没有坑位：${key}`);
-    const unfillable = targets.find((s) => !FILLABLE.has(s.span.control.type));
-    if (unfillable) throw new Error(`坑位「${key}」是 ${unfillable.span.control.type} 控件，不能填文字`);
+    for (const { span } of targets) {
+      const type = span.control.type;
+      if (type === 'checkbox') {
+        if (typeof value !== 'boolean') throw new TypeError(`坑位「${key}」是 checkbox 控件，需要布尔值`);
+      } else {
+        if (!FILLABLE.has(type)) throw new Error(`坑位「${key}」是 ${type} 控件，不能填写`);
+        if (typeof value !== 'string') throw new TypeError(`坑位「${key}」是 ${type} 控件，需要字符串`);
+      }
+    }
     this.#pending.set(key, value);
     return this;
   }
@@ -94,7 +113,7 @@ export class Bindings {
    * 一次记多个。与 `set` 不同，**文档里没有的名字跳过**：数据对象常常带着模板用不上的字段
    * （同一份数据套好几份模板），为此逐个挑字段太啰嗦。返回值里的 `skipped` 就是跳过的那些
    */
-  setMany(values: Readonly<Record<string, string>>): { skipped: string[] } {
+  setMany(values: Readonly<Record<string, BindingValue>>): { skipped: string[] } {
     const keys = new Set(this.#spans().map((s) => s.key));
     const skipped: string[] = [];
     for (const [key, value] of Object.entries(values)) {
@@ -105,7 +124,7 @@ export class Bindings {
   }
 
   /** 还没提交的值 */
-  get pending(): ReadonlyMap<string, string> {
+  get pending(): ReadonlyMap<string, BindingValue> {
     return this.#pending;
   }
 
@@ -122,12 +141,15 @@ export class Bindings {
     if (!this.#pending.size) return undefined;
     // 倒着填：嵌套的两个坑位都给了值时，先填内层、再让外层把它整个盖掉（与 Word 里覆盖外层内容一致）；
     // 正着填的话外层先把内层删掉，内层就找不到自己了
-    const jobs: [NodeId, string][] = this.#spans()
+    const jobs: [NodeId, BindingValue][] = this.#spans()
       .filter((s) => this.#pending.has(s.key))
-      .map((s) => [s.span.control.id, this.#pending.get(s.key) as string] as [NodeId, string])
+      .map((s) => [s.span.control.id, this.#pending.get(s.key) as BindingValue] as [NodeId, BindingValue])
       .reverse();
     const change = this.#host.tx((t) => {
-      for (const [id, value] of jobs) t.fillContentControl(id, value);
+      for (const [id, value] of jobs) {
+        if (typeof value === 'boolean') t.setContentControlChecked(id, value);
+        else t.fillContentControl(id, value);
+      }
       return undefined;
     });
     this.#pending.clear();

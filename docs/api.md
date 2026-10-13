@@ -417,6 +417,7 @@ view.scrollTo(target: DocPosition | DocRange | { page: number }, options?: {
 ```ts
 doc.bindings.list(): BindingInfo[];              // 文档里有哪些坑位（按文档序，含现值 / 是否占位 / 下拉选项 / range）
 doc.bindings.set('applicant', '张三');            // 名字不存在就抛；返回 this，可链式
+doc.bindings.set('agree', true);                 // 复选框填布尔值；list() 的 checked 返回当前状态
 doc.bindings.setMany({ applicant: '张三', date: '2026-08-13' });   // → { skipped: string[] }
 doc.bindings.apply();                            // 一次性提交 → 一个事务、一次重排、一个撤销单元
 doc.bindings.pending / discard();                // 还没提交的值 / 丢掉它们
@@ -428,7 +429,7 @@ doc.bindings.pending / discard();                // 还没提交的值 / 丢掉�
 > - `set` 对不存在的名字**抛错**（拼错字段名静默不填是最难发现的错），`setMany` 却**跳过**并在返回值里列出来 ——
 >   数据对象常常带着模板用不上的字段，逐个挑太啰嗦。原设想两者形状一致，实际用法不一样。
 > - `apply()` 是一个 `doc.tx()`：任何一个坑位填不进去（锁了内容、下拉框没有这个选项）**整批回滚**，攒着的值留着。
->   复选框、图片、文档部件（目录外壳）控件在 `set` 时就拒绝。值里的 `\n` 写成软换行、`\t` 写成制表位；
+>   图片、文档部件（目录外壳）控件在 `set` 时就拒绝。文字值里的 `\n` 写成软换行、`\t` 写成制表位；
 >   单行纯文本控件（`w:text` 没开 `w:multiLine`）把换行换成空格；下拉框认显示文字或 `w:value`（值换成显示文字）。
 > - 占位状态（`w:showingPlcHdr`）的控件填值时，占位文字的 `PlaceholderText` 灰字格式换成控件自己的
 >   `sdtPr/w:rPr`，标记随事务清掉（跟着撤销走）。回写时**内容一变**就去掉 `w:showingPlcHdr` 与数据绑定
@@ -438,6 +439,17 @@ doc.bindings.pending / discard();                // 还没提交的值 / 丢掉�
 > - 只认**正文**里包着 run（行内）或包着段落 / 表格（块级）的控件；页眉页脚里的、以及包着整行 / 整格的
 >   （重复区块的外壳）照旧是透明容器。日期控件只换文字，不改 `w:date w:fullDate`。
 > - 低层入口：`@uw/model` 的 `contentControlSpans(body)` 与事务命令 `tx.fillContentControl(id, text)`（§10.1）。
+
+**复选框**（2026-10-13）：`set` / `setMany` 的值类型是 `BindingValue = string | boolean`，复选框必须填布尔值，
+文字坑位必须填字符串（`'false'` 不会被转换成未勾选）。同名复选框一起设置，各自使用模板中的符号与字体；
+同名坑位混合了文字与复选框时，类型检查失败，不留下该名字的待提交值。
+`BindingInfo.value` 保持字符串，复选框额外带 `checked: boolean`；`pending` 为 `ReadonlyMap<string, BindingValue>`。
+自身或外层的内容锁都阻止填写，`locked` 同样看父链；`sdtLocked` 只锁外壳，仍可填值。
+状态与显示符号一起提交、撤销、回写（`w14:checked` + `w:sym`），填值后清占位标记与数据绑定；
+符号相同但状态不同也记一次修改，状态与符号都没变时不重排、不增加撤销单元。
+符号 / 字体按[微软的复选框格式定义](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.office2010.word.sdtcontentcheckbox)读取，
+默认显示 ☒ / ☐。只接受单个无修订的文字或符号作为内容；带域 / 修订的控件，以及多字符 / 多段落的异常控件拒绝，整批回滚。
+目前通过模板 API 设置，鼠标点击控件切换状态尚未接入。
 
 底层走 OOXML 原生的**内容控件 `w:sdt`**，所以：填完导回 docx，在 Word 里打开
 坑位仍然是坑位，可以继续用 Word 编辑——而不是变成一段死文本。
@@ -569,7 +581,10 @@ editor.breakHistory(); // 光标移动、焦点切换等输入边界中断合并
 - `t.fillContentControl(id, text)`（2026-09-28）把内容控件（`Body.contentControls` 的 id）的内容换成 `text`，返回新内容的范围。
   块级控件跨段的内容并成一段；删空的成员 run 去掉（内层控件随之消失，位置收拢到起点）；占位状态换上控件自己的
   字符格式并清掉占位标记（值与占位文字相同也算一次修改）。锁了内容、复选框 / 图片 / 文档部件控件、下拉框没有的选项都拒绝。
-  门面的 `doc.bindings`（§9）就是它按名字批量调用。
+  锁判断包括外层控件；门面的 `doc.bindings`（§9）按名字批量调用。
+- `t.setContentControlChecked(id, checked)`（2026-10-13）设置复选框布尔状态，返回原内容的范围。
+  换上该状态的自定义符号 / 字体（缺席时用规范默认值），保留 run 格式、id 与片段下标，状态与符号是同一个撤销单元。
+  自身 / 外层内容锁、修订、域或不符合单字符结构的控件拒绝；相同状态与符号不产生变更。
 - 默认最多 100 个撤销单元。只有显式 `origin: 'input'` 的单次纯插入、位置紧接上次末端、
   间隔不超过 1000ms 才合并；默认命令、超时、`breakHistory()`、undo/redo 都打断合并。
   `historyLimit: 0` 关闭历史，`mergeDelay: 0` 关闭合并。每次提交的变更集仍只含本次修改。

@@ -18,7 +18,12 @@ import {
   threadRoot,
 } from './comment-edit.ts';
 import type { CommentContent } from './comments.ts';
-import { contentControlSpans, rangeOfContentControl, withinContentControl } from './content-control.ts';
+import {
+  contentControlSpans,
+  isContentControlLocked,
+  rangeOfContentControl,
+  withinContentControl,
+} from './content-control.ts';
 import { scanFields } from './fields.ts';
 import type { Block, Body, NodeId, Paragraph, Run, RunContent, TableCell, TableRow } from './nodes.ts';
 import { walkBlocks, walkParagraphs } from './nodes.ts';
@@ -165,6 +170,11 @@ export interface TextTransaction {
    * 复选框 / 图片 / 文档部件（目录）/ 锁了内容的控件拒绝。
    */
   fillContentControl(id: NodeId, text: string): DocRange;
+  /**
+   * 设置复选框状态并换上该状态的符号 / 字体，内容必须是单个文字或符号（MS-DOCX §2.3.26）。
+   * 锁了内容、含修订或域的控件拒绝；状态与符号未变时不产生撤销单元。
+   */
+  setContentControlChecked(id: NodeId, checked: boolean): DocRange;
   /**
    * 把一个域（`field` = begin 界桩所在的 run）的结果区整个换成这几段，返回新结果的范围 ——
    * 「更新目录」靠它（草稿出自 toc.ts 的 `planTableOfContents`）。界桩与指令原样留着（id 不变，
@@ -1414,6 +1424,72 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             return { ...position };
           });
         },
+        setContentControlChecked(id, checked) {
+          return command(() => {
+            if (typeof checked !== 'boolean') throw new TypeError('复选框状态必须是布尔值');
+            flush();
+            const control = draft.contentControls?.[id];
+            if (control === undefined) throw new RangeError(`文档中没有内容控件：${id}`);
+            if (control.type !== 'checkbox' || control.checkbox === undefined)
+              throw new Error('内容控件不是复选框');
+            if (isContentControlLocked(draft.contentControls ?? {}, id))
+              throw new Error('内容控件锁定了内容');
+            const span = contentControlSpans(draft).find((s) => s.control.id === id);
+            const range = span === undefined ? undefined : rangeOfContentControl(span);
+            if (span === undefined || range === undefined) throw new Error('复选框里没有可写的位置');
+            const parts = span.runs.flatMap((run) =>
+              run.content.flatMap((content, index) =>
+                content.kind === 'text' && content.text === '' ? [] : [{ run, content, index }],
+              ),
+            );
+            const part = parts[0];
+            if (
+              span.paragraphs.length !== 1 ||
+              parts.length !== 1 ||
+              part === undefined ||
+              (part.content.kind !== 'text' && part.content.kind !== 'symbol') ||
+              contentLength(part.content) !== 1 ||
+              span.runs.some(
+                (r) =>
+                  r.revision !== undefined ||
+                  entries.get(r.id)?.protected ||
+                  (r.contentControl ?? span.paragraphs[0]?.contentControl) !== id,
+              )
+            )
+              throw new Error('复选框内容必须是单个无修订的文字或符号');
+            const state = control.checkbox;
+            const glyph = checked ? state.checkedState : state.uncheckedState;
+            const c = part.content;
+            const sameGlyph = c.kind === 'symbol' && c.char === glyph.char && c.font === glyph.font;
+            const sameValue = c.kind === 'text' ? c.text === glyph.char : sameGlyph;
+            if (state.checked === checked && sameValue && !control.showingPlaceholder) return range;
+            if (!sameGlyph || control.showingPlaceholder) {
+              const content = [...part.run.content];
+              // 单字换单字，保留片段下标、run id 与格式，已保存的位置不需要搬动；符号字体走既有 w:sym 通路。
+              content[part.index] = { kind: 'symbol', ...glyph };
+              replacements.set(part.run.id, {
+                ...part.run,
+                content,
+                props: control.showingPlaceholder ? { ...control.runProps } : part.run.props,
+              });
+              flush();
+            }
+            const { dataBound: _dataBound, ...unbound } = control;
+            draft = {
+              ...draft,
+              contentControls: {
+                ...draft.contentControls,
+                [id]: { ...unbound, showingPlaceholder: false, checkbox: { ...state, checked } },
+              },
+            };
+            // 两种状态的符号可能相同，只有属性改变也必须记变更，才能重排、回写与撤销。
+            structural(
+              span.paragraphs.map((p) => p.id),
+              [],
+            );
+            return range;
+          });
+        },
         fillContentControl(id, text) {
           return command(() => {
             if (typeof text !== 'string') throw new TypeError('fillContentControl 需要字符串');
@@ -1421,7 +1497,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             const control = draft.contentControls?.[id];
             if (control === undefined) throw new RangeError(`文档中没有内容控件：${id}`);
             if (!FILLABLE.has(control.type)) throw new Error(`不支持填写这种内容控件：${control.type}`);
-            if (control.lock === 'contentLocked' || control.lock === 'sdtContentLocked')
+            if (isContentControlLocked(draft.contentControls ?? {}, id))
               throw new Error('内容控件锁定了内容');
             if (control.type === 'dropDownList' && control.items?.length) {
               const item =
