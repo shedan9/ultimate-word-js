@@ -378,6 +378,80 @@ describe('doc.bindings', () => {
     expect(d.bindings.pending.get('emptyList')).toBe('自由输入');
   });
 
+  it('查找替换同步列表保存值，事件只触发一次，撤销 / 导出使用同一状态', async () => {
+    const d = await UltimateWord.load(
+      template(
+        `<w:p>${control('combo', '一般', '<w:comboBox w:lastValue="2"><w:listItem w:displayText="紧急" w:value="1"/><w:listItem w:displayText="一般" w:value="2"/></w:comboBox>')}</w:p>`,
+      ),
+    );
+    let events = 0;
+    const stop = d.on('document:change', () => {
+      events++;
+      expect(
+        d.bindings
+          .list()
+          .filter((b) => b.items)
+          .map((b) => b.lastValue),
+      ).toEqual(['1', '1']);
+    });
+    expect(d.replaceAll('一般', '紧急')).toEqual({ replaced: 2, skipped: 0 });
+    expect(events).toBe(1);
+    const again = await UltimateWord.load(await d.toDocx());
+    expect(
+      again.bindings
+        .list()
+        .filter((b) => b.items)
+        .map((b) => [b.value, b.lastValue]),
+    ).toEqual([
+      ['紧急', '1'],
+      ['紧急', '1'],
+    ]);
+    stop.dispose();
+    d.undo();
+    expect(
+      d.bindings
+        .list()
+        .filter((b) => b.items)
+        .map((b) => b.lastValue),
+    ).toEqual([undefined, '2']);
+    d.redo();
+    expect(
+      d.bindings
+        .list()
+        .filter((b) => b.items)
+        .map((b) => b.lastValue),
+    ).toEqual(['1', '1']);
+  });
+
+  it('普通文字事务同步组合框自填值并清旧日期，整批修改同撤销与导出', async () => {
+    const d = await UltimateWord.load(
+      template(
+        `<w:p>${control('combo', '原值', '<w:comboBox w:lastValue="old"/>')}</w:p><w:p>${control('issued', '2026年10月13日', '<w:date w:fullDate="2026-10-13T00:00:00Z"><w:dateFormat w:val="yyyy年M月d日"/></w:date>')}</w:p>`,
+      ),
+    );
+    d.tx((t) => {
+      const combo = d.find('原值')[0];
+      const date = d.find('2026年10月13日')[0];
+      if (combo === undefined || date === undefined) throw new Error('样本缺少控件文字');
+      t.insertText(combo.end, '待确认');
+      t.insertText(date.end, '待确认');
+    });
+    expect(d.bindings.list().find((b) => b.key === 'combo')).toMatchObject({
+      value: '原值待确认',
+      lastValue: '原值待确认',
+    });
+    expect(d.bindings.list().find((b) => b.key === 'issued')?.fullDate).toBeUndefined();
+    const again = await UltimateWord.load(await d.toDocx());
+    expect(again.bindings.list().find((b) => b.key === 'combo')?.lastValue).toBe('原值待确认');
+    expect(again.bindings.list().find((b) => b.key === 'issued')?.fullDate).toBeUndefined();
+    d.undo();
+    expect(d.bindings.list().find((b) => b.key === 'combo')?.lastValue).toBe('old');
+    expect(d.bindings.list().find((b) => b.key === 'issued')?.fullDate).toBe('2026-10-13T00:00:00Z');
+    d.redo();
+    expect(d.bindings.list().find((b) => b.key === 'combo')?.lastValue).toBe('原值待确认');
+    expect(d.bindings.list().find((b) => b.key === 'issued')?.fullDate).toBeUndefined();
+  });
+
   it('日期对象按各自模板格式填同名控件，冻结 pending 值，混合填写同撤销且可导出再加载', async () => {
     const extra = `<w:p>${control('issued', '某日', '<w:date><w:dateFormat w:val="yyyy年M月d日"/><w:lid w:val="zh-CN"/></w:date>')}${control('issued', 'another', '<w:date><w:dateFormat w:val="dddd, MMMM d, yyyy"/><w:lid w:val="en-US"/></w:date>')}</w:p>`;
     const d = await UltimateWord.load(template(extra));

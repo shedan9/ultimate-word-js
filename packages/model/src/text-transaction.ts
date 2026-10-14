@@ -26,6 +26,7 @@ import {
   textOfContentControl,
   withinContentControl,
 } from './content-control.ts';
+import { reconcileContentControlText } from './content-control-edit.ts';
 import { scanFields } from './fields.ts';
 import type { Block, Body, NodeId, Paragraph, Run, RunContent, TableCell, TableRow } from './nodes.ts';
 import { walkBlocks, walkParagraphs } from './nodes.ts';
@@ -517,6 +518,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
       let entries = indexRuns(draft);
       const replacements = new Map<NodeId, Run>();
       const changes: TextChange[] = [];
+      const filledControlText = new Map<NodeId, string>();
 
       function flush(): void {
         draft = replaceRuns(draft, replacements);
@@ -1519,6 +1521,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             )
               throw new Error('日期控件必须是单段、单 run、无修订的文字');
             const sameText = textOfContentControl(span) === value.text;
+            filledControlText.set(id, value.text.replace(/\r\n|\r/g, '\n'));
             if (sameText && control.date?.fullDate === value.fullDate && !control.showingPlaceholder)
               return range;
             const filled =
@@ -1569,6 +1572,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             const span = contentControlSpans(draft).find((s) => s.control.id === id);
             const range = span === undefined ? undefined : rangeOfContentControl(span);
             if (range === undefined) throw new Error('内容控件里没有可写的位置');
+            filledControlText.set(id, text.replace(/\r\n|\r/g, '\n'));
             if (
               choice &&
               span !== undefined &&
@@ -1935,7 +1939,9 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
         }
         if (failed) throw new Error('事务包含失败命令，已全部回滚');
         if (changes.length === 0) return undefined;
-        const after = freeze(replaceRuns(draft, replacements));
+        const after = freeze(
+          reconcileContentControlText(body, replaceRuns(draft, replacements), filledControlText),
+        );
         options.validate?.(after);
         const time = now();
         if (!Number.isFinite(time)) throw new RangeError('now 必须返回有限时间');

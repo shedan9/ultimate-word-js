@@ -29,6 +29,190 @@ const PLACEHOLDER =
   '<w:t>单击此处</w:t></w:r><w:r><w:rPr><w:rStyle w:val="PlaceholderText"/></w:rPr><w:t>输入文字。</w:t></w:r>' +
   '</w:sdtContent></w:sdt>';
 
+describe('自由文字编辑同步控件元数据', () => {
+  const list = (type: string) =>
+    `<w:${type} w:lastValue="2"><w:listItem w:displayText="紧急" w:value="1"/><w:listItem w:displayText="一般" w:value="2"/></w:${type}>`;
+  const date = '<w:date w:fullDate="2026-10-13T00:00:00Z"><w:dateFormat w:val="yyyy年M月d日"/></w:date>';
+  const xml = (pr: string, text = '一般') =>
+    `<w:p><w:sdt><w:sdtPr><w:tag w:val="edited"/><w:dataBinding w:xpath="/edited"/>${pr}</w:sdtPr><w:sdtContent><w:r><w:t>${text}</w:t></w:r></w:sdtContent></w:sdt></w:p>`;
+  const span = (body: Body) => {
+    const found = contentControlSpans(body).find((s) => s.control.tag === 'edited');
+    if (found === undefined) throw new Error('样本缺少 edited 控件');
+    return found;
+  };
+  const range = (body: Body) => {
+    const found = rangeOfContentControl(span(body));
+    if (found === undefined) throw new Error('样本控件没有范围');
+    return found;
+  };
+
+  it.each(['dropDownList', 'comboBox'])('%s 普通替换匹配显示选项，元数据与文字一起撤销 / 重做', (type) => {
+    const editor = createTextEditor(parse(xml(list(type))));
+    const before = editor.body;
+    editor.tx((t) => {
+      t.replaceText(range(before), '紧急');
+    });
+    const after = editor.body;
+    expect(span(after).control.lastValue).toBe('1');
+    expect(span(after).control.dataBound).toBeUndefined();
+    expect(textOfContentControl(span(after))).toBe('紧急');
+    editor.undo();
+    expect(editor.body).toBe(before);
+    editor.redo();
+    expect(editor.body).toBe(after);
+  });
+
+  it.each(['dropDownList', 'comboBox'])('%s 自由输入只按显示文字匹配，不按保存值改显示', (type) => {
+    const editor = createTextEditor(parse(xml(list(type))));
+    editor.tx((t) => {
+      t.replaceText(range(editor.body), '1');
+    });
+    expect(textOfContentControl(span(editor.body))).toBe('1');
+    expect(span(editor.body).control.lastValue).toBe(type === 'comboBox' ? '1' : undefined);
+  });
+
+  it.each(['dropDownList', 'comboBox'])('%s 删空后仍留控件，组合框保存空字符串，下拉框清旧选择', (type) => {
+    const editor = createTextEditor(parse(xml(list(type))));
+    editor.tx((t) => {
+      t.deleteRange(range(editor.body));
+    });
+    expect(textOfContentControl(span(editor.body))).toBe('');
+    expect(span(editor.body).control.lastValue).toBe(type === 'comboBox' ? '' : undefined);
+  });
+
+  it('日期自由编辑清 fullDate、占位状态与绑定，模板格式原样保留', () => {
+    const editor = createTextEditor(parse(xml(`${date}<w:showingPlcHdr/>`, '2026年10月13日')));
+    const before = editor.body;
+    editor.tx((t) => {
+      t.insertText(range(before).end, '待确认');
+    });
+    expect(span(editor.body).control).toMatchObject({
+      showingPlaceholder: false,
+      date: { format: 'yyyy年M月d日' },
+    });
+    expect(span(editor.body).control.date?.fullDate).toBeUndefined();
+    expect(span(editor.body).control.dataBound).toBeUndefined();
+    editor.undo();
+    expect(editor.body).toBe(before);
+  });
+
+  it.each([list('comboBox'), date])('改格式拆 run 与无效文字操作都不改控件状态：%s', (pr) => {
+    const editor = createTextEditor(parse(xml(`${pr}<w:showingPlcHdr/>`)));
+    const before = span(editor.body).control;
+    editor.tx((t) => {
+      const at = range(editor.body).start;
+      t.setRunProps({ start: at, end: { ...at, offset: 1 } }, { bold: true });
+    });
+    expect(span(editor.body).control).toBe(before);
+    const body = editor.body;
+    expect(
+      editor.tx((t) => {
+        t.insertText(range(body).start, '');
+      }),
+    ).toBeUndefined();
+    expect(editor.body).toBe(body);
+  });
+
+  it('同一事务显式填写重复显示选项时尊重选中的保存值，继续改字后再同步', () => {
+    const pr = list('comboBox').replace('w:displayText="一般"', 'w:displayText="紧急"');
+    const editor = createTextEditor(parse(xml(pr, '选择')));
+    const id = span(editor.body).control.id;
+    editor.tx((t) => {
+      t.fillContentControl(id, '2');
+    });
+    expect(span(editor.body).control.lastValue).toBe('2');
+    editor.tx((t) => {
+      const filled = t.fillContentControl(id, '2');
+      t.insertText(filled.end, '待确认');
+    });
+    expect(span(editor.body).control.lastValue).toBe('紧急待确认');
+  });
+
+  it('日期显式填写后保留 fullDate，同一事务再改字则清日期', () => {
+    const editor = createTextEditor(parse(xml(date, '2026年10月13日')));
+    const id = span(editor.body).control.id;
+    editor.tx((t) => {
+      t.setContentControlDate(id, '2026-10-14');
+    });
+    expect(span(editor.body).control.date?.fullDate).toBe('2026-10-14T00:00:00Z');
+    editor.tx((t) => {
+      const filled = t.setContentControlDate(id, '2026-10-15');
+      t.insertText(filled.end, '待确认');
+    });
+    expect(span(editor.body).control.date?.fullDate).toBeUndefined();
+  });
+
+  it('显式填写选项中的 CRLF 折成软换行，仍保存选项值；普通编辑后再填写以填写为准', () => {
+    const editor = createTextEditor(
+      parse(xml('<w:comboBox><w:listItem w:displayText="甲&#13;&#10;乙" w:value="code"/></w:comboBox>')),
+    );
+    const id = span(editor.body).control.id;
+    editor.tx((t) => {
+      t.insertText(range(editor.body).end, '待确认');
+      t.fillContentControl(id, 'code');
+    });
+    expect(textOfContentControl(span(editor.body))).toBe('甲\n乙');
+    expect(span(editor.body).control.lastValue).toBe('code');
+  });
+
+  it('内层文字编辑同时同步外层块级组合框，跨段 / 软换行按最终显示保存', () => {
+    const body = parse(
+      `<w:sdt><w:sdtPr><w:tag w:val="edited"/>${list('comboBox')}</w:sdtPr><w:sdtContent><w:p><w:sdt><w:sdtPr><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>一般</w:t></w:r></w:sdtContent></w:sdt></w:p></w:sdtContent></w:sdt>`,
+    );
+    const editor = createTextEditor(body);
+    editor.tx((t) => {
+      const end = t.insertText(range(body).end, '待确认');
+      const next = t.splitParagraph(end);
+      t.insertText(t.insertInline(next, 'lineBreak'), '续');
+    });
+    expect(span(editor.body).control.lastValue).toBe('一般待确认\n\n续');
+  });
+
+  it('连续输入仍合并为一个撤销单元；失败命令不泄漏同步状态', () => {
+    const editor = createTextEditor(parse(xml(list('comboBox'))), { now: () => 1 });
+    const before = editor.body;
+    let at = range(before).end;
+    for (const text of ['甲', '乙'])
+      editor.tx(
+        (t) => {
+          at = t.insertText(at, text);
+        },
+        { origin: 'input' },
+      );
+    expect(span(editor.body).control.lastValue).toBe('一般甲乙');
+    const after = editor.body;
+    expect(() =>
+      editor.tx((t) => {
+        t.insertText(at, '丙');
+        t.insertText({ nodeId: 'missing', contentIndex: 0, offset: 0 }, '坏');
+      }),
+    ).toThrow();
+    expect(editor.body).toBe(after);
+    editor.undo();
+    expect(editor.body).toBe(before);
+    expect(editor.canUndo).toBe(false);
+    editor.redo();
+    expect(editor.body).toBe(after);
+  });
+
+  it('提交校验读到同步后的元数据，校验失败不改正文与历史', () => {
+    const editor = createTextEditor(parse(xml(list('comboBox'))), {
+      validate(body) {
+        expect(span(body).control.lastValue).toBe('一般甲');
+        throw new Error('拒绝提交');
+      },
+    });
+    const before = editor.body;
+    expect(() =>
+      editor.tx((t) => {
+        t.insertText(range(before).end, '甲');
+      }),
+    ).toThrow('拒绝提交');
+    expect(editor.body).toBe(before);
+    expect(editor.canUndo).toBe(false);
+  });
+});
+
 describe('内容控件的解析', () => {
   it.each([
     ['', false],

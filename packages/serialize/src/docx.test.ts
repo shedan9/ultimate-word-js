@@ -379,6 +379,69 @@ describe('模型不认识的 XML 留在文件里', () => {
 });
 
 describe('内容控件', () => {
+  it.each(['dropDownList', 'comboBox'])('%s 自由编辑回写保存值，未知选项清选择，撤销逐字节恢复', (type) => {
+    const bytes = docx(
+      `<w:p><w:sdt><w:sdtPr><w:tag w:val="choice"/><w:dataBinding w:xpath="/choice"/><w:${type} w:lastValue="2" x:keep="yes"><w:listItem w:displayText="紧急" w:value="1" x:item="keep"/><w:listItem w:displayText="一般" w:value="2"/><x:unknown/></w:${type}></w:sdtPr><w:sdtContent><w:r><w:t>一般</w:t></w:r></w:sdtContent></w:sdt></w:p>`,
+    );
+    const { pkg, loaded } = load(bytes);
+    const editor = createTextEditor(loaded.body);
+    editor.tx((t) => {
+      const start = textPosition(editor.body, 0, 0) as DocPosition;
+      t.replaceText({ start, end: { ...start, offset: 2 } }, '紧急');
+    });
+    const matched = serializeDocx(pkg, editor.body);
+    expect(decoder.decode(unzip(matched).get('word/document.xml'))).toContain('w:lastValue="1"');
+    expect(load(matched).loaded.body.contentControls?.[idOf(loaded.body, 'choice')]?.lastValue).toBe('1');
+    editor.tx((t) => {
+      const at = textPosition(editor.body, 0, 0) as DocPosition;
+      t.insertText({ ...at, offset: 2 }, '待确认');
+    });
+    const out = serializeDocx(pkg, editor.body);
+    const xml = decoder.decode(unzip(out).get('word/document.xml'));
+    expect(xml).toContain('x:keep="yes"');
+    expect(xml).toContain('x:item="keep"');
+    expect(xml).toContain('<x:unknown/>');
+    expect(xml).not.toContain('dataBinding');
+    if (type === 'comboBox') expect(xml).toContain('w:lastValue="紧急待确认"');
+    else expect(xml).not.toContain('w:lastValue');
+    const again = load(out).loaded.body;
+    expect(again.contentControls?.[idOf(again, 'choice')]?.lastValue).toBe(
+      type === 'comboBox' ? '紧急待确认' : undefined,
+    );
+    expect(paragraphText(paragraphs(again)[0] as Paragraph)).toBe('紧急待确认');
+    editor.undo();
+    editor.undo();
+    const restored = unzip(serializeDocx(pkg, editor.body));
+    for (const [part, content] of unzip(bytes)) expect(restored.get(part)).toEqual(content);
+  });
+
+  it('表格里的日期自由编辑清旧 fullDate，格式与未知 XML 留着，撤销恢复全部部件', () => {
+    const bytes = docx(
+      '<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p>' +
+        '<w:sdt><w:sdtPr><w:tag w:val="date"/><w:dataBinding w:xpath="/date"/><w:date w:fullDate="2026-10-13T00:00:00Z" x:keep="yes"><w:dateFormat w:val="yyyy年M月d日"/><x:unknown/></w:date></w:sdtPr><w:sdtContent><w:r><w:t>2026年10月13日</w:t></w:r></w:sdtContent></w:sdt>' +
+        '</w:p></w:tc></w:tr></w:tbl><w:p/>',
+    );
+    const { pkg, loaded } = load(bytes);
+    const editor = createTextEditor(loaded.body);
+    editor.tx((t) => {
+      const at = textPosition(editor.body, 0, 0) as DocPosition;
+      t.insertText({ ...at, offset: 11 }, '待确认');
+    });
+    const out = serializeDocx(pkg, editor.body);
+    const xml = decoder.decode(unzip(out).get('word/document.xml'));
+    expect(xml).not.toContain('w:fullDate');
+    expect(xml).not.toContain('dataBinding');
+    expect(xml).toContain('x:keep="yes"');
+    expect(xml).toContain('<w:dateFormat w:val="yyyy年M月d日"/>');
+    expect(xml).toContain('<x:unknown/>');
+    const again = load(out).loaded.body;
+    expect(again.contentControls?.[idOf(again, 'date')]?.date?.fullDate).toBeUndefined();
+    expect(paragraphText(paragraphs(again)[0] as Paragraph)).toBe('2026年10月13日待确认');
+    editor.undo();
+    const restored = unzip(serializeDocx(pkg, editor.body));
+    for (const [part, content] of unzip(bytes)) expect(restored.get(part)).toEqual(content);
+  });
+
   it.each(['dropDownList', 'comboBox'])(
     '%s 的保存值与文字回写，选项与未知 XML 保留，组合框允许自填',
     (type) => {
