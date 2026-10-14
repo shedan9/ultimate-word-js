@@ -441,6 +441,15 @@ doc.bindings.pending / discard();                // 还没提交的值 / 丢掉�
 >   （重复区块的外壳）照旧是透明容器。
 > - 低层入口：`@uw/model` 的 `contentControlSpans(body)` 与事务命令 `tx.fillContentControl(id, text)`（§10.1）。
 
+**下拉框 / 组合框**（2026-10-14）：`BindingInfo.items` 提供 `{ text, value }[]`，`options` 仍为显示文字列表；
+`lastValue` 返回 OOXML 的 `w:lastValue`（原文没有时不从文字猜测），`value` 仍为显示文字。
+字符串先按显示文字匹配，再按选项值匹配，保持原有语义；下拉框没有选项时也拒绝填写，组合框允许自填。
+填写选项将保存值设为选项的 `value`，自填组合框将保存值设为输入文字；显示、保存值、解除绑定与撤销 / 回写同进同退。
+相同显示文字改选项值只改元数据、保留成员 run 与位置；显示与保存值都相同且非占位时不产生修改。
+规范中 `lastValue` 用于 XML 数据绑定，解除绑定后 Word 忽略它，库仍保持其与本次填值一致，
+依据[微软列表保存值说明](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.wordprocessing.sdtcontentdropdownlist.lastvalue)。
+内建选择面板与任意文本编辑对保存值的同步尚未实现，Word 打开无修复提示待人工验收。
+
 **复选框**（2026-10-13）：`set` / `setMany` 的值类型是 `BindingValue = string | boolean | DateBindingValue`，复选框必须填布尔值，
 文字坑位必须填字符串（`'false'` 不会被转换成未勾选）。同名复选框一起设置，各自使用模板中的符号与字体；
 同名坑位混合了文字与复选框时，类型检查失败，不留下该名字的待提交值。
@@ -592,7 +601,7 @@ editor.breakHistory(); // 光标移动、焦点切换等输入边界中断合并
   没合并过的格不修改。Word「拆分单元格」拆成任意行列数的那种还没有，拆表也还没有。
 - `t.fillContentControl(id, text)`（2026-09-28）把内容控件（`Body.contentControls` 的 id）的内容换成 `text`，返回新内容的范围。
   块级控件跨段的内容并成一段；删空的成员 run 去掉（内层控件随之消失，位置收拢到起点）；占位状态换上控件自己的
-  字符格式并清掉占位标记（值与占位文字相同也算一次修改）。锁了内容、复选框 / 图片 / 文档部件控件、下拉框没有的选项都拒绝。
+  字符格式并清掉占位标记（值与占位文字相同也算一次修改）。锁了内容、复选框 / 图片 / 文档部件控件、下拉框没有的选项（包括空选项列表）都拒绝；列表填写同步 lastValue，见 §9。
   锁判断包括外层控件；门面的 `doc.bindings`（§9）按名字批量调用。
 - `t.setContentControlChecked(id, checked)`（2026-10-13）设置复选框布尔状态，返回原内容的范围。
   换上该状态的自定义符号 / 字体（缺席时用规范默认值），保留 run 格式、id 与片段下标，状态与符号是同一个撤销单元。

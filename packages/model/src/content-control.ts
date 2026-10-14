@@ -86,6 +86,8 @@ export interface ContentControl {
   runProps?: RunProps;
   /** 下拉 / 组合框的选项。`value` 缺席时等于显示文字 */
   items?: { text: string; value: string }[];
+  /** w:lastValue：与当前显示文字关联的保存值；规范只在 XML 数据绑定时使用，不据此重算显示。 */
+  lastValue?: string;
   /** `w:text w:multiLine`：纯文本控件允不允许换行 */
   multiLine?: boolean;
   /** w14:checkbox 的状态与自定义符号；只改显示文字不会改变 Word 里的勾选状态 */
@@ -139,6 +141,8 @@ export function parseContentControl(
       const multi = attr(e, 'w:multiLine');
       if (multi !== undefined && multi !== '0' && multi !== 'false') out.multiLine = true;
     } else if (t === 'dropDownList' || t === 'comboBox') {
+      const lastValue = attr(e, 'w:lastValue');
+      if (lastValue !== undefined) out.lastValue = lastValue;
       out.items = children(e, 'w:listItem').map((li) => {
         const text = attr(li, 'w:displayText') ?? attr(li, 'w:value') ?? '';
         return { text, value: attr(li, 'w:value') ?? text };

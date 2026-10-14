@@ -14,7 +14,7 @@ body { margin: 0; font: 14px/1.5 system-ui; }
 // find → decorate → rectsOf 通到屏幕），字摆在哪由 Vitest 里的真值断言负责
 import { UltimateWord } from 'ultimate-word';
 import fixtureUrl from '../../fidelity/fixtures/gongwen-01.docx?url';
-import { controlDocx, dateControlDocx, linkDocx } from './list-fixture.ts';
+import { choiceControlDocx, controlDocx, dateControlDocx, linkDocx } from './list-fixture.ts';
 
 const host = document.querySelector('#host');
 const second = document.querySelector('#second');
@@ -243,6 +243,28 @@ try {
   const dateAgain = await UltimateWord.load(await dateDoc.toDocx());
   assert(dateAgain.bindings.list()[0].fullDate === '2026-10-13T00:00:00Z' && dateAgain.find('2026年10月13日').length === 1, '浏览器导出再加载保留日期');
   dateView.dispose();
+  const choiceDoc = await UltimateWord.load(choiceControlDocx());
+  const choiceView = choiceDoc.mount('#host', { virtualize: false });
+  await frame();
+  assert(choiceDoc.bindings.list()[0].items[0].value === '1' && choiceDoc.bindings.list()[0].lastValue === '2', '列表给宿主完整选项与原保存值');
+  const choiceHits = [];
+  choiceView.on('click:element', (e) => choiceHits.push(e));
+  choiceDoc.bindings.set('level', '1').apply();
+  await frame();
+  const choiceRange = choiceDoc.find('紧急')[0];
+  assert(choiceRange !== undefined && choiceView.root.textContent.includes('紧急'), '列表按值填写后显示与文字层同步');
+  const cr = choiceView.rectsOf(choiceRange)[0];
+  const cx = cr.x + cr.width / 2;
+  const cy = cr.y + cr.height / 2;
+  document.elementFromPoint(cx, cy).dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: cx, clientY: cy }));
+  assert(choiceHits.at(-1).control.lastValue === '1', '列表点击事件给填写后的保存值');
+  choiceDoc.undo();
+  assert(choiceDoc.find('一般').length === 1 && choiceDoc.bindings.list()[0].lastValue === '2', '列表撤销同步显示与保存值');
+  choiceDoc.redo();
+  assert(choiceDoc.find('紧急').length === 1 && choiceDoc.bindings.list()[0].lastValue === '1', '列表重做同步显示与保存值');
+  const choiceAgain = await UltimateWord.load(await choiceDoc.toDocx());
+  assert(choiceAgain.bindings.list()[0].lastValue === '1' && choiceAgain.find('紧急').length === 1, '浏览器导出再加载保留列表显示与保存值');
+  choiceView.dispose();
   result.textContent = `PASS: ${passed} browser assertions`;
 } catch (error) {
   result.textContent = `FAIL after ${passed}: ${error.message}`;

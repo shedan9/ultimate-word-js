@@ -64,6 +64,15 @@ export function listDocx(): Uint8Array {
   );
 }
 
+/** 列表模板：按选项值填写后，点击、撤销与回写应同步保存值。 */
+export function choiceControlDocx(): Uint8Array {
+  return docxOf(
+    '<w:p><w:sdt><w:sdtPr><w:tag w:val="level"/><w:dropDownList w:lastValue="2">' +
+      '<w:listItem w:displayText="紧急" w:value="1"/><w:listItem w:displayText="一般" w:value="2"/>' +
+      '</w:dropDownList></w:sdtPr><w:sdtContent><w:r><w:t>一般</w:t></w:r></w:sdtContent></w:sdt></w:p>',
+  );
+}
+
 /** 日期模板：点击事件应读到填写后的元数据，显示文字与撤销 / 回写同进同退。 */
 export function dateControlDocx(): Uint8Array {
   return docxOf(

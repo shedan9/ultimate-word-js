@@ -120,6 +120,130 @@ describe('内容控件的解析', () => {
   });
 });
 
+describe('列表控件的保存值', () => {
+  const choice = (type: string, last = '', text = '选择', pr = '') =>
+    `<w:p><w:sdt><w:sdtPr><w:tag w:val="choice"/>${pr}<w:${type} ${last}><w:listItem w:displayText="紧急" w:value="1"/><w:listItem w:displayText="一般" w:value="2"/></w:${type}></w:sdtPr><w:sdtContent><w:r><w:t>${text}</w:t></w:r></w:sdtContent></w:sdt></w:p>`;
+  const control = (body: Body) => contentControlSpans(body)[0]?.control;
+
+  it.each(['dropDownList', 'comboBox'])('%s 解析保存值，按值或文字填选项，元数据与显示同撤销', (type) => {
+    const editor = createTextEditor(
+      parse(
+        choice(type, 'w:lastValue="old"', '选择', '<w:showingPlcHdr/><w:dataBinding w:xpath="/choice"/>'),
+      ),
+    );
+    const before = editor.body;
+    const id = control(before)?.id as string;
+    expect(control(before)?.lastValue).toBe('old');
+    editor.tx((t) => {
+      t.fillContentControl(id, '1');
+    });
+    const after = editor.body;
+    expect(values(after)).toEqual({ choice: '紧急' });
+    expect(control(after)).toMatchObject({ lastValue: '1', showingPlaceholder: false });
+    expect(control(after)?.dataBound).toBeUndefined();
+    expect(
+      editor.tx((t) => {
+        t.fillContentControl(id, '紧急');
+      }),
+    ).toBeUndefined();
+    editor.undo();
+    expect(editor.body).toBe(before);
+    editor.redo();
+    expect(editor.body).toBe(after);
+    editor.tx((t) => {
+      t.fillContentControl(id, '一般');
+    });
+    expect(control(editor.body)?.lastValue).toBe('2');
+  });
+
+  it.each(['dropDownList', 'comboBox'])('%s 相同显示文字换选项值只改元数据，保留成员与位置', (type) => {
+    const xml = choice(type, 'w:lastValue="1"', '紧急', '<w:dataBinding w:xpath="/choice"/>').replace(
+      'w:displayText="一般"',
+      'w:displayText="紧急"',
+    );
+    const editor = createTextEditor(parse(xml));
+    const before = editor.body;
+    const span = contentControlSpans(before)[0];
+    const range = rangeOfContentControl(span as NonNullable<typeof span>);
+    editor.tx((t) => {
+      expect(t.fillContentControl(span?.control.id as string, '2')).toEqual(range);
+    });
+    expect(editor.body.sections).toEqual(before.sections);
+    expect(control(editor.body)?.lastValue).toBe('2');
+    expect(control(editor.body)?.dataBound).toBeUndefined();
+    editor.undo();
+    expect(editor.body).toBe(before);
+  });
+
+  it('组合框自填文字保存原值，空文字同样有效，缺省保存值不反推', () => {
+    const editor = createTextEditor(parse(choice('comboBox')));
+    const id = control(editor.body)?.id as string;
+    expect(control(editor.body)?.lastValue).toBeUndefined();
+    editor.tx((t) => {
+      t.fillContentControl(id, '自行填写');
+    });
+    expect(values(editor.body)).toEqual({ choice: '自行填写' });
+    expect(control(editor.body)?.lastValue).toBe('自行填写');
+    editor.tx((t) => {
+      t.fillContentControl(id, '');
+    });
+    expect(values(editor.body)).toEqual({ choice: '' });
+    expect(control(editor.body)?.lastValue).toBe('');
+  });
+
+  it('空选项下拉框拒绝任意文字，前面的选项显示与保存值一起回滚', () => {
+    const editor = createTextEditor(
+      parse(
+        choice('comboBox') +
+          '<w:p><w:sdt><w:sdtPr><w:dropDownList/></w:sdtPr><w:sdtContent><w:r><w:t>选择</w:t></w:r></w:sdtContent></w:sdt></w:p>',
+      ),
+    );
+    const before = editor.body;
+    const ids = contentControlSpans(before).map((s) => s.control.id);
+    expect(() =>
+      editor.tx((t) => {
+        t.fillContentControl(ids[0] as string, '1');
+        t.fillContentControl(ids[1] as string, '任意文字');
+      }),
+    ).toThrow(/下拉框没有这个选项/);
+    expect(editor.body).toBe(before);
+    expect(editor.canUndo).toBe(false);
+  });
+
+  it('保存值变化也遵守自身与外层内容锁，外壳锁仍允许选择', () => {
+    for (const type of ['dropDownList', 'comboBox']) {
+      for (const outer of [false, true]) {
+        const inner = choice(
+          type,
+          'w:lastValue="old"',
+          '紧急',
+          outer ? '' : '<w:lock w:val="contentLocked"/>',
+        );
+        const editor = createTextEditor(
+          parse(
+            outer
+              ? `<w:sdt><w:sdtPr><w:lock w:val="contentLocked"/></w:sdtPr><w:sdtContent>${inner}</w:sdtContent></w:sdt>`
+              : inner,
+          ),
+        );
+        const before = editor.body;
+        const id = Object.values(before.contentControls ?? {}).find((c) => c.tag === 'choice')?.id as string;
+        expect(() =>
+          editor.tx((t) => {
+            t.fillContentControl(id, '1');
+          }),
+        ).toThrow(/锁定/);
+        expect(editor.body).toBe(before);
+      }
+      const editor = createTextEditor(parse(choice(type, '', '选择', '<w:lock w:val="sdtLocked"/>')));
+      editor.tx((t) => {
+        t.fillContentControl(control(editor.body)?.id as string, '1');
+      });
+      expect(control(editor.body)?.lastValue).toBe('1');
+    }
+  });
+});
+
 describe('setContentControlDate', () => {
   const dateControl = (pr = '', content = '<w:r><w:t>某日</w:t></w:r>', extra = '') =>
     `<w:sdt><w:sdtPr><w:tag w:val="date"/>${extra}<w:date ${pr}><w:dateFormat w:val="yyyy年M月d日"/><w:lid w:val="zh-CN"/><w:calendar w:val="gregorian"/></w:date></w:sdtPr><w:sdtContent>${content}</w:sdtContent></w:sdt>`;

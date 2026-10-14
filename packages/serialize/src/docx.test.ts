@@ -379,6 +379,60 @@ describe('模型不认识的 XML 留在文件里', () => {
 });
 
 describe('内容控件', () => {
+  it.each(['dropDownList', 'comboBox'])(
+    '%s 的保存值与文字回写，选项与未知 XML 保留，组合框允许自填',
+    (type) => {
+      const bytes = docx(
+        `<w:p><w:sdt><w:sdtPr><w:tag w:val="choice"/><w:showingPlcHdr/><w:dataBinding w:xpath="/choice"/><w:${type} w:lastValue="old" x:keep="yes"><w:listItem w:displayText="紧急" w:value="1" x:item="keep"/><x:unknown/></w:${type}></w:sdtPr><w:sdtContent><w:r><w:t>选择</w:t></w:r></w:sdtContent></w:sdt></w:p>`,
+      );
+      const { out, again } = roundTrip(bytes, (t, body) => {
+        t.fillContentControl(idOf(body, 'choice'), '1');
+      });
+      const xml = decoder.decode(unzip(out).get('word/document.xml'));
+      expect(xml).toContain('w:lastValue="1"');
+      expect(xml).toContain('x:keep="yes"');
+      expect(xml).toContain('<w:listItem w:displayText="紧急" w:value="1" x:item="keep"/>');
+      expect(xml).toContain('<x:unknown/>');
+      expect(xml).not.toContain('showingPlcHdr');
+      expect(xml).not.toContain('dataBinding');
+      expect(again.body.contentControls?.[idOf(again.body, 'choice')]?.lastValue).toBe('1');
+      expect(paragraphText(paragraphs(again.body)[0] as Paragraph)).toBe('紧急');
+      if (type === 'comboBox') {
+        const free = roundTrip(out, (t, body) => {
+          t.fillContentControl(idOf(body, 'choice'), '自填');
+        });
+        expect(free.again.body.contentControls?.[idOf(free.again.body, 'choice')]?.lastValue).toBe('自填');
+        expect(paragraphText(paragraphs(free.again.body)[0] as Paragraph)).toBe('自填');
+        const empty = roundTrip(free.out, (t, body) => {
+          t.fillContentControl(idOf(body, 'choice'), '');
+        });
+        expect(empty.again.body.contentControls?.[idOf(empty.again.body, 'choice')]?.lastValue).toBe('');
+        expect(decoder.decode(unzip(empty.out).get('word/document.xml'))).toContain('w:lastValue=""');
+      }
+    },
+  );
+
+  it('列表仅保存值改变时穿过表格复用捷径，撤销恢复原始部件', () => {
+    const bytes = docx(
+      '<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:sdt><w:sdtPr><w:tag w:val="choice"/><w:dataBinding w:xpath="/choice"/><w:dropDownList w:lastValue="1"><w:listItem w:displayText="紧急" w:value="1"/><w:listItem w:displayText="紧急" w:value="2"/></w:dropDownList></w:sdtPr><w:sdtContent><w:p><w:r><w:t>紧急</w:t></w:r></w:p></w:sdtContent></w:sdt></w:tc></w:tr></w:tbl><w:p/>',
+    );
+    const { pkg, loaded } = load(bytes);
+    const editor = createTextEditor(loaded.body);
+    const before = editor.body;
+    editor.tx((t) => {
+      t.fillContentControl(idOf(before, 'choice'), '2');
+    });
+    expect(editor.body.sections).toEqual(before.sections);
+    const out = serializeDocx(pkg, editor.body);
+    expect(decoder.decode(unzip(out).get('word/document.xml'))).toContain('w:lastValue="2"');
+    expect(decoder.decode(unzip(out).get('word/document.xml'))).not.toContain('dataBinding');
+    const again = load(out).loaded.body;
+    expect(again.contentControls?.[idOf(again, 'choice')]?.lastValue).toBe('2');
+    editor.undo();
+    const restored = unzip(serializeDocx(pkg, editor.body));
+    for (const [part, content] of unzip(bytes)) expect(restored.get(part)).toEqual(content);
+  });
+
   const dateControl = (format = 'yyyy年M月d日', text = '某日') =>
     `<w:sdt><w:sdtPr><w:tag w:val="date"/><w:dataBinding w:xpath="/date"/><w:date w:fullDate="2020-01-01T00:00:00Z" x:keep="yes"><w:dateFormat w:val="${format}"/><w:lid w:val="zh-CN"/><w:storeMappedDataAs w:val="date"/><w:calendar w:val="gregorian"/><x:unknown/></w:date></w:sdtPr><w:sdtContent><w:r><w:t>${text}</w:t></w:r></w:sdtContent></w:sdt>`;
 

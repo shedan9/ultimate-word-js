@@ -322,6 +322,62 @@ describe('doc.bindings', () => {
     expect(d.bindings.list().map((b) => b.value)).toEqual(['单击输入', '某日', '单击输入', '一般', '☐']);
   });
 
+  it('列表提供完整选项与保存值，填写与点击所用元数据同撤销并可导出，返回选项不泄漏可变引用', async () => {
+    const d = await UltimateWord.load(
+      template(
+        `<w:p>${control('other', '选择', '<w:comboBox w:lastValue="old"><w:listItem w:displayText="紧急" w:value="1"/></w:comboBox>')}</w:p>`,
+      ),
+    );
+    const level = d.bindings.list().find((b) => b.key === 'level');
+    expect(level?.options).toEqual(['紧急', '一般']);
+    expect(level?.items).toEqual([
+      { text: '紧急', value: '1' },
+      { text: '一般', value: '2' },
+    ]);
+    expect(level?.lastValue).toBeUndefined();
+    if (level?.items?.[0]) level.items[0].value = '篡改';
+    expect(d.bindings.list().find((b) => b.key === 'level')?.items?.[0]?.value).toBe('1');
+    d.bindings.setMany({ level: '1', other: '自由输入' });
+    d.bindings.apply();
+    expect(
+      d.bindings
+        .list()
+        .filter((b) => b.items)
+        .map((b) => [b.value, b.lastValue]),
+    ).toEqual([
+      ['紧急', '1'],
+      ['自由输入', '自由输入'],
+    ]);
+    d.undo();
+    expect(d.bindings.list().find((b) => b.key === 'level')?.lastValue).toBeUndefined();
+    expect(d.bindings.list().find((b) => b.key === 'other')?.lastValue).toBe('old');
+    d.redo();
+    const again = await UltimateWord.load(await d.toDocx());
+    expect(
+      again.bindings
+        .list()
+        .filter((b) => b.items)
+        .map((b) => [b.value, b.lastValue]),
+    ).toEqual([
+      ['紧急', '1'],
+      ['自由输入', '自由输入'],
+    ]);
+    d.bindings.set('level', '紧急');
+    expect(d.bindings.apply()).toBeUndefined();
+  });
+
+  it('空下拉框拒绝任意值，混合填写回滚保存值并保留 pending', async () => {
+    const d = await UltimateWord.load(
+      template(`<w:p>${control('emptyList', '选择', '<w:dropDownList/>')}</w:p>`),
+    );
+    d.bindings.setMany({ level: '1', emptyList: '自由输入' });
+    expect(() => d.bindings.apply()).toThrow(/下拉框没有这个选项/);
+    expect(d.bindings.list().find((b) => b.key === 'level')).toMatchObject({ value: '一般' });
+    expect(d.bindings.list().find((b) => b.key === 'level')?.lastValue).toBeUndefined();
+    expect(d.bindings.pending.get('level')).toBe('1');
+    expect(d.bindings.pending.get('emptyList')).toBe('自由输入');
+  });
+
   it('日期对象按各自模板格式填同名控件，冻结 pending 值，混合填写同撤销且可导出再加载', async () => {
     const extra = `<w:p>${control('issued', '某日', '<w:date><w:dateFormat w:val="yyyy年M月d日"/><w:lid w:val="zh-CN"/></w:date>')}${control('issued', 'another', '<w:date><w:dateFormat w:val="dddd, MMMM d, yyyy"/><w:lid w:val="en-US"/></w:date>')}</w:p>`;
     const d = await UltimateWord.load(template(extra));

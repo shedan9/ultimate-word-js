@@ -40,6 +40,10 @@ export interface BindingInfo {
   locked: boolean;
   /** 下拉框 / 组合框的选项（显示文字） */
   options?: string[];
+  /** 完整选项，宿主可按 value 提交；options 保留原有显示文字列表。 */
+  items?: { text: string; value: string }[];
+  /** OOXML 保存值；未填写的文档可能缺席，不从显示文字猜测。 */
+  lastValue?: string;
   /** 控件内容的范围，可以拿去 `decorate` / `scrollTo` */
   range: DocRange | undefined;
 }
@@ -89,7 +93,11 @@ export class Bindings {
       };
       if (c.tag !== undefined) info.tag = c.tag;
       if (c.alias !== undefined) info.alias = c.alias;
-      if (c.items !== undefined) info.options = c.items.map((i) => i.text);
+      if (c.items !== undefined) {
+        info.options = c.items.map((i) => i.text);
+        info.items = c.items.map((i) => ({ ...i }));
+      }
+      if (c.lastValue !== undefined) info.lastValue = c.lastValue;
       if (c.checkbox !== undefined) info.checked = c.checkbox.checked;
       if (c.date?.fullDate !== undefined) info.fullDate = c.date.fullDate;
       return info;
