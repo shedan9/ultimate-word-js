@@ -26,7 +26,7 @@ import {
   textOfContentControl,
   withinContentControl,
 } from './content-control.ts';
-import { reconcileContentControlText } from './content-control-edit.ts';
+import { contentControlShells, reconcileContentControlText } from './content-control-edit.ts';
 import { scanFields } from './fields.ts';
 import type { Block, Body, NodeId, Paragraph, Run, RunContent, TableCell, TableRow } from './nodes.ts';
 import { walkBlocks, walkParagraphs } from './nodes.ts';
@@ -536,6 +536,8 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
       const replacements = new Map<NodeId, Run>();
       const changes: TextChange[] = [];
       const filledControlText = new Map<NodeId, string>();
+      const lockedShells = contentControlShells(body, true);
+      let shellsChecked = body;
 
       function flush(): void {
         draft = replaceRuns(draft, replacements);
@@ -895,7 +897,17 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
       function command<T>(action: () => T): T {
         if (!open) throw new Error('事务已结束');
         try {
-          return action();
+          const result = action();
+          // 普通删字保留空 run，外壳仍在；结构命令可能连最后一个成员一起移除。
+          // 统一在命令结束时检查，填外层、合段、删表格和更新域都不能绕过；捕获错误仍使整次回滚。
+          // replacements 只改 run 内容 / 格式，不改成员身份，无需为每次按键再扫描全文。
+          if (draft !== shellsChecked && lockedShells.size > 0) {
+            const present = contentControlShells(draft);
+            for (const id of lockedShells)
+              if (!present.has(id)) throw new Error('内容控件锁定了外壳，不能删除');
+            shellsChecked = draft;
+          }
+          return result;
         } catch (error) {
           failed = true;
           throw error;

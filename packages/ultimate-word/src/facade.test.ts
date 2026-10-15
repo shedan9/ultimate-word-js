@@ -297,6 +297,55 @@ describe('doc.bindings', () => {
     );
   }
 
+  it('覆盖外层不能移除锁定子外壳，失败不派发事件、保留待填值与历史', async () => {
+    const inner = control('innerShell', '子控件', '<w:lock w:val="sdtLocked"/>');
+    const d = await UltimateWord.load(
+      template(
+        `<w:sdt><w:sdtPr><w:tag w:val="outerShell"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>前缀</w:t></w:r>${inner}</w:p></w:sdtContent></w:sdt>`,
+      ),
+    );
+    d.bindings.set('applicant', '张三').apply();
+    let events = 0;
+    d.on('document:change', () => events++);
+    d.bindings.set('outerShell', '覆盖');
+    expect(() => d.bindings.apply()).toThrow(/锁定了外壳/);
+    expect(d.bindings.pending.get('outerShell')).toBe('覆盖');
+    expect(events).toBe(0);
+    expect(d.bindings.list().find((b) => b.key === 'innerShell')).toMatchObject({
+      value: '子控件',
+      locked: false,
+    });
+    expect(d.find('前缀子控件')).toHaveLength(1);
+    d.undo();
+    expect(d.find('张三')).toHaveLength(0);
+    d.redo();
+    const again = await UltimateWord.load(await d.toDocx());
+    expect(again.bindings.list().find((b) => b.key === 'innerShell')?.value).toBe('子控件');
+    again.bindings.set('outerShell', '再覆盖');
+    expect(() => again.bindings.apply()).toThrow(/锁定了外壳/);
+  });
+
+  it('外壳内部删光可导出并重新填写，历史跳转和回写保留锁', async () => {
+    const d = await UltimateWord.load(
+      template(`<w:p>${control('shell', '壳内文字', '<w:lock w:val="sdtLocked"/>')}</w:p>`),
+    );
+    const shell = d.find('壳内文字')[0] as DocRange;
+    d.tx((t) => void t.deleteRange(shell));
+    const empty = await UltimateWord.load(await d.toDocx());
+    expect(empty.bindings.list().find((b) => b.key === 'shell')).toMatchObject({ value: '', locked: false });
+    empty.bindings.set('shell', '重新填写').apply();
+    empty.undo();
+    expect(empty.bindings.list().find((b) => b.key === 'shell')?.value).toBe('');
+    empty.redo();
+    const exported = await empty.toDocx();
+    const again = await UltimateWord.load(exported);
+    expect(again.bindings.list().find((b) => b.key === 'shell')?.value).toBe('重新填写');
+    const xml = new TextDecoder().decode(
+      unzip(new Uint8Array(await exported.arrayBuffer())).get('word/document.xml'),
+    );
+    expect(xml).toContain('<w:lock w:val="sdtLocked"');
+  });
+
   it('普通文字命令不能绕过内容锁，失败不派发变更也不破坏已有撤销历史', async () => {
     const d = await UltimateWord.load(
       template(`<w:p>${control('locked', '锁中', '<w:lock w:val="contentLocked"/>')}</w:p>`),

@@ -6,6 +6,32 @@
 import type { ContentControl } from './content-control.ts';
 import { contentControlSpans, textOfContentControl } from './content-control.ts';
 import type { Body, NodeId } from './nodes.ts';
+import { walkBlocks } from './nodes.ts';
+
+/**
+ * 外壳是否存在看成员标记，不能只看元数据表（被删控件的属性仍留在那里供回写与撤销使用）。
+ * 块级外壳必须仍有块成员：合段后只剩行内后代引用它，不能冒充原来的块级容器。
+ */
+export function contentControlShells(body: Body, lockedOnly = false): Set<NodeId> {
+  const controls = body.contentControls ?? {};
+  const shellLocked = (c: ContentControl) => c.lock === 'sdtLocked' || c.lock === 'sdtContentLocked';
+  const present = new Set<NodeId>();
+  if (!Object.values(controls).some((c) => !lockedOnly || shellLocked(c))) return present;
+  const collect = (inner: NodeId | undefined, scope: ContentControl['scope']) => {
+    for (let id = inner, guard = 0; id !== undefined && guard < 64; guard++) {
+      const control = controls[id];
+      if (control === undefined) break;
+      if (control.scope === scope && (!lockedOnly || shellLocked(control))) present.add(id);
+      id = control.parent;
+    }
+  };
+  for (const section of body.sections)
+    for (const block of walkBlocks(section.blocks)) {
+      collect(block.contentControl, 'block');
+      if (block.kind === 'paragraph') for (const run of block.runs) collect(run.contentControl, 'inline');
+    }
+  return present;
+}
 
 export function reconcileContentControlText(
   before: Body,

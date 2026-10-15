@@ -1,7 +1,7 @@
 import { createDiagnosticSink } from '@uw/core';
 import { parseXml } from '@uw/ooxml';
 import { describe, expect, it } from 'vitest';
-import { contentControlSpans, rangeOfContentControl } from './content-control.ts';
+import { contentControlSpans, rangeOfContentControl, textOfContentControl } from './content-control.ts';
 import type { Body } from './nodes.ts';
 import { walkParagraphs } from './nodes.ts';
 import { parseBody } from './parse-body.ts';
@@ -258,5 +258,176 @@ describe('普通编辑遵守内容控件的内容锁', () => {
       ),
     ).toThrow(/锁定/);
     expect(editor.body).toBe(before);
+  });
+});
+
+describe('内容控件外壳锁', () => {
+  it('内部删光与重新填写仍保留外壳，格式拆 run、拆段和撤销重做不误拦', () => {
+    const editor = createTextEditor(parse(`<w:p>${control(run('原文'), 'sdtLocked')}</w:p>`));
+    const before = editor.body;
+    const id = required(contentControlSpans(before)[0]).control.id;
+    editor.tx((t) => void t.deleteRange(range(before)));
+    expect(textOfContentControl(required(contentControlSpans(editor.body)[0]))).toBe('');
+    editor.tx((t) => void t.fillContentControl(id, '新文字'));
+    editor.tx(
+      (t) =>
+        void t.setRunProps(
+          { start: range(editor.body).start, end: { ...range(editor.body).start, offset: 1 } },
+          { bold: true },
+        ),
+    );
+    editor.tx((t) => void t.splitParagraph(range(editor.body).end));
+    expect(textOfContentControl(required(contentControlSpans(editor.body)[0]))).toBe('新文字\n');
+    editor.undo();
+    editor.redo();
+    expect(required(contentControlSpans(editor.body)[0]).control).toMatchObject({ id, lock: 'sdtLocked' });
+  });
+
+  it.each(['', '后代'])('填外层不能清理掉内层外壳，即使内层原本没有字：%s', (text) => {
+    const editor = createTextEditor(
+      parse(control(`<w:p>${run('前')}${control(run(text), 'sdtLocked', 'inner')}</w:p>`, '', 'outer')),
+    );
+    const before = editor.body;
+    const id = required(contentControlSpans(before).find((s) => s.control.tag === 'outer')).control.id;
+    expect(() => editor.tx((t) => void t.fillContentControl(id, '覆盖'))).toThrow(/锁定了外壳/);
+    expect(editor.body).toBe(before);
+    expect(editor.canUndo).toBe(false);
+  });
+
+  it('外壳锁沿嵌套成员识别，不能通过删除无锁后代间接删掉锁定祖先', () => {
+    const inner = control(control(run('后代'), '', 'child'), 'sdtLocked', 'inner');
+    const editor = createTextEditor(parse(control(`<w:p>${run('前')}${inner}</w:p>`, '', 'outer')));
+    const before = editor.body;
+    const id = required(contentControlSpans(before).find((s) => s.control.tag === 'outer')).control.id;
+    expect(() => editor.tx((t) => void t.fillContentControl(id, '覆盖'))).toThrow(/锁定了外壳/);
+    expect(editor.body).toBe(before);
+  });
+
+  it.each(['join', 'delete'] as const)('跨块边界的 %s 不能移除块级外壳，包含空段也保护', (kind) => {
+    for (const content of [
+      '<w:p/>',
+      `<w:p>${run('里面')}</w:p>`,
+      `<w:p>${control(run('后代'), '', 'child')}</w:p>`,
+    ]) {
+      const editor = createTextEditor(
+        parse(`${paragraph('前')}${control(content, 'sdtLocked')}${paragraph('后')}`),
+      );
+      const before = editor.body;
+      const ps = [...walkParagraphs(before)];
+      expect(() =>
+        editor.tx((t) => {
+          if (kind === 'join') t.joinParagraph(required(ps[0]).id);
+          else
+            t.deleteRange({
+              start: { nodeId: required(required(ps[0]).runs[0]).id, contentIndex: 0, offset: 0 },
+              end: { nodeId: required(required(ps[2]).runs[0]).id, contentIndex: 0, offset: 1 },
+            });
+        }),
+      ).toThrow(/锁定了外壳/);
+      expect(editor.body).toBe(before);
+    }
+  });
+
+  it('同一块级外壳内合段允许；移除部分成员不等于删除整个控件', () => {
+    const editor = createTextEditor(parse(control(`${paragraph('甲')}${paragraph('乙')}`, 'sdtLocked')));
+    const p = required([...walkParagraphs(editor.body)][0]);
+    editor.tx((t) => void t.joinParagraph(p.id));
+    expect(textOfContentControl(required(contentControlSpans(editor.body)[0]))).toBe('甲乙');
+  });
+
+  it('锁住父外壳不会锁住无锁子外壳，覆盖父内容仍可移除子控件', () => {
+    const editor = createTextEditor(
+      parse(control(`<w:p>${run('前')}${control(run('后代'), '', 'child')}</w:p>`, 'sdtLocked')),
+    );
+    const id = required(contentControlSpans(editor.body).find((s) => s.control.tag === 'locked')).control.id;
+    editor.tx((t) => void t.fillContentControl(id, '覆盖'));
+    expect(contentControlSpans(editor.body).map((s) => [s.control.id, textOfContentControl(s)])).toEqual([
+      [id, '覆盖'],
+    ]);
+  });
+
+  it.each(['rows', 'columns', 'merge'] as const)('表格的 %s 不能丢掉单元格里的锁定空外壳', (kind) => {
+    const editor = createTextEditor(
+      parse(
+        `<w:tbl><w:tblGrid><w:gridCol w:w="1000"/><w:gridCol w:w="1000"/></w:tblGrid><w:tr><w:tc>${paragraph('正文')}</w:tc><w:tc>${control('<w:p/>', 'sdtLocked')}</w:tc></w:tr></w:tbl>${paragraph('后')}`,
+      ),
+    );
+    const before = editor.body;
+    const p = required([...walkParagraphs(before)][0]);
+    const r = {
+      start: { nodeId: required(p.runs[0]).id, contentIndex: 0, offset: 0 },
+      end: range(before).end,
+    };
+    expect(() =>
+      editor.tx((t) => {
+        if (kind === 'rows') t.deleteRows(r);
+        else if (kind === 'columns') t.deleteColumns(r);
+        else t.mergeCells(r);
+      }),
+    ).toThrow(/锁定了外壳/);
+    expect(editor.body).toBe(before);
+  });
+
+  it('整表外壳允许插行删行，最后一行删除才拒绝', () => {
+    const editor = createTextEditor(
+      parse(
+        control(
+          `<w:tbl><w:tblGrid><w:gridCol w:w="1000"/></w:tblGrid><w:tr><w:tc>${paragraph('甲')}</w:tc></w:tr></w:tbl>`,
+          'sdtLocked',
+        ),
+      ),
+    );
+    let inserted = range(editor.body).start;
+    editor.tx((t) => {
+      inserted = t.insertRow(range(editor.body).start, 'below');
+    });
+    editor.tx((t) => void t.deleteRows({ start: inserted, end: inserted }));
+    const before = editor.body;
+    expect(() => editor.tx((t) => void t.deleteRows(range(before)))).toThrow(/锁定了外壳/);
+    expect(editor.body).toBe(before);
+    expect(contentControlSpans(before)).toHaveLength(1);
+  });
+
+  it('更新域结果不能把结果区里的锁定外壳一并替换', () => {
+    const editor = createTextEditor(
+      parse(
+        `<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> TOC </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>${control(run('旧目录'), 'sdtLocked')}<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>`,
+      ),
+    );
+    const before = editor.body;
+    const first = required(required([...walkParagraphs(before)][0]).runs[0]);
+    expect(() =>
+      editor.tx(
+        (t) =>
+          void t.replaceFieldResult(first.id, [
+            { props: {}, runs: [{ content: [{ kind: 'text', text: '新目录' }] }] },
+          ]),
+      ),
+    ).toThrow(/锁定了外壳/);
+    expect(editor.body).toBe(before);
+  });
+
+  it('捕获外壳删除失败仍回滚全部命令，保留旧撤销与重做栈', () => {
+    const editor = createTextEditor(parse(`${paragraph('前')}${control(paragraph('壳内'), 'sdtLocked')}`));
+    const p = required([...walkParagraphs(editor.body)][0]);
+    const at = { nodeId: required(p.runs[0]).id, contentIndex: 0, offset: 1 };
+    editor.tx((t) => void t.insertText(at, '旧改'));
+    editor.undo();
+    const before = editor.body;
+    expect(() =>
+      editor.tx((t) => {
+        t.insertText(at, '先改');
+        try {
+          t.joinParagraph(p.id);
+        } catch {}
+      }),
+    ).toThrow(/全部回滚/);
+    expect(editor.body).toBe(before);
+    expect(editor.canUndo).toBe(false);
+    expect(editor.canRedo).toBe(true);
+    editor.redo();
+    expect(required([...walkParagraphs(editor.body)][0]).runs[0]?.content).toEqual([
+      { kind: 'text', text: '前旧改' },
+    ]);
   });
 });

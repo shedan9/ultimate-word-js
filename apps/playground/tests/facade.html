@@ -14,7 +14,7 @@ body { margin: 0; font: 14px/1.5 system-ui; }
 // find → decorate → rectsOf 通到屏幕），字摆在哪由 Vitest 里的真值断言负责
 import { UltimateWord } from 'ultimate-word';
 import fixtureUrl from '../../fidelity/fixtures/gongwen-01.docx?url';
-import { choiceControlDocx, controlDocx, dateControlDocx, linkDocx } from './list-fixture.ts';
+import { choiceControlDocx, controlDocx, dateControlDocx, linkDocx, shellControlDocx } from './list-fixture.ts';
 
 const host = document.querySelector('#host');
 const second = document.querySelector('#second');
@@ -249,6 +249,39 @@ try {
   assert(lockedAgain.replaceAll('内层文字', '不可换').skipped === 1, '全部替换跳过锁定命中');
   lockedSub.dispose();
   editTemplate.dispose();
+  const shellDoc = await UltimateWord.load(shellControlDocx());
+  const shellView = shellDoc.mount('#host', { mode: 'edit', virtualize: false });
+  await frame();
+  const blockRange = shellDoc.find('块内文字')[0];
+  shellView.select({ start: blockRange.start, end: blockRange.start });
+  shellView.focus();
+  const shellInput = host.querySelector('textarea');
+  const shellStatus = () => host.querySelector('[role="status"]')?.textContent ?? '';
+  let shellEvents = 0;
+  const shellSub = shellDoc.on('document:change', () => shellEvents++);
+  shellInput.dispatchEvent(new InputEvent('beforeinput', { inputType: 'deleteContentBackward', bubbles: true, cancelable: true }));
+  assert(shellStatus().includes('锁定了外壳') && shellDoc.find('块内文字').length === 1, '块级外壳首字前退格拒绝合段并提示');
+  assert(shellEvents === 0 && !shellDoc.canUndo, '外壳删除失败不派发变更也不产生撤销');
+  assert(shellDoc.compare(shellView.selection.start, blockRange.start) === 0, '外壳删除失败保留光标位置');
+  shellInput.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: '新', bubbles: true, cancelable: true }));
+  assert(shellDoc.find('新块内文字').length === 1 && shellEvents === 1 && shellStatus() === '', '外壳内部仍可输入并清拒绝提示');
+  shellDoc.undo();
+  assert(shellDoc.find('新块内文字').length === 0 && shellDoc.bindings.list().some((b) => b.key === 'blockShell'), '内部输入可撤销，外壳仍在');
+  shellDoc.redo();
+  assert(shellDoc.find('新块内文字').length === 1, '外壳保护不破坏内部输入重做');
+  shellDoc.bindings.set('outerShell', '覆盖');
+  let shellRejected = false;
+  try { shellDoc.bindings.apply(); } catch (e) { shellRejected = e.message.includes('锁定了外壳'); }
+  assert(shellRejected && shellDoc.bindings.pending.get('outerShell') === '覆盖', '外层填充不能清掉锁定行内外壳，失败保留待填值');
+  shellDoc.bindings.discard();
+  const shellAgain = await UltimateWord.load(await shellDoc.toDocx());
+  assert(shellAgain.find('新块内文字').length === 1 && shellAgain.bindings.list().some((b) => b.key === 'inlineShell'), '导出再加载保留编辑结果与两类外壳');
+  shellAgain.bindings.set('outerShell', '覆盖');
+  let shellAgainRejected = false;
+  try { shellAgain.bindings.apply(); } catch (e) { shellAgainRejected = e.message.includes('锁定了外壳'); }
+  assert(shellAgainRejected, '导出再加载仍保护嵌套行内外壳');
+  shellSub.dispose();
+  shellView.dispose();
   const dateDoc = await UltimateWord.load(dateControlDocx());
   const dateView = dateDoc.mount('#host', { virtualize: false });
   await frame();

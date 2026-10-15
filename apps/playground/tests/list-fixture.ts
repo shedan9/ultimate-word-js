@@ -130,3 +130,17 @@ export function controlDocx(): Uint8Array {
     <w:p>${control('shell', run('外壳锁'), '<w:text/><w:lock w:val="sdtLocked"/>')}</w:p>`,
   );
 }
+
+/** 块级合段与外层填充会移除外壳；外壳内部仍须允许普通输入。 */
+export function shellControlDocx(): Uint8Array {
+  const control = (tag: string, content: string, locked = true) =>
+    `<w:sdt><w:sdtPr><w:tag w:val="${tag}"/>${locked ? '<w:lock w:val="sdtLocked"/>' : ''}</w:sdtPr><w:sdtContent>${content}</w:sdtContent></w:sdt>`;
+  return docxOf(
+    `${paragraph('前段')}${control('blockShell', paragraph('块内文字'))}` +
+      control(
+        'outerShell',
+        `<w:p><w:r><w:t>外层前缀</w:t></w:r>${control('inlineShell', '<w:r><w:t>行内文字</w:t></w:r>')}</w:p>`,
+        false,
+      ),
+  );
+}
