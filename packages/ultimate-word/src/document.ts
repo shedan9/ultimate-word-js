@@ -78,7 +78,7 @@ export type DocNode = QueryNode<DirectProps>;
 
 export type { CommentSpan, FindOptions, RevisionSpan, RevisionView, TextMatch };
 
-/** `replaceAll` 的结果。跳过的是落在域（页码、目录、超链接域的显示文字）里的命中，事务改不了它们 */
+/** `replaceAll` 的结果。域与内容锁内的命中跳过，避免一处不可改导致整批回滚 */
 export interface ReplaceResult {
   replaced: number;
   skipped: number;
@@ -397,7 +397,7 @@ export class UwDocument {
    * 查找规则同 `find`；新文字取每处**首字**的格式（`tx.replaceText`），`\t` 写成制表位、换行写成软换行。
    * 正则查找时字符串替换按 `String.prototype.replace` 展开 `$1` / `$<name>` / `$&`；
    * 字符串查找时替换串**原样**写入 —— 查找串本身就不当正则，`$` 也不该有特殊意思（Word 的查找框同理）。
-   * 命中落在域里的跳过并计数，不让一处失败把整批回滚。
+   * 命中落在域或内容锁里的跳过并计数，不让一处失败把整批回滚。
    */
   replaceAll(
     pattern: string | RegExp,

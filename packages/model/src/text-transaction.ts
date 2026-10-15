@@ -261,6 +261,7 @@ interface RunEntry {
   paragraph: Paragraph;
   runIndex: number;
   protected: boolean;
+  contentLocked: boolean;
 }
 
 interface HistoryEntry {
@@ -299,18 +300,33 @@ function indexRuns(body: Body): Map<NodeId, RunEntry> {
         } else if (c.kind === 'fieldInstruction') protectedRun = true;
       }
       // 域可跨段，不能按段重置 depth；混合界桩与文字的 run 整体保护。
-      entries.set(run.id, { run, paragraph, runIndex, protected: protectedRun });
+      entries.set(run.id, {
+        run,
+        paragraph,
+        runIndex,
+        protected: protectedRun,
+        contentLocked:
+          contentLocked(body, paragraph.contentControl) || contentLocked(body, run.contentControl),
+      });
     }
   }
   return entries;
+}
+
+function contentLocked(body: Body, id: NodeId | undefined): boolean {
+  return id !== undefined && isContentControlLocked(body.contentControls ?? {}, id);
+}
+
+function assertContentUnlocked(locked: boolean): void {
+  if (locked) throw new Error('内容控件锁定了内容');
 }
 
 const editableIndex = new WeakMap<Body, Map<NodeId, RunEntry>>();
 
 /**
  * 同一段内的范围能不能交给文字事务改：从首 run 到末 run（**含中间的隐藏 run**，删除会一起清掉）
- * 都不在域里。批量替换先用它挑，而不是让事务去撞 —— 一条命令失败整个事务回滚，
- * 「全部替换」不该因为有一处命中落在页码域里就一处都不换。跨段的范围答 false。
+ * 都不在域或内容锁里。批量替换先用它挑，而不是让事务去撞 —— 一条命令失败整个事务回滚，
+ * 「全部替换」不该因为有一处命中不可改就一处都不换。跨段的范围答 false。
  */
 export function rangeEditable(body: Body, range: DocRange): boolean {
   // 一次替换几百处命中，每处都重建索引就是平方级；快照不可变，按对象缓存
@@ -326,7 +342,8 @@ export function rangeEditable(body: Body, range: DocRange): boolean {
   if (first.run.revision?.kind === 'delete') return false;
   for (let i = first.runIndex; i <= last.runIndex; i++) {
     const run = first.paragraph.runs[i] as Run;
-    if (entries.get(run.id)?.protected) return false;
+    const entry = entries.get(run.id);
+    if (entry?.protected || entry?.contentLocked) return false;
   }
   return true;
 }
@@ -615,6 +632,13 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
         return { ...entry, run: replacements.get(position.nodeId) ?? entry.run };
       }
 
+      function assertParagraphsUnlocked(paragraphs: readonly Paragraph[]): void {
+        for (const p of paragraphs) {
+          assertContentUnlocked(contentLocked(draft, p.contentControl));
+          for (const r of p.runs) assertContentUnlocked(entries.get(r.id)?.contentLocked ?? false);
+        }
+      }
+
       /**
        * 被删除的修订里不许再插东西：插进去的字会跟着它一起「已删除」—— 最终状态下打了看不见，
        * 回写成 `w:delText`。修订模式下的编辑是非目标（revisions.ts），所以拒绝而不是替用户挪位置。
@@ -643,6 +667,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
       function insertContent(position: DocPosition, item: RunContent): number {
         const entry = entryAt(position);
         editableAt(entry, position);
+        assertContentUnlocked(entry.contentLocked);
         const { run } = entry;
         const ci = position.contentIndex;
         const c = run.content[ci];
@@ -794,6 +819,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
         const text = textAt(entry, position);
         const deletedText = text.slice(position.offset, position.offset + count);
         if (deletedText === insertedText) return;
+        assertContentUnlocked(entry.contentLocked);
         const content = [...entry.run.content];
         content[position.contentIndex] = {
           kind: 'text',
@@ -881,6 +907,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
           return command(() => {
             position = textPosition(position);
             const entry = entryAt(position);
+            assertContentUnlocked(entry.contentLocked);
             const text = textAt(entry, position);
             // 域可能跨 run / 段；拆段不能切断其结构。
             for (const r of entry.paragraph.runs)
@@ -938,6 +965,8 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             const { paragraph, blocks, index } = paragraphAt(paragraphId);
             const next = blocks[index + 1];
             if (next?.kind !== 'paragraph') throw new Error('只能合并同一节或单元格内相邻的段落');
+            // 合段删的是段落标记；只在行内锁旁边合段不会修改那个控件的文字。
+            for (const p of [paragraph, next]) assertContentUnlocked(contentLocked(draft, p.contentControl));
             for (const p of [paragraph, next])
               for (const r of p.runs)
                 if (entries.get(r.id)?.protected) throw new Error('暂不支持合并包含域的段落');
@@ -1064,6 +1093,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
                   editableAt(entry, pos);
                   const stop = ri === last.runIndex && ci === to ? end.offset : contentLength(c);
                   if (stop > offset) {
+                    assertContentUnlocked(entry.contentLocked);
                     const content = [...entry.run.content];
                     content[ci] = { kind: 'text', text: '' };
                     replacements.set(run.id, { ...entry.run, content });
@@ -1230,6 +1260,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             flush();
             const hit = findRow(draft, position.nodeId);
             if (hit === undefined) throw new Error('位置不在表格里');
+            assertContentUnlocked(contentLocked(draft, hit.table.contentControl));
             const { table, row } = withInsertedRow(hit.table, hit.rowIndex, side, newId);
             draft = hit.replace(table, () => {
               throw new Error('插行不会删表');
@@ -1258,6 +1289,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             const b = findRow(draft, range.end.nodeId);
             if (a === undefined || b === undefined || a.table.id !== b.table.id)
               throw new Error('只能删除同一张表里的行');
+            assertContentUnlocked(contentLocked(draft, a.table.contentControl));
             const from = Math.min(a.rowIndex, b.rowIndex);
             const to = Math.max(a.rowIndex, b.rowIndex);
             const removed = a.table.rows.slice(from, to + 1);
@@ -1266,6 +1298,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
                 [...walkBlocks(c.blocks)].filter((x): x is Paragraph => x.kind === 'paragraph'),
               ),
             );
+            assertParagraphsUnlocked(paragraphs);
             for (const p of paragraphs)
               for (const r of p.runs)
                 if (entries.get(r.id)?.protected) throw new Error('暂不支持删除包含域的行');
@@ -1300,6 +1333,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             flush();
             const hit = findRow(draft, position.nodeId);
             if (hit === undefined) throw new Error('位置不在表格里');
+            assertContentUnlocked(contentLocked(draft, hit.table.contentControl));
             const own = hit.table.rows[hit.rowIndex]?.cells[hit.cellIndex];
             const { table, cells } = withInsertedColumn(hit.table, hit.rowIndex, hit.cellIndex, side, newId);
             draft = hit.replace(table, () => {
@@ -1340,6 +1374,8 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             const paragraphs = removed.flatMap((c) =>
               [...walkBlocks(c.blocks)].filter((x): x is Paragraph => x.kind === 'paragraph'),
             );
+            assertContentUnlocked(contentLocked(draft, a.table.contentControl));
+            assertParagraphsUnlocked(paragraphs);
             for (const p of paragraphs)
               for (const r of p.runs)
                 if (entries.get(r.id)?.protected) throw new Error('暂不支持删除包含域的列');
@@ -1380,11 +1416,13 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             const b = findRow(draft, range.end.nodeId);
             if (a === undefined || b === undefined || a.table.id !== b.table.id)
               throw new Error('只能合并同一张表里的格');
+            assertContentUnlocked(contentLocked(draft, a.table.contentControl));
             const rect = cellRect(a.table, a, b);
             if (rect === undefined) throw new Error('选中的格撑不成完整的矩形（有跳过的网格列）');
             const merged = withMergedCells(a.table, rect, newId);
             if (merged === undefined) return structuredClone(range.start);
             const { table, head, dropped, added: fresh } = merged;
+            assertParagraphsUnlocked(dropped);
             draft = a.replace(table, () => {
               throw new Error('合并不会删表');
             });
@@ -1412,6 +1450,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             if (hit === undefined) throw new Error('位置不在表格里');
             const split = withSplitCell(hit.table, hit.rowIndex, hit.cellIndex, newId);
             if (split === undefined) return { ...position };
+            assertContentUnlocked(contentLocked(draft, hit.table.contentControl));
             draft = hit.replace(split.table, () => {
               throw new Error('拆分不会删表');
             });
@@ -1572,6 +1611,10 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             const span = contentControlSpans(draft).find((s) => s.control.id === id);
             const range = span === undefined ? undefined : rangeOfContentControl(span);
             if (range === undefined) throw new Error('内容控件里没有可写的位置');
+            // 覆盖外层还会清掉内层空 run；即使锁住的内层没有字，也不能借填外层把它删掉。
+            for (const nested of contentControlSpans(draft))
+              if (withinContentControl(draft.contentControls ?? {}, nested.control.id, id))
+                assertContentUnlocked(contentLocked(draft, nested.control.id));
             filledControlText.set(id, text.replace(/\r\n|\r/g, '\n'));
             if (
               choice &&
@@ -1686,6 +1729,8 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             const ib = b.paragraph.runs.findIndex((r) => r.id === end.runId);
             const sepRun = a.paragraph.runs[ia] as Run;
             const endRun = b.paragraph.runs[ib] as Run;
+            assertContentUnlocked(entries.get(sepRun.id)?.contentLocked ?? false);
+            assertContentUnlocked(entries.get(endRun.id)?.contentLocked ?? false);
 
             // 界桩在真实文件里独占一个 run；万一与结果文字挤在一个 run 里，只切掉结果那半
             const head =
@@ -1705,6 +1750,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             const headRuns = a.paragraph.runs.slice(ia + 1, same ? ib : undefined);
             if (headRuns.length) removed.unshift({ ...a.paragraph, runs: headRuns });
             if (!same && ib > 0) removed.push({ ...b.paragraph, runs: b.paragraph.runs.slice(0, ib) });
+            assertParagraphsUnlocked(removed);
 
             const make = (d: RunDraft): Run => ({
               kind: 'run',

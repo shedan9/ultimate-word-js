@@ -6,6 +6,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { FALLBACK_METRICS, FontRegistry } from '@uw/fonts';
+import type { DocRange } from '@uw/model';
 import { unzip, zip } from '@uw/ooxml';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { UwDocument } from './index.ts';
@@ -295,6 +296,59 @@ describe('doc.bindings', () => {
       ]),
     );
   }
+
+  it('普通文字命令不能绕过内容锁，失败不派发变更也不破坏已有撤销历史', async () => {
+    const d = await UltimateWord.load(
+      template(`<w:p>${control('locked', '锁中', '<w:lock w:val="contentLocked"/>')}</w:p>`),
+    );
+    d.bindings.set('applicant', '张三').apply();
+    let events = 0;
+    d.on('document:change', () => events++);
+    const locked = d.find('锁中')[0] as DocRange;
+    const applicant = d.find('张三')[0] as DocRange;
+    expect(() =>
+      d.tx((t) => {
+        t.insertText(applicant.end, '先改');
+        t.replaceText(locked, '篡改');
+      }),
+    ).toThrow(/锁定/);
+    expect(events).toBe(0);
+    expect(d.find('张三')).toHaveLength(2);
+    expect(d.find('先改')).toHaveLength(0);
+    expect(d.find('锁中')).toHaveLength(1);
+    d.undo();
+    expect(d.find('张三')).toHaveLength(0);
+    d.redo();
+    expect(d.find('张三')).toHaveLength(2);
+  });
+
+  it('全部替换跳过锁定命中，外壳锁仍可改，撤销与导出再加载保留锁', async () => {
+    const d = await UltimateWord.load(
+      template(
+        `<w:p>${control('locked', '一般', '<w:lock w:val="sdtContentLocked"/>')}${control('shell', '一般', '<w:lock w:val="sdtLocked"/>')}</w:p>`,
+      ),
+    );
+    let callbacks = 0;
+    expect(
+      d.replaceAll('一般', () => {
+        callbacks++;
+        return '紧急';
+      }),
+    ).toEqual({ replaced: 2, skipped: 1 });
+    expect(callbacks).toBe(2);
+    expect(d.find('紧急')).toHaveLength(2);
+    expect(d.find('一般')).toHaveLength(1);
+    d.undo();
+    expect(d.find('一般')).toHaveLength(3);
+    d.redo();
+    const again = await UltimateWord.load(await d.toDocx());
+    expect(again.bindings.list().find((b) => b.key === 'locked')).toMatchObject({
+      value: '一般',
+      locked: true,
+    });
+    expect(again.replaceAll('一般', '不改')).toEqual({ replaced: 0, skipped: 1 });
+    expect(again.find('紧急')).toHaveLength(2);
+  });
 
   it('list 按文档序列出坑位与现值；set 只记下，apply 一次提交成一个撤销单元', async () => {
     const d = await UltimateWord.load(template());
