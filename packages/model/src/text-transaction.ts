@@ -174,6 +174,8 @@ export interface TextTransaction {
    * 复选框 / 图片 / 文档部件（目录）/ 锁了内容的控件拒绝。
    */
   fillContentControl(id: NodeId, text: string): DocRange;
+  /** 按零起始序号选中一个列表项，避免重复显示文字或显示文字与保存值重名时选错。 */
+  selectContentControlItem(id: NodeId, index: number): DocRange;
   /**
    * 设置复选框状态并换上该状态的符号 / 字体，内容必须是单个文字或符号（MS-DOCX §2.3.26）。
    * 锁了内容、含修订或域的控件拒绝；状态与符号未变时不产生撤销单元。
@@ -955,6 +957,138 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
         }
       }
 
+      function fillControl(id: NodeId, text: string, itemIndex?: number): DocRange {
+        return command(() => {
+          if (typeof text !== 'string') throw new TypeError('fillContentControl 需要字符串');
+          flush();
+          const control = draft.contentControls?.[id];
+          if (control === undefined) throw new RangeError(`文档中没有内容控件：${id}`);
+          if (!FILLABLE.has(control.type)) throw new Error(`不支持填写这种内容控件：${control.type}`);
+          if (isContentControlLocked(draft.contentControls ?? {}, id)) throw new Error('内容控件锁定了内容');
+          const choice = control.type === 'dropDownList' || control.type === 'comboBox';
+          if (itemIndex !== undefined && !choice) throw new Error('内容控件不是列表控件');
+          let lastValue: string | undefined;
+          if (choice) {
+            const items = control.items ?? [];
+            // 保留原有文字优先语义；空下拉框也不能绕过选项校验，只有组合框接受自填文字。
+            if (
+              itemIndex !== undefined &&
+              (!Number.isInteger(itemIndex) || itemIndex < 0 || itemIndex >= items.length)
+            )
+              throw new RangeError(`列表选项序号超出范围：${itemIndex}`);
+            const item =
+              itemIndex === undefined
+                ? (items.find((i) => i.text === text) ?? items.find((i) => i.value === text))
+                : items[itemIndex];
+            if (item === undefined && control.type === 'dropDownList')
+              throw new RangeError(`下拉框没有这个选项：${text}`);
+            lastValue = item?.value ?? text;
+            text = item?.text ?? text;
+          }
+          if (control.type === 'text' && !control.multiLine) text = text.replace(/\r\n|\r|\n/g, ' ');
+          const span = contentControlSpans(draft).find((s) => s.control.id === id);
+          const range = span === undefined ? undefined : rangeOfContentControl(span);
+          if (range === undefined) throw new Error('内容控件里没有可写的位置');
+          // 覆盖外层还会清掉内层空 run；内容锁或下拉框即使没有字，也不能借填外层把它删掉。
+          for (const nested of contentControlSpans(draft))
+            if (withinContentControl(draft.contentControls ?? {}, nested.control.id, id))
+              assertControlEditable(nested.control.id, id);
+          filledControlText.set(id, text.replace(/\r\n|\r/g, '\n'));
+          if (
+            choice &&
+            span !== undefined &&
+            textOfContentControl(span) === text &&
+            !control.showingPlaceholder
+          ) {
+            // 相同显示文字可能对应不同选项值；只改元数据，避免重建 run 扰动已保存的位置。
+            if (lastValue !== undefined && control.lastValue !== lastValue) {
+              const { dataBound: _dataBound, ...unbound } = control;
+              draft = {
+                ...draft,
+                contentControls: { ...draft.contentControls, [id]: { ...unbound, lastValue } },
+              };
+              structural(
+                span.paragraphs.map((p) => p.id),
+                [],
+              );
+            }
+            return range;
+          }
+          const previousFilling = fillingControl;
+          fillingControl = id;
+          let start: DocPosition;
+          let at: DocPosition;
+          try {
+            // 空块级控件的范围落在段落上；先建文字槽，后续清理与返回范围才能使用同一个 run 锚点。
+            start = materialize(transaction.deleteRange(range));
+            at = start;
+            for (const piece of text.split(/(\r\n|\r|\n|\t)/)) {
+              if (piece === '') continue;
+              if (piece === '\t') at = transaction.insertInline(at, 'tab');
+              else if (/^[\r\n]/.test(piece)) at = transaction.insertInline(at, 'lineBreak');
+              else at = transaction.insertText(at, piece);
+            }
+          } finally {
+            fillingControl = previousFilling;
+          }
+          // 删字留下的空 run（占位文字的后半截、内层控件）去掉：留着的话内层控件回写出来
+          // 是个空壳，而 Word 里覆盖外层内容时内层控件是跟着消失的。落点所在的 run 留着 ——
+          // 值为空时控件还得有个能写字的位置
+          flush();
+          const host = entryAt(start).paragraph;
+          const controls = draft.contentControls ?? {};
+          const dropped = host.runs.filter(
+            (r) =>
+              r.id !== start.nodeId &&
+              r.id !== at.nodeId &&
+              withinContentControl(controls, r.contentControl ?? host.contentControl, id) &&
+              r.content.every((c) => c.kind === 'text' && c.text === ''),
+          );
+          if (dropped.length) {
+            draft = mapParagraphs(draft, (p) =>
+              p.id === host.id ? { ...p, runs: p.runs.filter((r) => !dropped.includes(r)) } : p,
+            );
+            entries = indexRuns(draft);
+            structural([host.id], collapseInto([{ ...host, runs: dropped }], { ...start }), []);
+          }
+          // 插入是从 start 往后长的，start 自己不动；空值时是折叠范围
+          const filled: DocRange = { start: { ...start }, end: { ...at } };
+          if (choice && lastValue !== undefined && (control.lastValue !== lastValue || control.dataBound)) {
+            const { dataBound: _dataBound, ...unbound } = draft.contentControls?.[id] ?? control;
+            draft = {
+              ...draft,
+              contentControls: { ...draft.contentControls, [id]: { ...unbound, lastValue } },
+            };
+            structural([host.id], []);
+          }
+          if (control.showingPlaceholder) {
+            if (!samePosition(start, at)) {
+              transaction.clearRunProps(filled);
+              if (control.runProps !== undefined) transaction.setRunProps(filled, control.runProps);
+            }
+            flush();
+            draft = {
+              ...draft,
+              contentControls: {
+                ...draft.contentControls,
+                [id]: { ...(draft.contentControls?.[id] ?? control), showingPlaceholder: false },
+              },
+            };
+            // 值与占位文字恰好相同时上面一条变更都没有，标记变了也得成一个撤销单元
+            structural([host.id], []);
+          }
+          // 任意字符串无法反推出日历日；保留旧 fullDate 会让文字与 Word 日期选择器互相矛盾。
+          if (control.date?.fullDate !== undefined) {
+            flush();
+            const current = draft.contentControls?.[id] ?? control;
+            const { fullDate: _fullDate, ...date } = control.date;
+            draft = { ...draft, contentControls: { ...draft.contentControls, [id]: { ...current, date } } };
+            structural([host.id], []);
+          }
+          return filled;
+        });
+      }
+
       const transaction: TextTransaction = {
         splitParagraph(position, options = {}) {
           return command(() => {
@@ -1640,126 +1774,12 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
           });
         },
         fillContentControl(id, text) {
+          return fillControl(id, text);
+        },
+        selectContentControlItem(id, index) {
           return command(() => {
-            if (typeof text !== 'string') throw new TypeError('fillContentControl 需要字符串');
-            flush();
-            const control = draft.contentControls?.[id];
-            if (control === undefined) throw new RangeError(`文档中没有内容控件：${id}`);
-            if (!FILLABLE.has(control.type)) throw new Error(`不支持填写这种内容控件：${control.type}`);
-            if (isContentControlLocked(draft.contentControls ?? {}, id))
-              throw new Error('内容控件锁定了内容');
-            const choice = control.type === 'dropDownList' || control.type === 'comboBox';
-            let lastValue: string | undefined;
-            if (choice) {
-              const items = control.items ?? [];
-              // 保留原有文字优先语义；空下拉框也不能绕过选项校验，只有组合框接受自填文字。
-              const item = items.find((i) => i.text === text) ?? items.find((i) => i.value === text);
-              if (item === undefined && control.type === 'dropDownList')
-                throw new RangeError(`下拉框没有这个选项：${text}`);
-              lastValue = item?.value ?? text;
-              text = item?.text ?? text;
-            }
-            if (control.type === 'text' && !control.multiLine) text = text.replace(/\r\n|\r|\n/g, ' ');
-            const span = contentControlSpans(draft).find((s) => s.control.id === id);
-            const range = span === undefined ? undefined : rangeOfContentControl(span);
-            if (range === undefined) throw new Error('内容控件里没有可写的位置');
-            // 覆盖外层还会清掉内层空 run；内容锁或下拉框即使没有字，也不能借填外层把它删掉。
-            for (const nested of contentControlSpans(draft))
-              if (withinContentControl(draft.contentControls ?? {}, nested.control.id, id))
-                assertControlEditable(nested.control.id, id);
-            filledControlText.set(id, text.replace(/\r\n|\r/g, '\n'));
-            if (
-              choice &&
-              span !== undefined &&
-              textOfContentControl(span) === text &&
-              !control.showingPlaceholder
-            ) {
-              // 相同显示文字可能对应不同选项值；只改元数据，避免重建 run 扰动已保存的位置。
-              if (lastValue !== undefined && control.lastValue !== lastValue) {
-                const { dataBound: _dataBound, ...unbound } = control;
-                draft = {
-                  ...draft,
-                  contentControls: { ...draft.contentControls, [id]: { ...unbound, lastValue } },
-                };
-                structural(
-                  span.paragraphs.map((p) => p.id),
-                  [],
-                );
-              }
-              return range;
-            }
-            const previousFilling = fillingControl;
-            fillingControl = id;
-            let start: DocPosition;
-            let at: DocPosition;
-            try {
-              // 空块级控件的范围落在段落上；先建文字槽，后续清理与返回范围才能使用同一个 run 锚点。
-              start = materialize(transaction.deleteRange(range));
-              at = start;
-              for (const piece of text.split(/(\r\n|\r|\n|\t)/)) {
-                if (piece === '') continue;
-                if (piece === '\t') at = transaction.insertInline(at, 'tab');
-                else if (/^[\r\n]/.test(piece)) at = transaction.insertInline(at, 'lineBreak');
-                else at = transaction.insertText(at, piece);
-              }
-            } finally {
-              fillingControl = previousFilling;
-            }
-            // 删字留下的空 run（占位文字的后半截、内层控件）去掉：留着的话内层控件回写出来
-            // 是个空壳，而 Word 里覆盖外层内容时内层控件是跟着消失的。落点所在的 run 留着 ——
-            // 值为空时控件还得有个能写字的位置
-            flush();
-            const host = entryAt(start).paragraph;
-            const controls = draft.contentControls ?? {};
-            const dropped = host.runs.filter(
-              (r) =>
-                r.id !== start.nodeId &&
-                r.id !== at.nodeId &&
-                withinContentControl(controls, r.contentControl ?? host.contentControl, id) &&
-                r.content.every((c) => c.kind === 'text' && c.text === ''),
-            );
-            if (dropped.length) {
-              draft = mapParagraphs(draft, (p) =>
-                p.id === host.id ? { ...p, runs: p.runs.filter((r) => !dropped.includes(r)) } : p,
-              );
-              entries = indexRuns(draft);
-              structural([host.id], collapseInto([{ ...host, runs: dropped }], { ...start }), []);
-            }
-            // 插入是从 start 往后长的，start 自己不动；空值时是折叠范围
-            const filled: DocRange = { start: { ...start }, end: { ...at } };
-            if (choice && lastValue !== undefined && (control.lastValue !== lastValue || control.dataBound)) {
-              const { dataBound: _dataBound, ...unbound } = draft.contentControls?.[id] ?? control;
-              draft = {
-                ...draft,
-                contentControls: { ...draft.contentControls, [id]: { ...unbound, lastValue } },
-              };
-              structural([host.id], []);
-            }
-            if (control.showingPlaceholder) {
-              if (!samePosition(start, at)) {
-                transaction.clearRunProps(filled);
-                if (control.runProps !== undefined) transaction.setRunProps(filled, control.runProps);
-              }
-              flush();
-              draft = {
-                ...draft,
-                contentControls: {
-                  ...draft.contentControls,
-                  [id]: { ...(draft.contentControls?.[id] ?? control), showingPlaceholder: false },
-                },
-              };
-              // 值与占位文字恰好相同时上面一条变更都没有，标记变了也得成一个撤销单元
-              structural([host.id], []);
-            }
-            // 任意字符串无法反推出日历日；保留旧 fullDate 会让文字与 Word 日期选择器互相矛盾。
-            if (control.date?.fullDate !== undefined) {
-              flush();
-              const current = draft.contentControls?.[id] ?? control;
-              const { fullDate: _fullDate, ...date } = control.date;
-              draft = { ...draft, contentControls: { ...draft.contentControls, [id]: { ...current, date } } };
-              structural([host.id], []);
-            }
-            return filled;
+            if (!Number.isInteger(index)) throw new RangeError('列表选项序号必须是整数');
+            return fillControl(id, '', index);
           });
         },
         replaceFieldResult(field, drafts) {

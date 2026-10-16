@@ -1,7 +1,7 @@
 // 用 headless Chrome + CDP 跑这里的浏览器回归页，轮询每页的 #result 直到 PASS / FAIL。
 //
 // 为什么不直接在浏览器里开：回归页靠 rAF 等一帧，被遮住的标签页（document.hidden）里 rAF 不跑，
-// 页面会永远停在「正在验证…」；headless 没有这个问题，而且能一口气跑完七个页面。
+// 页面会永远停在「正在验证…」；headless 没有这个问题，而且能一口气跑完全部页面。
 // 用法（先 `pnpm --filter @uw/playground dev`）：
 //   node apps/playground/tests/run.mjs            # 全部
 //   node apps/playground/tests/run.mjs print react  # 指定页
@@ -13,7 +13,17 @@ import { join } from 'node:path';
 
 const CHROME = process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const BASE = process.env.PLAYGROUND ?? 'http://localhost:5273';
-const ALL = ['view', 'virtual-text', 'annotations', 'scroll', 'facade', 'print', 'react', 'editing'];
+const ALL = [
+  'view',
+  'virtual-text',
+  'annotations',
+  'scroll',
+  'facade',
+  'print',
+  'react',
+  'editing',
+  'template',
+];
 const pages = process.argv.length > 2 ? process.argv.slice(2) : ALL;
 const port = 9333;
 const profile = mkdtempSync(join(tmpdir(), 'uw-chrome-'));

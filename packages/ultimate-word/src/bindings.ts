@@ -21,6 +21,8 @@ import {
 } from '@uw/model';
 
 export interface BindingInfo {
+  /** 当前控件的模型 id；按此 id 调事务只改这一处，同名坑位仍可分别填写。 */
+  id: NodeId;
   /** 坑位名：`w:tag`，没有 tag 时是 `w:alias`。同名的几个控件一起填 */
   key: string;
   tag?: string;
@@ -83,6 +85,7 @@ export class Bindings {
     return this.#spans().map(({ key, span }) => {
       const c = span.control;
       const info: BindingInfo = {
+        id: c.id,
         key,
         type: c.type,
         scope: c.scope,

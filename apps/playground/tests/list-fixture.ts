@@ -73,6 +73,30 @@ export function choiceControlDocx(type: 'dropDownList' | 'comboBox' = 'dropDownL
   );
 }
 
+/** 填写面板回归：同名字段、重复显示 / 保存值冲突，以及各类可写与不可写状态。 */
+export function templateControlsDocx(): Uint8Array {
+  const control = (tag: string, text: string, pr: string) =>
+    `<w:p><w:sdt><w:sdtPr><w:tag w:val="${tag}"/>${pr}</w:sdtPr><w:sdtContent><w:r><w:t>${text}</w:t></w:r></w:sdtContent></w:sdt></w:p>`;
+  const items =
+    '<w:listItem w:displayText="一般" w:value="a"/><w:listItem w:displayText="一般" w:value="b"/><w:listItem w:displayText="b" w:value="c"/>';
+  return docxOf(
+    paragraph('项目申请表') +
+      control('紧急程度', '一般', `<w:dropDownList w:lastValue="a">${items}</w:dropDownList>`) +
+      control('紧急程度', '一般', `<w:dropDownList w:lastValue="a">${items}</w:dropDownList>`) +
+      control('办理意见', '待确认', '<w:comboBox/>') +
+      control(
+        '签发日期',
+        '2026年10月16日',
+        '<w:date w:fullDate="2026-10-16T00:00:00Z"><w:dateFormat w:val="yyyy年M月d日"/></w:date>',
+      ) +
+      control('同意申请', '☐', '<w14:checkbox/>') +
+      `<w:sdt><w:sdtPr><w:lock w:val="contentLocked"/></w:sdtPr><w:sdtContent>${control('审批结果', '已归档', '<w:comboBox/>')}</w:sdtContent></w:sdt>` +
+      control('空选项', '请选择', '<w:showingPlcHdr/><w:dropDownList/>') +
+      control('缺少日期格式', '某日', '<w:date/>') +
+      control('申请说明', '文字字段请在编辑模式下填写', '<w:text/>'),
+  );
+}
+
 /** 日期模板：点击事件应读到填写后的元数据，显示文字与撤销 / 回写同进同退。 */
 export function dateControlDocx(): Uint8Array {
   return docxOf(

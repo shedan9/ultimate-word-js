@@ -513,6 +513,51 @@ describe('doc.bindings', () => {
     expect(again.replaceAll('甲 乙', '张三')).toEqual({ replaced: 2, skipped: 0 });
   });
 
+  it('坑位给出独立 id，按选项序号填写只改当前同名控件并精确回写保存值', async () => {
+    const pr =
+      '<w:dropDownList w:lastValue="a"><w:listItem w:displayText="同名" w:value="a"/><w:listItem w:displayText="同名" w:value="b"/><w:listItem w:displayText="b" w:value="c"/></w:dropDownList>';
+    const d = await UltimateWord.load(
+      template(`<w:p>${control('duplicate', '同名', pr)}${control('duplicate', '同名', pr)}</w:p>`),
+    );
+    const list = d.bindings.list().filter((b) => b.key === 'duplicate');
+    expect(list[0]?.id).not.toBe(list[1]?.id);
+    const id = list[0]?.id ?? '';
+    let changes = 0;
+    d.on('document:change', () => {
+      changes++;
+    });
+    d.tx((t) => void t.selectContentControlItem(id, 1));
+    expect(changes).toBe(1);
+    expect(
+      d.bindings
+        .list()
+        .filter((b) => b.key === 'duplicate')
+        .map((b) => [b.id, b.lastValue]),
+    ).toEqual([
+      [list[0]?.id, 'b'],
+      [list[1]?.id, 'a'],
+    ]);
+    const again = await UltimateWord.load(await d.toDocx());
+    expect(
+      again.bindings
+        .list()
+        .filter((b) => b.key === 'duplicate')
+        .map((b) => [b.value, b.lastValue]),
+    ).toEqual([
+      ['同名', 'b'],
+      ['同名', 'a'],
+    ]);
+    d.undo();
+    expect(
+      d.bindings
+        .list()
+        .filter((b) => b.key === 'duplicate')
+        .map((b) => b.lastValue),
+    ).toEqual(['a', 'a']);
+    d.redo();
+    expect(d.bindings.list().find((b) => b.id === id)?.lastValue).toBe('b');
+  });
+
   it('下拉框拒绝直接文字事务且不派发事件，填写与导出回读后仍受保护', async () => {
     const d = await UltimateWord.load(template());
     let events = 0;

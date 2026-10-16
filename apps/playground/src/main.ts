@@ -22,6 +22,7 @@ import type {
   UwView,
 } from 'ultimate-word';
 import { UltimateWord } from 'ultimate-word';
+import { createTemplatePanel } from './template-panel.ts';
 
 const app = document.querySelector<HTMLElement>('#app');
 if (app === null) throw new Error('#app 不在页面上');
@@ -42,6 +43,7 @@ app.innerHTML = `
       <option value="original">原始状态</option>
     </select></label>
     <button type="button" class="toc" disabled>更新目录</button>
+    <button type="button" class="fill-template" disabled>填写模板</button>
     <button type="button" class="export" disabled>导出 docx</button>
     <label class="find">查找 <input type="search" placeholder="回车到下一处" disabled><span class="hits"></span></label>
     <span class="status">把一份 .docx 拖进来</span>
@@ -65,6 +67,7 @@ const tocButton = app.querySelector<HTMLButtonElement>('.toc') as HTMLButtonElem
 const revisionSelect = app.querySelector<HTMLSelectElement>('.revisions') as HTMLSelectElement;
 const commentsInput = app.querySelector<HTMLInputElement>('.show-comments') as HTMLInputElement;
 const commentCount = app.querySelector<HTMLElement>('.comment-count') as HTMLElement;
+const templatePanel = createTemplatePanel(app.querySelector('.fill-template') as HTMLButtonElement, app);
 
 let doc: UwDocument | undefined;
 let view: UwView | undefined;
@@ -88,7 +91,16 @@ function remount(): void {
   // 外部链接照浏览器习惯开新标签页。编辑态点链接是放光标，不跳
   const current = view;
   const opened = doc;
-  current.on('click:element', ({ href }) => {
+  templatePanel.attach(opened, current);
+  current.on('click:element', (hit) => {
+    if (hit.kind === 'contentControl') {
+      if (['dropDownList', 'comboBox', 'date', 'checkbox'].includes(hit.control.type)) {
+        if (!templatePanel.open(hit.control.id))
+          status.textContent = '此控件尚未命名，请先在模板中设置字段名。';
+      }
+      return;
+    }
+    const { href } = hit;
     if (href === undefined || editInput.checked) return;
     if (!href.startsWith('#')) {
       window.open(href, '_blank', 'noopener');

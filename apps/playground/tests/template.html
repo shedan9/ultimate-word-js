@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>调试台模板填写回归</title>
+<style>body { margin: 0; font: 14px/1.5 system-ui; } iframe { width: 100%; height: 800px; border: 0; } #result { margin: 0; }</style>
+<pre id="result">正在验证…</pre><iframe src="/" title="调试台"></iframe>
+<script type="module">
+import { UltimateWord } from 'ultimate-word';
+import { choiceControlDocx, templateControlsDocx } from './list-fixture.ts';
+
+const result = document.querySelector('#result');
+const iframe = document.querySelector('iframe');
+let passed = 0;
+const assert = (ok, label) => { if (!ok) throw new Error(label); passed++; result.textContent = `进行中 ${passed}：${label}`; };
+const until = async (fn) => {
+  const start = performance.now();
+  while (!fn()) { if (performance.now() - start > 5000) throw new Error('等待页面更新超时'); await new Promise((r) => setTimeout(r, 20)); }
+};
+try {
+  await until(() => iframe.contentDocument?.querySelector('input[type=file]'));
+  const win = iframe.contentWindow;
+  const page = iframe.contentDocument;
+  const $ = (selector) => page.querySelector(selector);
+  const load = async (bytes, name) => {
+    const data = new win.DataTransfer();
+    data.items.add(new win.File([bytes], name));
+    $('input[type=file]').files = data.files;
+    $('input[type=file]').dispatchEvent(new win.Event('change', { bubbles: true }));
+    await until(() => $('.status').textContent.includes(`${name} ·`));
+  };
+  const button = $('.fill-template');
+  assert(button.disabled, '未打开文件时填写按钮禁用');
+  await load(templateControlsDocx(), '模板回归.docx');
+  assert(!button.disabled, '有字段的模板启用填写入口');
+  const dialog = $('.template-panel');
+  const picker = $('#template-target');
+  const open = () => { button.focus(); button.click(); };
+  const choose = (name, occurrence = 0) => {
+    const option = [...picker.options].filter((o) => o.textContent.startsWith(name))[occurrence];
+    if (!option) throw new Error(`没有字段：${name}`);
+    picker.value = option.value;
+    picker.dispatchEvent(new win.Event('change'));
+  };
+  const select = (index) => {
+    $('#template-choice').value = String(index);
+    $('#template-choice').dispatchEvent(new win.Event('change'));
+  };
+  const save = () => dialog.querySelector('form').requestSubmit();
+  let exported;
+  const originalUrl = win.URL.createObjectURL.bind(win.URL);
+  win.URL.createObjectURL = (blob) => { exported = blob; return originalUrl(blob); };
+  win.HTMLAnchorElement.prototype.click = () => {};
+  const snapshot = async () => {
+    exported = undefined;
+    $('.export').click();
+    await until(() => exported !== undefined);
+    return UltimateWord.load(new Uint8Array(await exported.arrayBuffer()));
+  };
+  open();
+  assert(dialog.matches(':modal') && page.activeElement === picker, '原生模态弹窗打开并聚焦字段选择器');
+  assert(picker.options[0].textContent.includes('第 1 处') && picker.options[1].textContent.includes('第 2 处'), '同名字段按文档序区分各处');
+  select(1); save();
+  assert(!dialog.open && page.activeElement === button, '保存关闭弹窗并恢复入口焦点');
+  let doc = await snapshot();
+  assert(doc.bindings.list()[0].lastValue === 'b' && doc.bindings.list()[0].value === '一般', '重复显示选项精确保存第二项，不误选显示文字 b 的第三项');
+  assert(doc.bindings.list()[1].lastValue === 'a', '填写一个同名字段不改另一处');
+  open(); choose('紧急程度', 1); select(2); save();
+  doc = await snapshot();
+  assert(doc.bindings.list()[1].lastValue === 'c' && doc.bindings.list()[1].value === 'b', '第二处可独立改选并导出');
+  open();
+  $('.template-undo').click();
+  choose('紧急程度', 1);
+  assert($('#template-choice').value === '0' && !$('.template-redo').disabled, '撤销重读当前值并启用重做');
+  $('.template-redo').click();
+  assert($('#template-choice').value === '2', '重做后面板与保存值同步');
+  select(0); $('.template-cancel').click();
+  open(); choose('紧急程度', 1);
+  assert($('#template-choice').value === '2', '取消不会提交草稿');
+  choose('办理意见');
+  assert($('#template-choice').value === 'custom' && !$('.template-custom').hidden, '无选项组合框仍能自填');
+  $('#template-value').value = '补齐材料后办理'; save();
+  doc = await snapshot();
+  assert(doc.bindings.list().find((b) => b.key === '办理意见').lastValue === '补齐材料后办理', '组合框自填同步显示与保存值');
+  open(); choose('签发日期');
+  assert($('#template-value').type === 'date' && $('#template-value').value === '2026-10-16', '日期输入读取 fullDate');
+  $('#template-value').value = ''; save();
+  assert(dialog.open && $('.template-message').textContent.includes('有效日期'), '日期未选择时就地报错且保持弹窗');
+  $('#template-value').value = '2026-10-20'; save();
+  doc = await snapshot();
+  assert(doc.bindings.list().find((b) => b.key === '签发日期').value === '2026年10月20日', '日期按原模板格式显示');
+  assert(doc.bindings.list().find((b) => b.key === '签发日期').fullDate === '2026-10-20T00:00:00Z', '日期导出保留同步属性');
+  open(); choose('同意申请'); $('#template-value').checked = true; save();
+  doc = await snapshot();
+  assert(doc.bindings.list().find((b) => b.key === '同意申请').checked === true, '面板勾选同步复选框状态并可导出');
+  open(); choose('审批结果');
+  assert($('.template-save').disabled && $('#template-value').disabled && $('.template-message').textContent.includes('锁定'), '继承内容锁禁用输入和保存并说明原因');
+  choose('空选项');
+  assert($('.template-save').disabled && $('.template-message').textContent.includes('没有可选项'), '空下拉框不给无效提交入口');
+  choose('申请说明');
+  assert($('.template-save').disabled && $('.template-message').textContent.includes('编辑模式'), '暂不支持的文字字段给出可执行指引');
+  choose('缺少日期格式'); $('#template-value').value = '2026-10-20'; save();
+  assert(dialog.open && $('.template-message').textContent.includes('缺少显示格式') && $('#template-value').value === '2026-10-20', '模型拒绝填写时显示原因并保留草稿');
+  $('.template-cancel').click();
+  // 桌面和窄屏都由原生 dialog 提供焦点约束，面板宽度不能溢出可用视口。
+  iframe.style.width = '390px';
+  open();
+  await new Promise((r) => setTimeout(r, 50));
+  const box = dialog.getBoundingClientRect();
+  assert(box.left >= 0 && box.right <= 390 && box.width <= 358, '窄屏弹窗适应视口且保留边距');
+  iframe.style.width = '100%';
+  await load(choiceControlDocx(), '新模板.docx');
+  assert(!dialog.open, '切换文件关闭旧面板并清掉旧字段');
+  open();
+  assert(picker.options.length === 1 && picker.options[0].textContent === 'level', '新模板的面板只列新文件字段');
+  $('.template-cancel').click();
+  const textNode = [...page.querySelectorAll('.stage .uw-text-layer text, .stage .uw-text-layer tspan')].find((el) => el.textContent === '一般');
+  if (!textNode) throw new Error('找不到控件文字');
+  const rect = textNode.getBoundingClientRect();
+  const x = rect.x + rect.width / 2, y = rect.y + rect.height / 2;
+  page.elementFromPoint(x, y).dispatchEvent(new win.MouseEvent('click', { bubbles: true, clientX: x, clientY: y }));
+  assert(dialog.open && picker.value === picker.options[0].value, '点击文档控件可打开对应字段填写面板');
+  result.textContent = `PASS: ${passed} template browser assertions`;
+} catch (error) {
+  result.textContent = `FAIL: ${error.message}\n${error.stack}`;
+  console.error(error);
+}
+</script>
+</html>

@@ -1,0 +1,153 @@
+/* 与调试台的炭灰工具栏和白纸一致；蓝色只用于保存和焦点，不遮盖文档的内容层级。 */
+.template-panel {
+  --panel-paper: #fff;
+  --panel-ink: #1f2328;
+  --panel-muted: #57606a;
+  --panel-rule: #d0d7de;
+  --panel-action: #0969da;
+  --panel-error: #cf222e;
+  color-scheme: light;
+  box-sizing: border-box;
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 24px;
+  border: 1px solid var(--panel-rule);
+  border-radius: 10px;
+  background: var(--panel-paper);
+  color: var(--panel-ink);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 24%);
+  font:
+    14px / 1.5 system-ui,
+    sans-serif;
+  overflow: auto;
+}
+.template-panel::backdrop {
+  background: rgb(31 35 40 / 40%);
+}
+.template-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.template-heading h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+.template-intro {
+  margin: 8px 0 24px;
+  color: var(--panel-muted);
+}
+.template-label {
+  display: block;
+  margin: 16px 0 8px;
+  font-weight: 600;
+}
+.template-panel select,
+.template-panel input:not([type="checkbox"]) {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--panel-rule);
+  border-radius: 6px;
+  background: var(--panel-paper);
+  color: var(--panel-ink);
+  font: inherit;
+}
+.template-current {
+  margin-top: 20px;
+  padding: 12px 0;
+  border-block: 1px solid var(--panel-rule);
+}
+.template-current > span {
+  color: var(--panel-muted);
+  font-size: 12px;
+}
+.template-current p {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 120px;
+  overflow: auto;
+}
+.template-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  margin-top: 16px;
+}
+.template-check input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--panel-action);
+}
+.template-message {
+  min-height: 21px;
+  margin: 12px 0 20px;
+  color: var(--panel-muted);
+  overflow-wrap: anywhere;
+}
+.template-error {
+  color: var(--panel-error);
+}
+.template-actions,
+.template-actions > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.template-actions {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  border-top: 1px solid var(--panel-rule);
+  padding-top: 16px;
+}
+.template-panel button {
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--panel-rule);
+  border-radius: 6px;
+  background: var(--panel-paper);
+  color: var(--panel-ink);
+  font: inherit;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.template-panel .template-save {
+  background: var(--panel-action);
+  color: #fff;
+  border-color: var(--panel-action);
+}
+.template-panel button:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+.template-panel button:active:not(:disabled) {
+  filter: brightness(0.9);
+}
+.template-panel :is(button, input, select):focus-visible {
+  outline: 2px solid var(--panel-action);
+  outline-offset: 3px;
+}
+.template-panel :disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.template-panel [hidden] {
+  display: none;
+}
+@media (max-width: 480px) {
+  .template-panel {
+    padding: 16px;
+    font-size: 16px;
+  }
+  .template-actions > div {
+    flex: 0 0 100%;
+  }
+  .template-actions button {
+    flex: 1;
+  }
+}
