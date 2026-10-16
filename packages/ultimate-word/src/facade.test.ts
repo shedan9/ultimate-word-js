@@ -665,6 +665,41 @@ describe('doc.bindings', () => {
     ).toEqual([undefined, '1']);
   });
 
+  it.each(['<w:text/>', '<w:richText/>'])(
+    '文字控件 %s 普通替换立即清占位状态，事件、历史与导出一致',
+    async (type) => {
+      const d = await UltimateWord.load(
+        template(
+          `<w:p>${control('field', '占位文字', `${type}<w:showingPlcHdr/><w:dataBinding w:xpath="/field"/>`)}</w:p>`,
+        ),
+      );
+      let changes = 0;
+      const sub = d.on('document:change', () => {
+        changes++;
+        expect(d.bindings.list().find((b) => b.key === 'field')).toMatchObject({
+          value: '张三',
+          placeholder: false,
+        });
+      });
+      expect(d.replaceAll('占位文字', '张三')).toEqual({ replaced: 1, skipped: 0 });
+      expect(changes).toBe(1);
+      sub.dispose();
+      const current = d.bindings.list().find((b) => b.key === 'field');
+      const again = await UltimateWord.load(await d.toDocx());
+      expect(again.bindings.list().find((b) => b.key === 'field')).toMatchObject({
+        value: '张三',
+        placeholder: false,
+      });
+      d.undo();
+      expect(d.bindings.list().find((b) => b.key === 'field')).toMatchObject({
+        value: '占位文字',
+        placeholder: true,
+      });
+      d.redo();
+      expect(d.bindings.list().find((b) => b.key === 'field')).toEqual(current);
+    },
+  );
+
   it('普通文字事务同步组合框自填值并清旧日期，整批修改同撤销与导出', async () => {
     const d = await UltimateWord.load(
       template(

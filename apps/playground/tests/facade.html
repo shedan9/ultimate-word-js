@@ -14,7 +14,7 @@ body { margin: 0; font: 14px/1.5 system-ui; }
 // find → decorate → rectsOf 通到屏幕），字摆在哪由 Vitest 里的真值断言负责
 import { UltimateWord } from 'ultimate-word';
 import fixtureUrl from '../../fidelity/fixtures/gongwen-01.docx?url';
-import { choiceControlDocx, controlDocx, dateControlDocx, linkDocx, shellControlDocx } from './list-fixture.ts';
+import { choiceControlDocx, controlDocx, dateControlDocx, linkDocx, shellControlDocx, textStateDocx } from './list-fixture.ts';
 
 const host = document.querySelector('#host');
 const second = document.querySelector('#second');
@@ -465,6 +465,29 @@ try {
   const comboAgain = await UltimateWord.load(await comboDoc.toDocx());
   assert(comboAgain.bindings.list()[0].lastValue === '紧急甲乙中文' && comboAgain.find('紧急甲乙中文').length === 1, '组合框自由编辑导出再加载保留显示与保存值');
   comboView.dispose();
+  for (const type of ['text', 'richText']) {
+    const textDoc = await UltimateWord.load(textStateDocx(type));
+    const textView = textDoc.mount('#host', { mode: 'edit', virtualize: false });
+    textView.select(textDoc.find('占位文字')[0]);
+    textView.focus();
+    await frame();
+    const input = host.querySelector('textarea');
+    input.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: '张三', bubbles: true, cancelable: true }));
+    assert(textDoc.bindings.list()[0].value === '张三' && !textDoc.bindings.list()[0].placeholder, `${type} beforeinput 同步文字与占位状态`);
+    input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    input.dispatchEvent(new CompositionEvent('compositionend', { data: '中文', bubbles: true }));
+    assert(textDoc.bindings.list()[0].value === '张三中文' && !textDoc.bindings.list()[0].placeholder, `${type} IME 后保持已填写状态`);
+    textDoc.undo();
+    textDoc.undo();
+    assert(textDoc.bindings.list()[0].value === '占位文字' && textDoc.bindings.list()[0].placeholder, `${type} 撤销输入与 IME 恢复占位状态`);
+    textDoc.redo();
+    textDoc.redo();
+    const latest = textDoc.bindings.list()[0];
+    assert(latest.value === '张三中文' && !latest.placeholder, `${type} 重做恢复文字与已填写状态`);
+    const reloaded = await UltimateWord.load(await textDoc.toDocx());
+    assert(reloaded.bindings.list()[0].value === latest.value && reloaded.bindings.list()[0].placeholder === latest.placeholder, `${type} 导出回读状态与当前查询一致`);
+    textView.dispose();
+  }
   result.textContent = `PASS: ${passed} browser assertions`;
 } catch (error) {
   result.textContent = `FAIL after ${passed}: ${error.message}`;

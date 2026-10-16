@@ -649,6 +649,43 @@ describe('内容控件', () => {
     expect(control?.dataBound).toBeUndefined();
   });
 
+  it.each(['<w:text/>', '<w:richText/>'])(
+    '文字控件 %s 普通改字后模型与回读状态一致，未知属性保留',
+    (type) => {
+      const original = docx(
+        `<w:p><w:sdt><w:sdtPr><w:tag w:val="field"/><w:showingPlcHdr/><w:dataBinding w:xpath="/field"/><w:alias w:val="姓名" probe="keep"/>${type}</w:sdtPr><w:sdtContent><w:r><w:t>占位文字</w:t></w:r></w:sdtContent></w:sdt></w:p>`,
+      );
+      const { out, again, edited } = roundTrip(original, (t, body) => {
+        const at = textPosition(body) as DocPosition;
+        t.insertText(at, '张三');
+      });
+      const xml = decoder.decode(unzip(out).get('word/document.xml'));
+      expect(xml).not.toContain('showingPlcHdr');
+      expect(xml).not.toContain('dataBinding');
+      expect(xml).toContain('<w:alias w:val="姓名" probe="keep"/>');
+      expect(edited.contentControls?.[idOf(edited, 'field')]).toMatchObject({ showingPlaceholder: false });
+      expect(edited.contentControls?.[idOf(edited, 'field')]?.dataBound).toBeUndefined();
+      expect(again.body.contentControls?.[idOf(again.body, 'field')]).toEqual(
+        edited.contentControls?.[idOf(edited, 'field')],
+      );
+    },
+  );
+
+  it('表格里非占位文字显式填相同值也解除绑定，撤销后逐字节恢复', () => {
+    const bytes = docx(
+      '<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:sdt><w:sdtPr><w:tag w:val="field"/><w:text/><w:dataBinding w:xpath="/field"/></w:sdtPr><w:sdtContent><w:r><w:t>张三</w:t></w:r></w:sdtContent></w:sdt></w:p></w:tc></w:tr></w:tbl><w:p/>',
+    );
+    const { pkg, loaded } = load(bytes);
+    const editor = createTextEditor(loaded.body);
+    editor.tx((t) => void t.fillContentControl(idOf(editor.body, 'field'), '张三'));
+    const out = serializeDocx(pkg, editor.body);
+    expect(decoder.decode(unzip(out).get('word/document.xml'))).not.toContain('dataBinding');
+    expect(editor.body.contentControls?.[idOf(editor.body, 'field')]?.dataBound).toBeUndefined();
+    editor.undo();
+    const restored = unzip(serializeDocx(pkg, editor.body));
+    for (const [part, content] of unzip(bytes)) expect(restored.get(part)).toEqual(content);
+  });
+
   it('在控件末尾之后拆出来的 run 留在控件外面', () => {
     const { out } = roundTrip(docx(FORM), (t, body) => {
       const tail = paragraphs(body)[0]?.runs.at(-1)?.id as string;

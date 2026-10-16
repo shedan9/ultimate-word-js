@@ -1086,6 +1086,12 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             // 值与占位文字恰好相同时上面一条变更都没有，标记变了也得成一个撤销单元
             structural([host.id], []);
           }
+          // 文字控件也要立即解除绑定，否则提交后查询仍报告旧状态、与导出回读不一致。
+          if (draft.contentControls?.[id]?.dataBound) {
+            const { dataBound: _dataBound, ...unbound } = draft.contentControls[id];
+            draft = { ...draft, contentControls: { ...draft.contentControls, [id]: unbound } };
+            structural([host.id], []);
+          }
           // 任意字符串无法反推出日历日；保留旧 fullDate 会让文字与 Word 日期选择器互相矛盾。
           if (control.date?.fullDate !== undefined) {
             flush();

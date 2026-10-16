@@ -527,6 +527,7 @@ class BodyWriter {
       children.length !== content.children.length ||
       children.some((c, i) => c !== content.children[i]) ||
       (was?.showingPlaceholder === true && now?.showingPlaceholder === false) ||
+      (was?.dataBound === true && now?.dataBound !== true) ||
       checkedChanged ||
       dateChanged ||
       choiceChanged;

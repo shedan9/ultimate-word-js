@@ -57,6 +57,13 @@ function docxOf(blocks: string, extraRels = ''): Uint8Array {
   });
 }
 
+/** 文字模板状态回归：普通输入必须同步清占位标记与绑定。 */
+export function textStateDocx(type: 'text' | 'richText'): Uint8Array {
+  return docxOf(
+    `<w:p><w:sdt><w:sdtPr><w:tag w:val="field"/><w:showingPlcHdr/><w:dataBinding w:xpath="/field"/><w:${type}/></w:sdtPr><w:sdtContent><w:r><w:t>占位文字</w:t></w:r></w:sdtContent></w:sdt></w:p>`,
+  );
+}
+
 /** 列表编辑回归用：三个一级列表项 + 一段普通正文。 */
 export function listDocx(): Uint8Array {
   return docxOf(
