@@ -371,6 +371,40 @@ try {
   const dropdownAgain = await UltimateWord.load(await dropdownDoc.toDocx());
   assert(dropdownAgain.find('紧急').length === 1 && dropdownAgain.replaceAll('紧急', '待确认').skipped === 1, '下拉框导出回读仍限制自由替换');
   dropdownView.dispose();
+  const singleDoc = await UltimateWord.load(controlDocx());
+  const singleView = singleDoc.mount('#host', { mode: 'edit', virtualize: false });
+  const singleRange = singleDoc.find('申请人')[0];
+  singleView.select(singleRange);
+  singleView.focus();
+  await frame();
+  const singleInput = document.querySelector('#host textarea');
+  const singleStatus = () => host.querySelector('[role="status"]')?.textContent ?? '';
+  let singleChanges = 0;
+  singleDoc.on('document:change', () => singleChanges++);
+  singleInput.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertParagraph', bubbles: true, cancelable: true }));
+  assert(singleDoc.find('申请人').length === 1 && singleStatus().includes('单行纯文本控件不能换行'), '单行控件 Enter 拒绝换行并报告错误');
+  singleInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true, cancelable: true }));
+  assert(singleDoc.find('申请人').length === 1 && singleStatus().includes('单行纯文本控件不能换行'), '单行控件 Shift+Enter 同样拒绝软换行');
+  for (const html of [false, true]) {
+    const data = new DataTransfer();
+    data.setData('text/plain', '甲\n乙');
+    if (html) data.setData('text/html', '<p>甲</p><p>乙</p>');
+    singleInput.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+    assert(singleDoc.find('申请人').length === 1 && singleStatus().includes('单行纯文本控件不能换行'), `单行控件 ${html ? 'HTML' : '纯文字'} 多行粘贴全部回滚`);
+  }
+  assert(singleChanges === 0 && !singleDoc.canUndo && JSON.stringify(singleView.selection) === JSON.stringify(singleRange), '拒绝换行不派发变更、不记历史并保留选区');
+  singleInput.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+  singleInput.dispatchEvent(new CompositionEvent('compositionend', { data: '张三', bubbles: true }));
+  assert(singleDoc.find('张三').length === 1 && singleDoc.bindings.list().find((b) => b.key === 'applicant').value === '张三', '单行控件仍接受普通 IME 文字');
+  singleDoc.undo();
+  assert(singleDoc.find('申请人').length === 1, '单行控件普通输入仍可撤销');
+  singleDoc.redo();
+  assert(singleDoc.find('张三').length === 1, '单行控件普通输入仍可重做');
+  const singleAgain = await UltimateWord.load(await singleDoc.toDocx());
+  let singleRejected = false;
+  try { singleAgain.tx((t) => t.insertInline(singleAgain.find('张三')[0].end, 'lineBreak')); } catch (error) { singleRejected = error.message.includes('单行纯文本控件不能换行'); }
+  assert(singleRejected && singleAgain.find('张三').length === 1, '单行控件导出回读仍限制换行并保留文字');
+  singleView.dispose();
   const comboDoc = await UltimateWord.load(choiceControlDocx('comboBox'));
   const comboView = comboDoc.mount('#host', { mode: 'edit', virtualize: false });
   comboView.select(comboDoc.find('一般')[0]);

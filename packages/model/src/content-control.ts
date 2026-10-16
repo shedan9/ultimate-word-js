@@ -139,7 +139,7 @@ export function parseContentControl(
     type = t;
     if (t === 'text') {
       const multi = attr(e, 'w:multiLine');
-      if (multi !== undefined && multi !== '0' && multi !== 'false') out.multiLine = true;
+      if (multi !== undefined && !['0', 'false', 'off'].includes(multi)) out.multiLine = true;
     } else if (t === 'dropDownList' || t === 'comboBox') {
       const lastValue = attr(e, 'w:lastValue');
       if (lastValue !== undefined) out.lastValue = lastValue;

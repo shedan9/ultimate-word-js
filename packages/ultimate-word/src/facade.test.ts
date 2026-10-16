@@ -481,6 +481,38 @@ describe('doc.bindings', () => {
     expect(d.bindings.pending.get('emptyList')).toBe('自由输入');
   });
 
+  it('单行控件拒绝换行且不派发事件，正常填写可撤销并保留导出回读后的限制', async () => {
+    const d = await UltimateWord.load(template());
+    let events = 0;
+    d.on('document:change', () => {
+      events++;
+    });
+    const r = d.find('单击输入')[0] as DocRange;
+    expect(() => d.tx((t) => void t.replaceText(r, '甲\n乙'))).toThrow(/单行纯文本控件不能换行/);
+    expect(() => d.replaceAll('单击输入', '甲\n乙')).toThrow(/单行纯文本控件不能换行/);
+    expect(events).toBe(0);
+    expect(d.canUndo).toBe(false);
+    expect(d.find('单击输入')).toHaveLength(2);
+    d.bindings.set('applicant', '甲\n乙').apply();
+    expect(events).toBe(1);
+    expect(d.find('甲 乙')).toHaveLength(2);
+    d.undo();
+    expect(d.find('单击输入')).toHaveLength(2);
+    d.redo();
+    expect(d.find('甲 乙')).toHaveLength(2);
+    const again = await UltimateWord.load(await d.toDocx());
+    expect(
+      again.bindings
+        .list()
+        .filter((b) => b.key === 'applicant')
+        .every((b) => b.value === '甲 乙'),
+    ).toBe(true);
+    expect(() => again.tx((t) => void t.splitParagraph((again.find('甲 乙')[0] as DocRange).end))).toThrow(
+      /单行纯文本控件不能换行/,
+    );
+    expect(again.replaceAll('甲 乙', '张三')).toEqual({ replaced: 2, skipped: 0 });
+  });
+
   it('下拉框拒绝直接文字事务且不派发事件，填写与导出回读后仍受保护', async () => {
     const d = await UltimateWord.load(template());
     let events = 0;

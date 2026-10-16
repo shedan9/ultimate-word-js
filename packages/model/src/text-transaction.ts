@@ -667,6 +667,20 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
         assertControlEditable(entry.run.contentControl);
       }
 
+      /** 换行限制沿父链生效；普通文字、制表位和删除原有换行仍可执行，不把单行误当成内容锁。 */
+      function assertLineBreakAllowed(entry: RunEntry): void {
+        const controls = draft.contentControls ?? {};
+        for (const inner of [entry.paragraph.contentControl, entry.run.contentControl])
+          for (
+            let id = inner, guard = 0;
+            id !== undefined && guard < 64;
+            id = controls[id]?.parent, guard++
+          ) {
+            const control = controls[id];
+            if (control?.type === 'text' && !control.multiLine) throw new Error('单行纯文本控件不能换行');
+          }
+      }
+
       /**
        * 被删除的修订里不许再插东西：插进去的字会跟着它一起「已删除」—— 最终状态下打了看不见，
        * 回写成 `w:delText`。修订模式下的编辑是非目标（revisions.ts），所以拒绝而不是替用户挪位置。
@@ -696,6 +710,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
         const entry = entryAt(position);
         editableAt(entry, position);
         assertTextEditable(entry);
+        if (item.kind === 'break') assertLineBreakAllowed(entry);
         const { run } = entry;
         const ci = position.contentIndex;
         const c = run.content[ci];
@@ -946,6 +961,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             position = textPosition(position);
             const entry = entryAt(position);
             assertTextEditable(entry);
+            assertLineBreakAllowed(entry);
             const text = textAt(entry, position);
             // 域可能跨 run / 段；拆段不能切断其结构。
             for (const r of entry.paragraph.runs)
@@ -1775,6 +1791,16 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             const endRun = b.paragraph.runs[ib] as Run;
             assertTextEditable(entryAt({ nodeId: sepRun.id, contentIndex: 0, offset: 0 }));
             assertTextEditable(entryAt({ nodeId: endRun.id, contentIndex: 0, offset: 0 }));
+            // 域结果直接装配节点，不经过 insertInline / splitParagraph，也要检查新增的换行。
+            if (
+              drafts.length > 1 ||
+              drafts.some((d: ParagraphDraft) =>
+                d.runs.some((r) => r.content.some((c) => c.kind === 'break')),
+              )
+            ) {
+              assertLineBreakAllowed(entryAt({ nodeId: sepRun.id, contentIndex: 0, offset: 0 }));
+              assertLineBreakAllowed(entryAt({ nodeId: endRun.id, contentIndex: 0, offset: 0 }));
+            }
 
             // 界桩在真实文件里独占一个 run；万一与结果文字挤在一个 run 里，只切掉结果那半
             const head =

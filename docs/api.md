@@ -442,6 +442,11 @@ doc.bindings.pending / discard();                // 还没提交的值 / 丢掉�
 >   （重复区块的外壳）照旧是透明容器。
 > - 低层入口：`@uw/model` 的 `contentControlSpans(body)` 与事务命令 `tx.fillContentControl(id, text)`（§10.1）。
 
+**单行纯文本控件的普通编辑**（2026-10-16）：`w:text` 未开启 `w:multiLine` 时（缺席、0 / false / off），
+Enter、软换行、分页符、多行粘贴 / 替换与多行域结果均拒绝，整次事务回滚，不派发变更、不改变选区与历史。
+限制包含父控件：内层开启 multiLine 仍不能绕过单行祖先。普通文字 / IME、制表位、格式与删除已有换行仍可使用，
+`locked` 仍仅表示内容锁。填写接口继续把目标单行控件的换行转为空格；填写子控件若向单行父控件引入换行则拒绝。
+
 **下拉框 / 组合框**（2026-10-14）：`BindingInfo.items` 提供 `{ text, value }[]`，`options` 仍为显示文字列表；
 `lastValue` 返回 OOXML 的 `w:lastValue`（原文没有时不从文字猜测），`value` 仍为显示文字。
 字符串先按显示文字匹配，再按选项值匹配，保持原有语义；下拉框没有选项时也拒绝填写，组合框允许自填。

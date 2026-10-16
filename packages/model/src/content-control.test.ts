@@ -157,7 +157,7 @@ describe('自由文字编辑同步控件元数据', () => {
 
   it('内层文字编辑同时同步外层块级组合框，跨段 / 软换行按最终显示保存', () => {
     const body = parse(
-      `<w:sdt><w:sdtPr><w:tag w:val="edited"/>${list('comboBox')}</w:sdtPr><w:sdtContent><w:p><w:sdt><w:sdtPr><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>一般</w:t></w:r></w:sdtContent></w:sdt></w:p></w:sdtContent></w:sdt>`,
+      `<w:sdt><w:sdtPr><w:tag w:val="edited"/>${list('comboBox')}</w:sdtPr><w:sdtContent><w:p><w:sdt><w:sdtPr><w:text w:multiLine="1"/></w:sdtPr><w:sdtContent><w:r><w:t>一般</w:t></w:r></w:sdtContent></w:sdt></w:p></w:sdtContent></w:sdt>`,
     );
     const editor = createTextEditor(body);
     editor.tx((t) => {
