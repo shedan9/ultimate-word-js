@@ -1750,7 +1750,6 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             if (span === undefined || range === undefined) throw new Error('日期控件里没有可写的位置');
             if (
               span.paragraphs.length !== 1 ||
-              span.runs.length > 1 ||
               span.runs.some(
                 (r) =>
                   r.revision !== undefined ||
@@ -1759,7 +1758,8 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
                   r.content.some((c) => c.kind !== 'text'),
               )
             )
-              throw new Error('日期控件必须是单段、单 run、无修订的文字');
+              throw new Error('日期控件必须是单段、无修订且无嵌套控件的纯文字');
+            // 局部格式或 Word 保存都会拆 run；成员全是普通文字即可共用填写路径，不能把格式边界当成不支持的内容。
             const sameText = textOfContentControl(span) === value.text;
             filledControlText.set(id, value.text.replace(/\r\n|\r/g, '\n'));
             if (sameText && control.date?.fullDate === value.fullDate && !control.showingPlaceholder)

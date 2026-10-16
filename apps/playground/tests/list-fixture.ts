@@ -95,6 +95,9 @@ export function templateControlsDocx(): Uint8Array {
         '签发日期',
         '2026年10月16日',
         '<w:date w:fullDate="2026-10-16T00:00:00Z"><w:dateFormat w:val="yyyy年M月d日"/></w:date>',
+      ).replace(
+        '<w:t>2026年10月16日</w:t>',
+        '<w:rPr><w:b/></w:rPr><w:t>2026年</w:t></w:r><w:r><w:t>10月16日</w:t>',
       ) +
       control('同意申请', '☐', '<w14:checkbox/>') +
       `<w:sdt><w:sdtPr><w:lock w:val="contentLocked"/></w:sdtPr><w:sdtContent>${control('审批结果', '已归档', '<w:comboBox/>')}</w:sdtContent></w:sdt>` +

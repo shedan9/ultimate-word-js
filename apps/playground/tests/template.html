@@ -89,6 +89,15 @@ try {
   doc = await snapshot();
   assert(doc.bindings.list().find((b) => b.key === '签发日期').value === '2026年10月20日', '日期按原模板格式显示');
   assert(doc.bindings.list().find((b) => b.key === '签发日期').fullDate === '2026-10-20T00:00:00Z', '日期导出保留同步属性');
+  open();
+  $('.template-undo').click(); choose('签发日期');
+  assert($('#template-value').value === '2026-10-16', '多 run 日期填写撤销恢复原日期');
+  doc = await snapshot();
+  assert(doc.find('2026年10月16日').length === 1, '多 run 日期填写撤销恢复原文字');
+  assert(doc.query('run').filter((r) => r.content.some((c) => c.kind === 'text' && /2026年|10月16日/.test(c.text))).length === 2, '多 run 日期填写撤销保留原有 run');
+  $('.template-redo').click(); choose('签发日期');
+  assert($('#template-value').value === '2026-10-20', '多 run 日期填写重做更新日期输入');
+  $('.template-cancel').click();
   open(); choose('同意申请'); $('#template-value').checked = true; save();
   doc = await snapshot();
   assert(doc.bindings.list().find((b) => b.key === '同意申请').checked === true, '面板勾选同步复选框状态并可导出');

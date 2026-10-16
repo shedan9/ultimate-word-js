@@ -433,6 +433,11 @@ describe('setContentControlDate', () => {
     `<w:sdt><w:sdtPr><w:tag w:val="date"/>${extra}<w:date ${pr}><w:dateFormat w:val="yyyy年M月d日"/><w:lid w:val="zh-CN"/><w:calendar w:val="gregorian"/></w:date></w:sdtPr><w:sdtContent>${content}</w:sdtContent></w:sdt>`;
   const idOf = (body: Body) =>
     contentControlSpans(body).find((s) => s.control.tag === 'date')?.control.id as string;
+  const dateSpan = (body: Body) => {
+    const span = contentControlSpans(body).find((s) => s.control.tag === 'date');
+    if (span === undefined) throw new Error('样本缺少日期控件');
+    return span;
+  };
 
   it('解析日期属性；填入日历日同步显示、元数据与占位格式，撤销重做同进同退', () => {
     const editor = createTextEditor(
@@ -528,12 +533,96 @@ describe('setContentControlDate', () => {
     expect(editor.canUndo).toBe(false);
   });
 
-  it('内容锁沿父链生效；修订、域、多段、多 run 与嵌套内容拒绝', () => {
+  it.each(['inline', 'block'])('多个文字 run 的日期可填写，返回范围与撤销重做一致：%s', (scope) => {
+    const content =
+      '<w:r><w:rPr><w:b/></w:rPr><w:t>2026年</w:t></w:r>' +
+      '<w:r><w:rPr><w:i/></w:rPr><w:t>10月13日</w:t></w:r>';
+    const control = dateControl('', scope === 'block' ? `<w:p>${content}</w:p>` : content);
+    const editor = createTextEditor(parse(scope === 'block' ? control : `<w:p>${control}</w:p>`));
+    const before = editor.body;
+    let filled: ReturnType<typeof rangeOfContentControl>;
+    editor.tx((t) => {
+      filled = t.setContentControlDate(idOf(before), '2024-02-29');
+    });
+    const after = editor.body;
+    const span = dateSpan(after);
+    expect(values(after)).toEqual({ date: '2024年2月29日' });
+    expect(span.control.date?.fullDate).toBe('2024-02-29T00:00:00Z');
+    expect(span.runs).toHaveLength(1);
+    expect(span.runs[0]?.props).toEqual({ bold: true });
+    expect(filled).toEqual(rangeOfContentControl(span));
+    editor.undo();
+    expect(editor.body).toBe(before);
+    editor.redo();
+    expect(editor.body).toBe(after);
+  });
+
+  it('局部格式拆 run 后同一事务仍可填日期；仅改日期属性保留各 run 格式，相同日期不记修改', () => {
+    const editor = createTextEditor(
+      parse(
+        `<w:p>${dateControl('w:fullDate="2026-10-01T00:00:00Z"', '<w:r><w:t>2026年10月</w:t></w:r>').replace('yyyy年M月d日', 'yyyy年M月')}</w:p>`,
+      ),
+    );
+    const before = editor.body;
+    const run = dateSpan(before).runs[0];
+    if (run === undefined) throw new Error('样本缺少日期文字');
+    editor.tx((t) => {
+      t.setRunProps(
+        {
+          start: { nodeId: run.id, contentIndex: 0, offset: 0 },
+          end: { nodeId: run.id, contentIndex: 0, offset: 4 },
+        },
+        { bold: true },
+      );
+      t.setContentControlDate(idOf(before), '2026-10-13');
+    });
+    const after = editor.body;
+    const span = dateSpan(after);
+    expect(span.runs).toHaveLength(2);
+    expect(span.runs.map((r) => r.props)).toEqual([{ bold: true }, {}]);
+    expect(span.control.date?.fullDate).toBe('2026-10-13T00:00:00Z');
+    expect(values(after)).toEqual({ date: '2026年10月' });
+    expect(
+      editor.tx((t) => {
+        t.setContentControlDate(idOf(after), '2026-10-13');
+      }),
+    ).toBeUndefined();
+    expect(editor.body).toBe(after);
+    editor.undo();
+    expect(editor.body).toBe(before);
+    editor.redo();
+    expect(editor.body).toBe(after);
+  });
+
+  it('多个占位文字 run 填日期后采用控件格式并清占位与绑定', () => {
+    const editor = createTextEditor(
+      parse(
+        `<w:p>${dateControl(
+          '',
+          '<w:r><w:rPr><w:rStyle w:val="PlaceholderText"/></w:rPr><w:t>选择</w:t></w:r><w:r><w:t>日期</w:t></w:r>',
+          '<w:showingPlcHdr/><w:dataBinding w:xpath="/date"/><w:rPr><w:i/></w:rPr>',
+        )}</w:p>`,
+      ),
+    );
+    editor.tx((t) => {
+      t.setContentControlDate(idOf(editor.body), '2026-10-16');
+    });
+    const span = dateSpan(editor.body);
+    expect(textOfContentControl(span)).toBe('2026年10月16日');
+    expect(span.runs).toHaveLength(1);
+    expect(span.runs[0]?.props).toEqual({ italic: true });
+    expect(span.control.showingPlaceholder).toBe(false);
+    expect(span.control.dataBound).toBeUndefined();
+  });
+
+  it('内容锁沿父链生效；修订、域、多段与嵌套内容拒绝', () => {
     for (const content of [
       '<w:ins><w:r><w:t>某日</w:t></w:r></w:ins>',
       '<w:fldSimple w:instr="DATE"><w:r><w:t>某日</w:t></w:r></w:fldSimple>',
       '<w:p><w:r><w:t>某</w:t></w:r></w:p><w:p><w:r><w:t>日</w:t></w:r></w:p>',
-      '<w:r><w:t>某</w:t></w:r><w:r><w:t>日</w:t></w:r>',
+      '<w:r><w:t>某</w:t></w:r><w:ins><w:r><w:t>日</w:t></w:r></w:ins>',
+      '<w:r><w:t>某</w:t></w:r><w:fldSimple w:instr="DATE"><w:r><w:t>日</w:t></w:r></w:fldSimple>',
+      '<w:r><w:t>某</w:t></w:r><w:r><w:tab/><w:t>日</w:t></w:r>',
       '<w:sdt><w:sdtContent><w:r><w:t>某日</w:t></w:r></w:sdtContent></w:sdt>',
     ]) {
       const editor = createTextEditor(

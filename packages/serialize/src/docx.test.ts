@@ -545,6 +545,39 @@ describe('内容控件', () => {
     for (const [part, content] of unzip(bytes)) expect(restored.get(part)).toEqual(content);
   });
 
+  it.each(['2026-10-13', '2024-02-29'])('表格里的多 run 日期填写后可回读，撤销恢复原始部件：%s', (date) => {
+    const control = dateControl('yyyy年M月d日', '2026年10月13日').replace(
+      '<w:r><w:t>2026年10月13日</w:t></w:r>',
+      '<w:r><w:rPr><w:b/></w:rPr><w:t>2026年</w:t></w:r><w:r><w:rPr><w:i/></w:rPr><w:t>10月13日</w:t></w:r>',
+    );
+    const bytes = docx(`<w:tbl><w:tr><w:tc><w:p>${control}</w:p></w:tc></w:tr></w:tbl><w:p/>`);
+    const { pkg, loaded } = load(bytes);
+    const editor = createTextEditor(loaded.body);
+    const before = editor.body;
+    editor.tx((t) => {
+      t.setContentControlDate(idOf(before, 'date'), date);
+    });
+    const after = editor.body;
+    const out = serializeDocx(pkg, after);
+    const xml = decoder.decode(unzip(out).get('word/document.xml'));
+    const again = load(out).loaded.body;
+    expect(again.contentControls?.[idOf(again, 'date')]?.date?.fullDate).toBe(`${date}T00:00:00Z`);
+    expect(paragraphText(paragraphs(again)[0] as Paragraph)).toBe(
+      date === '2026-10-13' ? '2026年10月13日' : '2024年2月29日',
+    );
+    expect(xml).not.toContain('dataBinding');
+    expect(xml).toContain('x:keep="yes"');
+    expect(xml).toContain('<x:unknown/>');
+    expect(paragraphs(again)[0]?.runs.map((r) => r.props)).toEqual(
+      date === '2026-10-13' ? [{ bold: true }, { italic: true }] : [{ bold: true }],
+    );
+    editor.undo();
+    const restored = unzip(serializeDocx(pkg, editor.body));
+    for (const [part, content] of unzip(bytes)) expect(restored.get(part)).toEqual(content);
+    editor.redo();
+    expect(serializeDocx(pkg, editor.body)).toEqual(out);
+  });
+
   const checkbox = (pr = '', content = '<w:r><w:t>☐</w:t></w:r>', extra = '') =>
     `<w:sdt><w:sdtPr><w:tag w:val="agree"/>${extra}<w14:checkbox>${pr}</w14:checkbox></w:sdtPr><w:sdtContent>${content}</w:sdtContent></w:sdt>`;
   const FORM =

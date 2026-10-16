@@ -762,6 +762,38 @@ describe('doc.bindings', () => {
     expect(d.bindings.apply()).toBeUndefined();
   });
 
+  it('日期局部加粗后仍可批量填写，显示、事件、历史与导出回读一致', async () => {
+    const d = await UltimateWord.load(
+      template(
+        `<w:p>${control('issued', '2026年10月13日', '<w:date w:fullDate="2026-10-13T00:00:00Z"><w:dateFormat w:val="yyyy年M月d日"/></w:date>')}</w:p>`,
+      ),
+    );
+    d.tx((t) => {
+      t.setRunProps(d.find('2026年')[0] as DocRange, { bold: true });
+    });
+    const before = d.bindings.list().find((b) => b.key === 'issued');
+    let changes = 0;
+    const sub = d.on('document:change', () => {
+      changes++;
+    });
+    d.bindings.set('issued', { date: '2024-02-29' }).apply();
+    expect(changes).toBe(1);
+    expect(d.bindings.pending.size).toBe(0);
+    const after = d.bindings.list().find((b) => b.key === 'issued');
+    expect(after).toMatchObject({ value: '2024年2月29日', fullDate: '2024-02-29T00:00:00Z' });
+    expect(d.find('2024年2月29日')[0]).toEqual(after?.range);
+    d.undo();
+    expect(d.bindings.list().find((b) => b.key === 'issued')).toEqual(before);
+    d.redo();
+    expect(d.bindings.list().find((b) => b.key === 'issued')).toEqual(after);
+    sub.dispose();
+    const again = await UltimateWord.load(await d.toDocx());
+    expect(again.bindings.list().find((b) => b.key === 'issued')).toMatchObject({
+      value: '2024年2月29日',
+      fullDate: '2024-02-29T00:00:00Z',
+    });
+  });
+
   it('日期对象验证全部同名控件；批量日期填写失败时回滚并保留 pending', async () => {
     const pr = '<w:date><w:dateFormat w:val="yyyy-MM-dd"/></w:date>';
     const d = await UltimateWord.load(template(`<w:p>${control('issued', '某日', pr)}</w:p>`));
