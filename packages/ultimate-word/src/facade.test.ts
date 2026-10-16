@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { FALLBACK_METRICS, FontRegistry } from '@uw/fonts';
 import type { DocRange } from '@uw/model';
 import { unzip, zip } from '@uw/ooxml';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import type { UwDocument } from './index.ts';
 import { DOCX_MIME, UltimateWord, UwError, UwErrorCode } from './index.ts';
 
@@ -556,6 +556,39 @@ describe('doc.bindings', () => {
     ).toEqual(['a', 'a']);
     d.redo();
     expect(d.bindings.list().find((b) => b.id === id)?.lastValue).toBe('b');
+  });
+
+  it('复选框拒绝自由编辑，全部替换跳过且不调用替换函数，勾选与导出回读仍一致', async () => {
+    const d = await UltimateWord.load(template());
+    const r = d.find('☐')[0] as DocRange;
+    let events = 0;
+    d.on('document:change', () => {
+      events++;
+    });
+    expect(() => d.tx((t) => void t.replaceText(r, '☒'))).toThrow(/复选框只能/);
+    const replace = vi.fn(() => '☒');
+    expect(d.replaceAll('☐', replace)).toEqual({ replaced: 0, skipped: 1 });
+    expect(replace).not.toHaveBeenCalled();
+    expect(events).toBe(0);
+    expect(d.canUndo).toBe(false);
+    expect(d.bindings.list().find((b) => b.key === 'agree')).toMatchObject({
+      checked: false,
+      value: '☐',
+      locked: false,
+    });
+    d.bindings.set('agree', true).apply();
+    expect(events).toBe(1);
+    const again = await UltimateWord.load(await d.toDocx());
+    expect(again.bindings.list().find((b) => b.key === 'agree')).toMatchObject({
+      checked: true,
+      value: '☒',
+    });
+    expect(() => again.tx((t) => void t.deleteRange(again.find('☒')[0] as DocRange))).toThrow(/复选框只能/);
+    expect(again.replaceAll('☒', '☐')).toEqual({ replaced: 0, skipped: 1 });
+    d.undo();
+    expect(d.find('☐')).toHaveLength(1);
+    d.redo();
+    expect(d.find('☒')).toHaveLength(1);
   });
 
   it('下拉框拒绝直接文字事务且不派发事件，填写与导出回读后仍受保护', async () => {

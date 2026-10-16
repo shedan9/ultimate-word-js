@@ -264,7 +264,7 @@ interface RunEntry {
   runIndex: number;
   protected: boolean;
   contentLocked: boolean;
-  dropDownList: boolean;
+  inputRestricted: boolean;
 }
 
 interface HistoryEntry {
@@ -310,8 +310,9 @@ function indexRuns(body: Body): Map<NodeId, RunEntry> {
         protected: protectedRun,
         contentLocked:
           contentLocked(body, paragraph.contentControl) || contentLocked(body, run.contentControl),
-        dropDownList:
-          inDropDownList(body, paragraph.contentControl) || inDropDownList(body, run.contentControl),
+        inputRestricted:
+          inputRestriction(body, paragraph.contentControl) !== undefined ||
+          inputRestriction(body, run.contentControl) !== undefined,
       });
     }
   }
@@ -322,13 +323,19 @@ function contentLocked(body: Body, id: NodeId | undefined): boolean {
   return id !== undefined && isContentControlLocked(body.contentControls ?? {}, id);
 }
 
-/** 填写只放行指定下拉框本身，不能借内层填写改掉外层下拉框的显示。 */
-function inDropDownList(body: Body, id: NodeId | undefined, filling?: NodeId): boolean {
+/** 专用填写只放行目标本身，不能借填写子控件破坏祖先的选项或勾选符号。 */
+function inputRestriction(
+  body: Body,
+  id: NodeId | undefined,
+  filling?: NodeId,
+): 'dropDownList' | 'checkbox' | undefined {
   const controls = body.contentControls;
-  if (controls === undefined) return false;
-  for (let guard = 0; id !== undefined && guard < 64; id = controls[id]?.parent, guard++)
-    if (controls[id]?.type === 'dropDownList' && id !== filling) return true;
-  return false;
+  if (controls === undefined) return undefined;
+  for (let guard = 0; id !== undefined && guard < 64; id = controls[id]?.parent, guard++) {
+    const type = controls[id]?.type;
+    if ((type === 'dropDownList' || type === 'checkbox') && id !== filling) return type;
+  }
+  return undefined;
 }
 
 function assertContentUnlocked(locked: boolean): void {
@@ -339,7 +346,7 @@ const editableIndex = new WeakMap<Body, Map<NodeId, RunEntry>>();
 
 /**
  * 同一段内的范围能不能交给文字事务改：从首 run 到末 run（**含中间的隐藏 run**，删除会一起清掉）
- * 都不在域、内容锁或下拉框里。批量替换先用它挑，而不是让事务去撞 —— 一条命令失败整个事务回滚，
+ * 都不在域、内容锁、下拉框或复选框里。批量替换先用它挑，而不是让事务去撞 —— 一条命令失败整个事务回滚，
  * 「全部替换」不该因为有一处命中不可改就一处都不换。跨段的范围答 false。
  */
 export function rangeEditable(body: Body, range: DocRange): boolean {
@@ -357,7 +364,7 @@ export function rangeEditable(body: Body, range: DocRange): boolean {
   for (let i = first.runIndex; i <= last.runIndex; i++) {
     const run = first.paragraph.runs[i] as Run;
     const entry = entries.get(run.id);
-    if (entry?.protected || entry?.contentLocked || entry?.dropDownList) return false;
+    if (entry?.protected || entry?.contentLocked || entry?.inputRestricted) return false;
   }
   return true;
 }
@@ -659,12 +666,14 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
 
       function assertControlEditable(id: NodeId | undefined, filling = fillingControl): void {
         assertContentUnlocked(contentLocked(draft, id));
-        if (inDropDownList(draft, id, filling)) throw new Error('下拉框只能通过填写接口选择选项');
+        const restriction = inputRestriction(draft, id, filling);
+        if (restriction === 'dropDownList') throw new Error('下拉框只能通过填写接口选择选项');
+        if (restriction === 'checkbox') throw new Error('复选框只能通过勾选接口切换状态');
       }
 
       function assertTextEditable(entry: RunEntry): void {
         assertContentUnlocked(entry.contentLocked);
-        if (!entry.dropDownList) return;
+        if (!entry.inputRestricted) return;
         assertControlEditable(entry.paragraph.contentControl);
         assertControlEditable(entry.run.contentControl);
       }
@@ -989,7 +998,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
           const span = contentControlSpans(draft).find((s) => s.control.id === id);
           const range = span === undefined ? undefined : rangeOfContentControl(span);
           if (range === undefined) throw new Error('内容控件里没有可写的位置');
-          // 覆盖外层还会清掉内层空 run；内容锁或下拉框即使没有字，也不能借填外层把它删掉。
+          // 覆盖外层还会清掉内层空 run；内容锁、下拉框或复选框即使没有字，也不能借填外层把它删掉。
           for (const nested of contentControlSpans(draft))
             if (withinContentControl(draft.contentControls ?? {}, nested.control.id, id))
               assertControlEditable(nested.control.id, id);
@@ -1666,7 +1675,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             if (control === undefined) throw new RangeError(`文档中没有内容控件：${id}`);
             if (control.type !== 'checkbox' || control.checkbox === undefined)
               throw new Error('内容控件不是复选框');
-            assertControlEditable(id);
+            assertControlEditable(id, id);
             const span = contentControlSpans(draft).find((s) => s.control.id === id);
             const range = span === undefined ? undefined : rangeOfContentControl(span);
             if (span === undefined || range === undefined) throw new Error('复选框里没有可写的位置');
