@@ -46,8 +46,8 @@ describe('自由文字编辑同步控件元数据', () => {
     return found;
   };
 
-  it.each(['dropDownList', 'comboBox'])('%s 普通替换匹配显示选项，元数据与文字一起撤销 / 重做', (type) => {
-    const editor = createTextEditor(parse(xml(list(type))));
+  it('组合框普通替换匹配显示选项，元数据与文字一起撤销 / 重做', () => {
+    const editor = createTextEditor(parse(xml(list('comboBox'))));
     const before = editor.body;
     editor.tx((t) => {
       t.replaceText(range(before), '紧急');
@@ -62,22 +62,22 @@ describe('自由文字编辑同步控件元数据', () => {
     expect(editor.body).toBe(after);
   });
 
-  it.each(['dropDownList', 'comboBox'])('%s 自由输入只按显示文字匹配，不按保存值改显示', (type) => {
-    const editor = createTextEditor(parse(xml(list(type))));
+  it('组合框自由输入只按显示文字匹配，不按保存值改显示', () => {
+    const editor = createTextEditor(parse(xml(list('comboBox'))));
     editor.tx((t) => {
       t.replaceText(range(editor.body), '1');
     });
     expect(textOfContentControl(span(editor.body))).toBe('1');
-    expect(span(editor.body).control.lastValue).toBe(type === 'comboBox' ? '1' : undefined);
+    expect(span(editor.body).control.lastValue).toBe('1');
   });
 
-  it.each(['dropDownList', 'comboBox'])('%s 删空后仍留控件，组合框保存空字符串，下拉框清旧选择', (type) => {
-    const editor = createTextEditor(parse(xml(list(type))));
+  it('组合框删空后仍留控件，保存空字符串', () => {
+    const editor = createTextEditor(parse(xml(list('comboBox'))));
     editor.tx((t) => {
       t.deleteRange(range(editor.body));
     });
     expect(textOfContentControl(span(editor.body))).toBe('');
-    expect(span(editor.body).control.lastValue).toBe(type === 'comboBox' ? '' : undefined);
+    expect(span(editor.body).control.lastValue).toBe('');
   });
 
   it('日期自由编辑清 fullDate、占位状态与绑定，模板格式原样保留', () => {

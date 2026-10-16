@@ -262,6 +262,7 @@ interface RunEntry {
   runIndex: number;
   protected: boolean;
   contentLocked: boolean;
+  dropDownList: boolean;
 }
 
 interface HistoryEntry {
@@ -307,6 +308,8 @@ function indexRuns(body: Body): Map<NodeId, RunEntry> {
         protected: protectedRun,
         contentLocked:
           contentLocked(body, paragraph.contentControl) || contentLocked(body, run.contentControl),
+        dropDownList:
+          inDropDownList(body, paragraph.contentControl) || inDropDownList(body, run.contentControl),
       });
     }
   }
@@ -317,6 +320,15 @@ function contentLocked(body: Body, id: NodeId | undefined): boolean {
   return id !== undefined && isContentControlLocked(body.contentControls ?? {}, id);
 }
 
+/** 填写只放行指定下拉框本身，不能借内层填写改掉外层下拉框的显示。 */
+function inDropDownList(body: Body, id: NodeId | undefined, filling?: NodeId): boolean {
+  const controls = body.contentControls;
+  if (controls === undefined) return false;
+  for (let guard = 0; id !== undefined && guard < 64; id = controls[id]?.parent, guard++)
+    if (controls[id]?.type === 'dropDownList' && id !== filling) return true;
+  return false;
+}
+
 function assertContentUnlocked(locked: boolean): void {
   if (locked) throw new Error('内容控件锁定了内容');
 }
@@ -325,7 +337,7 @@ const editableIndex = new WeakMap<Body, Map<NodeId, RunEntry>>();
 
 /**
  * 同一段内的范围能不能交给文字事务改：从首 run 到末 run（**含中间的隐藏 run**，删除会一起清掉）
- * 都不在域或内容锁里。批量替换先用它挑，而不是让事务去撞 —— 一条命令失败整个事务回滚，
+ * 都不在域、内容锁或下拉框里。批量替换先用它挑，而不是让事务去撞 —— 一条命令失败整个事务回滚，
  * 「全部替换」不该因为有一处命中不可改就一处都不换。跨段的范围答 false。
  */
 export function rangeEditable(body: Body, range: DocRange): boolean {
@@ -343,7 +355,7 @@ export function rangeEditable(body: Body, range: DocRange): boolean {
   for (let i = first.runIndex; i <= last.runIndex; i++) {
     const run = first.paragraph.runs[i] as Run;
     const entry = entries.get(run.id);
-    if (entry?.protected || entry?.contentLocked) return false;
+    if (entry?.protected || entry?.contentLocked || entry?.dropDownList) return false;
   }
   return true;
 }
@@ -536,6 +548,8 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
       const replacements = new Map<NodeId, Run>();
       const changes: TextChange[] = [];
       const filledControlText = new Map<NodeId, string>();
+      // 仅填写内部的删写命令放行目标下拉框，不能把权限带到调用方后续命令。
+      let fillingControl: NodeId | undefined;
       const lockedShells = contentControlShells(body, true);
       let shellsChecked = body;
 
@@ -636,9 +650,21 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
 
       function assertParagraphsUnlocked(paragraphs: readonly Paragraph[]): void {
         for (const p of paragraphs) {
-          assertContentUnlocked(contentLocked(draft, p.contentControl));
-          for (const r of p.runs) assertContentUnlocked(entries.get(r.id)?.contentLocked ?? false);
+          assertControlEditable(p.contentControl);
+          for (const r of p.runs) assertControlEditable(r.contentControl);
         }
+      }
+
+      function assertControlEditable(id: NodeId | undefined, filling = fillingControl): void {
+        assertContentUnlocked(contentLocked(draft, id));
+        if (inDropDownList(draft, id, filling)) throw new Error('下拉框只能通过填写接口选择选项');
+      }
+
+      function assertTextEditable(entry: RunEntry): void {
+        assertContentUnlocked(entry.contentLocked);
+        if (!entry.dropDownList) return;
+        assertControlEditable(entry.paragraph.contentControl);
+        assertControlEditable(entry.run.contentControl);
       }
 
       /**
@@ -669,7 +695,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
       function insertContent(position: DocPosition, item: RunContent): number {
         const entry = entryAt(position);
         editableAt(entry, position);
-        assertContentUnlocked(entry.contentLocked);
+        assertTextEditable(entry);
         const { run } = entry;
         const ci = position.contentIndex;
         const c = run.content[ci];
@@ -821,7 +847,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
         const text = textAt(entry, position);
         const deletedText = text.slice(position.offset, position.offset + count);
         if (deletedText === insertedText) return;
-        assertContentUnlocked(entry.contentLocked);
+        assertTextEditable(entry);
         const content = [...entry.run.content];
         content[position.contentIndex] = {
           kind: 'text',
@@ -919,7 +945,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
           return command(() => {
             position = textPosition(position);
             const entry = entryAt(position);
-            assertContentUnlocked(entry.contentLocked);
+            assertTextEditable(entry);
             const text = textAt(entry, position);
             // 域可能跨 run / 段；拆段不能切断其结构。
             for (const r of entry.paragraph.runs)
@@ -978,7 +1004,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             const next = blocks[index + 1];
             if (next?.kind !== 'paragraph') throw new Error('只能合并同一节或单元格内相邻的段落');
             // 合段删的是段落标记；只在行内锁旁边合段不会修改那个控件的文字。
-            for (const p of [paragraph, next]) assertContentUnlocked(contentLocked(draft, p.contentControl));
+            for (const p of [paragraph, next]) assertControlEditable(p.contentControl);
             for (const p of [paragraph, next])
               for (const r of p.runs)
                 if (entries.get(r.id)?.protected) throw new Error('暂不支持合并包含域的段落');
@@ -1105,7 +1131,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
                   editableAt(entry, pos);
                   const stop = ri === last.runIndex && ci === to ? end.offset : contentLength(c);
                   if (stop > offset) {
-                    assertContentUnlocked(entry.contentLocked);
+                    assertTextEditable(entry);
                     const content = [...entry.run.content];
                     content[ci] = { kind: 'text', text: '' };
                     replacements.set(run.id, { ...entry.run, content });
@@ -1272,7 +1298,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             flush();
             const hit = findRow(draft, position.nodeId);
             if (hit === undefined) throw new Error('位置不在表格里');
-            assertContentUnlocked(contentLocked(draft, hit.table.contentControl));
+            assertControlEditable(hit.table.contentControl);
             const { table, row } = withInsertedRow(hit.table, hit.rowIndex, side, newId);
             draft = hit.replace(table, () => {
               throw new Error('插行不会删表');
@@ -1301,7 +1327,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             const b = findRow(draft, range.end.nodeId);
             if (a === undefined || b === undefined || a.table.id !== b.table.id)
               throw new Error('只能删除同一张表里的行');
-            assertContentUnlocked(contentLocked(draft, a.table.contentControl));
+            assertControlEditable(a.table.contentControl);
             const from = Math.min(a.rowIndex, b.rowIndex);
             const to = Math.max(a.rowIndex, b.rowIndex);
             const removed = a.table.rows.slice(from, to + 1);
@@ -1345,7 +1371,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             flush();
             const hit = findRow(draft, position.nodeId);
             if (hit === undefined) throw new Error('位置不在表格里');
-            assertContentUnlocked(contentLocked(draft, hit.table.contentControl));
+            assertControlEditable(hit.table.contentControl);
             const own = hit.table.rows[hit.rowIndex]?.cells[hit.cellIndex];
             const { table, cells } = withInsertedColumn(hit.table, hit.rowIndex, hit.cellIndex, side, newId);
             draft = hit.replace(table, () => {
@@ -1386,7 +1412,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             const paragraphs = removed.flatMap((c) =>
               [...walkBlocks(c.blocks)].filter((x): x is Paragraph => x.kind === 'paragraph'),
             );
-            assertContentUnlocked(contentLocked(draft, a.table.contentControl));
+            assertControlEditable(a.table.contentControl);
             assertParagraphsUnlocked(paragraphs);
             for (const p of paragraphs)
               for (const r of p.runs)
@@ -1428,7 +1454,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             const b = findRow(draft, range.end.nodeId);
             if (a === undefined || b === undefined || a.table.id !== b.table.id)
               throw new Error('只能合并同一张表里的格');
-            assertContentUnlocked(contentLocked(draft, a.table.contentControl));
+            assertControlEditable(a.table.contentControl);
             const rect = cellRect(a.table, a, b);
             if (rect === undefined) throw new Error('选中的格撑不成完整的矩形（有跳过的网格列）');
             const merged = withMergedCells(a.table, rect, newId);
@@ -1462,7 +1488,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             if (hit === undefined) throw new Error('位置不在表格里');
             const split = withSplitCell(hit.table, hit.rowIndex, hit.cellIndex, newId);
             if (split === undefined) return { ...position };
-            assertContentUnlocked(contentLocked(draft, hit.table.contentControl));
+            assertControlEditable(hit.table.contentControl);
             draft = hit.replace(split.table, () => {
               throw new Error('拆分不会删表');
             });
@@ -1490,8 +1516,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             if (control === undefined) throw new RangeError(`文档中没有内容控件：${id}`);
             if (control.type !== 'checkbox' || control.checkbox === undefined)
               throw new Error('内容控件不是复选框');
-            if (isContentControlLocked(draft.contentControls ?? {}, id))
-              throw new Error('内容控件锁定了内容');
+            assertControlEditable(id);
             const span = contentControlSpans(draft).find((s) => s.control.id === id);
             const range = span === undefined ? undefined : rangeOfContentControl(span);
             if (span === undefined || range === undefined) throw new Error('复选框里没有可写的位置');
@@ -1554,8 +1579,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             const control = draft.contentControls?.[id];
             if (control === undefined) throw new RangeError(`文档中没有内容控件：${id}`);
             const value = formatContentControlDate(control, date);
-            if (isContentControlLocked(draft.contentControls ?? {}, id))
-              throw new Error('内容控件锁定了内容');
+            assertControlEditable(id);
             const span = contentControlSpans(draft).find((s) => s.control.id === id);
             const range = span === undefined ? undefined : rangeOfContentControl(span);
             if (span === undefined || range === undefined) throw new Error('日期控件里没有可写的位置');
@@ -1623,10 +1647,10 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             const span = contentControlSpans(draft).find((s) => s.control.id === id);
             const range = span === undefined ? undefined : rangeOfContentControl(span);
             if (range === undefined) throw new Error('内容控件里没有可写的位置');
-            // 覆盖外层还会清掉内层空 run；即使锁住的内层没有字，也不能借填外层把它删掉。
+            // 覆盖外层还会清掉内层空 run；内容锁或下拉框即使没有字，也不能借填外层把它删掉。
             for (const nested of contentControlSpans(draft))
               if (withinContentControl(draft.contentControls ?? {}, nested.control.id, id))
-                assertContentUnlocked(contentLocked(draft, nested.control.id));
+                assertControlEditable(nested.control.id, id);
             filledControlText.set(id, text.replace(/\r\n|\r/g, '\n'));
             if (
               choice &&
@@ -1648,14 +1672,22 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
               }
               return range;
             }
-            // 空块级控件的范围落在段落上；先建文字槽，后续清理与返回范围才能使用同一个 run 锚点。
-            const start = materialize(transaction.deleteRange(range));
-            let at = start;
-            for (const piece of text.split(/(\r\n|\r|\n|\t)/)) {
-              if (piece === '') continue;
-              if (piece === '\t') at = transaction.insertInline(at, 'tab');
-              else if (/^[\r\n]/.test(piece)) at = transaction.insertInline(at, 'lineBreak');
-              else at = transaction.insertText(at, piece);
+            const previousFilling = fillingControl;
+            fillingControl = id;
+            let start: DocPosition;
+            let at: DocPosition;
+            try {
+              // 空块级控件的范围落在段落上；先建文字槽，后续清理与返回范围才能使用同一个 run 锚点。
+              start = materialize(transaction.deleteRange(range));
+              at = start;
+              for (const piece of text.split(/(\r\n|\r|\n|\t)/)) {
+                if (piece === '') continue;
+                if (piece === '\t') at = transaction.insertInline(at, 'tab');
+                else if (/^[\r\n]/.test(piece)) at = transaction.insertInline(at, 'lineBreak');
+                else at = transaction.insertText(at, piece);
+              }
+            } finally {
+              fillingControl = previousFilling;
             }
             // 删字留下的空 run（占位文字的后半截、内层控件）去掉：留着的话内层控件回写出来
             // 是个空壳，而 Word 里覆盖外层内容时内层控件是跟着消失的。落点所在的 run 留着 ——
@@ -1741,8 +1773,8 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             const ib = b.paragraph.runs.findIndex((r) => r.id === end.runId);
             const sepRun = a.paragraph.runs[ia] as Run;
             const endRun = b.paragraph.runs[ib] as Run;
-            assertContentUnlocked(entries.get(sepRun.id)?.contentLocked ?? false);
-            assertContentUnlocked(entries.get(endRun.id)?.contentLocked ?? false);
+            assertTextEditable(entryAt({ nodeId: sepRun.id, contentIndex: 0, offset: 0 }));
+            assertTextEditable(entryAt({ nodeId: endRun.id, contentIndex: 0, offset: 0 }));
 
             // 界桩在真实文件里独占一个 run；万一与结果文字挤在一个 run 里，只切掉结果那半
             const head =

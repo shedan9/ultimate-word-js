@@ -379,7 +379,8 @@ describe('模型不认识的 XML 留在文件里', () => {
 });
 
 describe('内容控件', () => {
-  it.each(['dropDownList', 'comboBox'])('%s 自由编辑回写保存值，未知选项清选择，撤销逐字节恢复', (type) => {
+  it('组合框自由编辑回写保存值，撤销逐字节恢复', () => {
+    const type = 'comboBox';
     const bytes = docx(
       `<w:p><w:sdt><w:sdtPr><w:tag w:val="choice"/><w:dataBinding w:xpath="/choice"/><w:${type} w:lastValue="2" x:keep="yes"><w:listItem w:displayText="紧急" w:value="1" x:item="keep"/><w:listItem w:displayText="一般" w:value="2"/><x:unknown/></w:${type}></w:sdtPr><w:sdtContent><w:r><w:t>一般</w:t></w:r></w:sdtContent></w:sdt></w:p>`,
     );
@@ -402,12 +403,9 @@ describe('内容控件', () => {
     expect(xml).toContain('x:item="keep"');
     expect(xml).toContain('<x:unknown/>');
     expect(xml).not.toContain('dataBinding');
-    if (type === 'comboBox') expect(xml).toContain('w:lastValue="紧急待确认"');
-    else expect(xml).not.toContain('w:lastValue');
+    expect(xml).toContain('w:lastValue="紧急待确认"');
     const again = load(out).loaded.body;
-    expect(again.contentControls?.[idOf(again, 'choice')]?.lastValue).toBe(
-      type === 'comboBox' ? '紧急待确认' : undefined,
-    );
+    expect(again.contentControls?.[idOf(again, 'choice')]?.lastValue).toBe('紧急待确认');
     expect(paragraphText(paragraphs(again)[0] as Paragraph)).toBe('紧急待确认');
     editor.undo();
     editor.undo();

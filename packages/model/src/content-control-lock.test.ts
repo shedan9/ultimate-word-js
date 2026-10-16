@@ -19,6 +19,9 @@ function control(content: string, lock = 'contentLocked', tag = 'locked'): strin
 const run = (text: string) => `<w:r><w:t>${text}</w:t></w:r>`;
 const paragraph = (text: string) => `<w:p>${run(text)}</w:p>`;
 
+const dropdown = (content: string, extra = '') =>
+  `<w:sdt><w:sdtPr><w:tag w:val="locked"/>${extra}<w:dropDownList w:lastValue="2"><w:listItem w:displayText="紧急" w:value="1"/><w:listItem w:displayText="一般" w:value="2"/></w:dropDownList></w:sdtPr><w:sdtContent>${content}</w:sdtContent></w:sdt>`;
+
 function required<T>(value: T | undefined): T {
   if (value === undefined) throw new Error('样本缺少节点');
   return value;
@@ -30,6 +33,180 @@ function range(body: Body, tag = 'locked'): DocRange {
   if (found === undefined) throw new Error(`样本缺少控件范围：${tag}`);
   return found;
 }
+
+describe('下拉框只通过填写接口选择选项', () => {
+  it.each(['insert', 'tab', 'lineBreak', 'pageBreak', 'delete', 'replace', 'split'] as const)(
+    '普通 %s 命令拒绝改写下拉框，即使替换成有效选项',
+    (kind) => {
+      const editor = createTextEditor(parse(`<w:p>${dropdown(run('一般'))}</w:p>`));
+      const before = editor.body;
+      const r = range(before);
+      expect(rangeEditable(before, r)).toBe(false);
+      expect(() =>
+        editor.tx((t) => {
+          if (kind === 'insert') t.insertText(r.end, '改');
+          else if (kind === 'delete') t.deleteRange(r);
+          else if (kind === 'replace') t.replaceText(r, '紧急');
+          else if (kind === 'split') t.splitParagraph(r.start);
+          else t.insertInline(r.start, kind);
+        }),
+      ).toThrow(/下拉框只能/);
+      expect(editor.body).toBe(before);
+      expect(editor.canUndo).toBe(false);
+    },
+  );
+
+  it('填写只临时放行目标，同事务再输入即失败并回滚填写', () => {
+    const editor = createTextEditor(parse(`<w:p>${dropdown(run('一般'))}</w:p>`));
+    const before = editor.body;
+    const id = required(contentControlSpans(before)[0]).control.id;
+    expect(() =>
+      editor.tx((t) => {
+        const filled = t.fillContentControl(id, '1');
+        try {
+          t.insertText(filled.end, '改');
+        } catch {}
+      }),
+    ).toThrow(/全部回滚/);
+    expect(editor.body).toBe(before);
+    editor.tx((t) => void t.fillContentControl(id, '1'));
+    expect(required(contentControlSpans(editor.body)[0]).control.lastValue).toBe('1');
+    editor.undo();
+    expect(editor.body).toBe(before);
+    editor.redo();
+    expect(() => editor.tx((t) => void t.insertText(range(editor.body).end, '改'))).toThrow(/下拉框只能/);
+    expect(required(contentControlSpans(editor.body)[0]).control.lastValue).toBe('1');
+  });
+
+  it('占位文字可填写，空操作、格式与批注不误拦，也不改变元数据', () => {
+    const editor = createTextEditor(parse(`<w:p>${dropdown(run('选择'), '<w:showingPlcHdr/>')}</w:p>`));
+    const before = editor.body;
+    const r = range(before);
+    expect(editor.tx((t) => void t.insertText(r.start, ''))).toBeUndefined();
+    expect(editor.tx((t) => void t.deleteRange({ start: r.start, end: r.start }))).toBeUndefined();
+    editor.tx((t) => {
+      const formatted = t.setRunProps({ start: r.start, end: { ...r.start, offset: 1 } }, { bold: true });
+      t.addComment(formatted, { text: '说明', author: '作者' });
+    });
+    expect(required(contentControlSpans(editor.body)[0]).control).toBe(
+      required(contentControlSpans(before)[0]).control,
+    );
+    editor.tx(
+      (t) => void t.fillContentControl(required(contentControlSpans(editor.body)[0]).control.id, '1'),
+    );
+    expect(textOfContentControl(required(contentControlSpans(editor.body)[0]))).toBe('紧急');
+  });
+
+  it('空块级下拉框首次输入拒绝，填写可创建文字槽', () => {
+    const editor = createTextEditor(parse(dropdown('<w:p/>')));
+    const before = editor.body;
+    expect(() => editor.tx((t) => void t.insertText(range(before).start, '改'))).toThrow(/下拉框只能/);
+    expect(editor.body).toBe(before);
+    editor.tx((t) => void t.fillContentControl(required(contentControlSpans(before)[0]).control.id, '1'));
+    expect(textOfContentControl(required(contentControlSpans(editor.body)[0]))).toBe('紧急');
+  });
+
+  it('填内层不能改外层下拉框，填外层不能覆盖下拉框后代，包括空控件', () => {
+    const inner = control(run('一般'), '', 'inner');
+    const editor = createTextEditor(parse(dropdown(`<w:p>${inner}</w:p>`)));
+    const before = editor.body;
+    const id = required(contentControlSpans(before).find((s) => s.control.tag === 'inner')).control.id;
+    expect(() => editor.tx((t) => void t.fillContentControl(id, '改'))).toThrow(/下拉框只能/);
+    expect(() => editor.tx((t) => void t.insertText(range(before, 'inner').end, '改'))).toThrow(/下拉框只能/);
+    for (const text of ['一般', '']) {
+      const outer = createTextEditor(
+        parse(control(`<w:p>${run('前')}${dropdown(run(text))}</w:p>`, '', 'outer')),
+      );
+      const body = outer.body;
+      const outerId = required(contentControlSpans(body).find((s) => s.control.tag === 'outer')).control.id;
+      expect(() => outer.tx((t) => void t.fillContentControl(outerId, '覆盖'))).toThrow(/下拉框只能/);
+      expect(outer.body).toBe(body);
+    }
+  });
+
+  it('下拉框边界外的文字仍可删改，失败保留原有重做历史', () => {
+    const editor = createTextEditor(parse(`<w:p>${run('前')}${dropdown(run('一般'))}</w:p>`));
+    const p = required([...walkParagraphs(editor.body)][0]);
+    const at = { nodeId: required(p.runs[0]).id, contentIndex: 0, offset: 0 };
+    editor.tx((t) => void t.deleteRange({ start: at, end: range(editor.body).start }));
+    editor.undo();
+    const before = editor.body;
+    expect(() => editor.tx((t) => void t.deleteRange(range(before)))).toThrow(/下拉框只能/);
+    expect(editor.body).toBe(before);
+    expect(editor.canRedo).toBe(true);
+    editor.redo();
+    expect(textOfContentControl(required(contentControlSpans(editor.body)[0]))).toBe('一般');
+  });
+
+  it.each(['<w:tab/>', '<w:br/>', '<w:sym w:font="Wingdings" w:char="F0FE"/>'])(
+    '非文字片段删除也不能改写下拉框：%s',
+    (fragment) => {
+      const editor = createTextEditor(parse(`<w:p>${dropdown(`<w:r>${fragment}</w:r>`)}</w:p>`));
+      const before = editor.body;
+      expect(() => editor.tx((t) => void t.deleteRange(range(before)))).toThrow(/下拉框只能/);
+      expect(editor.body).toBe(before);
+    },
+  );
+
+  it.each(['checkbox', 'date'] as const)('填写嵌套的 %s 也不能绕过外层下拉框', (type) => {
+    const pr =
+      type === 'checkbox'
+        ? '<w14:checkbox/>'
+        : '<w:date w:fullDate="2026-10-13T00:00:00Z"><w:dateFormat w:val="yyyy年M月"/></w:date>';
+    const inner = `<w:sdt><w:sdtPr><w:tag w:val="inner"/>${pr}</w:sdtPr><w:sdtContent>${run(type === 'checkbox' ? '☐' : '2026年10月')}</w:sdtContent></w:sdt>`;
+    const editor = createTextEditor(parse(dropdown(`<w:p>${inner}</w:p>`)));
+    const before = editor.body;
+    const id = required(contentControlSpans(before).find((s) => s.control.tag === 'inner')).control.id;
+    expect(() =>
+      editor.tx((t) => {
+        if (type === 'checkbox') t.setContentControlChecked(id, true);
+        else t.setContentControlDate(id, '2026-10-14');
+      }),
+    ).toThrow(/下拉框只能/);
+    expect(editor.body).toBe(before);
+  });
+
+  it('更新域结果不能绕过下拉框限制', () => {
+    const editor = createTextEditor(
+      parse(
+        `<w:p>${dropdown(
+          '<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> TOC </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>' +
+            run('旧目录') +
+            '<w:r><w:fldChar w:fldCharType="end"/></w:r>',
+        )}</w:p>`,
+      ),
+    );
+    const before = editor.body;
+    expect(() =>
+      editor.tx(
+        (t) =>
+          void t.replaceFieldResult(range(before).start.nodeId, [
+            { props: {}, runs: [{ content: [{ kind: 'text', text: '新目录' }] }] },
+          ]),
+      ),
+    ).toThrow(/下拉框只能/);
+    expect(editor.body).toBe(before);
+  });
+
+  it.each(['rows', 'columns', 'join'] as const)('%s 结构命令不能移除下拉框内容或段落标记', (kind) => {
+    const body =
+      kind === 'join'
+        ? parse(`${paragraph('前')}${dropdown(paragraph('一般'))}`)
+        : parse(
+            `<w:tbl><w:tblGrid><w:gridCol w:w="1000"/></w:tblGrid><w:tr><w:tc><w:p>${dropdown(run('一般'))}</w:p></w:tc></w:tr></w:tbl>`,
+          );
+    const editor = createTextEditor(body);
+    const before = editor.body;
+    expect(() =>
+      editor.tx((t) => {
+        if (kind === 'join') t.joinParagraph(required([...walkParagraphs(before)][0]).id);
+        else if (kind === 'rows') t.deleteRows(range(before));
+        else t.deleteColumns(range(before));
+      }),
+    ).toThrow(/下拉框只能/);
+    expect(editor.body).toBe(before);
+  });
+});
 
 describe('普通编辑遵守内容控件的内容锁', () => {
   it.each(['contentLocked', 'sdtContentLocked'])('%s 拒绝插字、换行、制表位、删除、替换与拆段', (lock) => {

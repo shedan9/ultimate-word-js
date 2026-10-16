@@ -383,10 +383,10 @@ describe('doc.bindings', () => {
         callbacks++;
         return '紧急';
       }),
-    ).toEqual({ replaced: 2, skipped: 1 });
-    expect(callbacks).toBe(2);
-    expect(d.find('紧急')).toHaveLength(2);
-    expect(d.find('一般')).toHaveLength(1);
+    ).toEqual({ replaced: 1, skipped: 2 });
+    expect(callbacks).toBe(1);
+    expect(d.find('紧急')).toHaveLength(1);
+    expect(d.find('一般')).toHaveLength(2);
     d.undo();
     expect(d.find('一般')).toHaveLength(3);
     d.redo();
@@ -395,8 +395,8 @@ describe('doc.bindings', () => {
       value: '一般',
       locked: true,
     });
-    expect(again.replaceAll('一般', '不改')).toEqual({ replaced: 0, skipped: 1 });
-    expect(again.find('紧急')).toHaveLength(2);
+    expect(again.replaceAll('一般', '不改')).toEqual({ replaced: 0, skipped: 2 });
+    expect(again.find('紧急')).toHaveLength(1);
   });
 
   it('list 按文档序列出坑位与现值；set 只记下，apply 一次提交成一个撤销单元', async () => {
@@ -481,7 +481,36 @@ describe('doc.bindings', () => {
     expect(d.bindings.pending.get('emptyList')).toBe('自由输入');
   });
 
-  it('查找替换同步列表保存值，事件只触发一次，撤销 / 导出使用同一状态', async () => {
+  it('下拉框拒绝直接文字事务且不派发事件，填写与导出回读后仍受保护', async () => {
+    const d = await UltimateWord.load(template());
+    let events = 0;
+    d.on('document:change', () => {
+      events++;
+    });
+    expect(() => d.tx((t) => void t.replaceText(d.find('一般')[0] as DocRange, '紧急'))).toThrow(
+      /下拉框只能/,
+    );
+    expect(events).toBe(0);
+    expect(d.canUndo).toBe(false);
+    d.bindings.set('level', '1').apply();
+    expect(events).toBe(1);
+    expect(d.bindings.list().find((b) => b.key === 'level')).toMatchObject({
+      value: '紧急',
+      lastValue: '1',
+      locked: false,
+    });
+    const again = await UltimateWord.load(await d.toDocx());
+    expect(() => again.tx((t) => void t.insertText((again.find('紧急')[0] as DocRange).end, '改'))).toThrow(
+      /下拉框只能/,
+    );
+    expect(again.replaceAll('紧急', '一般')).toEqual({ replaced: 0, skipped: 1 });
+    d.undo();
+    expect(d.find('一般')).toHaveLength(1);
+    d.redo();
+    expect(d.find('紧急')).toHaveLength(1);
+  });
+
+  it('查找替换跳过下拉框并同步组合框保存值，事件只触发一次，撤销 / 导出使用同一状态', async () => {
     const d = await UltimateWord.load(
       template(
         `<w:p>${control('combo', '一般', '<w:comboBox w:lastValue="2"><w:listItem w:displayText="紧急" w:value="1"/><w:listItem w:displayText="一般" w:value="2"/></w:comboBox>')}</w:p>`,
@@ -495,9 +524,9 @@ describe('doc.bindings', () => {
           .list()
           .filter((b) => b.items)
           .map((b) => b.lastValue),
-      ).toEqual(['1', '1']);
+      ).toEqual([undefined, '1']);
     });
-    expect(d.replaceAll('一般', '紧急')).toEqual({ replaced: 2, skipped: 0 });
+    expect(d.replaceAll('一般', '紧急')).toEqual({ replaced: 1, skipped: 1 });
     expect(events).toBe(1);
     const again = await UltimateWord.load(await d.toDocx());
     expect(
@@ -506,7 +535,7 @@ describe('doc.bindings', () => {
         .filter((b) => b.items)
         .map((b) => [b.value, b.lastValue]),
     ).toEqual([
-      ['紧急', '1'],
+      ['一般', undefined],
       ['紧急', '1'],
     ]);
     stop.dispose();
@@ -523,7 +552,7 @@ describe('doc.bindings', () => {
         .list()
         .filter((b) => b.items)
         .map((b) => b.lastValue),
-    ).toEqual(['1', '1']);
+    ).toEqual([undefined, '1']);
   });
 
   it('普通文字事务同步组合框自填值并清旧日期，整批修改同撤销与导出', async () => {
