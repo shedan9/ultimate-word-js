@@ -498,19 +498,23 @@ describe('内容控件', () => {
     `<w:sdt><w:sdtPr><w:tag w:val="date"/><w:dataBinding w:xpath="/date"/><w:date w:fullDate="2020-01-01T00:00:00Z" x:keep="yes"><w:dateFormat w:val="${format}"/><w:lid w:val="zh-CN"/><w:storeMappedDataAs w:val="date"/><w:calendar w:val="gregorian"/><x:unknown/></w:date></w:sdtPr><w:sdtContent><w:r><w:t>${text}</w:t></w:r></w:sdtContent></w:sdt>`;
 
   describe.each(['inline', 'block'])('表格里 %s 控件仅解除绑定', (scope) => {
-    it.each(['dropDownList', 'comboBox', 'date', 'checkbox'])(
+    it.each(['dropDownList', 'comboBox', 'date', 'checkbox', 'text', 'richText', 'dateString'])(
       '%s 填当前值穿过原文复用，保留未知 XML；撤销逐字节恢复',
       (type) => {
         const pr =
-          type === 'date'
+          type === 'date' || type === 'dateString'
             ? '<w:date w:fullDate="2026-10-13T00:00:00Z"><w:dateFormat w:val="yyyy年M月d日"/></w:date>'
             : type === 'checkbox'
               ? '<w14:checkbox/>'
-              : `<w:${type} w:lastValue="2"><w:listItem w:displayText="一般" w:value="2"/></w:${type}>`;
+              : type === 'text' || type === 'richText'
+                ? `<w:${type}/>`
+                : `<w:${type} w:lastValue="2"><w:listItem w:displayText="一般" w:value="2"/></w:${type}>`;
         const content =
-          type === 'date'
+          type === 'date' || type === 'dateString'
             ? '<w:r><w:rPr><w:b/></w:rPr><w:t>2026年</w:t></w:r><w:r><w:t>10月13日</w:t></w:r>'
-            : `<w:r><w:rPr><w:i/></w:rPr><w:t>${type === 'checkbox' ? '☐' : '一般'}</w:t></w:r>`;
+            : type === 'checkbox'
+              ? '<w:r><w:rPr><w:i/></w:rPr><w:t>☐</w:t></w:r>'
+              : '<w:r><w:rPr><w:i/></w:rPr><w:t>一</w:t></w:r><w:r><w:t>般</w:t></w:r>';
         const inner = scope === 'block' ? `<w:p>${content}</w:p>` : content;
         const sdt = `<w:sdt><w:sdtPr><w:tag w:val="field"/><w:dataBinding w:xpath="/field"/><w:alias w:val="字段" probe="keep"/><w:temporary/>${pr}</w:sdtPr><w:sdtContent>${inner}</w:sdtContent></w:sdt>`;
         const bytes = docx(
@@ -523,6 +527,7 @@ describe('内容控件', () => {
           const id = idOf(before, 'field');
           if (type === 'date') t.setContentControlDate(id, '2026-10-13');
           else if (type === 'checkbox') t.setContentControlChecked(id, false);
+          else if (type === 'dateString') t.fillContentControl(id, '2026年10月13日');
           else t.fillContentControl(id, '一般');
         });
         const out = serializeDocx(pkg, editor.body);
@@ -531,6 +536,7 @@ describe('内容控件', () => {
         expect(xml).toContain('<w:temporary/>');
         expect(xml).toContain('<w:alias w:val="字段" probe="keep"/>');
         expect(xml).toContain(content);
+        if (type === 'dateString') expect(xml).not.toContain('fullDate');
         const again = load(out).loaded.body;
         expect(again.contentControls?.[idOf(again, 'field')]).toEqual(
           editor.body.contentControls?.[idOf(editor.body, 'field')],

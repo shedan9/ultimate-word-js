@@ -171,6 +171,7 @@ export interface TextTransaction {
    * 拆段又会让多段内容的控件与单段的行为不同）。占位符状态的控件换上控件自己的字符格式、
    * 清掉占位符标记；下拉框只接受选项里的文字或值（值换成显示文字），空列表也拒绝。
    * 下拉框 / 组合框同步 lastValue，显示与保存值相同、非占位且无数据绑定时不产生修改。
+   * 单段、无嵌套 / 域 / 修订的普通文字重复填写保留内容与局部格式；仅清绑定 / 旧日期时记属性修改。
    * 复选框 / 图片 / 文档部件（目录）/ 锁了内容的控件拒绝。
    */
   fillContentControl(id: NodeId, text: string): DocRange;
@@ -1015,6 +1016,43 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
               draft = {
                 ...draft,
                 contentControls: { ...draft.contentControls, [id]: { ...unbound, lastValue } },
+              };
+              structural(
+                span.paragraphs.map((p) => p.id),
+                [],
+              );
+            }
+            return range;
+          }
+          if (
+            !choice &&
+            span !== undefined &&
+            !control.showingPlaceholder &&
+            span.paragraphs.length === 1 &&
+            span.paragraphs[0]?.markRevision === undefined &&
+            span.runs.every(
+              (r) =>
+                r.revision === undefined &&
+                !entries.get(r.id)?.protected &&
+                (r.contentControl ?? span.paragraphs[0]?.contentControl) === id &&
+                r.content.every(
+                  (c) =>
+                    c.kind === 'text' || c.kind === 'tab' || (c.kind === 'break' && c.breakType === 'line'),
+                ),
+            ) &&
+            textOfContentControl(span) === text.replace(/\r\n|\r/g, '\n')
+          ) {
+            // 重填同一段文字不能吞掉局部格式、改变位置或清空重做栈。摘要忽略域 / 对象，
+            // 因此只对无修订、无嵌套的普通文字启用；占位内容仍要走下面的格式重置。
+            if (control.dataBound || control.date?.fullDate !== undefined) {
+              const { dataBound: _dataBound, ...unbound } = control;
+              const { fullDate: _fullDate, ...date } = control.date ?? {};
+              draft = {
+                ...draft,
+                contentControls: {
+                  ...draft.contentControls,
+                  [id]: { ...unbound, ...(control.date === undefined ? {} : { date }) },
+                },
               };
               structural(
                 span.paragraphs.map((p) => p.id),

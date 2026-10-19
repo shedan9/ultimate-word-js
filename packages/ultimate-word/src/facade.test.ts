@@ -700,7 +700,7 @@ describe('doc.bindings', () => {
     },
   );
 
-  it.each(['dropDownList', 'comboBox', 'date', 'checkbox'])(
+  it.each(['dropDownList', 'comboBox', 'date', 'checkbox', 'text', 'richText'])(
     '%s 显式填相同值解除绑定，事件只派发一次，重复提交无修改，历史与导出一致',
     async (type) => {
       const pr =
@@ -708,7 +708,9 @@ describe('doc.bindings', () => {
           ? '<w:date w:fullDate="2026-10-13T00:00:00Z"><w:dateFormat w:val="yyyy年M月d日"/></w:date>'
           : type === 'checkbox'
             ? '<w14:checkbox/>'
-            : `<w:${type} w:lastValue="2"><w:listItem w:displayText="一般" w:value="2"/></w:${type}>`;
+            : type === 'text' || type === 'richText'
+              ? `<w:${type}/>`
+              : `<w:${type} w:lastValue="2"><w:listItem w:displayText="一般" w:value="2"/></w:${type}>`;
       const text = type === 'date' ? '2026年10月13日' : type === 'checkbox' ? '☐' : '一般';
       const d = await UltimateWord.load(
         template(`<w:p>${control('bound', text, `${pr}<w:dataBinding w:xpath="/bound"/>`)}</w:p>`),
@@ -720,7 +722,14 @@ describe('doc.bindings', () => {
       let layouts = 0;
       d.on('document:change', () => changes++);
       d.on('layout:done', () => layouts++);
-      const value = type === 'date' ? { date: '2026-10-13' } : type === 'checkbox' ? false : '2';
+      const value =
+        type === 'date'
+          ? { date: '2026-10-13' }
+          : type === 'checkbox'
+            ? false
+            : type === 'text' || type === 'richText'
+              ? text
+              : '2';
       expect(d.bindings.set('bound', value).apply()).toBeDefined();
       expect(await xmlOf()).not.toContain('dataBinding');
       expect(changes).toBe(1);
