@@ -751,6 +751,37 @@ describe('doc.bindings', () => {
     },
   );
 
+  it.each(['dropDownList', 'comboBox'])(
+    '%s 填当前摘要不能绕过对象校验，失败保留待填值与历史',
+    async (type) => {
+      const list = `<w:${type} w:lastValue="2"><w:listItem w:displayText="一般" w:value="2"/></w:${type}>`;
+      const d = await UltimateWord.load(
+        template(
+          `<w:p>${control('complex', '一般', `${list}<w:dataBinding w:xpath="/complex"/>`).replace('<w:t>一般</w:t>', '<w:t>一般</w:t><w:drawing/>')}</w:p>`,
+        ),
+      );
+      d.bindings.set('applicant', '张三').apply();
+      const original = new Uint8Array(await (await d.toDocx()).arrayBuffer());
+      let events = 0;
+      let layouts = 0;
+      d.on('document:change', () => events++);
+      d.on('layout:done', () => layouts++);
+      d.bindings.set('applicant', '李四').set('complex', '2');
+      expect(() => d.bindings.apply()).toThrow();
+      expect(events).toBe(0);
+      expect(layouts).toBe(0);
+      expect(d.bindings.pending.get('complex')).toBe('2');
+      expect(d.bindings.pending.get('applicant')).toBe('李四');
+      expect(d.find('张三')).toHaveLength(2);
+      expect(d.find('李四')).toHaveLength(0);
+      expect(new Uint8Array(await (await d.toDocx()).arrayBuffer())).toEqual(original);
+      d.undo();
+      expect(d.find('张三')).toHaveLength(0);
+      d.redo();
+      expect(d.find('张三')).toHaveLength(2);
+    },
+  );
+
   it('普通文字事务同步组合框自填值并清旧日期，整批修改同撤销与导出', async () => {
     const d = await UltimateWord.load(
       template(

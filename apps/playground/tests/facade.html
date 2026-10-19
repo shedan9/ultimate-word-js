@@ -515,6 +515,42 @@ try {
     assert(!(await xmlOf()).includes('dataBinding') && boundDoc.find(text).length === 1, `${type} 重做解除绑定并保留文字`);
     boundView.dispose();
   }
+  for (const type of ['dropDownList', 'comboBox']) {
+    const complexDoc = await UltimateWord.load(choiceControlDocx(type, '<w:r><w:t>一般</w:t><w:drawing/></w:r>'));
+    const complexView = complexDoc.mount('#host', { mode: 'edit', virtualize: false });
+    const range = complexDoc.find('一般')[0];
+    complexDoc.tx((t) => t.setRunProps(range, { bold: true }));
+    complexDoc.undo();
+    complexView.select(range);
+    const selection = JSON.stringify(complexView.selection);
+    const xmlOf = async () => new TextDecoder().decode(unzip(new Uint8Array(await (await complexDoc.toDocx()).arrayBuffer())).get('word/document.xml'));
+    const original = await xmlOf();
+    let changes = 0;
+    complexDoc.on('document:change', () => changes++);
+    let failed = false;
+    try { complexDoc.bindings.set('level', '2').apply(); } catch { failed = true; }
+    assert(failed && changes === 0, `${type} 填当前摘要不能绕过对象检查，失败不派事件`);
+    assert(complexDoc.bindings.pending.get('level') === '2' && (await xmlOf()) === original, `${type} 失败保留待填值与原始内容`);
+    assert(JSON.stringify(complexView.selection) === selection && complexView.rectsOf(range).length > 0, `${type} 失败保留选区与定位`);
+    assert(complexDoc.canRedo && !complexDoc.canUndo, `${type} 失败保留原有重做历史`);
+    complexDoc.redo();
+    assert((await xmlOf()).includes('<w:b/>'), `${type} 失败后原格式命令仍可重做`);
+    complexView.dispose();
+
+    const nested = '<w:r><w:t>一般</w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="inner"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t/></w:r></w:sdtContent></w:sdt>';
+    const nestedDoc = await UltimateWord.load(choiceControlDocx(type, nested));
+    const nestedView = nestedDoc.mount('#host', { mode: 'edit', virtualize: false });
+    assert(nestedDoc.bindings.list().length === 2, `${type} 初始包含空嵌套控件`);
+    nestedDoc.bindings.set('level', '2').apply();
+    assert(nestedDoc.bindings.list().length === 1 && nestedView.root.textContent.includes('一般'), `${type} 相同文字仍清理嵌套控件并保留文字层`);
+    nestedDoc.undo();
+    assert(nestedDoc.bindings.list().length === 2, `${type} 一次撤销恢复空嵌套控件`);
+    nestedDoc.redo();
+    assert(nestedDoc.bindings.list().length === 1, `${type} 一次重做重新清理空嵌套控件`);
+    const again = await UltimateWord.load(await nestedDoc.toDocx());
+    assert(again.bindings.list().length === 1 && again.bindings.list()[0].value === '一般', `${type} 导出回读只保留填写目标`);
+    nestedView.dispose();
+  }
   result.textContent = `PASS: ${passed} browser assertions`;
 } catch (error) {
   result.textContent = `FAIL after ${passed}: ${error.message}`;

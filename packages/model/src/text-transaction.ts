@@ -170,7 +170,7 @@ export interface TextTransaction {
    * `\n` 写成软换行、`\t` 写成制表位（块级控件也不拆段：跨段删除只在同一容器里做得到，
    * 拆段又会让多段内容的控件与单段的行为不同）。占位符状态的控件换上控件自己的字符格式、
    * 清掉占位符标记；下拉框只接受选项里的文字或值（值换成显示文字），空列表也拒绝。
-   * 下拉框 / 组合框同步 lastValue，显示与保存值相同、非占位且无数据绑定时不产生修改。
+   * 下拉框 / 组合框同步 lastValue，普通单段文字的显示与保存值相同、非占位且无数据绑定时不产生修改。
    * 单段、无嵌套 / 域 / 修订的普通文字重复填写保留内容与局部格式；仅清绑定 / 旧日期时记属性修改。
    * 复选框 / 图片 / 文档部件（目录）/ 锁了内容的控件拒绝。
    */
@@ -1004,28 +1004,9 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             if (withinContentControl(draft.contentControls ?? {}, nested.control.id, id))
               assertControlEditable(nested.control.id, id);
           filledControlText.set(id, text.replace(/\r\n|\r/g, '\n'));
-          if (
-            choice &&
-            span !== undefined &&
-            textOfContentControl(span) === text &&
-            !control.showingPlaceholder
-          ) {
-            // 相同显示文字也可能要解除旧 XML 绑定；只改元数据，避免重建 run 扰动已保存的位置。
-            if (lastValue !== undefined && (control.lastValue !== lastValue || control.dataBound)) {
-              const { dataBound: _dataBound, ...unbound } = control;
-              draft = {
-                ...draft,
-                contentControls: { ...draft.contentControls, [id]: { ...unbound, lastValue } },
-              };
-              structural(
-                span.paragraphs.map((p) => p.id),
-                [],
-              );
-            }
-            return range;
-          }
-          if (
-            !choice &&
+          // 摘要忽略域、对象与删除修订，也不区分软换行和段落边界。
+          // 所有文字填写共用完整内容检查，列表的同值提交也不能绕过覆盖与编辑校验。
+          const samePlainText =
             span !== undefined &&
             !control.showingPlaceholder &&
             span.paragraphs.length === 1 &&
@@ -1040,8 +1021,23 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
                     c.kind === 'text' || c.kind === 'tab' || (c.kind === 'break' && c.breakType === 'line'),
                 ),
             ) &&
-            textOfContentControl(span) === text.replace(/\r\n|\r/g, '\n')
-          ) {
+            textOfContentControl(span) === text.replace(/\r\n|\r/g, '\n');
+          if (choice && samePlainText) {
+            // 相同显示文字也可能要解除旧 XML 绑定；只改元数据，避免重建 run 扰动已保存的位置。
+            if (lastValue !== undefined && (control.lastValue !== lastValue || control.dataBound)) {
+              const { dataBound: _dataBound, ...unbound } = control;
+              draft = {
+                ...draft,
+                contentControls: { ...draft.contentControls, [id]: { ...unbound, lastValue } },
+              };
+              structural(
+                span.paragraphs.map((p) => p.id),
+                [],
+              );
+            }
+            return range;
+          }
+          if (!choice && samePlainText) {
             // 重填同一段文字不能吞掉局部格式、改变位置或清空重做栈。摘要忽略域 / 对象，
             // 因此只对无修订、无嵌套的普通文字启用；占位内容仍要走下面的格式重置。
             if (control.dataBound || control.date?.fullDate !== undefined) {

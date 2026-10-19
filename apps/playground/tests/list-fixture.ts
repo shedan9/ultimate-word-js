@@ -93,11 +93,14 @@ export function listDocx(): Uint8Array {
 }
 
 /** 列表模板：按选项值填写后，点击、撤销与回写应同步保存值。 */
-export function choiceControlDocx(type: 'dropDownList' | 'comboBox' = 'dropDownList'): Uint8Array {
+export function choiceControlDocx(
+  type: 'dropDownList' | 'comboBox' = 'dropDownList',
+  content = '<w:r><w:t>一般</w:t></w:r>',
+): Uint8Array {
   return docxOf(
     `<w:p><w:sdt><w:sdtPr><w:tag w:val="level"/><w:${type} w:lastValue="2">` +
       '<w:listItem w:displayText="紧急" w:value="1"/><w:listItem w:displayText="一般" w:value="2"/>' +
-      `</w:${type}></w:sdtPr><w:sdtContent><w:r><w:t>一般</w:t></w:r></w:sdtContent></w:sdt></w:p>`,
+      `</w:${type}></w:sdtPr><w:sdtContent>${content}</w:sdtContent></w:sdt></w:p>`,
   );
 }
 

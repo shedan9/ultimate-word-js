@@ -494,6 +494,31 @@ describe('内容控件', () => {
     for (const [part, content] of unzip(bytes)) expect(restored.get(part)).toEqual(content);
   });
 
+  it.each(['dropDownList', 'comboBox'])('%s 填当前文字仍清理空嵌套控件并回写，撤销恢复原文', (type) => {
+    const content =
+      '<w:r><w:rPr><w:b/></w:rPr><w:t>一般</w:t></w:r>' +
+      '<w:sdt><w:sdtPr><w:tag w:val="inner"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t/></w:r></w:sdtContent></w:sdt>';
+    const bytes = docx(
+      `<w:tbl><w:tr><w:tc><w:sdt><w:sdtPr><w:tag w:val="choice"/><w:dataBinding w:xpath="/choice"/><w:${type} w:lastValue="2"><w:listItem w:displayText="一般" w:value="2"/></w:${type}></w:sdtPr><w:sdtContent><w:p>${content}</w:p></w:sdtContent></w:sdt></w:tc></w:tr></w:tbl><w:p/>`,
+    );
+    const { pkg, loaded } = load(bytes);
+    const editor = createTextEditor(loaded.body);
+    editor.tx((t) => void t.fillContentControl(idOf(editor.body, 'choice'), '2'));
+    const out = serializeDocx(pkg, editor.body);
+    const xml = decoder.decode(unzip(out).get('word/document.xml'));
+    expect(xml).not.toContain('w:val="inner"');
+    expect(xml).not.toContain('dataBinding');
+    expect(xml).toContain('<w:b/>');
+    const again = load(out).loaded.body;
+    expect(shape(again)).toEqual(shape(editor.body));
+    expect(Object.values(again.contentControls ?? {}).map((c) => c.tag)).toEqual(['choice']);
+    editor.undo();
+    for (const [part, content] of unzip(bytes))
+      expect(unzip(serializeDocx(pkg, editor.body)).get(part)).toEqual(content);
+    editor.redo();
+    expect(serializeDocx(pkg, editor.body)).toEqual(out);
+  });
+
   const dateControl = (format = 'yyyy年M月d日', text = '某日') =>
     `<w:sdt><w:sdtPr><w:tag w:val="date"/><w:dataBinding w:xpath="/date"/><w:date w:fullDate="2020-01-01T00:00:00Z" x:keep="yes"><w:dateFormat w:val="${format}"/><w:lid w:val="zh-CN"/><w:storeMappedDataAs w:val="date"/><w:calendar w:val="gregorian"/><x:unknown/></w:date></w:sdtPr><w:sdtContent><w:r><w:t>${text}</w:t></w:r></w:sdtContent></w:sdt>`;
 
