@@ -700,6 +700,48 @@ describe('doc.bindings', () => {
     },
   );
 
+  it.each(['dropDownList', 'comboBox', 'date', 'checkbox'])(
+    '%s 显式填相同值解除绑定，事件只派发一次，重复提交无修改，历史与导出一致',
+    async (type) => {
+      const pr =
+        type === 'date'
+          ? '<w:date w:fullDate="2026-10-13T00:00:00Z"><w:dateFormat w:val="yyyy年M月d日"/></w:date>'
+          : type === 'checkbox'
+            ? '<w14:checkbox/>'
+            : `<w:${type} w:lastValue="2"><w:listItem w:displayText="一般" w:value="2"/></w:${type}>`;
+      const text = type === 'date' ? '2026年10月13日' : type === 'checkbox' ? '☐' : '一般';
+      const d = await UltimateWord.load(
+        template(`<w:p>${control('bound', text, `${pr}<w:dataBinding w:xpath="/bound"/>`)}</w:p>`),
+      );
+      const parts = async () => unzip(new Uint8Array(await (await d.toDocx()).arrayBuffer()));
+      const original = await parts();
+      const xmlOf = async () => new TextDecoder().decode((await parts()).get('word/document.xml'));
+      let changes = 0;
+      let layouts = 0;
+      d.on('document:change', () => changes++);
+      d.on('layout:done', () => layouts++);
+      const value = type === 'date' ? { date: '2026-10-13' } : type === 'checkbox' ? false : '2';
+      expect(d.bindings.set('bound', value).apply()).toBeDefined();
+      expect(await xmlOf()).not.toContain('dataBinding');
+      expect(changes).toBe(1);
+      expect(layouts).toBe(1);
+      expect(d.bindings.pending.size).toBe(0);
+      const current = d.bindings.list().find((b) => b.key === 'bound');
+      expect(current?.value).toBe(text);
+      expect(d.bindings.set('bound', value).apply()).toBeUndefined();
+      expect(changes).toBe(1);
+      expect(layouts).toBe(1);
+      const again = await UltimateWord.load(await d.toDocx());
+      expect(again.bindings.list().find((b) => b.key === 'bound')).toEqual(current);
+      d.undo();
+      const restored = await parts();
+      for (const [part, content] of original) expect(restored.get(part)).toEqual(content);
+      d.redo();
+      expect(await xmlOf()).not.toContain('dataBinding');
+      expect(d.bindings.list().find((b) => b.key === 'bound')).toEqual(current);
+    },
+  );
+
   it('普通文字事务同步组合框自填值并清旧日期，整批修改同撤销与导出', async () => {
     const d = await UltimateWord.load(
       template(

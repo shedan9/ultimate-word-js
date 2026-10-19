@@ -12,9 +12,10 @@ body { margin: 0; font: 14px/1.5 system-ui; }
 <script type="module">
 // 真实公文走完整条链：这里验的是门面的**接线**（fit 跟容器、dispose 摘干净、
 // find → decorate → rectsOf 通到屏幕），字摆在哪由 Vitest 里的真值断言负责
+import { unzip } from '@uw/ooxml';
 import { UltimateWord } from 'ultimate-word';
 import fixtureUrl from '../../fidelity/fixtures/gongwen-01.docx?url';
-import { choiceControlDocx, controlDocx, dateControlDocx, linkDocx, shellControlDocx, textStateDocx } from './list-fixture.ts';
+import { boundControlDocx, choiceControlDocx, controlDocx, dateControlDocx, linkDocx, shellControlDocx, textStateDocx } from './list-fixture.ts';
 
 const host = document.querySelector('#host');
 const second = document.querySelector('#second');
@@ -487,6 +488,31 @@ try {
     const reloaded = await UltimateWord.load(await textDoc.toDocx());
     assert(reloaded.bindings.list()[0].value === latest.value && reloaded.bindings.list()[0].placeholder === latest.placeholder, `${type} 导出回读状态与当前查询一致`);
     textView.dispose();
+  }
+  for (const type of ['dropDownList', 'comboBox', 'date', 'checkbox']) {
+    const boundDoc = await UltimateWord.load(boundControlDocx(type));
+    const boundView = boundDoc.mount('#host', { mode: 'edit', virtualize: false });
+    const text = type === 'date' ? '2026年10月13日' : type === 'checkbox' ? '☐' : '一般';
+    const range = boundDoc.find(text)[0];
+    boundView.select(range);
+    const selection = JSON.stringify(boundView.selection);
+    const xmlOf = async () => new TextDecoder().decode(unzip(new Uint8Array(await (await boundDoc.toDocx()).arrayBuffer())).get('word/document.xml'));
+    const originalXml = await xmlOf();
+    let changes = 0;
+    boundDoc.on('document:change', () => changes++);
+    const value = type === 'date' ? { date: '2026-10-13' } : type === 'checkbox' ? false : '2';
+    boundDoc.bindings.set('bound', value).apply();
+    await frame();
+    assert(changes === 1 && !(await xmlOf()).includes('dataBinding'), `${type} 提交当前值只派发一次变更并解除绑定`);
+    assert(JSON.stringify(boundView.selection) === selection && boundView.rectsOf(range).length > 0 && boundView.root.textContent.includes(text), `${type} 仅解除绑定保留选区、定位与文字层`);
+    assert(boundDoc.bindings.set('bound', value).apply() === undefined && changes === 1, `${type} 解除绑定后重复提交不增加历史与事件`);
+    const again = await UltimateWord.load(await boundDoc.toDocx());
+    assert(again.bindings.list()[0].value === text, `${type} 导出回读保留当前值`);
+    boundDoc.undo();
+    assert((await xmlOf()) === originalXml, `${type} 一次撤销恢复绑定与全部原始 XML`);
+    boundDoc.redo();
+    assert(!(await xmlOf()).includes('dataBinding') && boundDoc.find(text).length === 1, `${type} 重做解除绑定并保留文字`);
+    boundView.dispose();
   }
   result.textContent = `PASS: ${passed} browser assertions`;
 } catch (error) {

@@ -170,7 +170,7 @@ export interface TextTransaction {
    * `\n` 写成软换行、`\t` 写成制表位（块级控件也不拆段：跨段删除只在同一容器里做得到，
    * 拆段又会让多段内容的控件与单段的行为不同）。占位符状态的控件换上控件自己的字符格式、
    * 清掉占位符标记；下拉框只接受选项里的文字或值（值换成显示文字），空列表也拒绝。
-   * 下拉框 / 组合框同步 lastValue，显示与保存值相同且非占位时不产生修改。
+   * 下拉框 / 组合框同步 lastValue，显示与保存值相同、非占位且无数据绑定时不产生修改。
    * 复选框 / 图片 / 文档部件（目录）/ 锁了内容的控件拒绝。
    */
   fillContentControl(id: NodeId, text: string): DocRange;
@@ -178,7 +178,7 @@ export interface TextTransaction {
   selectContentControlItem(id: NodeId, index: number): DocRange;
   /**
    * 设置复选框状态并换上该状态的符号 / 字体，内容必须是单个文字或符号（MS-DOCX §2.3.26）。
-   * 锁了内容、含修订或域的控件拒绝；状态与符号未变时不产生撤销单元。
+   * 锁了内容、含修订或域的控件拒绝；状态与符号未变、非占位且无数据绑定时不产生撤销单元。
    */
   setContentControlChecked(id: NodeId, checked: boolean): DocRange;
   /** 按模板 dateFormat 填入 YYYY-MM-DD 日历日，同步 fullDate；支持公历、中英文，锁与异常内容拒绝。 */
@@ -1009,8 +1009,8 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             textOfContentControl(span) === text &&
             !control.showingPlaceholder
           ) {
-            // 相同显示文字可能对应不同选项值；只改元数据，避免重建 run 扰动已保存的位置。
-            if (lastValue !== undefined && control.lastValue !== lastValue) {
+            // 相同显示文字也可能要解除旧 XML 绑定；只改元数据，避免重建 run 扰动已保存的位置。
+            if (lastValue !== undefined && (control.lastValue !== lastValue || control.dataBound)) {
               const { dataBound: _dataBound, ...unbound } = control;
               draft = {
                 ...draft,
@@ -1710,8 +1710,10 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             const c = part.content;
             const sameGlyph = c.kind === 'symbol' && c.char === glyph.char && c.font === glyph.font;
             const sameValue = c.kind === 'text' ? c.text === glyph.char : sameGlyph;
-            if (state.checked === checked && sameValue && !control.showingPlaceholder) return range;
-            if (!sameGlyph || control.showingPlaceholder) {
+            const unchanged = state.checked === checked && sameValue && !control.showingPlaceholder;
+            // 显式填写即解除绑定；只有绑定改变时保留原文字 / 符号与格式，不能把它当成空操作。
+            if (unchanged && !control.dataBound) return range;
+            if (!unchanged && (!sameGlyph || control.showingPlaceholder)) {
               const content = [...part.run.content];
               // 单字换单字，保留片段下标、run id 与格式，已保存的位置不需要搬动；符号字体走既有 w:sym 通路。
               content[part.index] = { kind: 'symbol', ...glyph };
@@ -1762,7 +1764,12 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             // 局部格式或 Word 保存都会拆 run；成员全是普通文字即可共用填写路径，不能把格式边界当成不支持的内容。
             const sameText = textOfContentControl(span) === value.text;
             filledControlText.set(id, value.text.replace(/\r\n|\r/g, '\n'));
-            if (sameText && control.date?.fullDate === value.fullDate && !control.showingPlaceholder)
+            if (
+              sameText &&
+              control.date?.fullDate === value.fullDate &&
+              !control.showingPlaceholder &&
+              !control.dataBound
+            )
               return range;
             const filled =
               sameText && !control.showingPlaceholder

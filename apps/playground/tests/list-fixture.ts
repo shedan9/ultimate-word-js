@@ -64,6 +64,23 @@ export function textStateDocx(type: 'text' | 'richText'): Uint8Array {
   );
 }
 
+/** 显式填当前值仍需解除绑定；多 run 用来检查元数据修改不会覆盖局部格式。 */
+export function boundControlDocx(type: 'dropDownList' | 'comboBox' | 'date' | 'checkbox'): Uint8Array {
+  const pr =
+    type === 'date'
+      ? '<w:date w:fullDate="2026-10-13T00:00:00Z"><w:dateFormat w:val="yyyy年M月d日"/></w:date>'
+      : type === 'checkbox'
+        ? '<w14:checkbox/>'
+        : `<w:${type} w:lastValue="2"><w:listItem w:displayText="一般" w:value="2"/></w:${type}>`;
+  const text = type === 'date' ? ['2026年', '10月13日'] : type === 'checkbox' ? ['☐'] : ['一', '般'];
+  const content = text
+    .map((s, i) => `<w:r>${i === 0 ? '<w:rPr><w:b/></w:rPr>' : ''}<w:t>${s}</w:t></w:r>`)
+    .join('');
+  return docxOf(
+    `<w:p><w:sdt><w:sdtPr><w:tag w:val="bound"/><w:dataBinding w:xpath="/bound"/>${pr}</w:sdtPr><w:sdtContent>${content}</w:sdtContent></w:sdt></w:p>`,
+  );
+}
+
 /** 列表编辑回归用：三个一级列表项 + 一段普通正文。 */
 export function listDocx(): Uint8Array {
   return docxOf(

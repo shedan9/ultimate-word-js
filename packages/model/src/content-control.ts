@@ -96,7 +96,7 @@ export interface ContentControl {
   /**
    * 有没有 `w:dataBinding`（绑到 customXml 部件的某个 XPath）。
    * 绑定的控件在 Word 打开时**会被 customXml 里的值盖掉** —— 只改 `sdtContent` 等于白填，
-   * 所以回写时内容一变就去掉绑定（serialize 的 body-writer.ts）
+   * 所以显式填写即解除绑定（值未变也适用），普通编辑内容改变时同样解除；回写见 serialize 的 body-writer.ts。
    */
   dataBound?: boolean;
 }

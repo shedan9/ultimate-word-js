@@ -497,6 +497,54 @@ describe('内容控件', () => {
   const dateControl = (format = 'yyyy年M月d日', text = '某日') =>
     `<w:sdt><w:sdtPr><w:tag w:val="date"/><w:dataBinding w:xpath="/date"/><w:date w:fullDate="2020-01-01T00:00:00Z" x:keep="yes"><w:dateFormat w:val="${format}"/><w:lid w:val="zh-CN"/><w:storeMappedDataAs w:val="date"/><w:calendar w:val="gregorian"/><x:unknown/></w:date></w:sdtPr><w:sdtContent><w:r><w:t>${text}</w:t></w:r></w:sdtContent></w:sdt>`;
 
+  describe.each(['inline', 'block'])('表格里 %s 控件仅解除绑定', (scope) => {
+    it.each(['dropDownList', 'comboBox', 'date', 'checkbox'])(
+      '%s 填当前值穿过原文复用，保留未知 XML；撤销逐字节恢复',
+      (type) => {
+        const pr =
+          type === 'date'
+            ? '<w:date w:fullDate="2026-10-13T00:00:00Z"><w:dateFormat w:val="yyyy年M月d日"/></w:date>'
+            : type === 'checkbox'
+              ? '<w14:checkbox/>'
+              : `<w:${type} w:lastValue="2"><w:listItem w:displayText="一般" w:value="2"/></w:${type}>`;
+        const content =
+          type === 'date'
+            ? '<w:r><w:rPr><w:b/></w:rPr><w:t>2026年</w:t></w:r><w:r><w:t>10月13日</w:t></w:r>'
+            : `<w:r><w:rPr><w:i/></w:rPr><w:t>${type === 'checkbox' ? '☐' : '一般'}</w:t></w:r>`;
+        const inner = scope === 'block' ? `<w:p>${content}</w:p>` : content;
+        const sdt = `<w:sdt><w:sdtPr><w:tag w:val="field"/><w:dataBinding w:xpath="/field"/><w:alias w:val="字段" probe="keep"/><w:temporary/>${pr}</w:sdtPr><w:sdtContent>${inner}</w:sdtContent></w:sdt>`;
+        const bytes = docx(
+          `<w:tbl><w:tr><w:tc>${scope === 'block' ? sdt : `<w:p>${sdt}</w:p>`}</w:tc></w:tr></w:tbl><w:p/>`,
+        );
+        const { pkg, loaded } = load(bytes);
+        const editor = createTextEditor(loaded.body);
+        const before = editor.body;
+        editor.tx((t) => {
+          const id = idOf(before, 'field');
+          if (type === 'date') t.setContentControlDate(id, '2026-10-13');
+          else if (type === 'checkbox') t.setContentControlChecked(id, false);
+          else t.fillContentControl(id, '一般');
+        });
+        const out = serializeDocx(pkg, editor.body);
+        const xml = decoder.decode(unzip(out).get('word/document.xml'));
+        expect(xml).not.toContain('dataBinding');
+        expect(xml).toContain('<w:temporary/>');
+        expect(xml).toContain('<w:alias w:val="字段" probe="keep"/>');
+        expect(xml).toContain(content);
+        const again = load(out).loaded.body;
+        expect(again.contentControls?.[idOf(again, 'field')]).toEqual(
+          editor.body.contentControls?.[idOf(editor.body, 'field')],
+        );
+        expect(editor.body.sections).toEqual(before.sections);
+        editor.undo();
+        const restored = unzip(serializeDocx(pkg, editor.body));
+        for (const [part, content] of unzip(bytes)) expect(restored.get(part)).toEqual(content);
+        editor.redo();
+        expect(serializeDocx(pkg, editor.body)).toEqual(out);
+      },
+    );
+  });
+
   it('日期的显示与 fullDate 一起回写，格式、历法、数据存储设置与未知属性保留', () => {
     const { out, again } = roundTrip(docx(`<w:p>${dateControl()}</w:p>`), (t, body) => {
       t.setContentControlDate(idOf(body, 'date'), '2026-10-13');
