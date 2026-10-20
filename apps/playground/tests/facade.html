@@ -551,6 +551,35 @@ try {
     assert(again.bindings.list().length === 1 && again.bindings.list()[0].value === '一般', `${type} 导出回读只保留填写目标`);
     nestedView.dispose();
   }
+  for (const locked of [false, true]) {
+    const inner = `<w:sdt><w:sdtPr><w:tag w:val="inner"/><w:text/>${locked ? '<w:lock w:val="sdtLocked"/>' : ''}</w:sdtPr><w:sdtContent><w:r><w:t>一般</w:t></w:r></w:sdtContent></w:sdt>`;
+    const d = await UltimateWord.load(choiceControlDocx('comboBox', inner));
+    const v = d.mount('#host', { mode: 'edit', virtualize: false });
+    const range = d.find('一般')[0];
+    v.select(range);
+    const selection = JSON.stringify(v.selection);
+    let changes = 0;
+    d.on('document:change', () => changes++);
+    if (locked) {
+      let failed = false;
+      try { d.bindings.set('level', '覆盖').apply(); } catch { failed = true; }
+      assert(failed && changes === 0 && d.bindings.pending.get('level') === '覆盖', '首个子外壳锁阻止覆盖，保留待填值与事件状态');
+      assert(JSON.stringify(v.selection) === selection && d.bindings.list().length === 2, '锁定子控件失败后选区与字段保持原样');
+    } else {
+      d.bindings.set('level', '甲\n乙').apply();
+      await frame();
+      assert(changes === 1 && d.bindings.list().length === 1 && d.bindings.list()[0].value === '甲\n乙', '覆盖首个子控件只留目标，原单行子控件不再限制新值');
+      assert(d.find('甲')[0].start.nodeId === range.start.nodeId && v.rectsOf(d.find('甲')[0]).length > 0, '成员归回目标保留节点位置并能定位');
+      assert(v.root.textContent.includes('甲') && v.root.textContent.includes('乙'), '覆盖后文字层刷新');
+      d.undo();
+      assert(d.bindings.list().length === 2 && d.find('一般').length === 1, '一次撤销恢复首个子控件与文字');
+      d.redo();
+      assert(d.bindings.list().length === 1 && d.find('甲').length === 1, '一次重做重新移除首个子控件');
+    }
+    const again = await UltimateWord.load(await d.toDocx());
+    assert(again.bindings.list().length === (locked ? 2 : 1) && again.bindings.list()[0].value === (locked ? '一般' : '甲\n乙'), '首个子控件的保留或移除与导出回读一致');
+    v.dispose();
+  }
   result.textContent = `PASS: ${passed} browser assertions`;
 } catch (error) {
   result.textContent = `FAIL after ${passed}: ${error.message}`;

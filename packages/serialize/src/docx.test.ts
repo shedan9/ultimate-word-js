@@ -3,9 +3,11 @@ import { createDiagnosticSink } from '@uw/core';
 import type { Body, DocPosition, Paragraph, TextTransaction } from '@uw/model';
 import {
   builtinStyleDefinition,
+  contentControlSpans,
   createTextEditor,
   loadDocument,
   paragraphText,
+  textOfContentControl,
   walkParagraphs,
 } from '@uw/model';
 import { OpcPackage, unzip } from '@uw/ooxml';
@@ -517,6 +519,43 @@ describe('内容控件', () => {
       expect(unzip(serializeDocx(pkg, editor.body)).get(part)).toEqual(content);
     editor.redo();
     expect(serializeDocx(pkg, editor.body)).toEqual(out);
+  });
+
+  describe.each(['inline', 'block', 'nestedBlock'])('覆盖首个子控件后回写：%s', (scope) => {
+    it.each(['原值', '甲\n乙', ''])('填写 %j 只留下外层，保留格式、未知内容与撤销原文', (value) => {
+      const inner =
+        '<w:sdt><w:sdtPr><w:tag w:val="inner"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:rPr><w:b/><w:unknown/></w:rPr><w:t>原值</w:t></w:r></w:sdtContent></w:sdt>';
+      const content =
+        scope === 'inline'
+          ? inner
+          : scope === 'block'
+            ? `<w:p>${inner}</w:p>`
+            : `<w:sdt><w:sdtPr><w:tag w:val="middle"/></w:sdtPr><w:sdtContent><w:p>${inner}</w:p></w:sdtContent></w:sdt>`;
+      const outer = `<w:sdt><w:sdtPr><w:tag w:val="outer"/><w:unknown/></w:sdtPr><w:sdtContent>${content}</w:sdtContent></w:sdt>`;
+      const bytes = docx(
+        `<w:tbl><w:tr><w:tc>${scope === 'inline' ? `<w:p>${outer}</w:p>` : outer}</w:tc></w:tr></w:tbl><w:p/>`,
+      );
+      const { pkg, loaded } = load(bytes);
+      const editor = createTextEditor(loaded.body);
+      editor.tx((t) => void t.fillContentControl(idOf(editor.body, 'outer'), value));
+      const out = serializeDocx(pkg, editor.body);
+      const xml = decoder.decode(unzip(out).get('word/document.xml'));
+      expect(xml).not.toContain('w:val="inner"');
+      expect(xml).not.toContain('w:val="middle"');
+      expect(xml).toContain('<w:unknown/>');
+      expect(xml).toContain('<w:b/>');
+      const again = load(out).loaded.body;
+      const spans = contentControlSpans(again);
+      expect(spans.map((s) => s.control.tag)).toEqual(['outer']);
+      if (spans[0] === undefined) throw new Error('回读后缺少目标');
+      expect(textOfContentControl(spans[0])).toBe(value);
+      expect(paragraphs(again)[0]?.runs[0]?.props.bold).toBe(true);
+      editor.undo();
+      for (const [part, content] of unzip(bytes))
+        expect(unzip(serializeDocx(pkg, editor.body)).get(part)).toEqual(content);
+      editor.redo();
+      expect(serializeDocx(pkg, editor.body)).toEqual(out);
+    });
   });
 
   const dateControl = (format = 'yyyy年M月d日', text = '某日') =>

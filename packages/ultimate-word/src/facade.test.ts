@@ -297,6 +297,51 @@ describe('doc.bindings', () => {
     );
   }
 
+  it('覆盖首个子控件只留下目标，保留相邻字段与撤销导出', async () => {
+    const inner = control('firstChild', '原值', '<w:text/>');
+    const target = `<w:sdt><w:sdtPr><w:tag w:val="outer"/></w:sdtPr><w:sdtContent>${inner}</w:sdtContent></w:sdt>`;
+    const d = await UltimateWord.load(template(`<w:p>${target}${control('neighbor', '旁边')}</w:p>`));
+    const original = await d.toDocx();
+    const start = d.find('原值')[0]?.start;
+    let events = 0;
+    d.on('document:change', () => events++);
+    d.bindings.set('outer', '甲\n乙').apply();
+    expect(events).toBe(1);
+    expect(d.bindings.list().find((b) => b.key === 'firstChild')).toBeUndefined();
+    expect(d.bindings.list().find((b) => b.key === 'outer')?.value).toBe('甲\n乙');
+    expect(d.bindings.list().find((b) => b.key === 'neighbor')?.value).toBe('旁边');
+    expect(d.find('甲')[0]?.start).toEqual(start);
+    const again = await UltimateWord.load(await d.toDocx());
+    expect(again.bindings.list().map((b) => [b.key, b.value])).toEqual(
+      d.bindings.list().map((b) => [b.key, b.value]),
+    );
+    d.undo();
+    expect(await (await d.toDocx()).arrayBuffer()).toEqual(await original.arrayBuffer());
+    d.redo();
+    expect(d.bindings.list().find((b) => b.key === 'firstChild')).toBeUndefined();
+  });
+
+  it('无前缀的锁定子外壳阻止外层覆盖，失败保留待填值与重做', async () => {
+    const inner = control('firstChild', '原值', '<w:lock w:val="sdtLocked"/>');
+    const d = await UltimateWord.load(
+      template(
+        `<w:p><w:sdt><w:sdtPr><w:tag w:val="outer"/></w:sdtPr><w:sdtContent>${inner}</w:sdtContent></w:sdt></w:p>`,
+      ),
+    );
+    d.bindings.set('applicant', '张三').apply();
+    d.undo();
+    let events = 0;
+    d.on('document:change', () => events++);
+    d.bindings.set('outer', '原值');
+    expect(() => d.bindings.apply()).toThrow(/锁定了外壳/);
+    expect(events).toBe(0);
+    expect(d.bindings.pending.get('outer')).toBe('原值');
+    expect(d.bindings.list().find((b) => b.key === 'firstChild')?.value).toBe('原值');
+    expect(d.canRedo).toBe(true);
+    d.redo();
+    expect(d.bindings.list().find((b) => b.key === 'applicant')?.value).toBe('张三');
+  });
+
   it('覆盖外层不能移除锁定子外壳，失败不派发事件、保留待填值与历史', async () => {
     const inner = control('innerShell', '子控件', '<w:lock w:val="sdtLocked"/>');
     const d = await UltimateWord.load(

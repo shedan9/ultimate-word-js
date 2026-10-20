@@ -1057,6 +1057,31 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             }
             return range;
           }
+          // 覆盖的是整个目标内容，不是把新值写进首个子控件。先把后代成员归回目标，
+          // 否则复用起点 run 会留下子外壳，甚至让已被覆盖的单行子控件限制新值换行。
+          // 外壳锁仍由 command 的成员检查拒绝；节点 id 不变，原有位置无需额外映射。
+          const members = new Set(span?.runs.map((r) => r.id));
+          const reparented: NodeId[] = [];
+          draft = mapParagraphs(draft, (p) => {
+            const blockMember =
+              control.scope === 'block' &&
+              p.contentControl !== id &&
+              withinContentControl(draft.contentControls ?? {}, p.contentControl, id);
+            let changed = blockMember;
+            const runs = p.runs.map((r) => {
+              if (!members.has(r.id) || r.contentControl === undefined || r.contentControl === id) return r;
+              changed = true;
+              const { contentControl: _inner, ...rest } = r;
+              return control.scope === 'inline' ? { ...rest, contentControl: id } : rest;
+            });
+            if (!changed) return p;
+            reparented.push(p.id);
+            return { ...p, ...(blockMember ? { contentControl: id } : {}), runs };
+          });
+          if (reparented.length) {
+            entries = indexRuns(draft);
+            structural(reparented, []);
+          }
           const previousFilling = fillingControl;
           fillingControl = id;
           let start: DocPosition;

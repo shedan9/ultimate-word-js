@@ -34,7 +34,7 @@ import type {
   TableRow,
   TableWidth,
 } from '@uw/model';
-import { walkParagraphs } from '@uw/model';
+import { contentControlSpans, walkParagraphs } from '@uw/model';
 import type { XmlDocument, XmlElement, XmlNode } from '@uw/ooxml';
 import { child } from '@uw/ooxml';
 import { PPR_ORDER, patchParaProps, patchRunProps, RPR_ORDER } from './props-writer.ts';
@@ -155,6 +155,8 @@ class BodyWriter {
   readonly #orig = new Map<NodeId, Block | Run>();
   /** 控件属性住在 Body 上；文字相同时仍须穿过原段落 / 表格的复用捷径，才能把状态补回 sdtPr */
   readonly #changedControlBlocks = new Set<NodeId>();
+  /** 成员已归回外层的控件只展开内容，不能因原 run / 段落仍在就重新包回已删除的子外壳。 */
+  readonly #removedControls: ReadonlySet<NodeId>;
   /** 非末节最后一段 → 它该带的 `w:sectPr`。末节的在 `w:body` 末尾，原样留着 */
   readonly #sectFor = new Map<NodeId, XmlElement>();
   /** 图片 / 符号 / 域界桩的源元素池：拆 run 之后它们搬进了新 run，得凭内容找回原元素 */
@@ -177,11 +179,18 @@ class BodyWriter {
   constructor(input: BodyWriteInput) {
     this.#in = input;
     for (const [id, e] of input.sources.nodes) this.#idOf.set(e, id);
+    const present = new Set(contentControlSpans(input.body).map((s) => s.control.id));
+    this.#removedControls = new Set(
+      contentControlSpans(input.originalBody)
+        .map((s) => s.control.id)
+        .filter((id) => !present.has(id)),
+    );
     const changedControls = new Set(
       Object.values(input.body.contentControls ?? {})
         .filter((c) => !same(c, input.originalBody.contentControls?.[c.id]))
         .map((c) => c.id),
     );
+    for (const id of this.#removedControls) changedControls.add(id);
     if (changedControls.size) {
       const mark = (node: XmlElement): boolean => {
         const id = this.#idOf.get(node);
@@ -265,7 +274,7 @@ class BodyWriter {
         // 块级内容控件：外壳照抄，里面的块照常对齐（拆出来的新段留在控件里面）
         const content = child(node, 'w:sdtContent');
         if (content === undefined) out.push(node);
-        else out.push(this.#sdt(node, content, this.#blocks(content.children, cur)));
+        else out.push(...this.#sdt(node, content, this.#blocks(content.children, cur)));
       } else out.push(node);
     }
     return out;
@@ -431,7 +440,7 @@ class BodyWriter {
         // 修订容器里只剩删空的 run（删字保留 run 的槽位，见 text-transaction.ts）：同理不留 ——
         // 一条没有内容的修订在 Word 的审阅窗格里是一条点不中的空记录
         if (REVISION_CONTAINERS[node.name] !== undefined && children.every(isBlankRun)) continue;
-        out.push(content === node ? { ...content, children } : this.#sdt(node, content, children));
+        out.push(...(content === node ? [{ ...content, children }] : this.#sdt(node, content, children)));
         trailing();
       } else out.push(node); // 书签、批注范围、w:del、w:proofErr……原样
     }
@@ -451,7 +460,10 @@ class BodyWriter {
       const id = this.#idOf.get(node);
       return id === undefined ? marks : { ...marks, field: { id, instr: node.attrs['w:instr'] ?? '' } };
     }
-    if (node.name === 'w:sdt') return { ...marks, control: this.#idOf.get(node) };
+    if (node.name === 'w:sdt') {
+      const id = this.#idOf.get(node);
+      return id !== undefined && this.#removedControls.has(id) ? marks : { ...marks, control: id };
+    }
     const revision = revisionOf(node);
     return revision === undefined ? marks : { ...marks, revision };
   }
@@ -515,7 +527,13 @@ class BodyWriter {
    * 内容控件的外壳：内容或状态变了才去掉 `STALE_WHEN_FILLED`，勾选、日期与列表保存值单独补。
    * 内容变没变按**元素身份**比：没改的节点吐回的就是原元素；仅状态变了也要解除绑定，避免重开被旧值覆盖
    */
-  #sdt(node: XmlElement, content: XmlElement, children: XmlNode[]): XmlElement {
+  #sdt(node: XmlElement, content: XmlElement, children: XmlNode[]): XmlNode[] {
+    const id = this.#idOf.get(node);
+    if (id !== undefined && this.#removedControls.has(id)) return children;
+    return [this.#sdtShell(node, content, children)];
+  }
+
+  #sdtShell(node: XmlElement, content: XmlElement, children: XmlNode[]): XmlElement {
     const id = this.#idOf.get(node);
     const now = id === undefined ? undefined : this.#in.body.contentControls?.[id];
     const was = id === undefined ? undefined : this.#in.originalBody.contentControls?.[id];
