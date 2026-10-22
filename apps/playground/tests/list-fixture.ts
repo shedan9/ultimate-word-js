@@ -57,6 +57,13 @@ function docxOf(blocks: string, extraRels = ''): Uint8Array {
   });
 }
 
+/** 边界空段也属于块级控件，覆盖时不能留在新值之外。 */
+export function emptyBoundaryControlDocx(content: string): Uint8Array {
+  return docxOf(
+    `<w:tbl><w:tr><w:tc><w:sdt><w:sdtPr><w:tag w:val="outer"/></w:sdtPr><w:sdtContent>${content}</w:sdtContent></w:sdt></w:tc></w:tr></w:tbl><w:p/>`,
+  );
+}
+
 /** 文字模板状态回归：普通输入必须同步清占位标记与绑定。 */
 export function textStateDocx(type: 'text' | 'richText'): Uint8Array {
   return docxOf(

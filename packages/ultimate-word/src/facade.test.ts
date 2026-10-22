@@ -297,6 +297,35 @@ describe('doc.bindings', () => {
     );
   }
 
+  it.each(['<w:p/><w:p/>', '<w:p/><w:p><w:r><w:t>原值</w:t></w:r></w:p><w:p/>'])(
+    '块级控件范围包含边界空段，填写与导出回读一致：%s',
+    async (content) => {
+      const d = await UltimateWord.load(
+        template(
+          `<w:sdt><w:sdtPr><w:tag w:val="outer"/></w:sdtPr><w:sdtContent>${content}</w:sdtContent></w:sdt>`,
+        ),
+      );
+      const before = d.bindings.list().find((b) => b.key === 'outer');
+      if (before?.range === undefined) throw new Error('样本缺少范围');
+      const paragraphs = d
+        .query('paragraph')
+        .filter((p) => p.kind === 'paragraph' && p.contentControl === before.id);
+      expect(before.range.start.nodeId).toBe(paragraphs[0]?.id);
+      expect(before.range.end.nodeId).toBe(paragraphs.at(-1)?.id);
+      let changes = 0;
+      d.on('document:change', () => changes++);
+      d.bindings.set('outer', '新值').apply();
+      expect(changes).toBe(1);
+      expect(d.bindings.list().find((b) => b.key === 'outer')?.value).toBe('新值');
+      const again = await UltimateWord.load(await d.toDocx());
+      expect(again.bindings.list().find((b) => b.key === 'outer')?.value).toBe('新值');
+      d.undo();
+      expect(d.bindings.list().find((b) => b.key === 'outer')).toEqual(before);
+      d.redo();
+      expect(d.bindings.list().find((b) => b.key === 'outer')?.value).toBe('新值');
+    },
+  );
+
   it('覆盖首个子控件只留下目标，保留相邻字段与撤销导出', async () => {
     const inner = control('firstChild', '原值', '<w:text/>');
     const target = `<w:sdt><w:sdtPr><w:tag w:val="outer"/></w:sdtPr><w:sdtContent>${inner}</w:sdtContent></w:sdt>`;

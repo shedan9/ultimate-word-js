@@ -17,7 +17,7 @@ import { attr, child, children } from '@uw/ooxml';
 import { formatDateTime } from './date-format.ts';
 import type { DocumentBody, NodeId, ParagraphNode, PropSet, RunNode } from './nodes.ts';
 import { walkBlocks } from './nodes.ts';
-import { runEnd, runStart } from './order.ts';
+import { rangeOfNode, runEnd, runStart } from './order.ts';
 import { parseRunProps } from './parse-props.ts';
 import type { DocPosition, DocRange } from './position.ts';
 import type { RunProps } from './props.ts';
@@ -323,10 +323,18 @@ export function contentControlSpans<S extends PropSet>(
 }
 
 /**
- * 控件内容的范围：首个成员 run 的开头到末个成员 run 的结尾；块级控件里一个 run 都没有时
- * 是首段的折叠位置（空段落的位置就是段落 id 的 {0, 0}）。
+ * 行内控件只罩成员 run；块级控件从首段开头到末段结尾，包含没有 run 的边界空段。
+ * 只取首末 run 会漏掉空段与段落标记，填完整个控件后仍残留换行；全为空段时也必须覆盖全部段落。
  */
 export function rangeOfContentControl<S extends PropSet>(span: ContentControlSpan<S>): DocRange | undefined {
+  if (span.control.scope === 'block') {
+    const first = span.paragraphs[0];
+    const last = span.paragraphs.at(-1);
+    if (first === undefined || last === undefined) return undefined;
+    const start = rangeOfNode(first)?.start;
+    const end = rangeOfNode(last)?.end;
+    return start === undefined || end === undefined ? undefined : { start, end };
+  }
   const first = span.runs[0];
   const last = span.runs.at(-1);
   if (first !== undefined && last !== undefined) return { start: runStart(first), end: runEnd(last) };

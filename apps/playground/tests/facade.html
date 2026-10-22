@@ -15,7 +15,7 @@ body { margin: 0; font: 14px/1.5 system-ui; }
 import { unzip } from '@uw/ooxml';
 import { UltimateWord } from 'ultimate-word';
 import fixtureUrl from '../../fidelity/fixtures/gongwen-01.docx?url';
-import { boundControlDocx, choiceControlDocx, controlDocx, dateControlDocx, linkDocx, shellControlDocx, textStateDocx } from './list-fixture.ts';
+import { boundControlDocx, choiceControlDocx, controlDocx, dateControlDocx, emptyBoundaryControlDocx, linkDocx, shellControlDocx, textStateDocx } from './list-fixture.ts';
 
 const host = document.querySelector('#host');
 const second = document.querySelector('#second');
@@ -578,6 +578,30 @@ try {
     }
     const again = await UltimateWord.load(await d.toDocx());
     assert(again.bindings.list().length === (locked ? 2 : 1) && again.bindings.list()[0].value === (locked ? '一般' : '甲\n乙'), '首个子控件的保留或移除与导出回读一致');
+    v.dispose();
+  }
+  for (const content of ['<w:p/><w:p/>', '<w:p/><w:p><w:r><w:t>原值</w:t></w:r></w:p><w:p/>']) {
+    const d = await UltimateWord.load(emptyBoundaryControlDocx(content));
+    const v = d.mount('#host', { mode: 'edit', virtualize: false });
+    await frame();
+    const before = d.bindings.list()[0];
+    const members = d.query('paragraph').filter(p => p.contentControl === before.id);
+    assert(before.range.start.nodeId === members[0].id && before.range.end.nodeId === members.at(-1).id, '块级范围覆盖首末空段的段落锚点');
+    assert(v.caretRect(before.range.start) !== null && v.caretRect(before.range.end) !== null, '边界空段的范围端点可定位');
+    v.select(before.range);
+    let changes = 0;
+    d.on('document:change', () => changes++);
+    d.bindings.set('outer', '甲\n乙').apply();
+    await frame();
+    assert(changes === 1 && d.bindings.list()[0].value === '甲\n乙', '一次填写覆盖全部空段，不残留换行');
+    assert(d.query('paragraph').filter(p => p.contentControl === before.id).length === 1 && v.root.textContent.includes('甲'), '填写后模型只留一段并刷新文字层');
+    assert(v.rectsOf(d.find('甲')[0]).length > 0, '覆盖空段后新文字仍能定位');
+    d.undo();
+    assert(d.bindings.list()[0].value === before.value && JSON.stringify(d.bindings.list()[0].range) === JSON.stringify(before.range), '一次撤销恢复全部空段与原始范围');
+    d.redo();
+    assert(d.bindings.list()[0].value === '甲\n乙', '一次重做重新覆盖边界空段');
+    const again = await UltimateWord.load(await d.toDocx());
+    assert(again.bindings.list()[0].value === '甲\n乙', '表格内空段覆盖与导出回读一致');
     v.dispose();
   }
   result.textContent = `PASS: ${passed} browser assertions`;

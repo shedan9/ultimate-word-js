@@ -521,6 +521,38 @@ describe('内容控件', () => {
     expect(serializeDocx(pkg, editor.body)).toEqual(out);
   });
 
+  describe.each(['首末空段', '全为空段', '嵌套空段'])('块级控件完整范围回写：%s', (variant) => {
+    it.each(['新值', ''])('填写 %j 不残留空段，撤销逐字节恢复原文', (value) => {
+      const inner =
+        '<w:sdt><w:sdtPr><w:tag w:val="inner"/></w:sdtPr><w:sdtContent><w:p/></w:sdtContent></w:sdt>';
+      const text = '<w:p><w:r><w:t>原值</w:t></w:r></w:p>';
+      const content =
+        variant === '首末空段'
+          ? `<w:p/>${text}<w:p/>`
+          : variant === '全为空段'
+            ? '<w:p/><w:p/>'
+            : `${inner}${text}${inner}`;
+      const bytes = docx(
+        `<w:tbl><w:tr><w:tc><w:sdt><w:sdtPr><w:tag w:val="outer"/><w:unknown/></w:sdtPr><w:sdtContent>${content}</w:sdtContent></w:sdt></w:tc></w:tr></w:tbl><w:p/>`,
+      );
+      const { pkg, loaded } = load(bytes);
+      const editor = createTextEditor(loaded.body);
+      editor.tx((t) => void t.fillContentControl(idOf(editor.body, 'outer'), value));
+      const out = serializeDocx(pkg, editor.body);
+      const again = load(out).loaded.body;
+      const spans = contentControlSpans(again);
+      expect(spans.map((s) => s.control.tag)).toEqual(['outer']);
+      expect(spans[0]?.paragraphs).toHaveLength(1);
+      expect(spans[0] && textOfContentControl(spans[0])).toBe(value);
+      expect(decoder.decode(unzip(out).get('word/document.xml'))).toContain('<w:unknown/>');
+      editor.undo();
+      for (const [part, content] of unzip(bytes))
+        expect(unzip(serializeDocx(pkg, editor.body)).get(part)).toEqual(content);
+      editor.redo();
+      expect(serializeDocx(pkg, editor.body)).toEqual(out);
+    });
+  });
+
   describe.each(['inline', 'block', 'nestedBlock'])('覆盖首个子控件后回写：%s', (scope) => {
     it.each(['原值', '甲\n乙', ''])('填写 %j 只留下外层，保留格式、未知内容与撤销原文', (value) => {
       const inner =
