@@ -326,6 +326,36 @@ describe('doc.bindings', () => {
     },
   );
 
+  it.each([false, true])('占位控件填空后再输入继承控件格式，事件与历史一致：块级 %s', async (block) => {
+    const run = '<w:r><w:rPr><w:rStyle w:val="PlaceholderText"/><w:i/></w:rPr><w:t>请输入</w:t></w:r>';
+    const target = `<w:sdt><w:sdtPr><w:rPr><w:b/></w:rPr><w:tag w:val="emptyPlaceholder"/><w:showingPlcHdr/><w:text/></w:sdtPr><w:sdtContent>${block ? `<w:p>${run}</w:p>` : run}</w:sdtContent></w:sdt>`;
+    const d = await UltimateWord.load(template(block ? target : `<w:p>${target}</w:p>`));
+    const original = await d.toDocx();
+    let changes = 0;
+    d.on('document:change', () => changes++);
+    d.bindings.set('emptyPlaceholder', '').apply();
+    const empty = d.bindings.list().find((b) => b.key === 'emptyPlaceholder');
+    if (empty?.range === undefined) throw new Error('样本缺少范围');
+    const range = empty.range;
+    expect(changes).toBe(1);
+    d.tx((t) => void t.insertText(range.end, '张三'));
+    expect(d.query('run').find((r) => r.id === empty.range?.start.nodeId)?.props).toEqual({ bold: true });
+    const again = await UltimateWord.load(await d.toDocx());
+    expect(again.find('张三')).toHaveLength(1);
+    expect(again.query('run').find((r) => r.id === again.find('张三')[0]?.start.nodeId)?.props).toEqual({
+      bold: true,
+    });
+    d.undo();
+    d.bindings.set('emptyPlaceholder', '').apply();
+    expect(changes).toBe(3);
+    expect(d.canRedo).toBe(true);
+    d.undo();
+    expect(await d.toDocx()).toEqual(original);
+    d.redo();
+    d.redo();
+    expect(d.find('张三')).toHaveLength(1);
+  });
+
   it('覆盖首个子控件只留下目标，保留相邻字段与撤销导出', async () => {
     const inner = control('firstChild', '原值', '<w:text/>');
     const target = `<w:sdt><w:sdtPr><w:tag w:val="outer"/></w:sdtPr><w:sdtContent>${inner}</w:sdtContent></w:sdt>`;

@@ -1133,6 +1133,13 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             if (!samePosition(start, at)) {
               transaction.clearRunProps(filled);
               if (control.runProps !== undefined) transaction.setRunProps(filled, control.runProps);
+            } else {
+              // 折叠范围的格式命令不改 run；空值也要重置留下的文字槽，否则下一次输入仍继承占位样式。
+              const { run } = entryAt(start);
+              replacements.set(run.id, {
+                ...run,
+                props: { ...(patchRunProps(run.props, CLEAR_RUN_PROPS) ?? run.props), ...control.runProps },
+              });
             }
             flush();
             draft = {

@@ -64,6 +64,14 @@ export function emptyBoundaryControlDocx(content: string): Uint8Array {
   );
 }
 
+/** 空值填写也要清占位格式，下一次输入才会继承控件格式。 */
+export function emptyPlaceholderDocx(block: boolean): Uint8Array {
+  const run =
+    '<w:r><w:rPr><w:rStyle w:val="PlaceholderText"/><w:i/><w:color w:val="888888"/></w:rPr><w:t>请输入</w:t></w:r>';
+  const control = `<w:sdt><w:sdtPr><w:rPr><w:b/></w:rPr><w:tag w:val="field"/><w:showingPlcHdr/><w:dataBinding w:xpath="/field"/><w:text/></w:sdtPr><w:sdtContent>${block ? `<w:p>${run}</w:p>` : run}</w:sdtContent></w:sdt>`;
+  return docxOf(block ? control : `<w:p>${control}</w:p>`);
+}
+
 /** 文字模板状态回归：普通输入必须同步清占位标记与绑定。 */
 export function textStateDocx(type: 'text' | 'richText'): Uint8Array {
   return docxOf(

@@ -832,6 +832,37 @@ describe('内容控件', () => {
     expect(control?.dataBound).toBeUndefined();
   });
 
+  it.each([false, true])('表格内占位控件填空保留控件格式，回读后输入与撤销一致：块级 %s', (block) => {
+    const run =
+      '<w:r><w:rPr><w:rStyle w:val="PlaceholderText"/><w:i/><x:unknown/></w:rPr><w:t>请输入</w:t></w:r>';
+    const control = `<w:sdt><w:sdtPr><w:rPr><w:b/></w:rPr><w:tag w:val="field"/><w:showingPlcHdr/><w:dataBinding w:xpath="/field"/><w:text/></w:sdtPr><w:sdtContent>${block ? `<w:p>${run}</w:p>` : run}</w:sdtContent></w:sdt>`;
+    const original = docx(
+      `<w:tbl><w:tr><w:tc>${block ? control : `<w:p>${control}</w:p>`}</w:tc></w:tr></w:tbl>`,
+    );
+    const { pkg, loaded } = load(original);
+    const editor = createTextEditor(loaded.body);
+    editor.tx((t) => void t.fillContentControl(idOf(editor.body, 'field'), ''));
+    const out = serializeDocx(pkg, editor.body);
+    const xml = decoder.decode(unzip(out).get('word/document.xml'));
+    expect(xml).not.toMatch(/PlaceholderText|showingPlcHdr|dataBinding/);
+    expect(xml).toContain('<x:unknown/>');
+    const again = createTextEditor(load(out).loaded.body);
+    const span = contentControlSpans(again.body)[0];
+    if (span === undefined) throw new Error('回读缺少控件');
+    expect(span.runs[0]?.props).toEqual({ bold: true });
+    expect(textOfContentControl(span)).toBe('');
+    again.tx((t) => {
+      const range = t.fillContentControl(idOf(again.body, 'field'), '张三');
+      expect(range.start.offset).toBe(0);
+    });
+    expect(contentControlSpans(again.body)[0]?.runs[0]?.props).toEqual({ bold: true });
+    editor.undo();
+    for (const [part, content] of unzip(original))
+      expect(unzip(serializeDocx(pkg, editor.body)).get(part)).toEqual(content);
+    editor.redo();
+    expect(serializeDocx(pkg, editor.body)).toEqual(out);
+  });
+
   it.each(['<w:text/>', '<w:richText/>'])(
     '文字控件 %s 普通改字后模型与回读状态一致，未知属性保留',
     (type) => {

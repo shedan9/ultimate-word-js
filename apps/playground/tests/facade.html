@@ -15,7 +15,7 @@ body { margin: 0; font: 14px/1.5 system-ui; }
 import { unzip } from '@uw/ooxml';
 import { UltimateWord } from 'ultimate-word';
 import fixtureUrl from '../../fidelity/fixtures/gongwen-01.docx?url';
-import { boundControlDocx, choiceControlDocx, controlDocx, dateControlDocx, emptyBoundaryControlDocx, linkDocx, shellControlDocx, textStateDocx } from './list-fixture.ts';
+import { boundControlDocx, choiceControlDocx, controlDocx, dateControlDocx, emptyBoundaryControlDocx, emptyPlaceholderDocx, linkDocx, shellControlDocx, textStateDocx } from './list-fixture.ts';
 
 const host = document.querySelector('#host');
 const second = document.querySelector('#second');
@@ -602,6 +602,43 @@ try {
     assert(d.bindings.list()[0].value === '甲\n乙', '一次重做重新覆盖边界空段');
     const again = await UltimateWord.load(await d.toDocx());
     assert(again.bindings.list()[0].value === '甲\n乙', '表格内空段覆盖与导出回读一致');
+    v.dispose();
+  }
+  for (const block of [false, true]) {
+    const d = await UltimateWord.load(emptyPlaceholderDocx(block));
+    const v = d.mount('#host', { mode: 'edit', virtualize: false });
+    await frame();
+    let changes = 0;
+    d.on('document:change', () => changes++);
+    d.bindings.set('field', '').apply();
+    const empty = d.bindings.list()[0];
+    assert(!empty.placeholder && !empty.dataBound && empty.value === '', '填空清占位与绑定，保留空文字槽');
+    assert(d.query('run')[0].props.bold && !d.query('run')[0].props.styleId && !d.query('run')[0].props.color, '空文字槽使用控件格式并清灰色占位样式');
+    assert(v.caretRect(empty.range.start) !== null, '填空后的插入点仍可定位');
+    v.select(empty.range);
+    v.focus();
+    const input = host.querySelector('textarea');
+    if (block) {
+      input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+      input.dispatchEvent(new CompositionEvent('compositionend', { data: '张三', bubbles: true }));
+    } else {
+      input.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: '张三', bubbles: true, cancelable: true }));
+    }
+    await frame();
+    const run = d.query('run')[0];
+    assert(d.bindings.list()[0].value === '张三' && run.props.bold && !run.props.italic && !run.props.color, '填空后输入与 IME 继承控件格式');
+    const glyph = v.root.querySelector(`text[data-run="${run.id}"]`);
+    assert(glyph?.getAttribute('font-weight') === 'bold' && !glyph.hasAttribute('font-style') && glyph.getAttribute('fill') === '#000000', '重新输入的字形显示为加粗黑字');
+    assert(v.root.textContent.includes('张三') && v.rectsOf(d.find('张三')[0]).length > 0, '重新输入刷新文字层并能定位');
+    d.undo();
+    d.bindings.set('field', '').apply();
+    assert(changes === 3 && d.canRedo, '空值重复提交不派事件并保留输入重做');
+    d.undo();
+    assert(d.bindings.list()[0].placeholder && d.query('run')[0].props.styleId === 'PlaceholderText', '再撤销恢复原占位格式与状态');
+    d.redo();
+    d.redo();
+    const again = await UltimateWord.load(await d.toDocx());
+    assert(again.bindings.list()[0].value === '张三' && again.query('run')[0].props.bold && !again.query('run')[0].props.italic, '重做与导出回读保留控件格式');
     v.dispose();
   }
   result.textContent = `PASS: ${passed} browser assertions`;
