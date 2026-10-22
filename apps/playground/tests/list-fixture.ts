@@ -72,14 +72,22 @@ export function emptyPlaceholderDocx(block: boolean): Uint8Array {
   return docxOf(block ? control : `<w:p>${control}</w:p>`);
 }
 
-/** 段落标记上的修订独立于 run，专用填写同样必须校验。 */
-export function markRevisionControlDocx(type: 'date' | 'checkbox'): Uint8Array {
+/** 段落标记与祖先行的修订独立于 run，专用填写同样必须校验。 */
+export function markRevisionControlDocx(
+  type: 'date' | 'checkbox',
+  scope: 'paragraph' | 'row' | 'outerRow' = 'paragraph',
+  revision: 'ins' | 'del' = 'del',
+): Uint8Array {
   const pr =
     type === 'date'
       ? '<w:date w:fullDate="2026-10-13T00:00:00Z"><w:dateFormat w:val="yyyy"/></w:date>'
       : '<w14:checkbox/>';
+  const mark = `<w:${revision} w:id="7" w:author="甲"/>`;
+  const paragraph = `<w:p>${scope === 'paragraph' ? `<w:pPr><w:rPr>${mark}</w:rPr></w:pPr>` : ''}<w:sdt><w:sdtPr><w:tag w:val="field"/><w:dataBinding w:xpath="/field"/>${pr}</w:sdtPr><w:sdtContent><w:r><w:t>${type === 'date' ? '2026' : '☐'}</w:t></w:r></w:sdtContent></w:sdt></w:p>`;
+  const table = (content: string, revised = true) =>
+    `<w:tbl><w:tblGrid><w:gridCol w:w="5000"/></w:tblGrid><w:tr>${revised ? `<w:trPr>${mark}</w:trPr>` : ''}<w:tc>${content}</w:tc></w:tr></w:tbl>`;
   return docxOf(
-    `<w:p><w:pPr><w:rPr><w:del w:id="7" w:author="甲"/></w:rPr></w:pPr><w:sdt><w:sdtPr><w:tag w:val="field"/><w:dataBinding w:xpath="/field"/>${pr}</w:sdtPr><w:sdtContent><w:r><w:t>${type === 'date' ? '2026' : '☐'}</w:t></w:r></w:sdtContent></w:sdt></w:p><w:p/>`,
+    `${scope === 'paragraph' ? paragraph : table(scope === 'outerRow' ? `${table(paragraph, false)}<w:p/>` : paragraph)}<w:p/>`,
   );
 }
 

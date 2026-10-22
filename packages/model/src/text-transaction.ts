@@ -324,6 +324,24 @@ function contentLocked(body: Body, id: NodeId | undefined): boolean {
   return id !== undefined && isContentControlLocked(body.contentControls ?? {}, id);
 }
 
+/**
+ * 行修订罩住格内全部内容，包括嵌套表格；只查最内层行会漏掉外层修订。
+ * 用原始树检查，避免 final / original 视图隐藏整行后改变填写规则；空段同样按段落 id 认。
+ */
+function hasRevisedRow(body: Body, paragraphs: readonly Paragraph[]): boolean {
+  const members = new Set(paragraphs.map((p) => p.id));
+  function visit(blocks: readonly Block[], revised = false): boolean {
+    return blocks.some((block) =>
+      block.kind === 'paragraph'
+        ? revised && members.has(block.id)
+        : block.rows.some((row) =>
+            row.cells.some((cell) => visit(cell.blocks, revised || row.revision !== undefined)),
+          ),
+    );
+  }
+  return body.sections.some((section) => visit(section.blocks));
+}
+
 /** 专用填写只放行目标本身，不能借填写子控件破坏祖先的选项或勾选符号。 */
 function inputRestriction(
   body: Body,
@@ -1761,6 +1779,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
               span.paragraphs.length !== 1 ||
               // 段落标记的修订不挂在 run 上；同值或仅改属性也不能绕过修订内容限制。
               span.paragraphs[0]?.markRevision !== undefined ||
+              hasRevisedRow(draft, span.paragraphs) ||
               parts.length !== 1 ||
               part === undefined ||
               (part.content.kind !== 'text' && part.content.kind !== 'symbol') ||
@@ -1821,6 +1840,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             if (
               span.paragraphs.length !== 1 ||
               span.paragraphs[0]?.markRevision !== undefined ||
+              hasRevisedRow(draft, span.paragraphs) ||
               span.runs.some(
                 (r) =>
                   r.revision !== undefined ||
