@@ -297,6 +297,47 @@ describe('doc.bindings', () => {
     );
   }
 
+  it.each(['date', 'checkbox'] as const)(
+    '段落标记修订中的 %s 拒绝填写，三种视图下批量回滚、历史与原文件一致',
+    async (type) => {
+      const pr =
+        type === 'date'
+          ? '<w:date w:fullDate="2026-10-13T00:00:00Z"><w:dateFormat w:val="yyyy"/></w:date>'
+          : '<w14:checkbox/>';
+      for (const revision of ['ins', 'del'])
+        for (const revisions of ['final', 'original', 'markup'] as const) {
+          const bytes = template(
+            `<w:p><w:pPr><w:rPr><w:${revision} w:id="7" w:author="甲"/></w:rPr></w:pPr>${control('revised', type === 'date' ? '2026' : '☐', `<w:dataBinding w:xpath="/field"/>${pr}`)}</w:p><w:p/>`,
+          );
+          const d = await UltimateWord.load(bytes, { revisions });
+          let changes = 0;
+          d.on('document:change', () => changes++);
+          d.on('layout:done', () => changes++);
+          const initial = d.bindings.list();
+          const field = initial.find((b) => b.key === 'revised');
+          if (field === undefined) throw new Error('样本缺少控件');
+          const value = type === 'date' ? { date: '2026-10-14' } : true;
+          d.bindings.setMany({ applicant: '张三', revised: value });
+          expect(() => d.bindings.apply()).toThrow(/无修订/);
+          expect(d.bindings.list()).toEqual(initial);
+          expect(d.bindings.pending.get('revised')).toEqual(value);
+          expect(changes).toBe(0);
+          expect(d.canUndo).toBe(false);
+          expect(() =>
+            d.tx((t) => {
+              if (type === 'date') t.setContentControlDate(field.id, '2026-10-13');
+              else t.setContentControlChecked(field.id, false);
+            }),
+          ).toThrow(/无修订/);
+          const out = new Uint8Array(await (await d.toDocx()).arrayBuffer());
+          const sourceParts = unzip(bytes);
+          for (const [name, content] of unzip(out)) expect(content).toEqual(sourceParts.get(name));
+          const again = await UltimateWord.load(out, { revisions });
+          expect(again.bindings.list()).toEqual(initial);
+        }
+    },
+  );
+
   it.each(['<w:p/><w:p/>', '<w:p/><w:p><w:r><w:t>原值</w:t></w:r></w:p><w:p/>'])(
     '块级控件范围包含边界空段，填写与导出回读一致：%s',
     async (content) => {

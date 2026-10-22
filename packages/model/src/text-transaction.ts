@@ -1759,6 +1759,8 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             const part = parts[0];
             if (
               span.paragraphs.length !== 1 ||
+              // 段落标记的修订不挂在 run 上；同值或仅改属性也不能绕过修订内容限制。
+              span.paragraphs[0]?.markRevision !== undefined ||
               parts.length !== 1 ||
               part === undefined ||
               (part.content.kind !== 'text' && part.content.kind !== 'symbol') ||
@@ -1818,6 +1820,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
             if (span === undefined || range === undefined) throw new Error('日期控件里没有可写的位置');
             if (
               span.paragraphs.length !== 1 ||
+              span.paragraphs[0]?.markRevision !== undefined ||
               span.runs.some(
                 (r) =>
                   r.revision !== undefined ||

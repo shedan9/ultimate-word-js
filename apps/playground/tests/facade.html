@@ -15,7 +15,7 @@ body { margin: 0; font: 14px/1.5 system-ui; }
 import { unzip } from '@uw/ooxml';
 import { UltimateWord } from 'ultimate-word';
 import fixtureUrl from '../../fidelity/fixtures/gongwen-01.docx?url';
-import { boundControlDocx, choiceControlDocx, controlDocx, dateControlDocx, emptyBoundaryControlDocx, emptyPlaceholderDocx, linkDocx, shellControlDocx, textStateDocx } from './list-fixture.ts';
+import { boundControlDocx, choiceControlDocx, controlDocx, dateControlDocx, emptyBoundaryControlDocx, emptyPlaceholderDocx, linkDocx, markRevisionControlDocx, shellControlDocx, textStateDocx } from './list-fixture.ts';
 
 const host = document.querySelector('#host');
 const second = document.querySelector('#second');
@@ -640,6 +640,28 @@ try {
     const again = await UltimateWord.load(await d.toDocx());
     assert(again.bindings.list()[0].value === '张三' && again.query('run')[0].props.bold && !again.query('run')[0].props.italic, '重做与导出回读保留控件格式');
     v.dispose();
+  }
+  for (const type of ['date', 'checkbox']) {
+    for (const revisions of ['final', 'original', 'markup']) {
+      const d = await UltimateWord.load(markRevisionControlDocx(type), { revisions });
+      const v = d.mount('#host', { mode: 'edit', virtualize: false });
+      await frame();
+      const before = d.bindings.list()[0];
+      const selection = v.selection;
+      const text = v.root.textContent;
+      let changes = 0;
+      d.on('document:change', () => changes++);
+      const value = type === 'date' ? { date: '2026-10-14' } : true;
+      d.bindings.set('field', value);
+      let error;
+      try { d.bindings.apply(); } catch (e) { error = e; }
+      assert(/无修订/.test(error?.message), '日期与复选框不能绕过段落标记修订');
+      assert(changes === 0 && !d.canUndo && d.bindings.pending.has('field'), '失败保留待填值与历史，不派发变更');
+      assert(JSON.stringify(d.bindings.list()[0]) === JSON.stringify(before) && JSON.stringify(v.selection) === JSON.stringify(selection) && v.root.textContent === text, '三种修订视图下失败保留控件状态、选区与文字层');
+      const again = await UltimateWord.load(await d.toDocx(), { revisions });
+      assert(JSON.stringify(again.bindings.list()[0]) === JSON.stringify(before), '拒绝填写后导出回读保留原日期、勾选与绑定');
+      v.dispose();
+    }
   }
   result.textContent = `PASS: ${passed} browser assertions`;
 } catch (error) {
