@@ -15,7 +15,7 @@ body { margin: 0; font: 14px/1.5 system-ui; }
 import { unzip } from '@uw/ooxml';
 import { UltimateWord } from 'ultimate-word';
 import fixtureUrl from '../../fidelity/fixtures/gongwen-01.docx?url';
-import { boundControlDocx, choiceControlDocx, controlDocx, dateControlDocx, emptyBoundaryControlDocx, emptyPlaceholderDocx, linkDocx, markRevisionControlDocx, shellControlDocx, textStateDocx } from './list-fixture.ts';
+import { boundControlDocx, choiceControlDocx, controlDocx, dateControlDocx, emptyBoundaryControlDocx, emptyPlaceholderDocx, linkDocx, markRevisionControlDocx, nestedControlDocx, shellControlDocx, textStateDocx } from './list-fixture.ts';
 
 const host = document.querySelector('#host');
 const second = document.querySelector('#second');
@@ -663,6 +663,53 @@ try {
         assert(JSON.stringify(again.bindings.list()[0]) === JSON.stringify(before), '拒绝填写后导出回读保留原日期、勾选与绑定');
         v.dispose();
       }
+    }
+  }
+  for (const scope of ['inline', 'inlinePrefix', 'nestedBlock', 'mixed']) {
+    const d = await UltimateWord.load(nestedControlDocx(scope));
+    const v = d.mount('#host', { mode: 'edit', virtualize: false });
+    const before = d.bindings.list();
+    v.select(d.find('原值')[0]);
+    let changes = 0;
+    let layouts = 0;
+    d.on('document:change', () => changes++);
+    d.on('layout:done', () => layouts++);
+    d.bindings.setMany({ outer: '最终值', inner: '子更新', middle: '中层更新', neighbor: '邻居更新' });
+    d.bindings.apply();
+    await frame();
+    const after = d.bindings.list();
+    const outer = after.find((b) => b.key === 'outer');
+    assert(changes === 1 && layouts === 1 && d.bindings.pending.size === 0, '嵌套批量填写只派发一次变更与重排并清空待填值');
+    assert(after.length === 2 && outer.value === '最终值' && after.find((b) => b.key === 'neighbor').value === '邻居更新', '按父链先填子再填父，最终只留下外层与相邻控件');
+    assert(v.rectsOf(outer.range).length > 0 && v.root.textContent.includes('最终值') && !v.root.textContent.includes('子更新') && !v.root.textContent.includes('中层更新'), '覆盖后的文字层与定位同步刷新');
+    d.undo();
+    assert(JSON.stringify(d.bindings.list()) === JSON.stringify(before) && !d.canUndo, '一次撤销恢复全部父子控件与相邻字段');
+    d.redo();
+    assert(JSON.stringify(d.bindings.list()) === JSON.stringify(after), '一次重做恢复批量填写结果');
+    const again = await UltimateWord.load(await d.toDocx());
+    assert(JSON.stringify(again.bindings.list().map((b) => [b.key, b.value])) === JSON.stringify(after.map((b) => [b.key, b.value])), '嵌套批量填写导出回读不恢复已移除子外壳');
+    v.dispose();
+    for (const lock of ['sdtLocked', 'contentLocked']) {
+      const d = await UltimateWord.load(nestedControlDocx(scope, lock));
+      d.bindings.set('neighbor', '历史值').apply();
+      d.undo();
+      const v = d.mount('#host', { mode: 'edit', virtualize: false });
+      v.select(d.find('原值')[0]);
+      const before = d.bindings.list();
+      const selection = JSON.stringify(v.selection);
+      const text = v.root.textContent;
+      let changes = 0;
+      d.on('document:change', () => changes++);
+      d.bindings.setMany({ inner: '子更新', outer: '覆盖', neighbor: '邻居更新' });
+      let error;
+      try { d.bindings.apply(); } catch (e) { error = e; }
+      assert(/锁定/.test(error?.message) && changes === 0, '父链排序仍执行子控件内容锁与外壳锁检查，失败不派事件');
+      assert(JSON.stringify(d.bindings.list()) === JSON.stringify(before) && d.bindings.pending.size === 3, '嵌套填写失败整批回滚并保留全部待填值');
+      assert(JSON.stringify(v.selection) === selection && v.root.textContent === text, '失败保留原选区与文字层');
+      const canRedo = d.canRedo;
+      d.redo();
+      assert(canRedo && d.bindings.list().find((b) => b.key === 'neighbor').value === '历史值', '失败保留已有重做历史');
+      v.dispose();
     }
   }
   result.textContent = `PASS: ${passed} browser assertions`;

@@ -57,6 +57,29 @@ function docxOf(blocks: string, extraRels = ''): Uint8Array {
   });
 }
 
+/** 无自有文字的父控件未必先出现在成员列表里，批量填写必须按父链排序。 */
+export function nestedControlDocx(scope: string, lock = ''): Uint8Array {
+  const wrap = (tag: string, content: string, pr = '') =>
+    `<w:sdt><w:sdtPr><w:tag w:val="${tag}"/>${pr}</w:sdtPr><w:sdtContent>${content}</w:sdtContent></w:sdt>`;
+  const inner = wrap(
+    'inner',
+    '<w:r><w:rPr><w:b/></w:rPr><w:t>原值</w:t></w:r>',
+    lock ? `<w:lock w:val="${lock}"/>` : '',
+  );
+  const middle = wrap('middle', scope === 'nestedBlock' ? `<w:p>${inner}</w:p>` : inner);
+  const outer = wrap(
+    'outer',
+    scope === 'mixed'
+      ? `<w:p>${middle}</w:p>`
+      : scope === 'inlinePrefix'
+        ? `<w:r><w:t>前缀</w:t></w:r>${middle}`
+        : middle,
+  );
+  return docxOf(
+    `${scope === 'nestedBlock' || scope === 'mixed' ? outer : `<w:p>${outer}</w:p>`}<w:p>${wrap('neighbor', '<w:r><w:t>旁边</w:t></w:r>')}</w:p>`,
+  );
+}
+
 /** 边界空段也属于块级控件，覆盖时不能留在新值之外。 */
 export function emptyBoundaryControlDocx(content: string): Uint8Array {
   return docxOf(

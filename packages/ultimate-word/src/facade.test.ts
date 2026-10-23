@@ -429,6 +429,88 @@ describe('doc.bindings', () => {
     expect(d.bindings.list().find((b) => b.key === 'firstChild')).toBeUndefined();
   });
 
+  function nestedTemplate(scope: string, pr = '', sameName = false): Uint8Array {
+    const wrap = (tag: string, content: string, props = '') =>
+      `<w:sdt><w:sdtPr><w:tag w:val="${sameName ? 'nested' : tag}"/>${props}</w:sdtPr><w:sdtContent>${content}</w:sdtContent></w:sdt>`;
+    const inner = wrap('inner', '<w:r><w:rPr><w:b/></w:rPr><w:t>原值</w:t></w:r>', pr);
+    const middle = wrap('middle', scope === 'nestedBlock' ? `<w:p>${inner}</w:p>` : inner);
+    const outer = wrap(
+      'outer',
+      scope === 'mixed'
+        ? `<w:p>${middle}</w:p>`
+        : scope === 'inlinePrefix'
+          ? `<w:r><w:t>前缀</w:t></w:r>${middle}`
+          : middle,
+    );
+    return template(
+      `${scope === 'nestedBlock' || scope === 'mixed' ? outer : `<w:p>${outer}</w:p>`}<w:p>${control('neighbor', '旁边')}</w:p>`,
+    );
+  }
+
+  describe.each(['inline', 'inlinePrefix', 'nestedBlock', 'mixed'])('嵌套批量填写：%s', (scope) => {
+    it.each(['最终值', '原值', ''])('从内到外填写 %j，一个撤销单元且导出一致', async (value) => {
+      const d = await UltimateWord.load(nestedTemplate(scope));
+      const before = d.bindings.list();
+      const original = new Uint8Array(await (await d.toDocx()).arrayBuffer());
+      let changes = 0;
+      let layouts = 0;
+      d.on('document:change', () => changes++);
+      d.on('layout:done', () => layouts++);
+      d.bindings.setMany({ outer: value, inner: '子更新', middle: '中层更新', neighbor: '邻居更新' });
+      expect(d.bindings.apply()).toBeDefined();
+      expect(changes).toBe(1);
+      expect(layouts).toBe(1);
+      expect(d.bindings.pending.size).toBe(0);
+      const after = d.bindings.list();
+      expect(after.find((b) => b.key === 'outer')?.value).toBe(value);
+      expect(after.some((b) => b.key === 'inner' || b.key === 'middle')).toBe(false);
+      expect(after.find((b) => b.key === 'neighbor')?.value).toBe('邻居更新');
+      const again = await UltimateWord.load(await d.toDocx());
+      expect(again.bindings.list().map((b) => [b.key, b.value])).toEqual(after.map((b) => [b.key, b.value]));
+      d.undo();
+      expect(d.bindings.list()).toEqual(before);
+      expect(d.canUndo).toBe(false);
+      const sourceParts = unzip(original);
+      for (const [name, content] of unzip(new Uint8Array(await (await d.toDocx()).arrayBuffer())))
+        expect(content).toEqual(sourceParts.get(name));
+      d.redo();
+      expect(d.bindings.list()).toEqual(after);
+    });
+
+    it('同名祖孙字段与未提交的中间层均遵守父子顺序', async () => {
+      for (const sameName of [false, true]) {
+        const d = await UltimateWord.load(nestedTemplate(scope, '', sameName));
+        if (sameName) d.bindings.set('nested', '同名新值');
+        else d.bindings.setMany({ inner: '子更新', outer: '同名新值' });
+        d.bindings.apply();
+        expect(
+          d.bindings.list().filter((b) => ['nested', 'outer', 'middle', 'inner'].includes(b.key)),
+        ).toEqual([expect.objectContaining({ key: sameName ? 'nested' : 'outer', value: '同名新值' })]);
+      }
+    });
+
+    it.each(['sdtLocked', 'contentLocked'])('子控件 %s 仍阻止整批填写，保留待填值与重做', async (lock) => {
+      const d = await UltimateWord.load(nestedTemplate(scope, `<w:lock w:val="${lock}"/>`));
+      d.bindings.set('applicant', '张三').apply();
+      d.undo();
+      const before = d.bindings.list();
+      let changes = 0;
+      d.on('document:change', () => changes++);
+      d.bindings.setMany({ inner: '子更新', outer: '覆盖', neighbor: '邻居更新' });
+      expect(() => d.bindings.apply()).toThrow(/锁定/);
+      expect(d.bindings.list()).toEqual(before);
+      expect([...d.bindings.pending]).toEqual([
+        ['inner', '子更新'],
+        ['outer', '覆盖'],
+        ['neighbor', '邻居更新'],
+      ]);
+      expect(changes).toBe(0);
+      expect(d.canRedo).toBe(true);
+      d.redo();
+      expect(d.bindings.list().find((b) => b.key === 'applicant')?.value).toBe('张三');
+    });
+  });
+
   it('无前缀的锁定子外壳阻止外层覆盖，失败保留待填值与重做', async () => {
     const inner = control('firstChild', '原值', '<w:lock w:val="sdtLocked"/>');
     const d = await UltimateWord.load(

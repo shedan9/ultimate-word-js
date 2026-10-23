@@ -162,14 +162,26 @@ export class Bindings {
    */
   apply(): TextChangeSet | undefined {
     if (!this.#pending.size) return undefined;
-    // 倒着填：嵌套的两个坑位都给了值时，先填内层、再让外层把它整个盖掉（与 Word 里覆盖外层内容一致）；
-    // 正着填的话外层先把内层删掉，内层就找不到自己了
-    const jobs: [NodeId, BindingValue][] = this.#spans()
+    // 成员第一次来自子控件时，spans 可能先列子再列父，直接倒序反而先删掉还没填写的子控件。
+    // 按完整父链深度从内到外提交（中间层未攒值也算）；同深度保留原先的倒序，外层最终覆盖内层。
+    const controls = this.#host.body().contentControls ?? {};
+    const depthOf = (id: NodeId) => {
+      let depth = 0;
+      for (let parent = controls[id]?.parent; parent !== undefined && depth < 64; depth++)
+        parent = controls[parent]?.parent;
+      return depth;
+    };
+    const jobs = this.#spans()
       .filter((s) => this.#pending.has(s.key))
-      .map((s) => [s.span.control.id, this.#pending.get(s.key) as BindingValue] as [NodeId, BindingValue])
-      .reverse();
+      .map((s) => ({
+        id: s.span.control.id,
+        value: this.#pending.get(s.key) as BindingValue,
+        depth: depthOf(s.span.control.id),
+      }))
+      .reverse()
+      .sort((a, b) => b.depth - a.depth);
     const change = this.#host.tx((t) => {
-      for (const [id, value] of jobs) {
+      for (const { id, value } of jobs) {
         if (typeof value === 'boolean') t.setContentControlChecked(id, value);
         else if (typeof value === 'string') t.fillContentControl(id, value);
         else t.setContentControlDate(id, value.date);
