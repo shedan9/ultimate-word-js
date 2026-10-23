@@ -158,10 +158,16 @@ export class Bindings {
 
   /**
    * 一次性提交：一个事务、一次重排、一个撤销单元。任何一个坑位填不进去（锁了、下拉框没有这个选项）
-   * 整批回滚并抛错，攒着的值**留着**，改好了再 `apply`。值与现状完全相同时不产生事务，返回 undefined
+   * 整批回滚并抛错，攒着的值**留着**，改好了再 `apply`。暂存后字段被移除也抛错，不能静默丢值。
+   * 值与现状完全相同时不产生事务，返回 undefined
    */
   apply(): TextChangeSet | undefined {
     if (!this.#pending.size) return undefined;
+    const spans = this.#spans();
+    const keys = new Set(spans.map((s) => s.key));
+    // 暂存后编辑 / 历史跳转可能移除字段；先查齐名字，避免只填有效字段后清空整批待填值。
+    for (const key of this.#pending.keys())
+      if (!keys.has(key)) throw new RangeError(`文档里没有坑位：${key}`);
     // 成员第一次来自子控件时，spans 可能先列子再列父，直接倒序反而先删掉还没填写的子控件。
     // 按完整父链深度从内到外提交（中间层未攒值也算）；同深度保留原先的倒序，外层最终覆盖内层。
     const controls = this.#host.body().contentControls ?? {};
@@ -171,7 +177,7 @@ export class Bindings {
         parent = controls[parent]?.parent;
       return depth;
     };
-    const jobs = this.#spans()
+    const jobs = spans
       .filter((s) => this.#pending.has(s.key))
       .map((s) => ({
         id: s.span.control.id,

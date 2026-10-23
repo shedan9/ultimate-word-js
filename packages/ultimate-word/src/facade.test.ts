@@ -448,6 +448,59 @@ describe('doc.bindings', () => {
   }
 
   describe.each(['inline', 'inlinePrefix', 'nestedBlock', 'mixed'])('嵌套批量填写：%s', (scope) => {
+    it.each([false, true])('暂存字段被移除时拒绝提交，混合填写 %s，恢复后可重试', async (mixed) => {
+      const d = await UltimateWord.load(nestedTemplate(scope));
+      const initial = d.bindings.list();
+      const outer = initial.find((b) => b.key === 'outer');
+      if (outer === undefined) throw new Error('样本缺少外层控件');
+      d.bindings.set('inner', '子更新');
+      if (mixed) d.bindings.set('neighbor', '邻居更新');
+      const pending = [...d.bindings.pending];
+      d.tx((t) => {
+        t.fillContentControl(outer.id, '覆盖');
+      });
+      const applicant = d.bindings.list().find((b) => b.key === 'applicant');
+      if (applicant === undefined) throw new Error('样本缺少申请人控件');
+      d.tx((t) => {
+        t.fillContentControl(applicant.id, '历史值');
+      });
+      d.undo();
+      const before = d.bindings.list();
+      const original = new Uint8Array(await (await d.toDocx()).arrayBuffer());
+      let changes = 0;
+      let layouts = 0;
+      d.on('document:change', () => changes++);
+      d.on('layout:done', () => layouts++);
+      expect(() => d.bindings.apply()).toThrow(/文档里没有坑位：inner/);
+      expect(changes).toBe(0);
+      expect(layouts).toBe(0);
+      expect(d.bindings.list()).toEqual(before);
+      expect([...d.bindings.pending]).toEqual(pending);
+      expect(new Uint8Array(await (await d.toDocx()).arrayBuffer())).toEqual(original);
+      expect(d.canRedo).toBe(true);
+      d.redo();
+      expect(d.bindings.list().find((b) => b.key === 'applicant')?.value).toBe('历史值');
+      d.undo();
+      d.undo();
+      expect(d.bindings.list()).toEqual(initial);
+      expect([...d.bindings.pending]).toEqual(pending);
+      changes = 0;
+      layouts = 0;
+      expect(d.bindings.apply()).toBeDefined();
+      expect(changes).toBe(1);
+      expect(layouts).toBe(1);
+      expect(d.bindings.pending.size).toBe(0);
+      const after = d.bindings.list();
+      expect(after.find((b) => b.key === 'inner')?.value).toBe('子更新');
+      expect(after.find((b) => b.key === 'neighbor')?.value).toBe(mixed ? '邻居更新' : '旁边');
+      d.undo();
+      expect(d.bindings.list()).toEqual(initial);
+      d.redo();
+      expect(d.bindings.list()).toEqual(after);
+      const again = await UltimateWord.load(await d.toDocx());
+      expect(again.bindings.list().map((b) => [b.key, b.value])).toEqual(after.map((b) => [b.key, b.value]));
+    });
+
     it.each(['最终值', '原值', ''])('从内到外填写 %j，一个撤销单元且导出一致', async (value) => {
       const d = await UltimateWord.load(nestedTemplate(scope));
       const before = d.bindings.list();
@@ -509,6 +562,38 @@ describe('doc.bindings', () => {
       d.redo();
       expect(d.bindings.list().find((b) => b.key === 'applicant')?.value).toBe('张三');
     });
+  });
+
+  it('暂存字段只移除部分同名控件时，仍按当前名字填写剩余控件', async () => {
+    const d = await UltimateWord.load(nestedTemplate('inlinePrefix', '', true));
+    const outerId = d.bindings.list().find((b) => b.key === 'nested' && b.value === '前缀原值')?.id;
+    if (outerId === undefined) throw new Error('样本缺少外层控件');
+    d.bindings.set('nested', '暂存值');
+    d.tx((t) => {
+      t.fillContentControl(outerId, '覆盖');
+    });
+    expect(d.bindings.list().filter((b) => b.key === 'nested')).toHaveLength(1);
+    expect(d.bindings.apply()).toBeDefined();
+    expect(d.bindings.list().filter((b) => b.key === 'nested')).toEqual([
+      expect.objectContaining({ value: '暂存值' }),
+    ]);
+    expect(d.bindings.pending.size).toBe(0);
+  });
+
+  it('丢弃已移除字段的待填值后，可以提交新一批数据', async () => {
+    const d = await UltimateWord.load(nestedTemplate('inline'));
+    const outer = d.bindings.list().find((b) => b.key === 'outer');
+    if (outer === undefined) throw new Error('样本缺少控件');
+    d.bindings.set('inner', '子更新');
+    d.tx((t) => {
+      t.fillContentControl(outer.id, '覆盖');
+    });
+    expect(() => d.bindings.apply()).toThrow(RangeError);
+    d.bindings.discard();
+    expect(d.bindings.apply()).toBeUndefined();
+    expect(d.bindings.setMany({ inner: '已移除', neighbor: '新一批' })).toEqual({ skipped: ['inner'] });
+    expect(d.bindings.apply()).toBeDefined();
+    expect(d.bindings.list().find((b) => b.key === 'neighbor')?.value).toBe('新一批');
   });
 
   it('无前缀的锁定子外壳阻止外层覆盖，失败保留待填值与重做', async () => {

@@ -712,6 +712,54 @@ try {
       v.dispose();
     }
   }
+  for (const scope of ['inline', 'inlinePrefix', 'nestedBlock', 'mixed']) {
+    const d = await UltimateWord.load(nestedControlDocx(scope));
+    const initial = d.bindings.list();
+    const outer = initial.find((b) => b.key === 'outer');
+    const neighbor = initial.find((b) => b.key === 'neighbor');
+    d.bindings.setMany({ neighbor: '邻居更新', inner: '子更新' });
+    const pending = JSON.stringify([...d.bindings.pending]);
+    d.tx((t) => { t.fillContentControl(outer.id, '覆盖'); });
+    d.undo();
+    d.redo();
+    d.tx((t) => { t.fillContentControl(neighbor.id, '历史值'); });
+    d.undo();
+    const v = d.mount('#host', { mode: 'edit', virtualize: false });
+    v.select(d.find('覆盖')[0]);
+    const before = JSON.stringify(d.bindings.list());
+    const selection = JSON.stringify(v.selection);
+    const text = v.root.textContent;
+    let changes = 0;
+    let layouts = 0;
+    d.on('document:change', () => changes++);
+    d.on('layout:done', () => layouts++);
+    let error;
+    try { d.bindings.apply(); } catch (e) { error = e; }
+    assert(error instanceof RangeError && error.message.includes('inner'), '暂存后字段被编辑或重做移除，提交明确报告缺失名字');
+    assert(changes === 0 && layouts === 0 && JSON.stringify(d.bindings.list()) === before, '缺失字段阻止整批提交，不改有效字段且不派发变更或重排');
+    assert(JSON.stringify([...d.bindings.pending]) === pending, '提交缺失字段保留全部待填数据');
+    assert(JSON.stringify(v.selection) === selection && v.root.textContent === text, '缺失字段提交失败保留选区与文字层');
+    const again = await UltimateWord.load(await d.toDocx());
+    assert(JSON.stringify(again.bindings.list().map((b) => [b.key, b.value])) === JSON.stringify(d.bindings.list().map((b) => [b.key, b.value])), '拒绝缺失字段后导出回读保持原文');
+    const canRedo = d.canRedo;
+    d.redo();
+    assert(canRedo && d.bindings.list().find((b) => b.key === 'neighbor').value === '历史值', '缺失字段失败保留已有重做历史');
+    d.undo();
+    d.undo();
+    assert(JSON.stringify(d.bindings.list()) === JSON.stringify(initial) && JSON.stringify([...d.bindings.pending]) === pending, '撤销恢复被移除字段，待填值仍可重试');
+    changes = 0;
+    layouts = 0;
+    d.bindings.apply();
+    const after = d.bindings.list();
+    const inner = after.find((b) => b.key === 'inner');
+    assert(changes === 1 && layouts === 1 && d.bindings.pending.size === 0 && inner.value === '子更新' && after.find((b) => b.key === 'neighbor').value === '邻居更新', '恢复字段后重试一次提交全部暂存值');
+    assert(v.root.textContent.includes('子更新') && v.root.textContent.includes('邻居更新') && v.rectsOf(inner.range).length > 0, '重试成功后文字层与定位同步更新');
+    d.undo();
+    assert(JSON.stringify(d.bindings.list()) === JSON.stringify(initial), '重试后的填写仍是一个撤销单元');
+    d.redo();
+    assert(JSON.stringify(d.bindings.list()) === JSON.stringify(after), '重做恢复重试填写结果');
+    v.dispose();
+  }
   result.textContent = `PASS: ${passed} browser assertions`;
 } catch (error) {
   result.textContent = `FAIL after ${passed}: ${error.message}`;
