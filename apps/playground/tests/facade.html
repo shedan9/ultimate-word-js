@@ -15,7 +15,7 @@ body { margin: 0; font: 14px/1.5 system-ui; }
 import { unzip } from '@uw/ooxml';
 import { UltimateWord } from 'ultimate-word';
 import fixtureUrl from '../../fidelity/fixtures/gongwen-01.docx?url';
-import { boundControlDocx, choiceControlDocx, controlDocx, dateControlDocx, emptyBoundaryControlDocx, emptyPlaceholderDocx, linkDocx, markRevisionControlDocx, nestedControlDocx, shellControlDocx, textStateDocx } from './list-fixture.ts';
+import { boundControlDocx, choiceControlDocx, controlDocx, dateControlDocx, emptyBoundaryControlDocx, emptyPlaceholderDocx, linkDocx, markRevisionControlDocx, nestedControlDocx, shellControlDocx, templateControlsDocx, textStateDocx } from './list-fixture.ts';
 
 const host = document.querySelector('#host');
 const second = document.querySelector('#second');
@@ -815,6 +815,65 @@ try {
       }
       v.dispose();
     }
+  }
+  for (const [key, value] of [['同意申请', '错误类型'], ['签发日期', { date: '2026-02-29' }], ['缺少日期格式', { date: '2026-10-23' }]]) {
+    const d = await UltimateWord.load(templateControlsDocx());
+    d.bindings.set('办理意见', '历史值').apply();
+    d.undo();
+    const v = d.mount('#host', { mode: 'edit', virtualize: false });
+    const initial = d.bindings.list();
+    v.select(initial.find(b => b.key === '办理意见').range);
+    const selection = JSON.stringify(v.selection);
+    const text = v.root.textContent;
+    const pending = d.bindings.set('办理意见', '旧草稿').pending;
+    let changes = 0;
+    let layouts = 0;
+    d.on('document:change', () => changes++);
+    d.on('layout:done', () => layouts++);
+    let error;
+    try { d.bindings.setMany({ 办理意见: '意外覆盖', 紧急程度: 'c', [key]: value }); } catch (e) { error = e; }
+    assert(error instanceof Error && JSON.stringify([...pending]) === JSON.stringify([['办理意见', '旧草稿']]), '批量暂存校验失败保留旧草稿，不留下前面有效字段');
+    assert(changes === 0 && layouts === 0 && !d.canUndo && d.canRedo, '批量暂存失败不派发事件或重排，并保留重做历史');
+    assert(JSON.stringify(d.bindings.list()) === JSON.stringify(initial) && JSON.stringify(v.selection) === selection && v.root.textContent === text, '批量暂存失败不改变控件、选区与文字层');
+    const original = await UltimateWord.load(await d.toDocx());
+    assert(JSON.stringify(original.bindings.list()) === JSON.stringify(initial), '批量暂存失败导出回读保留原字段与日期属性');
+    d.redo();
+    assert(d.bindings.list().find(b => b.key === '办理意见').value === '历史值' && pending.get('办理意见') === '旧草稿', '失败后仍可重做先前编辑，旧草稿继续保留');
+    d.undo();
+    changes = 0;
+    layouts = 0;
+    assert(d.bindings.setMany({ 办理意见: '修正值', 同意申请: true, 签发日期: { date: '2026-10-23' }, unknown: null }).skipped[0] === 'unknown', '修正后整批暂存成功，未知字段继续跳过且不校验其值');
+    d.bindings.apply();
+    await frame();
+    const after = d.bindings.list();
+    assert(changes === 1 && layouts === 1 && pending.size === 0 && after.find(b => b.key === '办理意见').value === '修正值' && after.find(b => b.key === '同意申请').checked, '修正后一次提交文字与勾选并消费全部待填值');
+    assert(after.find(b => b.key === '签发日期').fullDate === '2026-10-23T00:00:00Z' && after.filter(b => b.key === '紧急程度').every(b => b.value === '一般'), '成功填写日期，失败批次中的列表值没有残留');
+    assert(v.root.textContent.includes('修正值') && v.rectsOf(after.find(b => b.key === '办理意见').range).length > 0, '修正填写后的文字层与定位同步更新');
+    d.undo();
+    assert(JSON.stringify(d.bindings.list()) === JSON.stringify(initial) && !d.canUndo, '一次撤销恢复原模板，没有半批暂存的额外历史');
+    d.redo();
+    const again = await UltimateWord.load(await d.toDocx());
+    // 多 run 日期填写后会合成一个 run，重新加载会重新编号后续位置；只比较字段与元数据。
+    const fields = list => list.map(({ range, ...field }) => field);
+    assert(JSON.stringify(fields(again.bindings.list())) === JSON.stringify(fields(after)), '重做与导出回读保留修正后的完整批次');
+    v.dispose();
+  }
+  for (const event of ['document:change', 'layout:done']) {
+    const d = await UltimateWord.load(controlDocx());
+    const v = d.mount('#host', { mode: 'edit', virtualize: false });
+    let error;
+    const sub = d.on(event, () => {
+      d.bindings.set('agree', true);
+      try { d.bindings.setMany({ applicant: '意外覆盖', agree: '错误类型' }); } catch (e) { error = e; }
+    });
+    d.bindings.set('applicant', '张三').apply();
+    sub.dispose();
+    assert(error instanceof TypeError && JSON.stringify([...d.bindings.pending]) === JSON.stringify([['agree', true]]), '事件回调内批量暂存失败也只保留先前的下一批草稿');
+    d.bindings.apply();
+    assert(d.bindings.list().find(b => b.key === 'applicant').value === '张三' && d.bindings.list().find(b => b.key === 'agree').checked && v.root.textContent.includes('张三') && !v.root.textContent.includes('意外覆盖'), '事件内失败没有留下半批文字，后续只提交原先暂存的勾选');
+    d.undo();
+    assert(d.bindings.list().find(b => b.key === 'applicant').value === '张三' && !d.bindings.list().find(b => b.key === 'agree').checked, '事件内暂存失败不污染下一批的撤销单元');
+    v.dispose();
   }
   result.textContent = `PASS: ${passed} browser assertions`;
 } catch (error) {

@@ -11,7 +11,15 @@
  * `fillContentControl`（换内容、换掉占位符格式、清占位标记都在那里）。这一层只管
  * 「名字 → 控件」与「攒着一起提交」。
  */
-import type { Body, ContentControlType, DocRange, NodeId, TextChangeSet, TextTransaction } from '@uw/model';
+import type {
+  Body,
+  ContentControl,
+  ContentControlType,
+  DocRange,
+  NodeId,
+  TextChangeSet,
+  TextTransaction,
+} from '@uw/model';
 import {
   contentControlSpans,
   formatContentControlDate,
@@ -112,37 +120,52 @@ export class Bindings {
    * 静默不填，是模板填充里最难发现的一类错。换行写成软换行、`\t` 写成制表位
    */
   set(key: string, value: BindingValue): this {
+    const targets = this.#spans()
+      .filter((s) => s.key === key)
+      .map((s) => s.span.control);
+    this.#pending.set(key, this.#prepareValue(key, value, targets));
+    return this;
+  }
+
+  #prepareValue(key: string, value: BindingValue, targets: readonly ContentControl[]): BindingValue {
     const dateValue = value !== null && typeof value === 'object' && typeof value.date === 'string';
     if (typeof value !== 'string' && typeof value !== 'boolean' && !dateValue)
       throw new TypeError(`坑位「${key}」的值必须是字符串、布尔值或日期对象`);
-    const targets = this.#spans().filter((s) => s.key === key);
     if (!targets.length) throw new RangeError(`文档里没有坑位：${key}`);
-    for (const { span } of targets) {
-      const type = span.control.type;
+    for (const control of targets) {
+      const type = control.type;
       if (type === 'checkbox') {
         if (typeof value !== 'boolean') throw new TypeError(`坑位「${key}」是 checkbox 控件，需要布尔值`);
       } else if (type === 'date' && dateValue) {
-        formatContentControlDate(span.control, (value as DateBindingValue).date);
+        formatContentControlDate(control, (value as DateBindingValue).date);
       } else {
         if (!FILLABLE.has(type)) throw new Error(`坑位「${key}」是 ${type} 控件，不能填写`);
         if (typeof value !== 'string') throw new TypeError(`坑位「${key}」是 ${type} 控件，需要字符串`);
       }
     }
-    this.#pending.set(key, dateValue ? Object.freeze({ date: (value as DateBindingValue).date }) : value);
-    return this;
+    return dateValue ? Object.freeze({ date: (value as DateBindingValue).date }) : value;
   }
 
   /**
    * 一次记多个。与 `set` 不同，**文档里没有的名字跳过**：数据对象常常带着模板用不上的字段
-   * （同一份数据套好几份模板），为此逐个挑字段太啰嗦。返回值里的 `skipped` 就是跳过的那些
+   * （同一份数据套好几份模板），为此逐个挑字段太啰嗦。返回值里的 `skipped` 就是跳过的那些。
+   * 已知字段全部校验通过才合入待填队列；任一失败保留原队列，避免报错却留下半批数据。
    */
   setMany(values: Readonly<Record<string, BindingValue>>): { skipped: string[] } {
-    const keys = new Set(this.#spans().map((s) => s.key));
+    const targets = new Map<string, ContentControl[]>();
+    for (const { key, span } of this.#spans()) {
+      const controls = targets.get(key);
+      if (controls) controls.push(span.control);
+      else targets.set(key, [span.control]);
+    }
+    const prepared = new Map<string, BindingValue>();
     const skipped: string[] = [];
     for (const [key, value] of Object.entries(values)) {
-      if (keys.has(key)) this.set(key, value);
+      const controls = targets.get(key);
+      if (controls) prepared.set(key, this.#prepareValue(key, value, controls));
       else skipped.push(key);
     }
+    for (const [key, value] of prepared) this.#pending.set(key, value);
     return { skipped };
   }
 

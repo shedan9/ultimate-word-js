@@ -9,7 +9,7 @@ import { FALLBACK_METRICS, FontRegistry } from '@uw/fonts';
 import type { DocRange } from '@uw/model';
 import { unzip, zip } from '@uw/ooxml';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import type { UwDocument } from './index.ts';
+import type { BindingValue, UwDocument } from './index.ts';
 import { DOCX_MIME, UltimateWord, UwError, UwErrorCode } from './index.ts';
 
 const FIXTURE = new URL('../../../apps/fidelity/fixtures/gongwen-01.docx', import.meta.url);
@@ -296,6 +296,160 @@ describe('doc.bindings', () => {
       ]),
     );
   }
+
+  it('setMany 后续字段类型错误时不覆盖旧草稿，也不留下部分新值', async () => {
+    const d = await UltimateWord.load(template());
+    const pending = d.bindings.set('applicant', '原草稿').set('date', '旧日期').pending;
+    const before = [...pending];
+    expect(() => d.bindings.setMany({ applicant: '意外覆盖', level: '1', agree: '错误类型' })).toThrow(
+      /布尔值/,
+    );
+    expect([...pending]).toEqual(before);
+    d.bindings.apply();
+    expect(
+      d.bindings
+        .list()
+        .filter((b) => b.key === 'applicant')
+        .map((b) => b.value),
+    ).toEqual(['原草稿', '原草稿']);
+    expect(d.bindings.list().find((b) => b.key === 'level')?.value).toBe('一般');
+  });
+
+  it.each([
+    ['文字类型', '<w:text/>', true],
+    ['无效日期', '<w:date><w:dateFormat w:val="yyyy-MM-dd"/></w:date>', { date: '2026-02-29' }],
+    ['日期缺格式', '<w:date/>', { date: '2026-10-23' }],
+    ['图片控件', '<w:picture/>', '文字'],
+    ['同名混合类型', '<w:date><w:dateFormat w:val="yyyy-MM-dd"/></w:date>', { date: '2026-10-23' }],
+  ] as const)('setMany 遇到%s时保留旧队列、模型、历史与导出', async (kind, props, value) => {
+    const extra = `<w:p>${control('invalid', '原值', props)}${kind === '同名混合类型' ? control('invalid', '文字', '<w:text/>') : ''}</w:p>`;
+    const d = await UltimateWord.load(template(extra));
+    d.bindings.set('applicant', '历史值').apply();
+    d.undo();
+    const before = d.bindings.list();
+    const original = new Uint8Array(await (await d.toDocx()).arrayBuffer());
+    const pending = d.bindings.set('applicant', '旧草稿').set('date', '旧日期').pending;
+    const staged = [...pending];
+    const events: string[] = [];
+    d.on('document:change', () => events.push('change'));
+    d.on('layout:done', () => events.push('layout'));
+    expect(() => d.bindings.setMany({ applicant: '意外覆盖', agree: true, invalid: value })).toThrow();
+    expect(d.bindings.pending).toBe(pending);
+    expect([...pending]).toEqual(staged);
+    expect(d.bindings.list()).toEqual(before);
+    expect(events).toEqual([]);
+    expect(d.canUndo).toBe(false);
+    expect(d.canRedo).toBe(true);
+    expect(new Uint8Array(await (await d.toDocx()).arrayBuffer())).toEqual(original);
+    d.redo();
+    expect(d.bindings.list().find((b) => b.key === 'applicant')?.value).toBe('历史值');
+    expect([...pending]).toEqual(staged);
+  });
+
+  it('setMany 拒绝运行时无效值时不暂存前面的有效字段', async () => {
+    const d = await UltimateWord.load(template());
+    expect(() => d.bindings.setMany({ applicant: '张三', agree: null as unknown as BindingValue })).toThrow(
+      TypeError,
+    );
+    expect(d.bindings.pending.size).toBe(0);
+    expect(d.bindings.apply()).toBeUndefined();
+    expect(d.canUndo).toBe(false);
+  });
+
+  it('setMany 失败保留原日期对象，已准备的新日期也不会冻结调用方对象', async () => {
+    const d = await UltimateWord.load(
+      template(
+        `<w:p>${control('issued', '某日', '<w:date><w:dateFormat w:val="yyyy-MM-dd"/></w:date>')}</w:p>`,
+      ),
+    );
+    const date = { date: '2026-10-23' };
+    d.bindings.set('issued', { date: '2026-10-22' });
+    const previous = d.bindings.pending.get('issued');
+    expect(() => d.bindings.setMany({ applicant: '张三', issued: date, agree: '错误类型' })).toThrow();
+    expect([...d.bindings.pending]).toEqual([['issued', { date: '2026-10-22' }]]);
+    expect(d.bindings.pending.get('issued')).toBe(previous);
+    expect(Object.isFrozen(date)).toBe(false);
+    date.date = '2026-10-24';
+    d.bindings.apply();
+    expect(d.bindings.list().find((b) => b.key === 'issued')?.fullDate).toBe('2026-10-22T00:00:00Z');
+  });
+
+  it('setMany 成功按输入顺序合入原队列，日期复制冻结，一次提交并导出回读', async () => {
+    const d = await UltimateWord.load(
+      template(
+        `<w:p>${control('issued', '某日', '<w:date><w:dateFormat w:val="yyyy-MM-dd"/></w:date>')}</w:p>`,
+      ),
+    );
+    const before = d.bindings.list();
+    const pending = d.bindings.set('date', '保留').set('applicant', '旧草稿').pending;
+    const date = { date: '2026-10-23' };
+    expect(d.bindings.setMany({ applicant: '张三', issued: date, agree: true, unused: '跳过' })).toEqual({
+      skipped: ['unused'],
+    });
+    expect([...pending]).toEqual([
+      ['date', '保留'],
+      ['applicant', '张三'],
+      ['issued', { date: '2026-10-23' }],
+      ['agree', true],
+    ]);
+    expect(Object.isFrozen(pending.get('issued'))).toBe(true);
+    date.date = '2026-10-24';
+    expect(d.bindings.list()).toEqual(before);
+    const events: string[] = [];
+    d.on('document:change', () => events.push('change'));
+    d.on('layout:done', () => events.push('layout'));
+    expect(d.bindings.apply()).toBeDefined();
+    expect(events).toEqual(['change', 'layout']);
+    expect(pending.size).toBe(0);
+    const after = d.bindings.list();
+    expect(after.filter((b) => b.key === 'applicant').map((b) => b.value)).toEqual(['张三', '张三']);
+    expect(after.find((b) => b.key === 'issued')?.fullDate).toBe('2026-10-23T00:00:00Z');
+    const again = await UltimateWord.load(await d.toDocx());
+    expect(again.bindings.list()).toEqual(after);
+    d.undo();
+    expect(d.bindings.list()).toEqual(before);
+    expect(d.canUndo).toBe(false);
+    d.redo();
+    expect(d.bindings.list()).toEqual(after);
+  });
+
+  it('setMany 空对象和未知字段只返回 skipped，不校验未知值也不改变旧草稿', async () => {
+    const d = await UltimateWord.load(template());
+    d.bindings.set('applicant', '旧草稿');
+    const before = [...d.bindings.pending];
+    expect(d.bindings.setMany({})).toEqual({ skipped: [] });
+    expect(
+      d.bindings.setMany({ unknown: null as unknown as BindingValue, unused: { date: '无效' } }),
+    ).toEqual({ skipped: ['unknown', 'unused'] });
+    expect([...d.bindings.pending]).toEqual(before);
+    expect(d.canUndo).toBe(false);
+  });
+
+  it.each(['document:change', 'layout:done'] as const)(
+    '%s 中批量暂存失败也只保留先前待填值',
+    async (event) => {
+      const d = await UltimateWord.load(template());
+      let error: unknown;
+      const sub = d.on(event, () => {
+        d.bindings.set('agree', true);
+        try {
+          d.bindings.setMany({ applicant: '意外覆盖', date: true });
+        } catch (e) {
+          error = e;
+        }
+      });
+      d.bindings.set('applicant', '张三').apply();
+      sub.dispose();
+      expect(error).toBeInstanceOf(TypeError);
+      expect([...d.bindings.pending]).toEqual([['agree', true]]);
+      d.bindings.apply();
+      expect(d.bindings.list().find((b) => b.key === 'applicant')?.value).toBe('张三');
+      expect(d.bindings.list().find((b) => b.key === 'agree')?.checked).toBe(true);
+      d.undo();
+      expect(d.bindings.list().find((b) => b.key === 'applicant')?.value).toBe('张三');
+      expect(d.bindings.list().find((b) => b.key === 'agree')?.checked).toBe(false);
+    },
+  );
 
   it.each(['document:change', 'layout:done'] as const)(
     '%s 回调暂存的下一批值不会被本次提交清空',
