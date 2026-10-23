@@ -105,6 +105,7 @@ export interface DocumentEvents {
   /**
    * 事务 / 撤销 / 重做之后的那一趟排版完成（含域求值的全部迭代）。`duration` 是级联 + 排版的
    * 毫秒数，`iterations` 是域求值排了几趟（1 = 没有要迭代的域）。
+   * 数据固定为本趟结果；同步监听者重入编辑后，文档查询可能已经指向更新的一趟。
    */
   'layout:done': { pageCount: number; duration: number; iterations: number };
   /**
@@ -232,14 +233,16 @@ export class UwDocument {
     const result = this.#prepared;
     if (!result) throw new Error('缺少预排版结果');
     this.#prepared = undefined;
+    // 刷新视图 / 派发变更时宿主可能同步再编辑，不能把那一趟的页数拼到本趟的耗时上。
+    const done = {
+      pageCount: result.layout.pages.length,
+      duration: result.duration,
+      iterations: result.passes ?? 1,
+    };
     const fresh = this.#adopt(result);
     for (const listener of this.#listeners) listener(change);
     this.#events.emit('document:change', { changeSet: change, source });
-    this.#events.emit('layout:done', {
-      pageCount: this.pageCount,
-      duration: result.duration,
-      iterations: result.passes ?? 1,
-    });
+    this.#events.emit('layout:done', done);
     for (const d of fresh) this.#events.emit('diagnostic', d);
     return change;
   }
@@ -264,12 +267,13 @@ export class UwDocument {
     this.#setRevisionView(view);
     const t0 = performance.now();
     const result = this.#reflow(this.#editor.body);
-    const fresh = this.#adopt(result);
-    this.#events.emit('layout:done', {
-      pageCount: this.pageCount,
+    const done = {
+      pageCount: result.layout.pages.length,
       duration: performance.now() - t0,
       iterations: result.passes ?? 1,
-    });
+    };
+    const fresh = this.#adopt(result);
+    this.#events.emit('layout:done', done);
     for (const d of fresh) this.#events.emit('diagnostic', d);
   }
 

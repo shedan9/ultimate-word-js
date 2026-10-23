@@ -178,6 +178,42 @@ describe('doc.toDocx', () => {
 });
 
 describe('UwDocument 的事件', () => {
+  it.each(['tx', 'undo', 'redo'] as const)(
+    '%s 事件内操作历史时，layout:done 页数仍属于各自的排版',
+    async (source) => {
+      const editing = await UltimateWord.load(bytes);
+      const initialPages = editing.pageCount;
+      const insertBreak = () =>
+        editing.tx((t) => {
+          const hit = editing.find('通知')[0];
+          if (!hit) throw new Error('样本缺少通知');
+          t.insertInline(hit.start, 'pageBreak');
+        });
+      if (source !== 'tx') insertBreak();
+      if (source === 'redo') editing.undo();
+      let outerPages = 0;
+      const sources: string[] = [];
+      const pages: number[] = [];
+      const sub = editing.on('document:change', (event) => {
+        sources.push(event.source);
+        if (sources.length !== 1) return;
+        outerPages = editing.pageCount;
+        if (source === 'undo') editing.redo();
+        else editing.undo();
+      });
+      const layoutSub = editing.on('layout:done', ({ pageCount }) => pages.push(pageCount));
+      if (source === 'tx') insertBreak();
+      else if (source === 'undo') editing.undo();
+      else editing.redo();
+      sub.dispose();
+      layoutSub.dispose();
+      expect(outerPages).toBe(source === 'undo' ? initialPages : initialPages + 1);
+      expect(editing.pageCount).toBe(source === 'undo' ? initialPages + 1 : initialPages);
+      expect(sources).toEqual([source, source === 'undo' ? 'redo' : 'undo']);
+      expect(pages).toEqual([editing.pageCount, outerPages]);
+    },
+  );
+
   it('事务 / 撤销 / 重做各派发一次 document:change，之后紧跟 layout:done', async () => {
     const editing = await UltimateWord.load(bytes);
     const log: string[] = [];
@@ -207,6 +243,70 @@ describe('UwDocument 的事件', () => {
     b.dispose();
     editing.undo();
     expect(log).toHaveLength(6);
+  });
+
+  it('三层同步编辑的完成事件按回调返回顺序各自保留页数', async () => {
+    const editing = await UltimateWord.load(bytes);
+    const initialPages = editing.pageCount;
+    const committed: number[] = [];
+    const completed: number[] = [];
+    const insertBreak = () =>
+      editing.tx((t) => {
+        const hit = editing.find('通知')[0];
+        if (!hit) throw new Error('样本缺少通知');
+        t.insertInline(hit.start, 'pageBreak');
+      });
+    const sub = editing.on('document:change', () => {
+      committed.push(editing.pageCount);
+      if (committed.length < 3) insertBreak();
+    });
+    const layoutSub = editing.on('layout:done', ({ pageCount }) => completed.push(pageCount));
+    insertBreak();
+    sub.dispose();
+    layoutSub.dispose();
+    expect(committed).toEqual([initialPages + 1, initialPages + 2, initialPages + 3]);
+    expect(completed).toEqual([...committed].reverse());
+    expect(editing.pageCount).toBe(initialPages + 3);
+    for (let i = 0; i < 3; i++) editing.undo();
+    expect(editing.pageCount).toBe(initialPages);
+    expect(editing.canUndo).toBe(false);
+    for (let i = 0; i < 3; i++) editing.redo();
+    expect(editing.pageCount).toBe(initialPages + 3);
+    const again = await UltimateWord.load(await editing.toDocx());
+    expect(again.pageCount).toBe(editing.pageCount);
+  });
+
+  it('监听者重入撤销后再抛错，不影响外层完成事件的页数与后续监听者', async () => {
+    const editing = await UltimateWord.load(bytes);
+    const initialPages = editing.pageCount;
+    const original = globalThis.reportError;
+    const failure = new Error('重入后的宿主错误');
+    const reported: unknown[] = [];
+    const completed: number[] = [];
+    const sources: string[] = [];
+    let reentered = false;
+    globalThis.reportError = (error) => reported.push(error);
+    try {
+      editing.on('document:change', () => {
+        if (reentered) return;
+        reentered = true;
+        editing.undo();
+        throw failure;
+      });
+      editing.on('document:change', ({ source }) => sources.push(source));
+      editing.on('layout:done', ({ pageCount }) => completed.push(pageCount));
+      const hit = editing.find('通知')[0];
+      if (!hit) throw new Error('样本缺少通知');
+      expect(() => editing.tx((t) => void t.insertInline(hit.start, 'pageBreak'))).not.toThrow();
+      expect(reported).toEqual([failure]);
+      expect(sources).toEqual(['undo', 'tx']);
+      expect(completed).toEqual([initialPages, initialPages + 1]);
+      expect(editing.pageCount).toBe(initialPages);
+      expect(editing.canUndo).toBe(false);
+      expect(editing.canRedo).toBe(true);
+    } finally {
+      globalThis.reportError = original;
+    }
   });
 
   it('一个监听者抛错不挡后面的监听者，也不让事务半途而废', async () => {
@@ -2381,6 +2481,33 @@ describe('修订的显示', () => {
       colors: body.map((f) => f.style.color),
     };
   }
+
+  it.each(['markup', 'original'] as const)(
+    '变更回调切到 %s 后，外层完成事件仍保留切换前页数',
+    async (view) => {
+      const d = await UltimateWord.load(
+        revisedDocx(
+          '<w:p><w:r><w:t>开头</w:t></w:r><w:del w:id="9" w:author="张三"><w:r><w:br w:type="page"/><w:delText>删除页</w:delText></w:r></w:del><w:r><w:t>结尾</w:t></w:r></w:p>',
+        ),
+      );
+      expect(d.pageCount).toBe(1);
+      const completed: number[] = [];
+      const sub = d.on('document:change', () => d.setRevisionView(view));
+      const layoutSub = d.on('layout:done', ({ pageCount }) => completed.push(pageCount));
+      const hit = d.find('结尾')[0];
+      if (!hit) throw new Error('样本缺少结尾');
+      d.tx((t) => void t.insertText(hit.start, '事件'));
+      sub.dispose();
+      layoutSub.dispose();
+      expect(d.revisionView).toBe(view);
+      expect(d.pageCount).toBe(2);
+      expect(completed).toEqual([2, 1]);
+      d.undo();
+      expect(d.pageCount).toBe(2);
+      expect(d.find('事件')).toHaveLength(0);
+      expect(d.canUndo).toBe(false);
+    },
+  );
 
   it('默认最终状态：被删的字不占位；换到「所有标记」正文与页眉一起重排，只派发 layout:done', async () => {
     const d = await UltimateWord.load(revisedDocx());

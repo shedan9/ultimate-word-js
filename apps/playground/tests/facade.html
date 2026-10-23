@@ -875,6 +875,64 @@ try {
     assert(d.bindings.list().find(b => b.key === 'applicant').value === '张三' && !d.bindings.list().find(b => b.key === 'agree').checked, '事件内暂存失败不污染下一批的撤销单元');
     v.dispose();
   }
+  for (const source of ['tx', 'undo', 'redo']) {
+    const d = await UltimateWord.load(controlDocx());
+    const insertBreak = () => d.tx(t => void t.insertInline(d.find('普通文字')[0].start, 'pageBreak'));
+    if (source !== 'tx') insertBreak();
+    if (source === 'redo') d.undo();
+    const v = d.mount('#host', { mode: 'edit', virtualize: false });
+    v.select(d.bindings.list().find(b => b.key === 'applicant').range);
+    const selection = JSON.stringify(v.selection);
+    const sources = [];
+    const completed = [];
+    let pagesInChange = 0;
+    const sub = d.on('document:change', event => {
+      sources.push(event.source);
+      if (sources.length > 1) return;
+      pagesInChange = d.pageCount;
+      if (source === 'undo') d.redo(); else d.undo();
+    });
+    const layoutSub = d.on('layout:done', data => completed.push({ ...data, currentPages: d.pageCount }));
+    if (source === 'tx') insertBreak(); else if (source === 'undo') d.undo(); else d.redo();
+    sub.dispose();
+    layoutSub.dispose();
+    await frame();
+    const expected = source === 'undo' ? [2, 1] : [1, 2];
+    assert(JSON.stringify(sources) === JSON.stringify([source, source === 'undo' ? 'redo' : 'undo']) && pagesInChange === expected[1], '事务与历史事件内仍可同步操作历史，外层先报告自己的新页数');
+    assert(JSON.stringify(completed.map(e => e.pageCount)) === JSON.stringify(expected), '内层先完成、外层随后完成，两次通知各自保留对应排版的页数');
+    assert(completed.every(e => e.currentPages === expected[0] && e.duration >= 0 && e.iterations >= 1) && d.pageCount === expected[0], '重入后的文档查询返回最新状态，完成事件仍保留历史排版数据');
+    assert(JSON.stringify(v.selection) === selection && v.rectsOf(d.bindings.list().find(b => b.key === 'applicant').range).length > 0 && v.root.textContent.includes('普通文字'), '重入历史后选区、文字层和当前布局定位保持有效');
+    const again = await UltimateWord.load(await d.toDocx());
+    assert(again.pageCount === d.pageCount && JSON.stringify(again.bindings.list().map(b => [b.key, b.value])) === JSON.stringify(d.bindings.list().map(b => [b.key, b.value])), '重入后的最终状态与导出回读一致');
+    v.dispose();
+  }
+  for (const operation of ['tx', 'revisionView']) {
+    const d = await UltimateWord.load(controlDocx());
+    let timing = false;
+    let clock = 0;
+    const v = d.mount('#host', {
+      virtualize: false,
+      fontFamily: family => { if (timing) clock += 1000; return family; },
+    });
+    const completed = [];
+    const sub = d.on('layout:done', data => completed.push(data));
+    const descriptor = Object.getOwnPropertyDescriptor(performance, 'now');
+    try {
+      // 只让页面绘制推进模拟时钟，隔开排版耗时与字体映射 / DOM 绘制耗时。
+      Object.defineProperty(performance, 'now', { configurable: true, value: () => clock });
+      timing = true;
+      if (operation === 'tx') d.bindings.set('applicant', '耗时回归').apply();
+      else d.setRevisionView('markup');
+    } finally {
+      timing = false;
+      if (descriptor) Object.defineProperty(performance, 'now', descriptor);
+      else delete performance.now;
+    }
+    sub.dispose();
+    assert(clock > 0 && completed.length === 1 && completed[0].duration === 0, '事务与修订视图的排版耗时不包含页面绘制回调');
+    assert(completed[0].pageCount === d.pageCount && completed[0].iterations >= 1 && v.root.textContent.includes(operation === 'tx' ? '耗时回归' : '申请人'), '固定事件数据后仍同步刷新视图并保留完整排版元数据');
+    v.dispose();
+  }
   result.textContent = `PASS: ${passed} browser assertions`;
 } catch (error) {
   result.textContent = `FAIL after ${passed}: ${error.message}`;

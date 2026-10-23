@@ -911,6 +911,11 @@ view.on('viewport:change', ({ visiblePages, zoom }) => {});
   编辑后重排这一半；新发现的同时追加进 `doc.diagnostics`（按内容去重 —— 字体注册后度量器会重新报一遍缺字体）。
 - **顺序**：视图先刷新 → `document:change` → `layout:done` → `diagnostic`，全部同步。监听者里读
   `doc.layout`、`view.rectsOf()` 拿到的已经是新布局。没有修改的事务什么都不派发。
+- **回调内再次修改文档**（2026-10-23）：`layout:done` 的 `pageCount` / `duration` / `iterations` 固定为本次排版结果，
+  在刷新视图及派发变更之前取好；原先派发时读取最新 `doc.pageCount`，会与外层排版的耗时混成不同批次的数据。
+  通知仍同步，内层操作先完成，再继续外层通知。例如增页到 2 页的变更回调里撤销回 1 页，完成事件依次报告 1、2 页，
+  此时 `doc.pageCount` / `doc.layout` 和视图均为最新的 1 页；需要当前状态时直接查询文档。
+  事务、撤销 / 重做和切换修订视图均适用；`duration` 只量级联与排版，不包含视图绘制（修订视图原先把绘制也计入）。
 - **监听者抛错不传回触发方**，交给 `reportError`：事务已经提交，一个宿主 bug 不该让视图停在旧布局上，
   也不该挡住后面的监听者。
 - `selection:change` **只在编辑态**有：预览态原生文字层的划词对不上 `DocRange`。滚动与缩放不算变化，
