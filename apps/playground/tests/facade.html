@@ -760,6 +760,62 @@ try {
     assert(JSON.stringify(d.bindings.list()) === JSON.stringify(after), '重做恢复重试填写结果');
     v.dispose();
   }
+  for (const event of ['document:change', 'layout:done']) {
+    for (const mode of ['stage', 'apply', 'fail']) {
+      const d = await UltimateWord.load(controlDocx());
+      const v = d.mount('#host', { mode: 'edit', virtualize: false });
+      const initial = d.bindings.list();
+      v.select(initial.find(b => b.key === 'applicant').range);
+      const pending = d.bindings.pending;
+      let changes = 0;
+      let layouts = 0;
+      let pendingInEvent = -1;
+      let textInEvent = '';
+      let error;
+      d.on('document:change', () => changes++);
+      d.on('layout:done', () => layouts++);
+      const sub = d.on(event, () => {
+        sub.dispose();
+        pendingInEvent = pending.size;
+        textInEvent = v.root.textContent;
+        d.bindings.setMany(mode === 'fail' ? { agree: true, outer: '锁内更新' } : { applicant: '李四', agree: true });
+        if (mode !== 'stage') {
+          try { d.bindings.apply(); } catch (e) { error = e; }
+        }
+      });
+      d.bindings.set('applicant', '张三').apply();
+      assert(pendingInEvent === 0 && textInEvent.includes('张三'), '填写事件看到新文字层与已消费的本批队列');
+      if (mode === 'fail') {
+        assert(/锁定/.test(error?.message) && changes === 1 && layouts === 1, '事件内下一批失败不影响本批成功，也不额外派发事件');
+        assert(pending.size === 2 && pending.get('agree') === true && pending.get('outer') === '锁内更新', '事件内失败恢复整批待填数据，外层成功不会清掉它');
+        assert(!d.bindings.list().find(b => b.key === 'agree').checked && d.bindings.list().find(b => b.key === 'applicant').value === '张三', '事件内失败只回滚下一批的勾选，保留已提交文字');
+        d.undo();
+        assert(!d.canUndo && JSON.stringify(d.bindings.list()) === JSON.stringify(initial) && pending.size === 2, '事件内失败不增加历史，撤销本批后待填值仍保留');
+        d.bindings.discard();
+      } else {
+        if (mode === 'stage') {
+          assert(changes === 1 && layouts === 1 && pending.get('applicant') === '李四' && pending.get('agree') === true, '事件新攒的同名字段与复选框留给下一批');
+          assert(d.bindings.list().find(b => b.key === 'applicant').value === '张三' && !d.bindings.list().find(b => b.key === 'agree').checked, '暂存下一批不会提前修改显示');
+          d.bindings.apply();
+        }
+        await frame();
+        const after = d.bindings.list();
+        const applicant = after.find(b => b.key === 'applicant');
+        assert(!error && changes === 2 && layouts === 2 && pending.size === 0, '两批各提交一次，事件内立即 apply 也不重复提交旧字段');
+        assert(applicant.value === '李四' && after.find(b => b.key === 'agree').checked && v.root.textContent.includes('李四') && v.rectsOf(applicant.range).length > 0, '下一批文字与勾选同步刷新并能定位');
+        const again = await UltimateWord.load(await d.toDocx());
+        assert(again.bindings.list().find(b => b.key === 'applicant').value === '李四' && again.bindings.list().find(b => b.key === 'agree').checked, '事件内新一批提交与导出回读一致');
+        d.undo();
+        assert(d.bindings.list().find(b => b.key === 'applicant').value === '张三' && !d.bindings.list().find(b => b.key === 'agree').checked, '一次撤销只撤回下一批，保留首批结果');
+        d.undo();
+        assert(!d.canUndo && JSON.stringify(d.bindings.list()) === JSON.stringify(initial), '再撤销恢复模板原值，没有重复旧批的历史');
+        d.redo();
+        d.redo();
+        assert(JSON.stringify(d.bindings.list()) === JSON.stringify(after), '两次重做恢复两批最终值');
+      }
+      v.dispose();
+    }
+  }
   result.textContent = `PASS: ${passed} browser assertions`;
 } catch (error) {
   result.textContent = `FAIL after ${passed}: ${error.message}`;

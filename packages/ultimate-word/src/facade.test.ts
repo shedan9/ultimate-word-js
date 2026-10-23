@@ -297,6 +297,206 @@ describe('doc.bindings', () => {
     );
   }
 
+  it.each(['document:change', 'layout:done'] as const)(
+    '%s 回调暂存的下一批值不会被本次提交清空',
+    async (event) => {
+      const d = await UltimateWord.load(template());
+      const pending = d.bindings.pending;
+      let pendingInEvent = -1;
+      const sub = d.on(event, () => {
+        pendingInEvent = pending.size;
+        d.bindings.setMany({ applicant: '李四', agree: true });
+      });
+      d.bindings.set('applicant', '张三').apply();
+      sub.dispose();
+      expect(pendingInEvent).toBe(0);
+      expect([...pending]).toEqual([
+        ['applicant', '李四'],
+        ['agree', true],
+      ]);
+      expect(
+        d.bindings
+          .list()
+          .filter((b) => b.key === 'applicant')
+          .map((b) => b.value),
+      ).toEqual(['张三', '张三']);
+      expect(d.bindings.list().find((b) => b.key === 'agree')?.checked).toBe(false);
+      expect(d.bindings.apply()).toBeDefined();
+      expect(pending.size).toBe(0);
+      const after = d.bindings.list();
+      expect(after.filter((b) => b.key === 'applicant').map((b) => b.value)).toEqual(['李四', '李四']);
+      expect(after.find((b) => b.key === 'agree')?.checked).toBe(true);
+      const again = await UltimateWord.load(await d.toDocx());
+      expect(again.bindings.list().map((b) => [b.key, b.value])).toEqual(after.map((b) => [b.key, b.value]));
+      d.undo();
+      expect(
+        d.bindings
+          .list()
+          .filter((b) => b.key === 'applicant')
+          .map((b) => b.value),
+      ).toEqual(['张三', '张三']);
+      expect(d.bindings.list().find((b) => b.key === 'agree')?.checked).toBe(false);
+      d.undo();
+      expect(d.canUndo).toBe(false);
+      expect(d.bindings.list().find((b) => b.key === 'applicant')?.placeholder).toBe(true);
+      d.redo();
+      d.redo();
+      expect(d.bindings.list()).toEqual(after);
+    },
+  );
+
+  describe.each(['document:change', 'layout:done'] as const)('填写事件中的待填队列：%s', (event) => {
+    it('重新暂存相同值仍属于下一批，空操作保留重做历史', async () => {
+      const d = await UltimateWord.load(template());
+      let changes = 0;
+      const count = d.on('document:change', () => changes++);
+      const sub = d.on(event, () => d.bindings.set('applicant', '张三'));
+      d.bindings.set('applicant', '张三').apply();
+      sub.dispose();
+      count.dispose();
+      expect([...d.bindings.pending]).toEqual([['applicant', '张三']]);
+      d.bindings.set('applicant', '李四').apply();
+      d.undo();
+      d.bindings.set('applicant', '张三');
+      expect(d.bindings.apply()).toBeUndefined();
+      expect(d.bindings.pending.size).toBe(0);
+      expect(changes).toBe(1);
+      expect(d.canRedo).toBe(true);
+    });
+
+    it('没有新值时在回调内再次 apply 为空操作，不重复提交本批', async () => {
+      const d = await UltimateWord.load(template());
+      const results: unknown[] = [];
+      let calls = 0;
+      const sub = d.on(event, () => {
+        if (++calls === 1) results.push(d.bindings.apply());
+      });
+      d.bindings.set('applicant', '张三').apply();
+      sub.dispose();
+      expect(results).toEqual([undefined]);
+      expect(calls).toBe(1);
+      expect(d.bindings.pending.size).toBe(0);
+      d.undo();
+      expect(d.canUndo).toBe(false);
+    });
+
+    it('回调内可以立即提交下一批，各自独立撤销且不重复旧字段', async () => {
+      const d = await UltimateWord.load(template());
+      const snapshots: string[][] = [];
+      const sub = d.on(event, () => {
+        snapshots.push([...d.bindings.pending.keys()]);
+        if (snapshots.length === 1) d.bindings.set('agree', true).apply();
+      });
+      d.bindings.set('applicant', '张三').apply();
+      sub.dispose();
+      expect(snapshots).toEqual([[], []]);
+      expect(d.bindings.pending.size).toBe(0);
+      expect(d.bindings.list().find((b) => b.key === 'agree')?.checked).toBe(true);
+      d.undo();
+      expect(d.bindings.list().find((b) => b.key === 'agree')?.checked).toBe(false);
+      expect(d.bindings.list().find((b) => b.key === 'applicant')?.value).toBe('张三');
+      d.undo();
+      expect(d.bindings.list().find((b) => b.key === 'applicant')?.placeholder).toBe(true);
+      expect(d.canUndo).toBe(false);
+      d.redo();
+      d.redo();
+      const again = await UltimateWord.load(await d.toDocx());
+      expect(again.bindings.list().find((b) => b.key === 'agree')?.checked).toBe(true);
+    });
+
+    it('回调内下一批失败时保留整批待填值，已成功的外层提交不清掉它', async () => {
+      const d = await UltimateWord.load(template());
+      let error: unknown;
+      const sub = d.on(event, () => {
+        d.bindings.setMany({ agree: true, level: '不存在的选项' });
+        try {
+          d.bindings.apply();
+        } catch (e) {
+          error = e;
+        }
+      });
+      expect(d.bindings.set('applicant', '张三').apply()).toBeDefined();
+      sub.dispose();
+      expect(error).toBeInstanceOf(Error);
+      expect([...d.bindings.pending]).toEqual([
+        ['agree', true],
+        ['level', '不存在的选项'],
+      ]);
+      expect(d.bindings.list().find((b) => b.key === 'agree')?.checked).toBe(false);
+      expect(d.bindings.list().find((b) => b.key === 'applicant')?.value).toBe('张三');
+      d.bindings.set('level', '紧急').apply();
+      expect(d.bindings.pending.size).toBe(0);
+      expect(d.bindings.list().find((b) => b.key === 'agree')?.checked).toBe(true);
+      d.undo();
+      expect(d.bindings.list().find((b) => b.key === 'applicant')?.value).toBe('张三');
+      expect(d.bindings.list().find((b) => b.key === 'agree')?.checked).toBe(false);
+    });
+
+    it('discard 后重新暂存日期对象仍保留复制的下一批值', async () => {
+      const d = await UltimateWord.load(
+        template(
+          `<w:p>${control('issued', '某日', '<w:date><w:dateFormat w:val="yyyy-MM-dd"/></w:date>')}</w:p>`,
+        ),
+      );
+      const date = { date: '2026-10-23' };
+      const sub = d.on(event, () => {
+        d.bindings.set('applicant', '丢弃');
+        d.bindings.discard();
+        d.bindings.set('issued', date);
+        date.date = '2026-10-24';
+      });
+      d.bindings.set('applicant', '张三').apply();
+      sub.dispose();
+      expect([...d.bindings.pending]).toEqual([['issued', { date: '2026-10-23' }]]);
+      expect(Object.isFrozen(d.bindings.pending.get('issued'))).toBe(true);
+      d.bindings.apply();
+      expect(d.bindings.list().find((b) => b.key === 'issued')?.fullDate).toBe('2026-10-23T00:00:00Z');
+    });
+  });
+
+  it('事务回调内不允许嵌套 apply，拒绝后恢复原待填队列与历史', async () => {
+    const d = await UltimateWord.load(template());
+    const before = d.bindings.list();
+    const pending = d.bindings.set('applicant', '张三').pending;
+    expect(() => d.tx(() => void d.bindings.apply())).toThrow();
+    expect(d.bindings.list()).toEqual(before);
+    expect([...pending]).toEqual([['applicant', '张三']]);
+    expect(d.canUndo).toBe(false);
+    expect(d.bindings.apply()).toBeDefined();
+    expect(pending.size).toBe(0);
+  });
+
+  it('命令结束后的预排版失败也恢复整批待填值，重试只产生一个撤销单元', async () => {
+    const fonts = new FontRegistry();
+    const d = await UltimateWord.load(template(), { fonts });
+    const before = d.bindings.list();
+    const layout = d.layout;
+    const original = new Uint8Array(await (await d.toDocx()).arrayBuffer());
+    d.bindings.setMany({ applicant: '张三', agree: true });
+    const pending = [...d.bindings.pending];
+    // 注册新度量使重排不能复用加载时的缓存，故障发生在命令成功之后的提交校验。
+    fonts.register('预排版回滚', { kind: 'file', metrics: FALLBACK_METRICS, advance: () => 1000 });
+    const failure = new Error('预排版失败');
+    const resolve = vi.spyOn(fonts, 'resolve').mockImplementation(() => {
+      throw failure;
+    });
+    try {
+      expect(() => d.bindings.apply()).toThrow(failure);
+    } finally {
+      resolve.mockRestore();
+    }
+    expect(d.bindings.list()).toEqual(before);
+    expect(d.layout).toBe(layout);
+    expect([...d.bindings.pending]).toEqual(pending);
+    expect(d.canUndo).toBe(false);
+    expect(new Uint8Array(await (await d.toDocx()).arrayBuffer())).toEqual(original);
+    expect(d.bindings.apply()).toBeDefined();
+    expect(d.bindings.pending.size).toBe(0);
+    d.undo();
+    expect(d.bindings.list()).toEqual(before);
+    expect(d.canUndo).toBe(false);
+  });
+
   it.each([
     ['date', 'paragraph'],
     ['checkbox', 'paragraph'],

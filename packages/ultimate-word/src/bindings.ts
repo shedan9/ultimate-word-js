@@ -186,16 +186,22 @@ export class Bindings {
       }))
       .reverse()
       .sort((a, b) => b.depth - a.depth);
-    const change = this.#host.tx((t) => {
-      for (const { id, value } of jobs) {
-        if (typeof value === 'boolean') t.setContentControlChecked(id, value);
-        else if (typeof value === 'string') t.fillContentControl(id, value);
-        else t.setContentControlDate(id, value.date);
-      }
-      return undefined;
-    });
+    // tx 返回前会同步派发事件；先取走本批，避免事件重入时重复提交，或清掉监听者新攒的值。
+    const pending = new Map(this.#pending);
     this.#pending.clear();
-    return change;
+    try {
+      return this.#host.tx((t) => {
+        for (const { id, value } of jobs) {
+          if (typeof value === 'boolean') t.setContentControlChecked(id, value);
+          else if (typeof value === 'string') t.fillContentControl(id, value);
+          else t.setContentControlDate(id, value.date);
+        }
+        return undefined;
+      });
+    } catch (error) {
+      for (const [key, value] of pending) this.#pending.set(key, value);
+      throw error;
+    }
   }
 
   #spans() {
