@@ -133,9 +133,8 @@ export interface UwDocumentInit {
   pkg?: OpcPackage;
   /** 新批注的默认署名（`LoadOptions.author`） */
   author?: string;
-  reflow?: (body: LoadedDocument['body']) => Reflowed;
-  /** 换修订视图：把下一趟 `reflow` 要用的页眉页脚 / 注 / 文本框按新视图重新级联（见 load.ts） */
-  setRevisionView?: (view: RevisionView) => void;
+  /** 指定修订视图时把正文与辅助部件一起重排；成功前不改变后续重排所用的视图。 */
+  reflow?: (body: LoadedDocument['body'], view?: RevisionView) => Reflowed;
   layout: DocumentLayout;
   /** 与 `layout` 自洽的域求值结果（run id → 显示的文字），查找时用它跳过旧值 */
   fieldValues: ReadonlyMap<NodeId, string>;
@@ -165,7 +164,6 @@ export class UwDocument {
   #fieldValues: ReadonlyMap<NodeId, string>;
   readonly #editor: TextEditor;
   readonly #reflow: UwDocumentInit['reflow'];
-  readonly #setRevisionView: UwDocumentInit['setRevisionView'];
   readonly #pkg: OpcPackage | undefined;
   readonly #author: string | undefined;
   #prepared: (Reflowed & { duration: number }) | undefined;
@@ -192,7 +190,6 @@ export class UwDocument {
       },
     });
     this.#reflow = init.reflow;
-    this.#setRevisionView = init.setRevisionView;
     this.#pkg = init.pkg;
     this.#author = init.author;
     this.#fieldValues = init.fieldValues;
@@ -263,10 +260,9 @@ export class UwDocument {
    */
   setRevisionView(view: RevisionView): void {
     if (view === this.revisionView) return;
-    if (!this.#reflow || !this.#setRevisionView) throw new Error('文档未配置重排，不能切换修订视图');
-    this.#setRevisionView(view);
+    if (!this.#reflow) throw new Error('文档未配置重排，不能切换修订视图');
     const t0 = performance.now();
-    const result = this.#reflow(this.#editor.body);
+    const result = this.#reflow(this.#editor.body, view);
     const done = {
       pageCount: result.layout.pages.length,
       duration: performance.now() - t0,

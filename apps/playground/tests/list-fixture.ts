@@ -57,6 +57,16 @@ function docxOf(blocks: string, extraRels = ''): Uint8Array {
   });
 }
 
+/** 删除修订含分页符，让切换失败后的文字层与页数漂移都能被检查到。 */
+export function revisionViewDocx(): Uint8Array {
+  return docxOf(
+    '<w:p><w:r><w:t>原文</w:t></w:r>' +
+      '<w:ins w:id="1" w:author="甲"><w:r><w:t>新增</w:t></w:r></w:ins>' +
+      '<w:del w:id="2" w:author="乙"><w:r><w:br w:type="page"/><w:delText>删除</w:delText></w:r></w:del>' +
+      '<w:r><w:t>结尾</w:t></w:r></w:p>',
+  );
+}
+
 /** 无自有文字的父控件未必先出现在成员列表里，批量填写必须按父链排序。 */
 export function nestedControlDocx(scope: string, lock = ''): Uint8Array {
   const wrap = (tag: string, content: string, pr = '') =>

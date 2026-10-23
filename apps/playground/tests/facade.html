@@ -12,10 +12,11 @@ body { margin: 0; font: 14px/1.5 system-ui; }
 <script type="module">
 // 真实公文走完整条链：这里验的是门面的**接线**（fit 跟容器、dispose 摘干净、
 // find → decorate → rectsOf 通到屏幕），字摆在哪由 Vitest 里的真值断言负责
+import { FALLBACK_METRICS, FontRegistry } from '@uw/fonts';
 import { unzip } from '@uw/ooxml';
 import { UltimateWord } from 'ultimate-word';
 import fixtureUrl from '../../fidelity/fixtures/gongwen-01.docx?url';
-import { boundControlDocx, choiceControlDocx, controlDocx, dateControlDocx, emptyBoundaryControlDocx, emptyPlaceholderDocx, linkDocx, markRevisionControlDocx, nestedControlDocx, shellControlDocx, templateControlsDocx, textStateDocx } from './list-fixture.ts';
+import { boundControlDocx, choiceControlDocx, controlDocx, dateControlDocx, emptyBoundaryControlDocx, emptyPlaceholderDocx, linkDocx, markRevisionControlDocx, nestedControlDocx, revisionViewDocx, shellControlDocx, templateControlsDocx, textStateDocx } from './list-fixture.ts';
 
 const host = document.querySelector('#host');
 const second = document.querySelector('#second');
@@ -932,6 +933,51 @@ try {
     assert(clock > 0 && completed.length === 1 && completed[0].duration === 0, '事务与修订视图的排版耗时不包含页面绘制回调');
     assert(completed[0].pageCount === d.pageCount && completed[0].iterations >= 1 && v.root.textContent.includes(operation === 'tx' ? '耗时回归' : '申请人'), '固定事件数据后仍同步刷新视图并保留完整排版元数据');
     v.dispose();
+  }
+  for (const from of ['final', 'original', 'markup']) {
+    for (const to of ['final', 'original', 'markup'].filter(view => view !== from)) {
+      const fonts = new FontRegistry();
+      const d = await UltimateWord.load(revisionViewDocx(), { fonts, revisions: from });
+      const hit = d.find('结尾')[0];
+      d.tx(t => void t.insertText(hit.start, '历史'));
+      d.undo();
+      const v = d.mount('#host', { mode: 'edit', virtualize: false });
+      v.select(hit);
+      const selection = JSON.stringify(v.selection);
+      const layout = d.layout;
+      const text = v.root.textContent;
+      const events = [];
+      d.on('layout:done', () => events.push('layout'));
+      d.on('document:change', () => events.push('change'));
+      d.on('diagnostic', () => events.push('diagnostic'));
+      fonts.register('切换失败回归', { kind: 'file', metrics: FALLBACK_METRICS, advance: () => 1000 });
+      const resolve = fonts.resolve;
+      const failure = new Error('修订视图重排失败');
+      let caught;
+      try {
+        fonts.resolve = () => { throw failure; };
+        d.setRevisionView(to);
+      } catch (error) {
+        caught = error;
+      } finally {
+        fonts.resolve = resolve;
+      }
+      assert(caught === failure && events.length === 0, '修订视图重排失败抛回原错误，不派发完成或变更事件');
+      assert(d.revisionView === from && d.layout === layout && v.root.textContent === text, '六种切换失败都保留旧视图、页面与常驻文字层');
+      assert(JSON.stringify(v.selection) === selection && v.rectsOf(hit).length > 0 && !d.canUndo && d.canRedo, '失败保留选区、定位和原有重做单元');
+      d.setRevisionView(from);
+      d.redo();
+      assert(d.revisionView === from && v.root.textContent.includes('历史') && d.pageCount === layout.pages.length, '失败后重做仍按原修订视图显示文字和分页');
+      d.undo();
+      assert(d.revisionView === from && v.root.textContent === text && JSON.stringify(v.selection) === selection, '失败后撤销仍恢复原文字层与选区');
+      events.length = 0;
+      d.setRevisionView(to);
+      assert(d.revisionView === to && JSON.stringify(events) === JSON.stringify(['layout']) && !d.canUndo && d.canRedo, '故障消失后可以重试切换，只重排、不改历史');
+      assert(d.find('删除').length === (to === 'final' ? 0 : 1) && d.find('新增').length === (to === 'original' ? 0 : 1) && v.rectsOf(d.find('结尾')[0]).length > 0, '重试后查找与视图定位使用目标修订状态');
+      const again = await UltimateWord.load(await d.toDocx(), { fonts, revisions: to });
+      assert(again.pageCount === d.pageCount && JSON.stringify(again.revisions()) === JSON.stringify(d.revisions()), '切换失败与重试都不改修订记录，导出回读与当前分页一致');
+      v.dispose();
+    }
   }
   result.textContent = `PASS: ${passed} browser assertions`;
 } catch (error) {

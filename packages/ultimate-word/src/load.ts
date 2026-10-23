@@ -116,12 +116,11 @@ export async function load(
     loaded,
     pkg,
     ...(options.author === undefined ? {} : { author: options.author }),
-    setRevisionView(view) {
-      aux = withRevisionView(aux, view);
-    },
-    reflow(body) {
+    reflow(body, view) {
+      // 切换和排版共用一份候选状态；先改 aux 再排版会在失败后污染下一次编辑 / 历史重排。
+      const next = view === undefined || view === aux.revisions.view ? aux : withRevisionView(aux, view);
       const fields = scanFields(body, sink);
-      for (const hf of Object.values(aux.headerFooters))
+      for (const hf of Object.values(next.headerFooters))
         fields.push(
           ...scanFields(
             {
@@ -139,15 +138,15 @@ export async function load(
       const resolved = resolveBody(loaded.cascade, body, {
         hyperlinks: fieldHyperlinks(fields),
         cache: resolveCache,
-        revisions: aux.revisions,
+        revisions: next.revisions,
       });
       const result = layoutDocumentWithFields(resolved, fields, {
         paragraphCache,
         measurer,
         settings,
-        headerFooters: aux.headerFooters,
-        notes: aux.notes,
-        textBoxes: aux.textBoxes,
+        headerFooters: next.headerFooters,
+        notes: next.notes,
+        textBoxes: next.textBoxes,
         bookmarks: bookmarkTargets(body),
         styleNames: paragraphStyleNames(loaded.cascade.styles, body.styles),
         now,
@@ -158,8 +157,9 @@ export async function load(
       const all = sink.list();
       const diagnostics = all.slice(reported);
       reported = all.length;
+      aux = next;
       return {
-        loaded: { ...aux, body, resolved, fields, numbering },
+        loaded: { ...next, body, resolved, fields, numbering },
         layout: result.layout,
         values: result.values,
         passes: result.passes,

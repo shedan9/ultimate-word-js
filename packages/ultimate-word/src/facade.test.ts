@@ -2531,6 +2531,73 @@ describe('修订的显示', () => {
     expect(painted(d)).toMatchObject({ body: '原文删掉结尾', header: '旧眉' });
   });
 
+  it.each([
+    ['final', 'markup'],
+    ['final', 'original'],
+    ['markup', 'final'],
+    ['markup', 'original'],
+    ['original', 'final'],
+    ['original', 'markup'],
+  ] as const)('从 %s 切到 %s 重排失败后，后续编辑与历史仍使用原修订视图，也可重新切换', async (from, to) => {
+    const fonts = new FontRegistry();
+    const d = await UltimateWord.load(revisedDocx(), { fonts, revisions: from });
+    const hit = d.find('结尾')[0];
+    if (!hit) throw new Error('样本缺少结尾');
+    d.tx((t) => void t.insertText(hit.start, '历史'));
+    d.undo();
+    const layout = d.layout;
+    const before = painted(d);
+    const diagnostics = [...d.diagnostics];
+    const original = unzip(new Uint8Array(await (await d.toDocx()).arrayBuffer()));
+    const events: string[] = [];
+    d.on('layout:done', () => events.push('layout'));
+    d.on('document:change', () => events.push('change'));
+    d.on('diagnostic', () => events.push('diagnostic'));
+    // 改变字体版本迫使重排重新测量；故障发生在切换辅助部件状态之后、收下新布局之前。
+    fonts.register('切换失败回归', { kind: 'file', metrics: FALLBACK_METRICS, advance: () => 1000 });
+    const failure = new Error('修订视图重排失败');
+    const resolve = vi.spyOn(fonts, 'resolve').mockImplementation(() => {
+      throw failure;
+    });
+    try {
+      expect(() => d.setRevisionView(to)).toThrow(failure);
+    } finally {
+      resolve.mockRestore();
+    }
+    expect(d.revisionView).toBe(from);
+    expect(d.layout).toBe(layout);
+    expect(painted(d)).toEqual(before);
+    expect(d.diagnostics).toEqual(diagnostics);
+    expect(d.canUndo).toBe(false);
+    expect(d.canRedo).toBe(true);
+    expect(unzip(new Uint8Array(await (await d.toDocx()).arrayBuffer()))).toEqual(original);
+    d.setRevisionView(from);
+    expect(events).toEqual([]);
+
+    d.redo();
+    expect(d.revisionView).toBe(from);
+    expect(painted(d)).toEqual({ ...before, body: before.body.replace('结尾', '历史结尾') });
+    d.undo();
+    expect(painted(d)).toEqual(before);
+    d.tx((t) => void t.insertText(hit.start, '编辑'));
+    expect(d.revisionView).toBe(from);
+    expect(painted(d)).toEqual({ ...before, body: before.body.replace('结尾', '编辑结尾') });
+    d.undo();
+    expect(painted(d)).toEqual(before);
+    expect(d.canRedo).toBe(true);
+
+    events.length = 0;
+    d.setRevisionView(to);
+    expect(d.revisionView).toBe(to);
+    expect(events).toEqual(['layout']);
+    expect(d.canUndo).toBe(false);
+    expect(d.canRedo).toBe(true);
+    const again = await UltimateWord.load(await d.toDocx(), { fonts, revisions: to });
+    expect(painted(d)).toEqual(painted(again));
+    d.setRevisionView(from);
+    expect(painted(d)).toEqual(before);
+  });
+
   it('段落标记被删：最终状态排成一段、能在并进来的字里打字，所有标记下是两段；被删的行最终状态不占位', async () => {
     const d = await UltimateWord.load(
       revisedDocx(
