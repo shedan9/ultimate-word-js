@@ -1088,6 +1088,8 @@ function Viewer({ url }: { url: string }) {
 > - 重挂后 overlay 在新视图上重新挂，**宿主元素与其中的 React 子树不动**，气泡里打了一半的字还在
 >   （`/tests/react.html` 里有这条断言）；锚点变了走 `handle.update()`，placement / offset 变了
 >   只能摘了重挂（底层句柄只认锚点）
+>   doc / 构造选项与 overlays 可在同一次渲染更新：气泡只挂到本次提交的存活视图，避免向已销毁的旧视图挂载时报错（2026-11-11 修复）。
+>   同 key 的气泡保留宿主与草稿，新增 / 移除 key 和 placement / offset 变更均按新 props 生效；StrictMode 重放后也只保留当前视图的句柄。
 > - `useDocument(source, options)` 接受完整的 `LoadOptions`（fonts / signal / revisions / author）。
 >   `source` 按引用比：字符串 URL 天然稳定，`ArrayBuffer` / `Blob` 要调用方 memo；options 按各字段值比较，同值内联对象不重载。
 >   来源或任一选项变化会重新加载、生成新文档，旧文档的编辑不迁移；等待时上一份文档留着（不闪白）。

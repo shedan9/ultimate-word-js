@@ -1327,6 +1327,13 @@ await view.toPNG(2);     // 第 3 页（页序号从 0 起，与 scrollTo({ page
     React 浏览器新增 16 项断言（98 项），含取消后重载的文字层、定位与卸载后迟到读取。
     全量 typecheck / test（21 个任务、1919 项测试，含坐标真值闸门）、lint 与全量构建通过。
 
+- ✅ **React 同次重挂与气泡更新**（2026-11-11）：doc / 构造选项与 overlays 同次更新时，挂载 effect 已销毁旧视图，
+  渲染期的 view 状态仍是旧句柄，新增 key 或修改 placement / offset 时会向旧视图挂气泡并抛错。
+  - 调和改为读取本次提交中实际存活的视图，挂载清理时清空引用；同 key 宿主与草稿保留，新增 / 移除 key、锚点与位置选项按新 props 生效。
+  - 新增 React 4 项回归（总计 37 项）：换 doc、切 mode、改 pageGap 与 overlays 同次更新，以及 StrictMode 重放和卸载；假视图也拒绝销毁后的挂载。
+    浏览器新增 21 项断言（119 项），验证草稿、placement / offset、新文档页数与定位、ref / 通知及编辑节点清理。
+    全量 typecheck / test（21 个任务、1923 项测试，含坐标真值闸门）、lint 与全量构建通过。
+
 ### Phase 7 — 编辑态
 - ✅ **模型层文字事务地基**（2026-09-13）：`@uw/model` 的 `createTextEditor()`。
   同步 `tx` 原子提交，命令失败整批回滚；段内 `insertText` / `deleteRange` 支持跨 run 与文字片段，

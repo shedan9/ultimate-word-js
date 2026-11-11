@@ -65,7 +65,7 @@ export const UltimateWordView = forwardRef<UwView | null, UltimateWordViewProps>
   const entries = useRef(new Map<OverlayKey, OverlayEntry<ReactOverlaySpec>>()).current;
   const latest = useRef({ zoom, onViewChange });
   latest.current = { zoom, onViewChange };
-  /** 视图当前生效的 zoom —— 与 props 不同步的那一瞬（刚重挂）靠它判断要不要 setZoom */
+  /** 当前存活的视图与已生效的 zoom；重挂当次先于 view 状态更新，不能靠旧状态操作视图。 */
   const applied = useRef<{ view: UwView | null; zoom: ZoomSpec }>({ view: null, zoom });
 
   // 挂载：doc 或任一构造选项变了就 dispose 再 mount —— 依赖表就是构造选项那几项。
@@ -88,6 +88,7 @@ export const UltimateWordView = forwardRef<UwView | null, UltimateWordViewProps>
     applied.current = { view: next, zoom: options.zoom as ZoomSpec };
     setView(next);
     return () => {
+      applied.current.view = null;
       setView(null);
       next.dispose();
     };
@@ -120,9 +121,12 @@ export const UltimateWordView = forwardRef<UwView | null, UltimateWordViewProps>
   };
   const canPortal = typeof document !== 'undefined';
   useLayoutEffect(() => {
+    // 挂载 effect 已经换好视图，但本次渲染的 view 状态仍可能是已销毁的旧句柄。
+    // 同时新增气泡或改变 placement 时会立刻 mount，必须读本次提交真正存活的视图。
+    const owner = applied.current.view;
     reconcileOverlays(entries, overlays, {
-      owner: view,
-      mount: (spec, options) => (view as UwView).overlay(spec.anchor, hostFor(spec.key), options),
+      owner,
+      mount: (spec, options) => (owner as UwView).overlay(spec.anchor, hostFor(spec.key), options),
       release: (key) => hosts.delete(key),
     });
   });

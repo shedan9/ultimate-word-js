@@ -14,7 +14,7 @@ body { margin: 0; font: 14px/1.5 system-ui; }
 import { UltimateWordView, useDecoration, useDocument } from '@uw/react';
 // Phase 6 的 DoD：在任意段落右侧挂一个 React 批注气泡，滚动 / 缩放 / 重排后位置不飘。
 // 真文档 + 真视图 + 真 React；组件的接线（何时挂 / 卸）在 Vitest 里已用假视图钉死，这里只看几何
-import { createRef, createElement as h, useEffect, useState } from 'react';
+import { createRef, createElement as h, StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { UltimateWord } from 'ultimate-word';
 import fixtureUrl from '../../fidelity/fixtures/gongwen-01.docx?url';
@@ -351,6 +351,55 @@ try {
   modeRoot.unmount();
   await frame();
   assert(modeRef.current === null && modeView === null && document.querySelector('#app').childElementCount === 0, '模式回归卸载后 ref、视图、编辑节点与气泡全部清理');
+  // 构造选项与气泡经常在同一次 React 渲染更新，不能把新气泡挂到本次刚销毁的旧视图。
+  const remountDoc = await UltimateWord.load(revisionViewDocx());
+  const replacementDoc = await UltimateWord.load(revisionViewDocx(), { revisions: 'original' });
+  const batchRoot = createRoot(document.querySelector('#app'));
+  const batchRef = createRef();
+  let batchView;
+  const batchNotices = [];
+  const onBatchView = view => { batchView = view; batchNotices.push(view); };
+  const batch = { doc: remountDoc, mode: 'preview', pageGap: 24 };
+  const batchAnchor = () => batch.doc.find('原文')[0].start;
+  const keptSpec = { key: 'batch-kept', anchor: batchAnchor(), render: () => h(Bubble, { id: 'batch-kept' }) };
+  let batchOverlays = [keptSpec, { key: 'batch-old', anchor: batchAnchor(), render: () => h(Bubble, { id: 'batch-old' }) }];
+  const renderBatch = () => batchRoot.render(h(StrictMode, null, h(UltimateWordView, {
+    ...batch, ref: batchRef, className: 'viewer', virtualize: false, overlays: batchOverlays, onViewChange: onBatchView,
+  })));
+  renderBatch();
+  assert(await until(() => batchView && document.querySelector('[data-input="batch-kept"]')), 'StrictMode 重放后视图与批注气泡就绪');
+  const batchDraft = document.querySelector('[data-input="batch-kept"]');
+  setter.call(batchDraft, '跨重挂草稿'); batchDraft.dispatchEvent(new Event('input', { bubbles: true }));
+  await frame();
+  let removedId = 'batch-old';
+  for (const change of ['pageGap', 'mode', 'doc']) {
+    const previous = batchView;
+    const oldInput = document.querySelector('#app textarea');
+    if (change === 'pageGap') batch.pageGap = 8;
+    if (change === 'mode') batch.mode = 'edit';
+    if (change === 'doc') batch.doc = replacementDoc;
+    const addedId = `batch-${change}`;
+    const offset = { x: change === 'doc' ? 12 : 0, y: 6 };
+    batchOverlays = [
+      { ...keptSpec, anchor: batchAnchor(), placement: 'below', offset },
+      { key: addedId, anchor: batchAnchor(), render: () => h(Bubble, { id: addedId }) },
+    ];
+    renderBatch();
+    assert(await until(() => batchView && batchView !== previous && document.querySelector(`[data-input="${addedId}"]`)), `同次修改 ${change} 与气泡可成功重挂`);
+    await frame();
+    assert(!previous.root.isConnected && batchRef.current === batchView && batchNotices.at(-2) === null && batchNotices.at(-1) === batchView, `${change} 重挂后清理旧视图并更新 ref 与通知`);
+    assert(document.querySelector('[data-input="batch-kept"]') === batchDraft && batchDraft.value === '跨重挂草稿' && batchView.root.contains(batchDraft), `${change} 与 placement 同次更新仍保留气泡宿主与草稿`);
+    assert(document.querySelector(`[data-input="${removedId}"]`) === null && batchView.root.querySelectorAll('[data-overlay]').length === 2, `${change} 重挂只保留两个目标气泡，移除旧 key`);
+    const caret = batchView.caretRect(batchAnchor());
+    const rect = batchDraft.closest('[data-bubble]').getBoundingClientRect();
+    assert(caret && near(rect.left, caret.x + offset.x, 1.5) && near(rect.top, caret.y + caret.height + offset.y, 1.5), `${change} 重挂后 placement 与 offset 对应新文档坐标`);
+    assert(document.querySelectorAll('#app textarea').length === (batch.mode === 'edit' ? 1 : 0) && !oldInput?.isConnected, `${change} 重挂后编辑输入节点数量正确，旧节点已移除`);
+    removedId = addedId;
+  }
+  assert(batchView.root.querySelectorAll('div[data-page]').length === replacementDoc.pageCount && batchView.rectsOf(replacementDoc.find('删除')[0]).length > 0, '换 doc 后视图页数与定位来自新文档');
+  batchRoot.unmount();
+  await frame();
+  assert(batchRef.current === null && batchView === null && !batchDraft.isConnected && document.querySelector('#app').childElementCount === 0, '同次重挂回归卸载后句柄、气泡与编辑节点清理完整');
   result.textContent = `PASS: ${passed} react browser assertions`;
 } catch (error) {
   if (error !== null) result.textContent = `FAIL after ${passed}: ${error.stack}`;

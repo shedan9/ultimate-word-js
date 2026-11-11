@@ -3,7 +3,7 @@
  * 通不通到 `view.overlay()`。视图本身用假的（记下每次调用）—— 字摆在哪由 ultimate-word 的
  * 真值断言负责，这里挂真视图只会把 jsdom 没有的 getScreenCTM 之类拖进来。
  */
-import { act, createRef, useState } from 'react';
+import { act, createRef, StrictMode, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { DocRange, OverlayHandle, UwDocument, UwView, ViewOptions } from 'ultimate-word';
 import { afterEach, beforeAll, describe, expect, it, type Mock, vi } from 'vitest';
@@ -27,6 +27,7 @@ function fakeDocument() {
   const views: FakeView[] = [];
   const doc = {
     mount: vi.fn((target: Element, options: ViewOptions = {}) => {
+      let disposed = false;
       const root = document.createElement('div');
       target.replaceChildren(root);
       const view: FakeView = {
@@ -36,7 +37,10 @@ function fakeDocument() {
         overlays: [],
         decorations: [],
         setZoom: vi.fn<UwView['setZoom']>(),
-        dispose: vi.fn(() => root.remove()),
+        dispose: vi.fn(() => {
+          disposed = true;
+          root.remove();
+        }),
         locate: () => null,
         rectsOf: () => [],
         caretRect: () => null,
@@ -50,6 +54,7 @@ function fakeDocument() {
           return { update: vi.fn(), dispose: item.dispose };
         },
         overlay: (_position, element) => {
+          if (disposed) throw new Error('视图已销毁');
           if (view.overlays.some((o) => o.element === element)) throw new Error('重复挂同一个元素');
           root.append(element);
           const update = vi.fn<OverlayHandle['update']>();
@@ -243,6 +248,83 @@ describe('<UltimateWordView>', () => {
       ),
     ).toThrow(/key 重复/);
     spy.mockRestore();
+  });
+
+  it.each(['doc', 'mode', 'pageGap'] as const)(
+    '同次更新 %s 与 overlays 时只向新视图挂气泡，保留同 key 的草稿',
+    (change) => {
+      const first = fakeDocument();
+      const second = fakeDocument();
+      const ref = createRef<UwView | null>();
+      function Draft() {
+        const [text, setText] = useState('草稿');
+        return (
+          <button type="button" onClick={() => setText('已修改草稿')}>
+            {text}
+          </button>
+        );
+      }
+      const kept: ReactOverlaySpec = { key: 'kept', anchor: at('r0'), render: () => <Draft /> };
+      render(
+        <UltimateWordView
+          doc={first.doc}
+          ref={ref}
+          overlays={[kept, { key: 'removed', anchor: at('r1'), render: () => <span>待移除</span> }]}
+        />,
+      );
+      const previous = first.views[0] as FakeView;
+      const draft = previous.root.querySelector('button') as HTMLButtonElement;
+      act(() => draft.click());
+      const oldHandles = previous.overlays.map((item) => item.handle);
+      const doc = change === 'doc' ? second.doc : first.doc;
+      const options: ViewOptions =
+        change === 'mode' ? { mode: 'edit' } : change === 'pageGap' ? { pageGap: 8 } : {};
+      render(
+        <UltimateWordView
+          doc={doc}
+          ref={ref}
+          {...options}
+          overlays={[
+            { ...kept, anchor: at('r0', 3), placement: 'below', offset: { x: 0, y: 4 } },
+            { key: 'added', anchor: at('r2'), render: () => <span>新批注</span> },
+          ]}
+        />,
+      );
+      const current = (change === 'doc' ? second.views[0] : first.views[1]) as FakeView;
+      expect(previous.dispose).toHaveBeenCalledTimes(1);
+      expect(oldHandles.every((handle) => vi.mocked(handle.dispose).mock.calls.length === 1)).toBe(true);
+      expect(current.overlays).toHaveLength(2);
+      expect(current.root.querySelector('button')).toBe(draft);
+      expect(draft.textContent).toBe('已修改草稿');
+      expect(current.root.textContent).toBe('已修改草稿新批注');
+      expect(ref.current).toBe(current);
+    },
+  );
+
+  it('StrictMode 重放挂载后气泡只属于存活视图，卸载清理全部句柄', () => {
+    const { doc, views } = fakeDocument();
+    const ref = createRef<UwView | null>();
+    render(
+      <StrictMode>
+        <UltimateWordView
+          doc={doc}
+          ref={ref}
+          overlays={[{ key: 'a', anchor: at('r0'), render: () => <span>批注</span> }]}
+        />
+      </StrictMode>,
+    );
+    expect(views).toHaveLength(2);
+    const current = views[1] as FakeView;
+    expect(views[0]?.dispose).toHaveBeenCalledTimes(1);
+    expect(current.dispose).not.toHaveBeenCalled();
+    expect(current.overlays).toHaveLength(1);
+    expect(current.root.textContent).toBe('批注');
+    expect(ref.current).toBe(current);
+    const handle = current.overlays[0]?.handle;
+    act(() => root?.unmount());
+    expect(current.dispose).toHaveBeenCalledTimes(1);
+    expect(handle?.dispose).toHaveBeenCalledTimes(1);
+    expect(ref.current).toBeNull();
   });
 });
 

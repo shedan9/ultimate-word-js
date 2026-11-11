@@ -465,7 +465,12 @@ SVG 当图片用时看不见宿主 `@font-face`，本页用到的族与外部图
 用户取消由加载器拒绝后报告 error、清空 doc，Blob 读取仍须等返回；换来源 / 卸载只取消旧请求、不取消宿主 signal，迟到结果不发布。
 新增 React 7 项 + 浏览器 16 项断言，覆盖预取消、默认 / 自定义原因、同 signal 换来源、完成 / 失败 / 卸载与重载后的文字层 / 定位。
 全量 typecheck / test（21 个任务、1919 项测试，含坐标真值闸门）、lint、全量构建与 React 浏览器回归（98 项断言）通过。
-判据是接线：React Vitest 33 项（jsdom + 真实加载 / 假视图）+ `/tests/react.html` 98 项。**浏览器回归页在被遮住的
+**React 同次重挂与气泡更新**（2026-11-11）：构造选项 / doc 与 overlays 同次更新时，挂载 effect 已销毁旧视图，
+本次渲染的 view 状态却仍指向旧句柄，新增 key 或修改 placement / offset 就会抛「视图已销毁」。现在气泡调和读取本次提交的存活视图，清理时清空该引用。
+同 key 宿主与草稿保留，增删 key、锚点和位置选项按新 props 生效；StrictMode 重放与最终卸载清理句柄。
+新增 React 4 项回归，假视图也拒绝销毁后挂气泡；浏览器新增 21 项断言（119 项），覆盖三种重挂、草稿、新文档几何、ref / 通知与编辑节点清理。
+全量 typecheck / test（21 个任务、1923 项测试，含坐标真值闸门）、lint、全量构建与 React 浏览器回归通过。
+判据是接线：React Vitest 37 项（jsdom + 真实加载 / 假视图）+ `/tests/react.html` 119 项。**浏览器回归页在被遮住的
 标签页里会永远停在「正在验证…」**（`document.hidden` 下 rAF 不跑）—— 用 headless Chrome + CDP
 轮询 `#result` 跑最稳：`node apps/playground/tests/run.mjs`（七个页面 view / virtual-text / annotations /
 scroll / facade / print / react 一口气跑完，要先起调试台）。
