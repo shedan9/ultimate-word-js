@@ -30,26 +30,29 @@ export function useDocument(source: LoadSource | null | undefined, options: Load
       return;
     }
     const controller = new AbortController();
-    const combined =
-      signal === undefined
-        ? controller.signal
-        : typeof AbortSignal.any === 'function'
-          ? AbortSignal.any([controller.signal, signal])
-          : controller.signal;
+    // 外部取消也必须在没有 AbortSignal.any 的环境生效；本地清理不能反向取消宿主的信号。
+    // active 单独区分失效请求与用户取消，否则用户取消后连错误状态也被丢弃，loading 会一直为 true。
+    let active = true;
+    const abort = () => controller.abort(signal?.reason);
+    const detach = () => signal?.removeEventListener('abort', abort);
+    if (signal?.aborted) abort();
+    else signal?.addEventListener('abort', abort, { once: true });
     setState((prev) =>
       prev.loading && prev.error === null ? prev : { doc: prev.doc, loading: true, error: null },
     );
-    const load: LoadOptions = { signal: combined };
+    const load: LoadOptions = { signal: controller.signal };
     if (fonts !== undefined) load.fonts = fonts;
     // 只依赖字段值：宿主内联 options 不该反复重载，但修订视图与默认署名变化必须生效。
     if (revisions !== undefined) load.revisions = revisions;
     if (author !== undefined) load.author = author;
     UltimateWord.load(source, load).then(
       (doc) => {
-        if (!controller.signal.aborted) setState({ doc, loading: false, error: null });
+        detach();
+        if (active) setState({ doc, loading: false, error: null });
       },
       (reason: unknown) => {
-        if (controller.signal.aborted) return;
+        detach();
+        if (!active) return;
         setState({
           doc: null,
           loading: false,
@@ -57,7 +60,11 @@ export function useDocument(source: LoadSource | null | undefined, options: Load
         });
       },
     );
-    return () => controller.abort();
+    return () => {
+      active = false;
+      detach();
+      controller.abort();
+    };
   }, [source, fonts, signal, revisions, author]);
 
   return state;

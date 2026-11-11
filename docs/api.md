@@ -1093,6 +1093,9 @@ function Viewer({ url }: { url: string }) {
 >   来源或任一选项变化会重新加载、生成新文档，旧文档的编辑不迁移；等待时上一份文档留着（不闪白）。
 >   移除 revisions / author 恢复默认最终状态 / 不指定作者；上一趟没回来的用 `AbortSignal` 掐掉（只掐得住取字节那一步），
 >   即使迟到成功或失败也不覆盖新状态。revisions / author 原来被 hook 忽略，2026-11-11 补齐。
+>   外部 signal 的取消不依赖 `AbortSignal.any()`（2026-11-11 修复原先缺少该 API 时静默忽略的问题），加载前已取消也生效。
+>   取消原因由加载器拒绝后进入 `error`，非 Error 原因转成 Error，`loading` 结束且 `doc` 为 null；Blob 读取仍须等读取返回才能报告取消。
+>   来源变化或卸载只取消本次请求，不反向取消宿主 signal，迟到结果不发布；请求完成或清理时移除外部监听，成功后取消不影响已加载文档。
 > - `useDecoration` 的 range 与 options 按**值**比 —— 调用方每次渲染都会造新对象
 
 编辑态直接使用 `<UltimateWordView doc={doc} mode="edit" onViewChange={setView} />`（2026-11-11 补齐原先遗漏的 mode 传递）。

@@ -138,12 +138,12 @@ try {
   let optionState;
   let optionView;
   const onOptionView = view => { optionView = view; };
-  function OptionsProbe({ options }) {
-    const state = useDocument(optionBytes, options);
+  function OptionsProbe({ options, source }) {
+    const state = useDocument(source, options);
     useEffect(() => { optionState = state; }, [state]);
     return state.doc ? h(UltimateWordView, { doc: state.doc, className: 'viewer', onViewChange: onOptionView }) : null;
   }
-  const renderOptions = options => optionsRoot.render(h(OptionsProbe, { options }));
+  const renderOptions = (options, source = optionBytes) => optionsRoot.render(h(OptionsProbe, { options, source }));
   const loadOptions = async options => {
     const previous = optionState?.doc;
     renderOptions(options);
@@ -194,7 +194,63 @@ try {
       UltimateWord.load = realLoad;
     }
   }
-  optionsRoot.unmount();
+  // 兼容没有 AbortSignal.any 的环境：用户取消必须结束 loading，旧请求清理不能取消宿主信号。
+  const anyDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
+  const realLoad = UltimateWord.load;
+  const requestSignals = [];
+  const delayedSource = () => {
+    let finish;
+    const source = new Blob([optionBytes]);
+    source.arrayBuffer = () => new Promise(resolve => { finish = () => resolve(new Uint8Array(optionBytes).buffer); });
+    return { source, finish: () => finish(), started: () => !!finish };
+  };
+  try {
+    Object.defineProperty(AbortSignal, 'any', { configurable: true, value: undefined });
+    UltimateWord.load = (source, options) => { requestSignals.push(options.signal); return realLoad(source, options); };
+    const preAborted = new AbortController();
+    preAborted.abort(new Error('加载前取消'));
+    renderOptions({ signal: preAborted.signal });
+    assert(await until(() => optionState?.error === preAborted.signal.reason && !optionState.loading), '缺少 any 时加载前取消仍结束 loading，并保留原错误');
+    assert(optionState.doc === null && optionView === null, '已取消的加载不发布文档或视图');
+    const pending = delayedSource();
+    const external = new AbortController();
+    renderOptions({ signal: external.signal }, pending.source);
+    assert(await until(pending.started), '缺少 any 时开始异步读取文档');
+    const request = requestSignals.at(-1);
+    external.abort(new Error('用户取消读取'));
+    assert(request.aborted && request.reason === external.signal.reason, '外部取消同步转发到加载器，保留取消原因');
+    pending.finish();
+    assert(await until(() => optionState.error === external.signal.reason && !optionState.loading), '异步读取结束后报告取消错误，不滞留 loading');
+    assert(optionState.doc === null && optionView === null, '被取消的异步读取不生成可见文档');
+    const shared = new AbortController();
+    const older = delayedSource();
+    renderOptions({ signal: shared.signal }, older.source);
+    assert(await until(older.started), '同一宿主信号下旧读取开始等待');
+    const oldRequest = requestSignals.at(-1);
+    const recovered = await loadOptions({ signal: shared.signal, author: '恢复作者' });
+    assert(oldRequest.aborted && !shared.signal.aborted && !requestSignals.at(-1).aborted, '换来源只取消旧请求，不反向取消宿主或新请求');
+    older.finish();
+    await frame(); await frame();
+    assert(optionState.doc === recovered && optionState.error === null && !optionState.loading, '旧读取迟到的取消错误不覆盖恢复后的文档');
+    assert(optionView.root.textContent.includes('新增') && optionView.rectsOf(recovered.find('新增')[0]).length > 0, '取消后重新加载恢复文字层与定位');
+    shared.abort();
+    assert(!requestSignals.at(-1).aborted && optionState.doc === recovered, '加载成功后移除外部取消监听，稍后取消不影响已发布文档');
+    const unfinished = delayedSource();
+    const unmountController = new AbortController();
+    renderOptions({ signal: unmountController.signal }, unfinished.source);
+    assert(await until(unfinished.started), '卸载前异步读取仍在等待');
+    const unmountedRequest = requestSignals.at(-1);
+    optionsRoot.unmount();
+    assert(unmountedRequest.aborted && !unmountController.signal.aborted, '卸载取消请求且保留宿主信号');
+    const beforeFinish = optionState;
+    unfinished.finish();
+    await frame(); await frame();
+    assert(optionState === beforeFinish, '卸载后的迟到读取不再发布状态');
+  } finally {
+    UltimateWord.load = realLoad;
+    if (anyDescriptor) Object.defineProperty(AbortSignal, 'any', anyDescriptor);
+    else delete AbortSignal.any;
+  }
   await frame();
   assert(optionView === null && document.querySelector('#app').childElementCount === 0, '加载选项回归卸载后视图与容器清理完整');
   // mode 必须进入底层构造选项；切换只换视图，同一份可编辑文档与 React 气泡继续保留。

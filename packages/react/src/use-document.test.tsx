@@ -4,7 +4,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { LoadOptions, LoadSource, UwDocument } from 'ultimate-word';
 import { UltimateWord } from 'ultimate-word';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DocumentState } from './use-document.ts';
 import { useDocument } from './use-document.ts';
 
@@ -114,8 +114,9 @@ describe('useDocument', () => {
     const passed = load.mock.calls[0]?.[1];
     expect(passed).toMatchObject({ revisions: 'markup', author: '', fonts: options.fonts });
     expect(passed?.signal?.aborted).toBe(false);
+    // 加载完成后不再监听外部信号，避免长寿命 signal 持有已结束请求。
     controller.abort();
-    expect(passed?.signal?.aborted).toBe(true);
+    expect(passed?.signal?.aborted).toBe(false);
   });
 
   it.each(['resolve', 'reject'] as const)('选项变更取消旧加载，迟到的 %s 不覆盖新文档', async (outcome) => {
@@ -172,5 +173,97 @@ describe('useDocument', () => {
     await settle();
     expect(last?.doc).not.toBe(first);
     expect(last?.doc?.pageCount).toBe(1);
+  });
+
+  describe('没有 AbortSignal.any 的环境', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
+    beforeEach(() => {
+      Object.defineProperty(AbortSignal, 'any', { configurable: true, value: undefined });
+    });
+    afterEach(() => {
+      if (descriptor) Object.defineProperty(AbortSignal, 'any', descriptor);
+      else Reflect.deleteProperty(AbortSignal, 'any');
+    });
+
+    function delayedSource() {
+      let finish: () => void = () => {};
+      const source = new Blob();
+      Object.defineProperty(source, 'arrayBuffer', {
+        value: () =>
+          new Promise<ArrayBuffer>((resolve) => {
+            finish = () => resolve(new Uint8Array(bytes).buffer);
+          }),
+      });
+      return { source, finish: () => finish() };
+    }
+
+    it.each([undefined, new Error('用户取消读取')])(
+      '外部取消会传给加载器并结束 loading：%s',
+      async (reason) => {
+        const pending = delayedSource();
+        const controller = new AbortController();
+        const load = vi.spyOn(UltimateWord, 'load');
+        render(pending.source, { signal: controller.signal });
+        const signal = load.mock.calls[0]?.[1]?.signal;
+        controller.abort(reason);
+        expect(signal?.aborted).toBe(true);
+        expect(signal?.reason).toBe(controller.signal.reason);
+        pending.finish();
+        await settle();
+        expect(last).toEqual({ doc: null, loading: false, error: controller.signal.reason });
+      },
+    );
+
+    it('首次加载前已取消的信号保留原因，不发布文档', async () => {
+      const controller = new AbortController();
+      controller.abort(new Error('加载前已取消'));
+      render(bytes, { signal: controller.signal });
+      await settle();
+      expect(last).toEqual({ doc: null, loading: false, error: controller.signal.reason });
+    });
+
+    it('同一个外部信号换来源只取消旧请求，旧读取完成不覆盖新文档', async () => {
+      const pending = delayedSource();
+      const controller = new AbortController();
+      const load = vi.spyOn(UltimateWord, 'load');
+      render(pending.source, { signal: controller.signal });
+      const previous = load.mock.calls[0]?.[1]?.signal;
+      render(bytes, { signal: controller.signal });
+      expect(previous?.aborted).toBe(true);
+      expect(controller.signal.aborted).toBe(false);
+      expect(load.mock.calls[1]?.[1]?.signal?.aborted).toBe(false);
+      await settle();
+      const current = last;
+      expect(current?.doc?.pageCount).toBe(1);
+      pending.finish();
+      await settle();
+      expect(last).toBe(current);
+    });
+
+    it.each(['success', 'error', 'unmount'] as const)('请求 %s 后移除外部取消监听', async (outcome) => {
+      const pending = delayedSource();
+      const controller = new AbortController();
+      const add = vi.spyOn(controller.signal, 'addEventListener');
+      const remove = vi.spyOn(controller.signal, 'removeEventListener');
+      const load = vi.spyOn(UltimateWord, 'load');
+      render(outcome === 'unmount' ? pending.source : outcome === 'success' ? bytes : new Uint8Array(), {
+        signal: controller.signal,
+      });
+      const handler = add.mock.calls.find(([type]) => type === 'abort')?.[1];
+      expect(handler).toBeTypeOf('function');
+      if (outcome === 'unmount') {
+        act(() => root?.unmount());
+        root = undefined;
+        expect(load.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+        expect(controller.signal.aborted).toBe(false);
+        pending.finish();
+      }
+      await settle();
+      expect(remove.mock.calls.some(([type, listener]) => type === 'abort' && listener === handler)).toBe(
+        true,
+      );
+      if (outcome === 'success') expect(last?.doc?.pageCount).toBe(1);
+      if (outcome === 'error') expect(last?.error).toBeInstanceOf(Error);
+    });
   });
 });

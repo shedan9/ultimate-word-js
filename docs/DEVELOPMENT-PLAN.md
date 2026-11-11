@@ -1319,6 +1319,14 @@ await view.toPNG(2);     // 第 3 页（页序号从 0 起，与 scrollTo({ page
     可视验收见 [React 编辑模式与气泡草稿](./screenshots/react-edit-mode.png)。
     全量 typecheck / test（21 个任务、1912 项测试）、坐标真值闸门、lint、全量构建与 9 页浏览器回归（1099 项断言）通过。
 
+- ✅ **React 外部取消信号的兼容与清理**（2026-11-11）：`useDocument` 原来在缺少 `AbortSignal.any()` 时忽略外部 signal，连加载前已取消也会继续加载。
+  - 统一把外部取消及原因转发到本次请求的 controller，不依赖 any；请求完成或 effect 清理时摘掉外部监听。
+  - 用户取消与请求失效分别判断：用户取消由加载器拒绝后结束 loading、清空 doc 并报告错误（非 Error 原因转成 Error）；Blob 读取须等返回才能报告取消。
+    来源 / 选项变化或卸载只取消旧请求、不反向取消宿主 signal，旧成功 / 失败均不覆盖新状态；加载成功后取消宿主信号不影响文档。
+  - 判据：新增 React 7 项回归（总计 33 项），覆盖默认 / 自定义取消原因、预取消、同信号换来源、成功 / 失败 / 卸载清理；
+    React 浏览器新增 16 项断言（98 项），含取消后重载的文字层、定位与卸载后迟到读取。
+    全量 typecheck / test（21 个任务、1919 项测试，含坐标真值闸门）、lint 与全量构建通过。
+
 ### Phase 7 — 编辑态
 - ✅ **模型层文字事务地基**（2026-09-13）：`@uw/model` 的 `createTextEditor()`。
   同步 `tx` 原子提交，命令失败整批回滚；段内 `insertText` / `deleteRange` 支持跨 run 与文字片段，

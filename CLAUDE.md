@@ -460,7 +460,12 @@ SVG 当图片用时看不见宿主 `@font-face`，本页用到的族与外部图
 销毁编辑态同时取消旧输入节点全部监听者，修复旧节点迟到的输入、组合、键盘与剪贴板事件仍能改字、操作历史或覆盖剪贴板。
 新增 React 4 项 + DOM 清理 6 项回归，并扩展气泡状态断言；React 浏览器新增 28 项（82 项），截图 `docs/screenshots/react-edit-mode.png`。
 全量 typecheck / test（21 个任务、1912 项测试）、坐标真值闸门、lint、全量构建与 9 页浏览器回归（1099 项断言）通过。
-判据是接线：React Vitest 26 项（jsdom + 假视图）+ `/tests/react.html` 82 项。**浏览器回归页在被遮住的
+**React 外部取消的兼容与清理**（2026-11-11）：`useDocument` 原来在没有 `AbortSignal.any()` 时静默忽略外部 signal，预取消也失效。
+现统一转发外部取消与原因到本次请求，完成 / 清理时移除监听；用户取消与旧请求失效分别判断，避免取消后 loading 永不结束。
+用户取消由加载器拒绝后报告 error、清空 doc，Blob 读取仍须等返回；换来源 / 卸载只取消旧请求、不取消宿主 signal，迟到结果不发布。
+新增 React 7 项 + 浏览器 16 项断言，覆盖预取消、默认 / 自定义原因、同 signal 换来源、完成 / 失败 / 卸载与重载后的文字层 / 定位。
+全量 typecheck / test（21 个任务、1919 项测试，含坐标真值闸门）、lint、全量构建与 React 浏览器回归（98 项断言）通过。
+判据是接线：React Vitest 33 项（jsdom + 真实加载 / 假视图）+ `/tests/react.html` 98 项。**浏览器回归页在被遮住的
 标签页里会永远停在「正在验证…」**（`document.hidden` 下 rAF 不跑）—— 用 headless Chrome + CDP
 轮询 `#result` 跑最稳：`node apps/playground/tests/run.mjs`（七个页面 view / virtual-text / annotations /
 scroll / facade / print / react 一口气跑完，要先起调试台）。
