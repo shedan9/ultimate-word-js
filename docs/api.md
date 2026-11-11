@@ -84,6 +84,8 @@ interface LoadOptions {
   signal?: AbortSignal;
   /** 修订显示哪一版，默认 'final'（见下面 §3.1） */
   revisions?: 'final' | 'markup' | 'original';
+  /** 新建批注 / 回复的默认署名；缺席时不指定作者（见 §3.2） */
+  author?: string;
 }
 ```
 
@@ -1086,8 +1088,11 @@ function Viewer({ url }: { url: string }) {
 > - 重挂后 overlay 在新视图上重新挂，**宿主元素与其中的 React 子树不动**，气泡里打了一半的字还在
 >   （`/tests/react.html` 里有这条断言）；锚点变了走 `handle.update()`，placement / offset 变了
 >   只能摘了重挂（底层句柄只认锚点）
-> - `useDocument` 的 `source` 按引用比：字符串 URL 天然稳定，`ArrayBuffer` / `Blob` 要调用方 memo。
->   换来源时上一份文档留着（不闪白），上一趟没回来的用 `AbortSignal` 掐掉（只掐得住取字节那一步）
+> - `useDocument(source, options)` 接受完整的 `LoadOptions`（fonts / signal / revisions / author）。
+>   `source` 按引用比：字符串 URL 天然稳定，`ArrayBuffer` / `Blob` 要调用方 memo；options 按各字段值比较，同值内联对象不重载。
+>   来源或任一选项变化会重新加载、生成新文档，旧文档的编辑不迁移；等待时上一份文档留着（不闪白）。
+>   移除 revisions / author 恢复默认最终状态 / 不指定作者；上一趟没回来的用 `AbortSignal` 掐掉（只掐得住取字节那一步），
+>   即使迟到成功或失败也不覆盖新状态。revisions / author 原来被 hook 忽略，2026-11-11 补齐。
 > - `useDecoration` 的 range 与 options 按**值**比 —— 调用方每次渲染都会造新对象
 
 ---

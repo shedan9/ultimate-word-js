@@ -16,7 +16,9 @@ import { UltimateWordView, useDecoration, useDocument } from '@uw/react';
 // 真文档 + 真视图 + 真 React；组件的接线（何时挂 / 卸）在 Vitest 里已用假视图钉死，这里只看几何
 import { createElement as h, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { UltimateWord } from 'ultimate-word';
 import fixtureUrl from '../../fidelity/fixtures/gongwen-01.docx?url';
+import { revisionViewDocx } from './list-fixture.ts';
 
 const result = document.querySelector('#result');
 let passed = 0;
@@ -130,6 +132,71 @@ try {
   await frame();
   assert(document.querySelector('#app').childElementCount === 0 && bubble('a') === null, '卸载后容器为空、气泡也没了');
   assert(window.__view === null, '卸载后 onViewChange 报了 null');
+  // 加载选项同门面一致：同一来源换修订视图或默认作者，也要换成新文档。
+  const optionBytes = revisionViewDocx();
+  const optionsRoot = createRoot(document.querySelector('#app'));
+  let optionState;
+  let optionView;
+  const onOptionView = view => { optionView = view; };
+  function OptionsProbe({ options }) {
+    const state = useDocument(optionBytes, options);
+    useEffect(() => { optionState = state; }, [state]);
+    return state.doc ? h(UltimateWordView, { doc: state.doc, className: 'viewer', onViewChange: onOptionView }) : null;
+  }
+  const renderOptions = options => optionsRoot.render(h(OptionsProbe, { options }));
+  const loadOptions = async options => {
+    const previous = optionState?.doc;
+    renderOptions(options);
+    assert(await until(() => optionState && !optionState.loading && optionState.doc !== previous && optionView, 10000), '加载选项变化后新文档与视图就绪');
+    assert(optionState.error === null, '加载选项没有产生错误');
+    return optionState.doc;
+  };
+  const comment = d => {
+    const id = d.addComment(d.find('原文')[0], 'React 默认署名');
+    return d.comments().find(item => item.id === id);
+  };
+  const original = await loadOptions({ revisions: 'original', author: '张三' });
+  assert(original.revisionView === 'original' && original.pageCount === 2 && original.find('新增').length === 0 && original.find('删除').length === 1, 'React 首次加载采用原始修订视图与对应分页');
+  assert(optionView.root.textContent.includes('删除') && !optionView.root.textContent.includes('新增') && optionView.rectsOf(original.find('删除')[0]).length > 0, '原始视图的文字层与定位对应可见修订');
+  assert(comment(original).author === '张三', 'React 加载的文档新建批注使用默认作者');
+  const exported = await UltimateWord.load(await original.toDocx(), { revisions: 'original' });
+  assert(exported.comments()[0].author === '张三' && exported.comments()[0].initials === '张', '默认署名与首字写入 DOCX，回读后保留');
+  const firstView = optionView;
+  renderOptions({ revisions: 'original', author: '张三' });
+  await frame(); await frame();
+  assert(optionState.doc === original && optionView === firstView, '同值内联加载选项不重新加载、不重挂视图');
+  const markup = await loadOptions({ revisions: 'markup', author: '张三' });
+  assert(markup.revisionView === 'markup' && markup.find('新增').length === 1 && markup.find('删除').length === 1, '同来源仅改变 revisions 也重新加载并显示全部修订');
+  assert(optionView !== firstView && !firstView.root.isConnected && optionView.root.textContent.includes('新增'), '选项重载后旧视图卸载，新文字层显示目标修订状态');
+  assert(comment(markup).author === '张三', '仅改变修订视图仍保留默认署名');
+  const renamed = await loadOptions({ revisions: 'markup', author: '李四' });
+  assert(renamed.revisionView === 'markup' && comment(renamed).author === '李四' && renamed.comments().length === 1, '同来源仅改变 author 也重载，新批注不沿用旧作者与旧内容');
+  const defaults = await loadOptions({});
+  assert(defaults.revisionView === 'final' && defaults.pageCount === 1 && defaults.find('删除').length === 0 && defaults.find('新增').length === 1, '移除修订选项恢复最终状态与一页布局');
+  assert(comment(defaults).author === undefined && !optionView.root.textContent.includes('删除'), '移除作者选项恢复默认署名，文字层不残留旧修订');
+  for (const outcome of ['resolve', 'reject']) {
+    const realLoad = UltimateWord.load;
+    const lateDoc = await realLoad(optionBytes, { revisions: 'original', author: '迟到作者' });
+    let finish;
+    let pendingSignal;
+    try {
+      UltimateWord.load = (source, options) => options.author === '迟到作者'
+        ? new Promise((resolve, reject) => { pendingSignal = options.signal; finish = () => outcome === 'resolve' ? resolve(lateDoc) : reject(new Error('迟到错误')); })
+        : realLoad(source, options);
+      renderOptions({ revisions: 'original', author: '迟到作者' });
+      assert(await until(() => pendingSignal), '开始等待旧选项加载');
+      const newest = await loadOptions({ revisions: 'markup', author: '最新作者' });
+      assert(pendingSignal.aborted && newest.revisionView === 'markup' && comment(newest).author === '最新作者', '新选项取消旧加载，并使用最新修订模式与署名');
+      finish();
+      await frame(); await frame();
+      assert(optionState.doc === newest && optionState.error === null && !optionState.loading, `旧加载迟到的 ${outcome} 不覆盖新状态`);
+    } finally {
+      UltimateWord.load = realLoad;
+    }
+  }
+  optionsRoot.unmount();
+  await frame();
+  assert(optionView === null && document.querySelector('#app').childElementCount === 0, '加载选项回归卸载后视图与容器清理完整');
   result.textContent = `PASS: ${passed} react browser assertions`;
 } catch (error) {
   if (error !== null) result.textContent = `FAIL after ${passed}: ${error.stack}`;

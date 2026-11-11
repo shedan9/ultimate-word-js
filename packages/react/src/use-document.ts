@@ -1,7 +1,7 @@
 /**
  * `useDocument(source, options)` —— `UltimateWord.load()` 的 hook 形态。
  *
- * 来源一换就重新加载，上一趟还没回来的用 `AbortSignal` 掐掉（只掐得住取字节那一步，
+ * 来源或加载选项变化就重新加载，上一趟还没回来的用 `AbortSignal` 掐掉（只掐得住取字节那一步，
  * 排版是同步的 —— `LoadOptions.signal` 的注释说的就是这个）；掐掉的那趟即使回来了也不写状态。
  * `source` 按引用比：字符串 URL 天然稳定，`ArrayBuffer` / `Blob` 要调用方自己 memo，
  * 每次渲染新造一个就会无限重载 —— 与 `useEffect` 的依赖规则一致，不另做深比较。
@@ -19,7 +19,7 @@ export interface DocumentState {
 const IDLE: DocumentState = { doc: null, loading: false, error: null };
 
 export function useDocument(source: LoadSource | null | undefined, options: LoadOptions = {}): DocumentState {
-  const { fonts, signal } = options;
+  const { fonts, signal, revisions, author } = options;
   const [state, setState] = useState<DocumentState>(() =>
     source === null || source === undefined ? IDLE : { doc: null, loading: true, error: null },
   );
@@ -41,6 +41,9 @@ export function useDocument(source: LoadSource | null | undefined, options: Load
     );
     const load: LoadOptions = { signal: combined };
     if (fonts !== undefined) load.fonts = fonts;
+    // 只依赖字段值：宿主内联 options 不该反复重载，但修订视图与默认署名变化必须生效。
+    if (revisions !== undefined) load.revisions = revisions;
+    if (author !== undefined) load.author = author;
     UltimateWord.load(source, load).then(
       (doc) => {
         if (!controller.signal.aborted) setState({ doc, loading: false, error: null });
@@ -55,7 +58,7 @@ export function useDocument(source: LoadSource | null | undefined, options: Load
       },
     );
     return () => controller.abort();
-  }, [source, fonts, signal]);
+  }, [source, fonts, signal, revisions, author]);
 
   return state;
 }

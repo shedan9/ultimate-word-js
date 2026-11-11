@@ -450,7 +450,12 @@ SVG 当图片用时看不见宿主 `@font-face`，本页用到的族与外部图
 摘了重挂；③ 气泡的宿主 `<div>` 在**渲染期**按 key 造（portal 要在同一趟渲染里拿到目标节点），
 视图重挂后宿主元素与其中的 React 子树不动 —— 输入到一半的字还在；④ `useDocument` 的 `source`
 按引用比（`ArrayBuffer` 要调用方 memo），`useDecoration` 的 range / options 按值比。
-判据是接线：Vitest 14 项（jsdom + 假视图）+ `/tests/react.html` 24 项。**浏览器回归页在被遮住的
+**React 加载选项补齐**（2026-11-11）：`useDocument` 原来只传 fonts / signal，遗漏 revisions 与 author，
+导致 React 默认显示最终状态、批注不带默认署名。现在完整传递，并按字段值响应变化；同值内联对象不重载，
+改变或移除选项会和换来源一样重新加载、等待时保留上一份文档，取消旧请求且不接受其迟到成功 / 失败。
+新增 8 项回归覆盖修订视图、批注与导出、默认值恢复、同值选项与请求竞态；React 浏览器新增 30 项断言（54 项），含真实修订分页、文字层、定位和视图重挂。
+全量 typecheck / test（21 个任务、1902 项测试）、坐标真值闸门、lint、全量构建与 9 页浏览器回归（1071 项断言）通过。
+判据是接线：Vitest 22 项（jsdom + 假视图）+ `/tests/react.html` 54 项。**浏览器回归页在被遮住的
 标签页里会永远停在「正在验证…」**（`document.hidden` 下 rAF 不跑）—— 用 headless Chrome + CDP
 轮询 `#result` 跑最稳：`node apps/playground/tests/run.mjs`（七个页面 view / virtual-text / annotations /
 scroll / facade / print / react 一口气跑完，要先起调试台）。
