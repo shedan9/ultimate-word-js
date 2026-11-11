@@ -14,7 +14,7 @@ body { margin: 0; font: 14px/1.5 system-ui; }
 import { UltimateWordView, useDecoration, useDocument } from '@uw/react';
 // Phase 6 的 DoD：在任意段落右侧挂一个 React 批注气泡，滚动 / 缩放 / 重排后位置不飘。
 // 真文档 + 真视图 + 真 React；组件的接线（何时挂 / 卸）在 Vitest 里已用假视图钉死，这里只看几何
-import { createElement as h, useEffect, useState } from 'react';
+import { createRef, createElement as h, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { UltimateWord } from 'ultimate-word';
 import fixtureUrl from '../../fidelity/fixtures/gongwen-01.docx?url';
@@ -197,6 +197,104 @@ try {
   optionsRoot.unmount();
   await frame();
   assert(optionView === null && document.querySelector('#app').childElementCount === 0, '加载选项回归卸载后视图与容器清理完整');
+  // mode 必须进入底层构造选项；切换只换视图，同一份可编辑文档与 React 气泡继续保留。
+  const modeDoc = await UltimateWord.load(revisionViewDocx());
+  const modeRoot = createRoot(document.querySelector('#app'));
+  const modeRef = createRef();
+  const anchor = modeDoc.find('原文')[0].start;
+  const modeOverlays = [{ key: 'mode', anchor, render: () => h(Bubble, { id: 'mode' }) }];
+  const modeNotices = [];
+  let modeView;
+  const onModeView = view => { modeView = view; modeNotices.push(view); };
+  const changes = [];
+  const changeSub = modeDoc.on('document:change', ({ source }) => changes.push(source));
+  const renderMode = (mode, zoom = 1) => modeRoot.render(h(UltimateWordView, {
+    doc: modeDoc, ref: modeRef, className: 'viewer', virtualize: false, zoom,
+    overlays: modeOverlays, onViewChange: onModeView, ...(mode === undefined ? {} : { mode }),
+  }));
+  const type = (input, text) => input.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: text, bubbles: true, cancelable: true }));
+  const key = (input, shiftKey = false) => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, shiftKey, bubbles: true, cancelable: true }));
+  renderMode('edit');
+  assert(await until(() => modeView), 'React mode=edit 挂出编辑视图');
+  const editView = modeView;
+  const editInput = document.querySelector('#app textarea[data-uw-input]');
+  assert(editInput && document.querySelectorAll('#app textarea').length === 1 && modeRef.current === editView, '编辑模式创建唯一输入节点，ref 与回调拿到同一视图');
+  assert(editView.root.querySelector('[data-text-layer="true"]') === null, '编辑模式默认关闭原生划词层');
+  const selectionChanges = [];
+  const selectionSub = editView.on('selection:change', range => selectionChanges.push(range));
+  const firstCaret = modeDoc.find('原文')[0].end;
+  editView.select({ start: firstCaret, end: firstCaret });
+  editView.focus();
+  assert(document.activeElement === editInput && selectionChanges.length === 1, 'React 编辑视图支持选择、聚焦与原生选区事件');
+  type(editInput, 'React输入');
+  assert(modeDoc.find('React输入').length === 1 && changes.join() === 'tx' && modeDoc.canUndo, 'beforeinput 提交到同一份文档，只产生一次变更');
+  assert(editView.root.textContent.includes('React输入') && editView.rectsOf(modeDoc.find('React输入')[0]).length > 0, 'React 输入同步绘制与定位');
+  key(editInput);
+  assert(modeDoc.find('React输入').length === 0 && modeDoc.canRedo && changes.join() === 'tx,undo', 'React 编辑态键盘撤销恢复原文');
+  key(editInput, true);
+  assert(modeDoc.find('React输入').length === 1 && changes.join() === 'tx,undo,redo', 'React 编辑态键盘重做恢复输入');
+  editInput.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+  editInput.dispatchEvent(new CompositionEvent('compositionend', { data: '中文', bubbles: true }));
+  assert(modeDoc.find('中文').length === 1 && changes.join() === 'tx,undo,redo,tx', 'React 组合输入只提交一次');
+  const bubbleInput = document.querySelector('[data-input="mode"]');
+  setter.call(bubbleInput, '备注草稿'); bubbleInput.dispatchEvent(new Event('input', { bubbles: true }));
+  const selected = JSON.stringify(editView.selection);
+  renderMode('edit', 1.5);
+  await frame(); await frame();
+  assert(modeView === editView && document.querySelector('#app textarea') === editInput && editView.zoom === 1.5, '同模式缩放保留视图与常驻输入节点');
+  assert(JSON.stringify(editView.selection) === selected && changes.length === 4, '同模式重渲染不改选区、文档或历史');
+  editInput.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+  renderMode('preview', 1.5);
+  assert(await until(() => modeView && modeView !== editView), '切换 preview 重挂成预览视图');
+  assert(!editInput.isConnected && document.querySelector('#app textarea') === null && document.querySelector('#app [role="status"]') === null, '切回预览移除旧输入与编辑状态节点');
+  assert(modeRef.current === modeView && modeNotices.at(-2) === null && modeNotices.at(-1) === modeView, '模式重挂更新 ref，并先通知 null 再通知新视图');
+  assert(modeView.selection === undefined && modeView.root.querySelector('[data-text-layer="true"]') !== null, '预览态恢复原生划词层，不保留旧编辑选区');
+  assert(document.querySelector('[data-input="mode"]') === bubbleInput && bubbleInput.value === '备注草稿' && modeView.root.contains(bubbleInput), '模式切换保留 React 气泡输入框与草稿');
+  const layoutBeforeLate = modeDoc.layout;
+  const clipboard = new DataTransfer();
+  clipboard.setData('text/plain', '粘贴文字');
+  const lateEvents = [
+    new CompositionEvent('compositionend', { data: '迟到组合', bubbles: true, cancelable: true }),
+    new InputEvent('beforeinput', { inputType: 'insertText', data: '旧输入', bubbles: true, cancelable: true }),
+    new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true }),
+    ...['paste', 'copy', 'cut'].map(type => new ClipboardEvent(type, { clipboardData: clipboard, bubbles: true, cancelable: true })),
+  ];
+  for (const event of lateEvents) editInput.dispatchEvent(event);
+  assert(changes.length === 4 && modeDoc.layout === layoutBeforeLate && modeDoc.find('迟到组合').length === 0 && modeDoc.find('旧输入').length === 0, '旧输入框迟到的输入、组合和剪贴板事件不再修改文档或历史');
+  assert(lateEvents.every(event => !event.defaultPrevented) && clipboard.getData('text/plain') === '粘贴文字', '旧监听者不再接管事件或覆盖剪贴板数据');
+  assert(modeDoc.find('React输入').length === 1 && modeDoc.find('中文').length === 1 && modeDoc.canUndo, '切回预览保留已提交输入与撤销历史');
+  const previewView = modeView;
+  renderMode('edit', 1.5);
+  assert(await until(() => modeView && modeView !== previewView), '再次进入 edit 创建新编辑视图');
+  const nextInput = document.querySelector('#app textarea');
+  const resetStart = modeDoc.rangeOf(modeDoc.query('paragraph')[0]).start;
+  assert(nextInput && nextInput !== editInput && document.querySelectorAll('#app textarea').length === 1 && modeDoc.compare(modeView.selection.start, resetStart) === 0 && modeDoc.compare(modeView.selection.end, resetStart) === 0, '重新编辑只保留一个新输入节点，光标回到文档开头');
+  const insertAt = modeDoc.find('原文')[0].start;
+  modeView.select({ start: insertAt, end: insertAt });
+  type(nextInput, '继续编辑');
+  assert(modeDoc.find('继续编辑').length === 1 && changes.length === 5, '切换后仍可输入，旧视图不会重复提交');
+  key(nextInput);
+  assert(modeDoc.find('继续编辑').length === 0 && modeDoc.find('React输入').length === 1 && modeDoc.find('中文').length === 1, '新会话撤销只撤销新输入，保留之前提交');
+  key(nextInput, true);
+  assert(modeDoc.find('继续编辑').length === 1 && changes.length === 7, '新会话重做正常，事件没有重复');
+  // `?editing` 留下真实编辑状态，供截图验收；常规回归继续验证恢复默认模式与卸载。
+  if (new URLSearchParams(location.search).has('editing')) {
+    renderMode('edit'); await frame(); await frame();
+    modeView.select(modeDoc.find('继续编辑')[0]); modeView.focus();
+    result.textContent = `KEEP: ${passed} 项通过，React 编辑模式与气泡草稿`;
+    throw null;
+  }
+  const reentered = modeView;
+  renderMode(undefined, 1.5);
+  assert(await until(() => modeView && modeView !== reentered), '移除 mode 恢复默认预览视图');
+  assert(!nextInput.isConnected && document.querySelector('#app textarea') === null && modeDoc.find('继续编辑').length === 1 && changes.length === 7, '默认预览保留文档内容，清理新会话输入且不记历史');
+  const roundtrip = await UltimateWord.load(await modeDoc.toDocx());
+  assert(['React输入', '中文', '继续编辑'].every(text => roundtrip.find(text).length === 1) && roundtrip.pageCount === modeDoc.pageCount, '编辑与模式切换后的文字、分页可导出回读');
+  selectionSub.dispose();
+  changeSub.dispose();
+  modeRoot.unmount();
+  await frame();
+  assert(modeRef.current === null && modeView === null && document.querySelector('#app').childElementCount === 0, '模式回归卸载后 ref、视图、编辑节点与气泡全部清理');
   result.textContent = `PASS: ${passed} react browser assertions`;
 } catch (error) {
   if (error !== null) result.textContent = `FAIL after ${passed}: ${error.stack}`;

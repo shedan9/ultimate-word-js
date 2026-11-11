@@ -75,6 +75,9 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
     ...(binding.styles === undefined ? {} : { styles: binding.styles }),
   });
   const input = doc.createElement('textarea');
+  // 切回预览后，旧输入节点仍可能被宿主持有或收到迟到的组合 / 剪贴板事件；移除 DOM 不会移除监听者。
+  const inputEvents = new (win?.AbortController ?? AbortController)();
+  const inputEventOptions = { signal: inputEvents.signal };
   input.dataset.uwInput = 'true';
   input.setAttribute('aria-label', '文档编辑输入');
   input.setAttribute('aria-multiline', 'true');
@@ -441,18 +444,22 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
     state.apply(change);
     refresh();
   });
-  input.addEventListener('input', () => {
-    if (!state.composing) input.value = '';
-  });
-  input.addEventListener('beforeinput', beforeInput);
-  input.addEventListener('keydown', keydown);
-  input.addEventListener('compositionstart', compositionStart);
-  input.addEventListener('compositionend', compositionEnd);
-  input.addEventListener('paste', paste);
-  input.addEventListener('copy', clipboard);
-  input.addEventListener('cut', clipboard);
-  input.addEventListener('focus', refresh);
-  input.addEventListener('blur', blur);
+  input.addEventListener(
+    'input',
+    () => {
+      if (!state.composing) input.value = '';
+    },
+    inputEventOptions,
+  );
+  input.addEventListener('beforeinput', beforeInput, inputEventOptions);
+  input.addEventListener('keydown', keydown, inputEventOptions);
+  input.addEventListener('compositionstart', compositionStart, inputEventOptions);
+  input.addEventListener('compositionend', compositionEnd, inputEventOptions);
+  input.addEventListener('paste', paste, inputEventOptions);
+  input.addEventListener('copy', clipboard, inputEventOptions);
+  input.addEventListener('cut', clipboard, inputEventOptions);
+  input.addEventListener('focus', refresh, inputEventOptions);
+  input.addEventListener('blur', blur, inputEventOptions);
   container.addEventListener('pointerdown', pointer as EventListener);
   container.addEventListener('dblclick', doubleClick as EventListener);
   doc.addEventListener('pointermove', pointerMove);
@@ -480,6 +487,7 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
     },
     dispose() {
       dead = true;
+      inputEvents.abort();
       selectionListeners.clear();
       clearTimeout(timer);
       unsubscribe();

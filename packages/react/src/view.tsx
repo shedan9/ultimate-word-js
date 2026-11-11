@@ -7,7 +7,7 @@
  * 批注气泡因此是**正常的 React 子树**（context、事件、state 都在），视图只负责它摆在哪。
  *
  * 三处容易搞反：
- * - **构造选项变了就重挂**（`pageGap` / `textLayer` / `virtualize` / … / `fontFamily`）：
+ * - **构造选项变了就重挂**（`mode` / `pageGap` / `textLayer` / `virtualize` / … / `fontFamily`）：
  *   `UwView` 没有 `update()`（api.md §5），门面自己就是 dispose 再 mount。所以 `fontFamily`
  *   要给稳定引用（`useCallback`），内联箭头函数会让每次渲染都重挂
  * - overlay 的宿主元素在**渲染期**造（按 key 缓存）而不是在 effect 里：portal 要在同一趟渲染里
@@ -48,6 +48,7 @@ export const UltimateWordView = forwardRef<UwView | null, UltimateWordViewProps>
     className,
     style,
     onViewChange,
+    mode,
     pageGap,
     textLayer,
     virtualize,
@@ -74,6 +75,7 @@ export const UltimateWordView = forwardRef<UwView | null, UltimateWordViewProps>
     if (el === null) return;
     // exactOptionalPropertyTypes：可选字段要么不写，要么给确定值
     const options: ViewOptions = { zoom: latest.current.zoom };
+    if (mode !== undefined) options.mode = mode;
     if (pageGap !== undefined) options.pageGap = pageGap;
     if (textLayer !== undefined) options.textLayer = textLayer;
     if (virtualize !== undefined) options.virtualize = virtualize;
@@ -89,7 +91,7 @@ export const UltimateWordView = forwardRef<UwView | null, UltimateWordViewProps>
       setView(null);
       next.dispose();
     };
-  }, [doc, pageGap, textLayer, virtualize, overscan, classPrefix, fontFamily, debug, printMode]);
+  }, [doc, mode, pageGap, textLayer, virtualize, overscan, classPrefix, fontFamily, debug, printMode]);
 
   // zoom：只改页面尺寸。挂载那一趟已经带上了当时的 zoom（记在 applied 里），这里只管之后的变化
   useLayoutEffect(() => {

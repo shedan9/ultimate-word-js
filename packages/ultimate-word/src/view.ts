@@ -42,7 +42,7 @@ export interface ViewOptions {
   zoom?: ZoomSpec;
   /** 页间距，CSS px，默认 24 */
   pageGap?: number;
-  /** 原生可选文本层（Ctrl+F / 划词复制 / 屏幕阅读器），默认开 */
+  /** 原生可选文本层（Ctrl+F / 划词复制 / 屏幕阅读器），预览默认开、编辑默认关 */
   textLayer?: boolean;
   /** 只绘制可见页前后几页，默认开；没有 `IntersectionObserver` 时退回全量绘制 */
   virtualize?: boolean;

@@ -87,6 +87,64 @@ afterEach(() => {
 });
 
 describe('<UltimateWordView>', () => {
+  it.each(['preview', 'edit'] as const)('完整传递构造选项，包含模式 %s', (mode) => {
+    const { doc, views } = fakeDocument();
+    const options: ViewOptions = {
+      mode,
+      zoom: 'fit-width',
+      pageGap: 8,
+      textLayer: true,
+      virtualize: false,
+      overscan: 0,
+      classPrefix: 'react-view',
+      fontFamily: (family) => family,
+      debug: false,
+      printMode: 'inline',
+    };
+    render(<UltimateWordView doc={doc} {...options} />);
+    expect(doc.mount).toHaveBeenCalledTimes(1);
+    expect(views[0]?.options).toEqual(options);
+  });
+
+  it('预览与编辑模式切换会清理旧视图，ref 与通知更新，移除 mode 恢复默认模式', () => {
+    const { doc, views } = fakeDocument();
+    const ref = createRef<UwView | null>();
+    const onViewChange = vi.fn();
+    render(<UltimateWordView doc={doc} ref={ref} onViewChange={onViewChange} zoom={1.5} />);
+    const notifications: (UwView | null | undefined)[] = [views[0]];
+    for (const mode of ['edit', 'preview', 'edit', undefined] as const) {
+      const previous = views.at(-1);
+      const count = views.length;
+      const options = mode === undefined ? {} : { mode };
+      render(<UltimateWordView doc={doc} ref={ref} onViewChange={onViewChange} zoom={1.5} {...options} />);
+      expect(views).toHaveLength(count + 1);
+      const current = views.at(-1);
+      expect(previous?.dispose).toHaveBeenCalledTimes(1);
+      expect(current?.options).toEqual({ zoom: 1.5, ...options });
+      expect(current?.setZoom).not.toHaveBeenCalled();
+      expect(ref.current).toBe(current);
+      notifications.push(null, current);
+      expect(onViewChange.mock.calls.map(([value]) => value)).toEqual(notifications);
+    }
+    act(() => root?.unmount());
+    expect(views.at(-1)?.dispose).toHaveBeenCalledTimes(1);
+    expect(ref.current).toBeNull();
+    expect(onViewChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it('编辑模式未变时重渲染不重挂，缩放仍只更新当前视图', () => {
+    const { doc, views } = fakeDocument();
+    const ref = createRef<UwView | null>();
+    render(<UltimateWordView doc={doc} mode="edit" ref={ref} />);
+    const first = ref.current;
+    render(<UltimateWordView doc={doc} mode="edit" ref={ref} className="updated" />);
+    render(<UltimateWordView doc={doc} mode="edit" ref={ref} zoom={1.5} />);
+    expect(doc.mount).toHaveBeenCalledTimes(1);
+    expect(ref.current).toBe(first);
+    expect(views[0]?.dispose).not.toHaveBeenCalled();
+    expect(views[0]?.setZoom).toHaveBeenCalledExactlyOnceWith(1.5);
+  });
+
   it('挂上就 mount 进容器，卸下就 dispose；ref 与 onViewChange 拿到的是同一个视图', () => {
     const { doc, views } = fakeDocument();
     const ref = createRef<UwView | null>();
@@ -159,6 +217,15 @@ describe('<UltimateWordView>', () => {
     expect(next.overlays).toHaveLength(1);
     expect(next.root.querySelector('[data-label="a"]')).toBe(button);
     expect(button.textContent).toBe('a:1');
+    // 模式也是构造选项，切换时只换底层视图，不应卸载宿主中的 React 子树。
+    for (const mode of ['edit', 'preview'] as const) {
+      render(<UltimateWordView doc={doc} overlays={specs(5, ['a'])} pageGap={0} mode={mode} />);
+      const current = views.at(-1) as FakeView;
+      expect(current.options.mode).toBe(mode);
+      expect(current.overlays).toHaveLength(1);
+      expect(current.root.querySelector('[data-label="a"]')).toBe(button);
+      expect(button.textContent).toBe('a:1');
+    }
   });
 
   it('overlay 的 key 重复直接抛', () => {

@@ -1081,8 +1081,8 @@ function Viewer({ url }: { url: string }) {
 气泡是 portal 进宿主元素的**正常 React 子树** —— context、事件、state 都在，视图只管它摆在哪。
 
 > **已实现的与原方案的差别**：
-> - 没有 `onSelectionChange`：选区是 Phase 7 的事，不摆不生效的 prop
-> - **构造选项变了就重挂**（`pageGap` / `textLayer` / `virtualize` / `overscan` / `classPrefix` /
+> - 选区事件通过 `ref` 或 `onViewChange` 拿到视图后，调用 `view.on('selection:change', listener)` 订阅；没有单独的 `onSelectionChange` prop。
+> - **构造选项变了就重挂**（`mode` / `pageGap` / `textLayer` / `virtualize` / `overscan` / `classPrefix` /
 >   `fontFamily` / `debug` / `printMode`）—— `UwView` 没有 `update()`（§5）。所以 `fontFamily`
 >   要给稳定引用（`useCallback`）；`zoom` 单独走 `setZoom()`，改它不重挂
 > - 重挂后 overlay 在新视图上重新挂，**宿主元素与其中的 React 子树不动**，气泡里打了一半的字还在
@@ -1094,6 +1094,13 @@ function Viewer({ url }: { url: string }) {
 >   移除 revisions / author 恢复默认最终状态 / 不指定作者；上一趟没回来的用 `AbortSignal` 掐掉（只掐得住取字节那一步），
 >   即使迟到成功或失败也不覆盖新状态。revisions / author 原来被 hook 忽略，2026-11-11 补齐。
 > - `useDecoration` 的 range 与 options 按**值**比 —— 调用方每次渲染都会造新对象
+
+编辑态直接使用 `<UltimateWordView doc={doc} mode="edit" onViewChange={setView} />`（2026-11-11 补齐原先遗漏的 mode 传递）。
+`mode` 默认 `'preview'`；切换模式会销毁旧视图再挂新视图，`ref` 和 `onViewChange` 跟着更新。
+同一个 `doc` 的已提交内容与撤销 / 重做历史保留，React 气泡子树与草稿保留；新编辑视图的光标从文档开头开始，旧选区不迁移。
+同模式重渲染或缩放保留当前输入节点与选区。`textLayer` 未指定时预览开启、编辑关闭，显式值仍优先。
+销毁编辑视图时同时移除输入节点的全部监听者，旧节点迟到的输入 / 组合 / 剪贴板事件不会再修改文档、操作历史或覆盖剪贴板。
+可视验收见 [React 编辑模式与气泡草稿](./screenshots/react-edit-mode.png)。
 
 ---
 

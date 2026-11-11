@@ -455,7 +455,12 @@ SVG 当图片用时看不见宿主 `@font-face`，本页用到的族与外部图
 改变或移除选项会和换来源一样重新加载、等待时保留上一份文档，取消旧请求且不接受其迟到成功 / 失败。
 新增 8 项回归覆盖修订视图、批注与导出、默认值恢复、同值选项与请求竞态；React 浏览器新增 30 项断言（54 项），含真实修订分页、文字层、定位和视图重挂。
 全量 typecheck / test（21 个任务、1902 项测试）、坐标真值闸门、lint、全量构建与 9 页浏览器回归（1071 项断言）通过。
-判据是接线：Vitest 22 项（jsdom + 假视图）+ `/tests/react.html` 54 项。**浏览器回归页在被遮住的
+**React 编辑模式补齐**（2026-11-11）：`UltimateWordView` 原先遗漏 mode，指定 edit 实际仍是预览；现完整传递并在模式变化时重挂。
+同 doc 的内容、历史和 React 气泡草稿保留，新编辑光标回到文档开头；同模式重渲染 / 缩放保留输入节点与选区。
+销毁编辑态同时取消旧输入节点全部监听者，修复旧节点迟到的输入、组合、键盘与剪贴板事件仍能改字、操作历史或覆盖剪贴板。
+新增 React 4 项 + DOM 清理 6 项回归，并扩展气泡状态断言；React 浏览器新增 28 项（82 项），截图 `docs/screenshots/react-edit-mode.png`。
+全量 typecheck / test（21 个任务、1912 项测试）、坐标真值闸门、lint、全量构建与 9 页浏览器回归（1099 项断言）通过。
+判据是接线：React Vitest 26 项（jsdom + 假视图）+ `/tests/react.html` 82 项。**浏览器回归页在被遮住的
 标签页里会永远停在「正在验证…」**（`document.hidden` 下 rAF 不跑）—— 用 headless Chrome + CDP
 轮询 `#result` 跑最稳：`node apps/playground/tests/run.mjs`（七个页面 view / virtual-text / annotations /
 scroll / facade / print / react 一口气跑完，要先起调试台）。
