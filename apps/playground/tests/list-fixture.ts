@@ -67,6 +67,17 @@ export function revisionViewDocx(): Uint8Array {
   );
 }
 
+/** 先出现缺字体，再在后续字体测量时注入故障，验证诊断与缓存一起回滚。 */
+export function diagnosticRollbackDocx(operation: 'tx' | 'undo' | 'redo' | 'revision'): Uint8Array {
+  const props = (family: string) =>
+    `<w:rPr><w:rFonts w:ascii="${family}" w:hAnsi="${family}" w:eastAsia="${family}"/></w:rPr>`;
+  return docxOf(
+    `<w:p><w:r>${operation === 'undo' ? props('失败诊断缺失字体') : ''}<w:t>原文</w:t></w:r>` +
+      `<w:del w:id="1" w:author="张三"><w:r>${operation === 'revision' ? props('失败诊断缺失字体') : ''}<w:delText>删掉</w:delText></w:r></w:del>` +
+      `</w:p><w:p><w:r>${props('失败诊断故障字体')}<w:t>结尾</w:t></w:r></w:p>`,
+  );
+}
+
 /** 无自有文字的父控件未必先出现在成员列表里，批量填写必须按父链排序。 */
 export function nestedControlDocx(scope: string, lock = ''): Uint8Array {
   const wrap = (tag: string, content: string, pr = '') =>

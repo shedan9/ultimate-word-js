@@ -9,7 +9,7 @@
  * 内容问题（缺字体、不认识的元素）记进 `doc.diagnostics` 并照常排版 —— 架构原则 1.5，
  * 这里不拦也不转译。
  */
-import { createDiagnosticSink } from '@uw/core';
+import { createDiagnosticSink, type DiagnosticSink } from '@uw/core';
 import type { FontRegistry } from '@uw/fonts';
 import { createTextMeasurer } from '@uw/fonts';
 import { layoutDocumentWithFields, ParagraphLayoutCache } from '@uw/layout';
@@ -73,18 +73,26 @@ export async function load(
   const bytes = await toBytes(source, options.signal);
   options.signal?.throwIfAborted();
 
-  const sink = createDiagnosticSink();
+  let sink = createDiagnosticSink();
   const pkg = OpcPackage.open(bytes);
   const loaded = loadDocument(
     pkg,
     sink,
     options.revisions === undefined ? {} : { revisions: options.revisions },
   );
-  const measurer = createTextMeasurer(options.fonts ?? registry, {
-    // 「黑体」→「SimHei」的桥在文档自己的 fontTable 里，fonts 不认识 model，所以在这儿接
-    candidates: (family) => fontNameCandidates(loaded.fonts, family),
-    diagnostics: sink,
-  });
+  // 度量器跨重排缓存；诊断却只属于当前候选状态，不能让失败排版的记录混入下一次提交。
+  const fontDiagnostics: DiagnosticSink = {
+    warn: (...args) => sink.warn(...args),
+    info: (...args) => sink.info(...args),
+    list: () => sink.list(),
+  };
+  const makeMeasurer = () =>
+    createTextMeasurer(options.fonts ?? registry, {
+      // 「黑体」→「SimHei」的桥在文档自己的 fontTable 里，fonts 不认识 model，所以在这儿接
+      candidates: (family) => fontNameCandidates(loaded.fonts, family),
+      diagnostics: fontDiagnostics,
+    });
+  let measurer = makeMeasurer();
   const paragraphCache = new ParagraphLayoutCache();
   // 交给排版的设置深冻结一份：段落缓存对冻结对象按身份记序列化串，否则每段都要重新
   // 序列化这约 765 字节（级联那边的原件不动，谁也不该经由排版改它）
@@ -108,8 +116,6 @@ export async function load(
     now,
     diagnostics: sink,
   });
-  // 诊断表是追加式的，每趟重排只把这之后新记的交出去（`diagnostic` 事件报的就是它们）
-  let reported = sink.list().length;
   // 页眉页脚 / 注 / 文本框的级联结果不随编辑变，只随修订视图变（`setRevisionView`），换视图时整份换掉
   let aux = loaded;
   return new UwDocument({
@@ -117,54 +123,59 @@ export async function load(
     pkg,
     ...(options.author === undefined ? {} : { author: options.author }),
     reflow(body, view) {
-      // 切换和排版共用一份候选状态；先改 aux 再排版会在失败后污染下一次编辑 / 历史重排。
-      const next = view === undefined || view === aux.revisions.view ? aux : withRevisionView(aux, view);
-      const fields = scanFields(body, sink);
-      for (const hf of Object.values(next.headerFooters))
-        fields.push(
-          ...scanFields(
-            {
-              sections: [
-                {
-                  id: hf.relId,
-                  props: loaded.body.sections[0]?.props ?? DEFAULT_SECTION_PROPS,
-                  blocks: hf.blocks,
-                },
-              ],
-            },
-            sink,
-          ),
-        );
-      const resolved = resolveBody(loaded.cascade, body, {
-        hyperlinks: fieldHyperlinks(fields),
-        cache: resolveCache,
-        revisions: next.revisions,
-      });
-      const result = layoutDocumentWithFields(resolved, fields, {
-        paragraphCache,
-        measurer,
-        settings,
-        headerFooters: next.headerFooters,
-        notes: next.notes,
-        textBoxes: next.textBoxes,
-        bookmarks: bookmarkTargets(body),
-        styleNames: paragraphStyleNames(loaded.cascade.styles, body.styles),
-        now,
-        diagnostics: sink,
-      });
-      // 编号定义随树走（新建列表会加定义），`loaded.numbering` 跟着换成同一份
-      const numbering = body.numbering ?? loaded.numbering;
-      const all = sink.list();
-      const diagnostics = all.slice(reported);
-      reported = all.length;
-      aux = next;
-      return {
-        loaded: { ...next, body, resolved, fields, numbering },
-        layout: result.layout,
-        values: result.values,
-        passes: result.passes,
-        diagnostics,
-      };
+      sink = createDiagnosticSink();
+      try {
+        // 切换和排版共用一份候选状态；先改 aux 再排版会在失败后污染下一次编辑 / 历史重排。
+        const next = view === undefined || view === aux.revisions.view ? aux : withRevisionView(aux, view);
+        const fields = scanFields(body, sink);
+        for (const hf of Object.values(next.headerFooters))
+          fields.push(
+            ...scanFields(
+              {
+                sections: [
+                  {
+                    id: hf.relId,
+                    props: loaded.body.sections[0]?.props ?? DEFAULT_SECTION_PROPS,
+                    blocks: hf.blocks,
+                  },
+                ],
+              },
+              sink,
+            ),
+          );
+        const resolved = resolveBody(loaded.cascade, body, {
+          hyperlinks: fieldHyperlinks(fields),
+          cache: resolveCache,
+          revisions: next.revisions,
+        });
+        const result = layoutDocumentWithFields(resolved, fields, {
+          paragraphCache,
+          measurer,
+          settings,
+          headerFooters: next.headerFooters,
+          notes: next.notes,
+          textBoxes: next.textBoxes,
+          bookmarks: bookmarkTargets(body),
+          styleNames: paragraphStyleNames(loaded.cascade.styles, body.styles),
+          now,
+          diagnostics: sink,
+        });
+        // 编号定义随树走（新建列表会加定义），`loaded.numbering` 跟着换成同一份
+        const numbering = body.numbering ?? loaded.numbering;
+        aux = next;
+        return {
+          loaded: { ...next, body, resolved, fields, numbering },
+          layout: result.layout,
+          values: result.values,
+          passes: result.passes,
+          diagnostics: sink.list(),
+        };
+      } catch (error) {
+        // 失败前可能已缓存缺失字体并标为「报过」；只丢诊断会让重试命中缓存而永远漏报。
+        // 更换度量器也会使段落缓存按身份失效，成功路径仍复用原缓存。
+        measurer = makeMeasurer();
+        throw error;
+      }
     },
     layout: result.layout,
     fieldValues: result.values,

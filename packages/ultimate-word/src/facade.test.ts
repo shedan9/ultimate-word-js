@@ -2598,6 +2598,108 @@ describe('修订的显示', () => {
     expect(painted(d)).toEqual(before);
   });
 
+  it.each([
+    ['tx', false],
+    ['tx', true],
+    ['undo', false],
+    ['undo', true],
+    ['redo', false],
+    ['redo', true],
+    ['revision', false],
+    ['revision', true],
+  ] as const)('%s 失败丢弃本趟诊断，缓存不吞掉重试诊断；先成功重排：%s', async (operation, editFirst) => {
+    const fonts = new FontRegistry();
+    const missing = '失败诊断缺失字体';
+    const broken = '失败诊断故障字体';
+    const fontProps = (family: string) =>
+      `<w:rPr><w:rFonts w:ascii="${family}" w:hAnsi="${family}" w:eastAsia="${family}"/></w:rPr>`;
+    const font = { kind: 'file' as const, metrics: FALLBACK_METRICS, advance: () => 1000 };
+    fonts.register(broken, font);
+    const resolveFont = fonts.resolve.bind(fonts);
+    // 先以可用字体建历史，之后变为缺失，才能观察历史重排首次发现的诊断。
+    const setupResolve = vi
+      .spyOn(fonts, 'resolve')
+      .mockImplementation((families) => resolveFont(families.includes(missing) ? [broken] : families));
+    const d = await UltimateWord.load(
+      revisedDocx(
+        `<w:p><w:r>${operation === 'undo' ? fontProps(missing) : ''}<w:t>原文</w:t></w:r>` +
+          `<w:del w:id="1" w:author="张三"><w:r>${operation === 'revision' ? fontProps(missing) : ''}<w:delText>删掉</w:delText></w:r></w:del>` +
+          `</w:p><w:p><w:r>${fontProps(broken)}<w:t>结尾</w:t></w:r></w:p>`,
+      ),
+      { fonts },
+    );
+    const hit = d.find('原文')[0];
+    if (!hit) throw new Error('样本缺少原文');
+    const setFont = (family: string) =>
+      d.tx((t) => void t.setRunProps(hit, { fonts: { ascii: family, hAnsi: family, eastAsia: family } }));
+    if (operation === 'undo') setFont(broken);
+    else if (operation === 'redo') {
+      setFont(missing);
+      d.undo();
+    } else {
+      d.tx((t) => void t.insertText(hit.start, '历史'));
+      d.undo();
+    }
+    setupResolve.mockRestore();
+    const layout = d.layout;
+    const diagnostics = [...d.diagnostics];
+    const original = unzip(new Uint8Array(await (await d.toDocx()).arrayBuffer()));
+    const events: string[] = [];
+    d.on('diagnostic', (item) => events.push(item.message));
+    const retry = () => {
+      if (operation === 'revision') d.setRevisionView('markup');
+      else if (operation === 'tx') setFont(missing);
+      else d[operation]();
+    };
+    // 首段已缓存并收集诊断，测量后段时才失败；重试必须连段落缓存一起失效，才能重新报告。
+    fonts.register(broken, font);
+    const failure = new Error('收集诊断后排版失败');
+    const resolve = vi.spyOn(fonts, 'resolve').mockImplementation((families) => {
+      if (families.includes(broken)) throw failure;
+      return resolveFont(families);
+    });
+    try {
+      expect(retry).toThrow(failure);
+      expect(resolve.mock.calls.some(([families]) => families.includes(missing))).toBe(true);
+    } finally {
+      resolve.mockRestore();
+    }
+    expect(d.layout).toBe(layout);
+    expect(d.diagnostics).toEqual(diagnostics);
+    expect(events).toEqual([]);
+    expect(d.canUndo).toBe(operation === 'undo');
+    expect(d.canRedo).toBe(operation !== 'undo');
+    expect(d.revisionView).toBe('final');
+    expect(unzip(new Uint8Array(await (await d.toDocx()).arrayBuffer()))).toEqual(original);
+    if (editFirst) {
+      // 新编辑会清掉 redo，改用切视图验证无关成功重排不泄漏诊断且保留重试入口。
+      if (operation === 'redo') d.setRevisionView('original');
+      else d.tx((t) => void t.insertText(hit.start, '其他'));
+      expect(d.diagnostics).toEqual(diagnostics);
+      expect(events).toEqual([]);
+      if (operation === 'redo') d.setRevisionView('final');
+      else d.undo();
+    }
+    retry();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toContain(missing);
+    expect(d.diagnostics).toHaveLength(diagnostics.length + 1);
+    if (operation === 'revision') {
+      d.setRevisionView('final');
+      d.setRevisionView('markup');
+    } else if (operation === 'undo') {
+      d.redo();
+      d.undo();
+    } else {
+      d.undo();
+      d.redo();
+    }
+    expect(events).toHaveLength(1);
+    const again = await UltimateWord.load(await d.toDocx(), { fonts, revisions: d.revisionView });
+    expect(painted(d)).toEqual(painted(again));
+    expect(again.diagnostics.filter((item) => item.message.includes(missing))).toHaveLength(1);
+  });
+
   it('段落标记被删：最终状态排成一段、能在并进来的字里打字，所有标记下是两段；被删的行最终状态不占位', async () => {
     const d = await UltimateWord.load(
       revisedDocx(

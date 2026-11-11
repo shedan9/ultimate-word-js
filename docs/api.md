@@ -912,6 +912,8 @@ view.on('viewport:change', ({ visiblePages, zoom }) => {});
 - **加载那一趟不派发。** `load()` 返回之前没人来得及挂监听者，那一趟的结果就是 `doc.layout` /
   `doc.pageCount`，诊断就是 `doc.diagnostics` 的初值。原表写的 `diagnostic`「解析 / 布局期」因此只剩
   编辑后重排这一半；新发现的同时追加进 `doc.diagnostics`（按内容去重 —— 字体注册后度量器会重新报一遍缺字体）。
+- **失败排版不留下诊断**（2026-11-11）：事务、撤销 / 重做或修订视图重排失败时，本趟新诊断不追加、不派发，
+  也不会延迟到下一次无关成功重排时发布。修正后重试仍正常报告有效问题，已提交的诊断继续保留且不重复报告。
 - **顺序**：视图先刷新 → `document:change` → `layout:done` → `diagnostic`，全部同步。监听者里读
   `doc.layout`、`view.rectsOf()` 拿到的已经是新布局。没有修改的事务什么都不派发。
 - **回调内再次修改文档**（2026-10-23）：`layout:done` 的 `pageCount` / `duration` / `iterations` 固定为本次排版结果，

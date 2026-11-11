@@ -16,7 +16,7 @@ import { FALLBACK_METRICS, FontRegistry } from '@uw/fonts';
 import { unzip } from '@uw/ooxml';
 import { UltimateWord } from 'ultimate-word';
 import fixtureUrl from '../../fidelity/fixtures/gongwen-01.docx?url';
-import { boundControlDocx, choiceControlDocx, controlDocx, dateControlDocx, emptyBoundaryControlDocx, emptyPlaceholderDocx, linkDocx, markRevisionControlDocx, nestedControlDocx, revisionViewDocx, shellControlDocx, templateControlsDocx, textStateDocx } from './list-fixture.ts';
+import { boundControlDocx, choiceControlDocx, controlDocx, dateControlDocx, diagnosticRollbackDocx, emptyBoundaryControlDocx, emptyPlaceholderDocx, linkDocx, markRevisionControlDocx, nestedControlDocx, revisionViewDocx, shellControlDocx, templateControlsDocx, textStateDocx } from './list-fixture.ts';
 
 const host = document.querySelector('#host');
 const second = document.querySelector('#second');
@@ -978,6 +978,65 @@ try {
       assert(again.pageCount === d.pageCount && JSON.stringify(again.revisions()) === JSON.stringify(d.revisions()), '切换失败与重试都不改修订记录，导出回读与当前分页一致');
       v.dispose();
     }
+  }
+  for (const operation of ['tx', 'undo', 'redo', 'revision']) {
+    const fonts = new FontRegistry();
+    const missing = '失败诊断缺失字体';
+    const broken = '失败诊断故障字体';
+    const font = { kind: 'file', metrics: FALLBACK_METRICS, advance: () => 1000 };
+    fonts.register(broken, font);
+    const resolve = fonts.resolve;
+    fonts.resolve = families => resolve.call(fonts, families.includes(missing) ? [broken] : families);
+    const d = await UltimateWord.load(diagnosticRollbackDocx(operation), { fonts });
+    const hit = d.find('原文')[0];
+    const setFont = family => d.tx(t => void t.setRunProps(hit, { fonts: { ascii: family, hAnsi: family, eastAsia: family } }));
+    if (operation === 'undo') setFont(broken);
+    else if (operation === 'redo') { setFont(missing); d.undo(); }
+    else { d.tx(t => void t.insertText(hit.start, '历史')); d.undo(); }
+    fonts.resolve = resolve;
+    const v = d.mount('#host', { mode: 'edit', virtualize: false });
+    v.select(hit);
+    const selection = JSON.stringify(v.selection);
+    const text = v.root.textContent;
+    const layout = d.layout;
+    const diagnostics = JSON.stringify(d.diagnostics);
+    const original = unzip(new Uint8Array(await (await d.toDocx()).arrayBuffer()));
+    const events = [];
+    d.on('diagnostic', item => events.push(item));
+    const retry = () => operation === 'revision' ? d.setRevisionView('markup') : operation === 'tx' ? setFont(missing) : d[operation]();
+    const failure = new Error('收集诊断后排版失败');
+    fonts.register(broken, font);
+    let sawMissing = false;
+    let caught;
+    try {
+      fonts.resolve = families => {
+        if (families.includes(missing)) sawMissing = true;
+        if (families.includes(broken)) throw failure;
+        return resolve.call(fonts, families);
+      };
+      retry();
+    } catch (error) { caught = error; }
+    finally { fonts.resolve = resolve; }
+    assert(caught === failure && sawMissing && events.length === 0, `${operation} 收集诊断后失败，抛回原错误且不派发诊断`);
+    assert(d.layout === layout && v.root.textContent === text && JSON.stringify(d.diagnostics) === diagnostics, '失败保留布局、文字层与已提交诊断');
+    assert(JSON.stringify(v.selection) === selection && v.rectsOf(hit).length > 0 && d.canUndo === (operation === 'undo') && d.canRedo === (operation !== 'undo'), '失败保留选区、定位与历史');
+    const exported = unzip(new Uint8Array(await (await d.toDocx()).arrayBuffer()));
+    assert([...original].every(([name, data]) => exported.get(name)?.every((value, i) => value === data[i]) && exported.get(name).length === data.length) && exported.size === original.size, '失败后导出各部件不变');
+    if (operation === 'redo') d.setRevisionView('original');
+    else d.tx(t => void t.insertText(hit.start, '其他'));
+    assert(events.length === 0 && JSON.stringify(d.diagnostics) === diagnostics, '无关成功重排不发布已回滚内容的诊断');
+    if (operation === 'redo') d.setRevisionView('final');
+    else d.undo();
+    retry();
+    assert(events.length === 1 && events[0].message.includes(missing) && d.diagnostics.length === JSON.parse(diagnostics).length + 1, '重试正常报告一次缺字体，缓存不会吞掉诊断');
+    assert(v.root.textContent.includes('原文') && v.rectsOf(d.find('原文')[0]).length > 0 && JSON.stringify(v.selection) === selection, '重试同步更新文字层并保留选区与定位');
+    if (operation === 'revision') { d.setRevisionView('final'); d.setRevisionView('markup'); }
+    else if (operation === 'undo') { d.redo(); d.undo(); }
+    else { d.undo(); d.redo(); }
+    assert(events.length === 1, '再次历史重排或切视图不重复报告缺字体');
+    const again = await UltimateWord.load(await d.toDocx(), { fonts, revisions: d.revisionView });
+    assert(again.pageCount === d.pageCount && again.diagnostics.filter(item => item.message.includes(missing)).length === 1, '导出回读保留分页与有效诊断');
+    v.dispose();
   }
   result.textContent = `PASS: ${passed} browser assertions`;
 } catch (error) {
