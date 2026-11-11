@@ -1090,6 +1090,8 @@ function Viewer({ url }: { url: string }) {
 >   只能摘了重挂（底层句柄只认锚点）
 >   doc / 构造选项与 overlays 可在同一次渲染更新：气泡只挂到本次提交的存活视图，避免向已销毁的旧视图挂载时报错（2026-11-11 修复）。
 >   同 key 的气泡保留宿主与草稿，新增 / 移除 key 和 placement / offset 变更均按新 props 生效；StrictMode 重放后也只保留当前视图的句柄。
+>   key 按类型区分：数字 `1` 与字符串 `'1'` 可共存，换序 / 重挂各自保留草稿，移除后重新添加则创建新子树；同类型同值仍拒绝重复。
+>   原来 portal 把 key 一律转成字符串，与句柄 Map 的身份规则不一致，两种 key 换序会重置草稿（2026-11-11 修复）。
 > - `useDocument(source, options)` 接受完整的 `LoadOptions`（fonts / signal / revisions / author）。
 >   `source` 按引用比：字符串 URL 天然稳定，`ArrayBuffer` / `Blob` 要调用方 memo；options 按各字段值比较，同值内联对象不重载。
 >   来源或任一选项变化会重新加载、生成新文档，旧文档的编辑不迁移；等待时上一份文档留着（不闪白）。

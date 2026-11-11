@@ -250,6 +250,45 @@ describe('<UltimateWordView>', () => {
     spy.mockRestore();
   });
 
+  it('数字与同文字符串 key 各自保留气泡状态，换序、移除与重挂不混用身份', () => {
+    const { doc, views } = fakeDocument();
+    const errors = vi.spyOn(console, 'error');
+    function Draft({ label }: { label: string }) {
+      const [text, setText] = useState('草稿');
+      return (
+        <button type="button" data-label={label} onClick={() => setText(`${label}已修改`)}>
+          {text}
+        </button>
+      );
+    }
+    const numeric: ReactOverlaySpec = { key: 1, anchor: at('r0'), render: () => <Draft label="数字" /> };
+    const textual: ReactOverlaySpec = { key: '1', anchor: at('r1'), render: () => <Draft label="字符串" /> };
+    render(<UltimateWordView doc={doc} overlays={[numeric, textual]} />);
+    const first = views[0] as FakeView;
+    const numberButton = first.root.querySelector('[data-label="数字"]') as HTMLButtonElement;
+    const stringButton = first.root.querySelector('[data-label="字符串"]') as HTMLButtonElement;
+    act(() => {
+      numberButton.click();
+      stringButton.click();
+    });
+    render(<UltimateWordView doc={doc} overlays={[textual, numeric]} />);
+    expect(first.root.querySelector('[data-label="数字"]')).toBe(numberButton);
+    expect(first.root.querySelector('[data-label="字符串"]')).toBe(stringButton);
+    expect(numberButton.textContent).toBe('数字已修改');
+    expect(stringButton.textContent).toBe('字符串已修改');
+    render(<UltimateWordView doc={doc} overlays={[textual]} pageGap={8} />);
+    const next = views[1] as FakeView;
+    expect(next.overlays).toHaveLength(1);
+    expect(numberButton.isConnected).toBe(false);
+    expect(next.root.querySelector('button')).toBe(stringButton);
+    expect(stringButton.textContent).toBe('字符串已修改');
+    render(<UltimateWordView doc={doc} overlays={[numeric, textual]} pageGap={8} />);
+    expect(next.root.querySelector('[data-label="数字"]')?.textContent).toBe('草稿');
+    expect(next.root.querySelector('[data-label="字符串"]')).toBe(stringButton);
+    expect(errors).not.toHaveBeenCalled();
+    errors.mockRestore();
+  });
+
   it.each(['doc', 'mode', 'pageGap'] as const)(
     '同次更新 %s 与 overlays 时只向新视图挂气泡，保留同 key 的草稿',
     (change) => {

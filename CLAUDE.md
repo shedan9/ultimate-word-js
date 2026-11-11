@@ -470,7 +470,12 @@ SVG 当图片用时看不见宿主 `@font-face`，本页用到的族与外部图
 同 key 宿主与草稿保留，增删 key、锚点和位置选项按新 props 生效；StrictMode 重放与最终卸载清理句柄。
 新增 React 4 项回归，假视图也拒绝销毁后挂气泡；浏览器新增 21 项断言（119 项），覆盖三种重挂、草稿、新文档几何、ref / 通知与编辑节点清理。
 全量 typecheck / test（21 个任务、1923 项测试，含坐标真值闸门）、lint、全量构建与 React 浏览器回归通过。
-判据是接线：React Vitest 37 项（jsdom + 真实加载 / 假视图）+ `/tests/react.html` 119 项。**浏览器回归页在被遮住的
+**React 气泡 key 的类型身份**（2026-11-11）：句柄与宿主 Map 区分数字 `1` 与字符串 `'1'`，portal 原来却统一转成字符串，
+两种 key 共存会发重复 key 警告、换序重建子树并丢失草稿。现为 portal key 加类型前缀，三处身份一致；
+换序 / 缩放 / 重挂各自保留草稿，移除只影响对应气泡，重新添加从新子树开始，同类型同值继续拒绝重复。
+新增 React 1 项回归与浏览器 11 项断言，覆盖 StrictMode、独立定位、移除 / 重加与最终清理。
+全量 typecheck / test（21 个任务、1924 项测试，含坐标真值闸门）、lint、全量构建与 React 浏览器回归（130 项断言）通过。
+判据是接线：React Vitest 38 项（jsdom + 真实加载 / 假视图）+ `/tests/react.html` 130 项。**浏览器回归页在被遮住的
 标签页里会永远停在「正在验证…」**（`document.hidden` 下 rAF 不跑）—— 用 headless Chrome + CDP
 轮询 `#result` 跑最稳：`node apps/playground/tests/run.mjs`（七个页面 view / virtual-text / annotations /
 scroll / facade / print / react 一口气跑完，要先起调试台）。

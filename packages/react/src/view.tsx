@@ -135,7 +135,10 @@ export const UltimateWordView = forwardRef<UwView | null, UltimateWordViewProps>
   return (
     <div ref={container} className={className} style={style}>
       {canPortal
-        ? overlays.map((spec) => createPortal(spec.render(), hostFor(spec.key), String(spec.key)))
+        ? overlays.map((spec) =>
+            // Map 区分数字与字符串，portal 也必须保留类型，否则 1 / '1' 换序会丢失气泡草稿。
+            createPortal(spec.render(), hostFor(spec.key), `${typeof spec.key}:${String(spec.key)}`),
+          )
         : null}
     </div>
   );

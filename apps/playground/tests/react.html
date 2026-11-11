@@ -400,6 +400,44 @@ try {
   batchRoot.unmount();
   await frame();
   assert(batchRef.current === null && batchView === null && !batchDraft.isConnected && document.querySelector('#app').childElementCount === 0, '同次重挂回归卸载后句柄、气泡与编辑节点清理完整');
+  // 管理句柄用 Map，数字 1 与字符串 '1' 是两份身份；portal 的 key 也须保持这一点。
+  const keyRoot = createRoot(document.querySelector('#app'));
+  let keyView;
+  const onKeyView = view => { keyView = view; };
+  const keyAnchor = remountDoc.find('原文')[0].start;
+  const numericSpec = { key: 1, anchor: keyAnchor, render: () => h(Bubble, { id: 'key-number' }) };
+  const textualSpec = { key: '1', anchor: keyAnchor, offset: { x: 0, y: 40 }, render: () => h(Bubble, { id: 'key-string' }) };
+  const renderKeys = (overlays, pageGap = 24, zoom = 1) => keyRoot.render(h(StrictMode, null, h(UltimateWordView, {
+    doc: remountDoc, overlays, pageGap, zoom, className: 'viewer', onViewChange: onKeyView,
+  })));
+  renderKeys([numericSpec, textualSpec]);
+  assert(await until(() => keyView && document.querySelector('[data-input="key-string"]')), '数字与同文字符串 key 的气泡可同时挂载');
+  const numberDraft = document.querySelector('[data-input="key-number"]');
+  const stringDraft = document.querySelector('[data-input="key-string"]');
+  for (const [input, text] of [[numberDraft, '数字草稿'], [stringDraft, '字符串草稿']]) {
+    setter.call(input, text); input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  await frame();
+  const originalKeyView = keyView;
+  renderKeys([textualSpec, numericSpec]); await frame();
+  assert(keyView === originalKeyView && keyView.root.querySelectorAll('[data-overlay]').length === 2, '两种 key 换序不重挂视图、不丢气泡');
+  assert(document.querySelector('[data-input="key-number"]') === numberDraft && numberDraft.value === '数字草稿', '换序保留数字 key 的节点与独立草稿');
+  assert(document.querySelector('[data-input="key-string"]') === stringDraft && stringDraft.value === '字符串草稿', '换序保留字符串 key 的节点与独立草稿');
+  renderKeys([textualSpec, numericSpec], 8, 1.5);
+  assert(await until(() => keyView && keyView !== originalKeyView), '两种 key 同时重挂与缩放成功');
+  await frame();
+  assert(keyView.root.contains(numberDraft) && keyView.root.contains(stringDraft) && numberDraft.value === '数字草稿' && stringDraft.value === '字符串草稿', '重挂后两种 key 各自保留宿主与草稿');
+  const keyCaret = keyView.caretRect(keyAnchor);
+  const numberRect = numberDraft.closest('[data-bubble]').getBoundingClientRect();
+  const stringRect = stringDraft.closest('[data-bubble]').getBoundingClientRect();
+  assert(keyCaret && near(numberRect.top, keyCaret.y, 1.5) && near(stringRect.top, keyCaret.y + 40, 1.5), '同文 key 的两个气泡分别按自己的 offset 定位');
+  renderKeys([textualSpec], 8, 1.5); await frame();
+  assert(!numberDraft.isConnected && keyView.root.contains(stringDraft) && stringDraft.value === '字符串草稿', '移除数字 key 只卸载对应气泡，保留字符串草稿');
+  renderKeys([numericSpec, textualSpec], 8, 1.5); await frame();
+  assert(document.querySelector('[data-input="key-number"]') !== numberDraft && document.querySelector('[data-input="key-number"]').value === '', '重新添加数字 key 使用新节点与空草稿');
+  assert(document.querySelector('[data-input="key-string"]') === stringDraft && stringDraft.value === '字符串草稿', '重新添加同文数字 key 不影响字符串 key 的状态');
+  keyRoot.unmount(); await frame();
+  assert(keyView === null && !stringDraft.isConnected && document.querySelector('#app').childElementCount === 0, '混合 key 回归卸载后视图与气泡清理完整');
   result.textContent = `PASS: ${passed} react browser assertions`;
 } catch (error) {
   if (error !== null) result.textContent = `FAIL after ${passed}: ${error.stack}`;
