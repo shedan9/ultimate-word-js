@@ -32,6 +32,165 @@ const base: ResolvedRunProps = {
 const parse = (html: string) => htmlToParagraphs(html, new DOMParser());
 
 describe('剪贴板 HTML', () => {
+  it('Word 的段落与字符类样式继承字号、字体分桶和对齐，内联样式覆盖类样式', () => {
+    const html = `<html><head><style><!--
+      body { font-size:12pt; font-family:"Times New Roman"; }
+      p.MsoNormal, li.MsoNormal, div.MsoNormal {
+        font-size:16pt; mso-fareast-font-family:仿宋; text-align:center;
+      }
+      span.Strong { font-weight:bold; color:red; }
+    --></style></head><body><p class='MsoNormal'>普通<span class="Strong">强调</span><span
+      class="Strong" style="font-weight:normal;color:blue;font-size:18pt">覆盖</span></p></body></html>`;
+    const paragraphs = parse(html);
+    expect(isTrustedHtml(html)).toBe(true);
+    expect(paragraphs[0]?.justification).toBe('center');
+    const runs = paragraphs[0]?.runs ?? [];
+    expect(runs.map((r) => [r.text, r.patch.size, r.patch.bold, r.patch.color])).toEqual([
+      ['普通', 320, false, undefined],
+      ['强调', 320, true, 'FF0000'],
+      ['覆盖', 360, false, '0000FF'],
+    ]);
+    expect(runs.every((r) => r.patch.fonts?.eastAsia === '仿宋')).toBe(true);
+    expect(runs[0]?.patch.fonts?.ascii).toBe('Times New Roman');
+  });
+
+  it('规则按选择器优先级与源码顺序合并，不受 class 属性里名字顺序影响', () => {
+    const paragraphs = parse(`<style>
+      #target { font-size:20pt; }
+      p.MsoNormal { font-size:16pt; color:red; }
+      .MsoNormal { font-size:10pt; color:blue; }
+      .A.B { font-weight:bold; }
+      .A { font-weight:normal; }
+      .B { font-style:italic; }
+    </style><p class="MsoNormal B A" id="target">甲</p>
+    <style>p.MsoNormal {color:green}</style><p class="MsoNormal A B">乙</p>`);
+    expect(paragraphs.map((p) => p.runs[0]?.patch)).toMatchObject([
+      { size: 400, color: '008000', bold: true, italic: true },
+      { size: 320, color: '008000', bold: true, italic: true },
+    ]);
+  });
+
+  it('important 高于普通内联声明，同等级内联与重复声明仍按 CSS 顺序覆盖', () => {
+    const runs = parse(`<style>
+      p.MsoNormal {font-size:18pt !important; color:red !important; font-weight:bold !important;}
+      #target {font-size:24pt; color:green !important;}
+    </style><p class="MsoNormal" id="target"
+      style="font-size:12pt; color:blue !important; font-weight:normal">甲</p>
+    <p class="MsoNormal" style="font-size:20pt !important;font-size:10pt;
+      font-size:22pt !important">乙</p>`).map((p) => p.runs[0]?.patch);
+    expect(runs).toMatchObject([
+      { size: 360, color: '0000FF', bold: true },
+      { size: 440, color: 'FF0000', bold: true },
+    ]);
+  });
+
+  it('原文解析保留字体名内的分号和注释标记，规则中的引号、括号不截断后续声明', () => {
+    const runs =
+      parse(`<style>
+      /* } ; .MsoNormal {font-size:99pt;} */
+      p.MsoNormal {font-family:'A;/*原样*/B'; font-size:16pt;
+        background:url("data:image/svg+xml;utf8,<svg>{}</svg>"); color: red;}
+      span.Em {font-style: /* 注释 */ italic;}
+    </style><p class="MsoNormal"><span class="Em">中文</span></p>`)[0]?.runs ?? [];
+    expect(runs[0]?.patch).toMatchObject({
+      size: 320,
+      color: 'FF0000',
+      italic: true,
+      fonts: { ascii: 'A;/*原样*/B', eastAsia: 'A;/*原样*/B' },
+    });
+  });
+
+  it('已支持的长短属性共享优先级，类中的简写不盖住内联长属性', () => {
+    const runs =
+      parse(`<style>
+      span.Mark {background:yellow;text-decoration:underline;text-emphasis:filled dot;}
+      .Page {page-break-before:always !important;}
+    </style><p class=MsoNormal><span class=Mark style="background-color:blue;
+      text-decoration-line:none;text-emphasis-style:none">正文</span><br class=Page
+      style="break-before:auto">下一页</p>`)[0]?.runs ?? [];
+    expect(runs[0]).toMatchObject({
+      text: '正文',
+      patch: {
+        shading: { pattern: 'clear', color: 'auto', fill: '0000FF' },
+        underline: 'none',
+        emphasis: null,
+      },
+    });
+    expect(runs.map((r) => r.text).join('')).toBe('正文\f下一页');
+  });
+
+  it('只应用支持的简单选择器，整块 at-rule 与外部样式跳过，不泄漏其声明或文字', () => {
+    const paragraphs = parse(`<style>
+      @import url("https://example.invalid/word.css");
+      @font-face {font-family:Other;src:url(other.woff2);}
+      @page WordSection1 {size:595.3pt 841.9pt;}
+      @media print {p.MsoNormal {font-size:99pt;color:red;}}
+      div p.MsoNormal {font-weight:bold;}
+      .123 {font-style:italic;}
+      p.MsoNormal {font-size:16pt;}
+    </style><link rel="stylesheet" href="https://example.invalid/other.css">
+    <div><p class=MsoNormal>正文</p></div>`);
+    expect(paragraphs).toHaveLength(1);
+    expect(paragraphs[0]?.runs[0]).toMatchObject({ text: '正文', patch: { size: 320, bold: false } });
+    expect(paragraphs[0]?.runs[0]?.patch).not.toHaveProperty('color');
+  });
+
+  it('类样式中的隐藏文字和编号占位不粘入正文，分页符仍走已有转换', () => {
+    const paragraphs = parse(`<style>
+      .Hidden {display:none;} .Number {mso-list:Ignore;}
+      .AlsoHidden {mso-hide:all;} .Page {page-break-before:always;}
+    </style><p class=MsoNormal><span class=Number>1.</span>甲<span class=Hidden>隐藏</span><span
+    class=AlsoHidden>隐藏</span><br class=Page>乙</p>`);
+    expect(paragraphs.map((p) => p.runs.map((r) => r.text).join(''))).toEqual(['甲\f乙']);
+  });
+
+  it('非 CSS 与仅打印的 style 不应用，正文根节点的类样式同样继承或隐藏', () => {
+    const html = `<style type="text/plain">.MsoNormal {font-size:99pt;}</style>
+      <style media="print">.MsoNormal {font-size:90pt;}</style>
+      <style media="screen and (max-width: 10px)">.MsoNormal {color:red;}</style>
+      <style media="screen, print">body.MsoNormal {font-size:16pt;}</style>
+      <body class=MsoNormal><p>正文</p></body>`;
+    expect(parse(html)[0]?.runs[0]?.patch).toMatchObject({ size: 320 });
+    expect(parse(html)[0]?.runs[0]?.patch).not.toHaveProperty('color');
+    expect(parse('<style>body.MsoNormal {display:none}</style><body class=MsoNormal>隐藏</body>')).toEqual(
+      [],
+    );
+  });
+
+  it('网页类样式不改变合并格式策略，宿主页面的同名类也不会影响粘贴', () => {
+    const hostStyle = document.head.appendChild(document.createElement('style'));
+    hostStyle.textContent = '.FromHost {font-weight:bold;font-size:99pt;}';
+    try {
+      const paragraphs = parse(`<style>.Web {font-weight:bold;font-family:Arial;font-size:24px;}</style>
+        <p class=Web><span class=FromHost>普通</span><b>加粗</b></p>`);
+      expect(paragraphs).toEqual([
+        {
+          runs: [
+            { text: '普通', patch: {} },
+            { text: '加粗', patch: { bold: true } },
+          ],
+        },
+      ]);
+    } finally {
+      hostStyle.remove();
+    }
+  });
+
+  it('普通网页类名中间出现 Mso 不改为保留源格式', () => {
+    const html = '<p class="Other-MsoNormal" style="font-size:99pt;color:red">普通</p>';
+    expect(isTrustedHtml(html)).toBe(false);
+    expect(parse(html)).toEqual([{ runs: [{ text: '普通', patch: {} }] }]);
+  });
+
+  it.each(['class=MsoNormal', "class='MsoNormal'", 'class="Other MsoNormal"'])(
+    'Word 标识 %s 允许读取内嵌类样式',
+    (attribute) => {
+      const html = `<style>.MsoNormal {font-size:16pt;}</style><p ${attribute}>正文</p>`;
+      expect(isTrustedHtml(html)).toBe(true);
+      expect(parse(html)[0]?.runs[0]?.patch.size).toBe(320);
+    },
+  );
+
   it('复制出的 HTML 读回来格式与段落不变：字体三个桶、字号、开关、颜色、对齐、连续空格与空段', () => {
     const html = fragmentToHtml({
       paragraphs: [

@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>Word 类样式粘贴浏览器回归</title>
+<style>
+body { margin: 0; font: 14px/1.5 system-ui; }
+#result { position: fixed; inset: 0 0 auto; z-index: 20; background: white; }
+#host { margin: 70px 30px; height: 600px; overflow: auto; }
+</style>
+<pre id="result">正在验证…</pre><div id="host"></div>
+<script type="module">
+import { UltimateWord } from 'ultimate-word';
+import { choiceControlDocx, listDocx } from './list-fixture.ts';
+
+const result = document.querySelector('#result');
+const host = document.querySelector('#host');
+let passed = 0;
+function assert(value, label) { if (!value) throw new Error(label); passed++; }
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const frame = () => new Promise(requestAnimationFrame);
+function paste(input, html, plain = '') {
+  const event = new Event('paste', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'clipboardData', { value: {
+    getData: (type) => type === 'text/html' ? html : type === 'text/plain' ? plain : '',
+  } });
+  input.dispatchEvent(event);
+  assert(event.defaultPrevented, '粘贴事件由编辑器处理');
+}
+function before(input, inputType, data = null) {
+  input.dispatchEvent(new InputEvent('beforeinput', { inputType, data, bubbles: true, cancelable: true }));
+}
+function runOf(doc, text) {
+  const hit = doc.find(text)[0];
+  return doc.query('paragraph').flatMap((p) => p.runs).find((r) => r.id === hit?.start.nodeId);
+}
+const word = `<html><head><style><!--
+  @font-face {font-family:Missing;src:url(never-load.woff2);}
+  @media print {p.MsoNormal {font-size:99pt;color:red;}}
+  p.MsoNormal, li.MsoNormal, div.MsoNormal {
+    font-size:16pt; font-family:"Times New Roman";mso-fareast-font-family:仿宋;text-align:center;
+  }
+  span.Strong {font-weight:bold !important;color:red;}
+  p.End {font-size:14pt;font-family:仿宋;text-align:right;}
+  .Number {mso-list:Ignore;} .Hidden {display:none;}
+--></style></head><body><!--StartFragment-->
+<p class='MsoNormal'><span class=Number>1.</span>正文2026<span class=Strong style="font-weight:normal;color:blue">强调</span><span class=Hidden>隐藏</span></p>
+<p class=End>尾段</p><p></p><!--EndFragment--></body></html>`;
+try {
+  const doc = await UltimateWord.load(listDocx());
+  const view = doc.mount(host, { mode: 'edit' });
+  await frame();
+  const input = host.querySelector('textarea');
+  const original = doc.find('普通正文')[0];
+  view.select({ start: original.end, end: original.start });
+  view.focus();
+  const hostStyle = document.head.appendChild(document.createElement('style'));
+  hostStyle.textContent = '.MsoNormal {font-size:99pt !important;color:yellow !important;}';
+  try { paste(input, word, '纯文本降级不应出现'); } finally { hostStyle.remove(); }
+  assert(doc.find('正文2026').length === 1 && doc.find('强调').length === 1, '粘贴类样式中的正文');
+  assert(doc.find('隐藏').length === 0 && doc.find('1.').length === 0, '类样式隐藏文字与编号占位不进入正文');
+  assert(doc.find('纯文本降级不应出现').length === 0, '可解析的 HTML 优先于纯文本');
+  assert(doc.query('paragraph').length === 6, '三个源段落保留段落结构');
+  assert(doc.query('paragraph')[3].props.justification === 'center', 'MsoNormal 类中的段落对齐生效');
+  assert(doc.query('paragraph')[4].props.justification === 'right', '第二段自己的类样式对齐生效');
+  const normal = runOf(doc, '正文2026');
+  assert(normal.props.size === 320, '类样式 16pt 进入模型');
+  assert(normal.props.fonts.eastAsia === '仿宋', 'mso-fareast 字体不被 CSSOM 丢掉');
+  assert(normal.props.fonts.ascii === 'Times New Roman', '西文字体独立保留');
+  assert(normal.props.bold === false, '普通文字不继承目标的加粗');
+  assert(runOf(doc, '强调').props.bold === true, '类样式 important 高于普通内联声明');
+  assert(runOf(doc, '强调').props.color === '0000FF', '普通内联颜色覆盖类样式');
+  assert(runOf(doc, '尾段').props.size === 280, '不同段落的字号独立');
+  assert(view.rectsOf(doc.find('正文2026')[0]).length > 0, '粘贴后的文字可定位');
+  const pasted = view.selection;
+  before(input, 'historyUndo');
+  assert(doc.query('paragraph').length === 4 && doc.find('普通正文').length === 1, '整次多段粘贴一个撤销单元');
+  assert(same(view.selection, original), '撤销恢复粘贴前的选中范围');
+  before(input, 'historyRedo');
+  assert(same(view.selection, pasted), '重做恢复粘贴后的光标');
+  assert(runOf(doc, '正文2026').props.size === 320 && runOf(doc, '强调').props.bold, '重做恢复全部类样式格式');
+  assert(input === host.querySelector('textarea'), '粘贴和历史跳转保留输入节点');
+  const reopened = await UltimateWord.load(await doc.toDocx());
+  assert(runOf(reopened, '正文2026').props.size === 320, '导出再加载保留字号');
+  assert(runOf(reopened, '正文2026').props.fonts.eastAsia === '仿宋', '导出再加载保留中文字体');
+  assert(runOf(reopened, '强调').props.bold && runOf(reopened, '强调').props.color === '0000FF', '导出再加载保留强调格式');
+  assert(reopened.query('paragraph')[3].props.justification === 'center', '导出再加载保留源段落对齐');
+
+  // 复制出的规范化 HTML 再粘贴，也使用同一套读取规则。
+  view.select(doc.find('正文2026')[0]);
+  const copied = new Map();
+  const copy = new Event('copy', { bubbles: true, cancelable: true });
+  Object.defineProperty(copy, 'clipboardData', { value: { setData: (type, value) => copied.set(type, value) } });
+  input.dispatchEvent(copy);
+  assert(copied.get('text/html')?.includes('font-size:16pt'), '复制将类样式得到的最终格式写成内联 HTML');
+  view.select(doc.find('尾段')[0]);
+  paste(input, copied.get('text/html'));
+  assert(doc.find('正文2026').length === 2, '规范化 HTML 可再粘贴');
+  before(input, 'historyUndo');
+  view.dispose();
+
+  const webDoc = await UltimateWord.load(listDocx());
+  const webView = webDoc.mount(host, { mode: 'edit' });
+  const target = webDoc.find('普通正文')[0];
+  webDoc.tx((t) => { t.setRunProps(target, { bold: true, size: 400, color: '008000' }); });
+  webView.select({ start: target.end, end: target.end });
+  const webInput = host.querySelector('textarea');
+  paste(webInput, '<style>.Web {font-size:99pt;color:red;font-weight:normal;}</style><p class=Web>网页</p>');
+  const web = runOf(webDoc, '网页');
+  assert(web.props.size === 400 && web.props.bold && web.props.color === '008000', '普通网页类样式沿用既有合并格式策略');
+  webView.dispose();
+
+  const lockedDoc = await UltimateWord.load(choiceControlDocx());
+  const lockedView = lockedDoc.mount(host, { mode: 'edit' });
+  const lockedRange = lockedDoc.find('一般')[0];
+  lockedView.select(lockedRange);
+  const lockedInput = host.querySelector('textarea');
+  paste(lockedInput, word);
+  assert(lockedDoc.find('一般').length === 1 && lockedDoc.find('正文2026').length === 0, '专用填写控件仍拒绝普通富文本粘贴');
+  assert(!lockedDoc.canUndo && same(lockedView.selection, lockedRange), '粘贴失败保留选区且不写历史');
+  assert(host.querySelector('[role=status]').textContent.length > 0, '粘贴失败按既有路径显示错误');
+  lockedView.dispose();
+
+  // 留一份结果用于可视验收。
+  const finalView = reopened.mount(host, { mode: 'edit' });
+  finalView.select(reopened.find('强调')[0]);
+  finalView.focus();
+  result.textContent = `PASS ${passed} 项`;
+} catch (error) { result.textContent = `FAIL ${passed} 项后\n${error.stack ?? error}`; }
+</script>
+</html>

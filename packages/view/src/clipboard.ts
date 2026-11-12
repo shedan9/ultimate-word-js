@@ -1,7 +1,7 @@
 /**
  * 富文本剪贴板：复制把模型片段写成 HTML，粘贴把 HTML 读回「段落 → 带格式补丁的文字」。
  *
- * 两个方向都**只认内联 `style` 属性的原文**，不走 CSSOM：Word 写的 `mso-fareast-font-family`
+ * 复制与粘贴都读取样式原文，粘贴同时读取 Word 类样式；不走 CSSOM：Word 写的 `mso-fareast-font-family`
  * 这类私有属性 CSSOM 一律丢掉，而「汉字用仿宋、数字用 Times」恰恰只靠它们表达。
  * 复制照 Word 自己的 HTML 写法出（`font-family` + `mso-ascii/hansi/fareast-font-family`），
  * 于是我们复制的内容 Word 认得出字体，Word 复制的内容我们也认得出 —— 同一套解析。
@@ -25,6 +25,7 @@ import type {
   Shading,
 } from '@uw/model';
 import { HIGHLIGHT_COLORS, highlightFill, shadingFill } from '@uw/render-dom';
+import { clipboardStyleReader } from './clipboard-styles.ts';
 
 /** 粘贴进来的一段文字；补丁在光标处继承来的格式之上再改。 */
 export interface PasteRun {
@@ -224,31 +225,6 @@ interface Inherited {
   align?: Justification | undefined;
 }
 
-/** 手写的 `style` 属性解析：分号在引号里不算分隔。属性名一律小写。 */
-function parseStyle(text: string | null): Map<string, string> {
-  const out = new Map<string, string>();
-  if (!text) return out;
-  let quote = '';
-  let start = 0;
-  const flush = (end: number) => {
-    const decl = text.slice(start, end);
-    const colon = decl.indexOf(':');
-    if (colon > 0) out.set(decl.slice(0, colon).trim().toLowerCase(), decl.slice(colon + 1).trim());
-  };
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (quote) {
-      if (c === quote) quote = '';
-    } else if (c === '"' || c === "'") quote = c;
-    else if (c === ';') {
-      flush(i);
-      start = i + 1;
-    }
-  }
-  flush(text.length);
-  return out;
-}
-
 const firstFamily = (value: string) =>
   value
     .split(',')[0]
@@ -291,7 +267,7 @@ const CSS_JUSTIFY: Readonly<Record<string, Justification>> = {
   justify: 'both',
 };
 
-function inherit(el: Element, from: Inherited): Inherited {
+function inherit(el: Element, from: Inherited, style: Map<string, string>): Inherited {
   const tag = el.tagName.toUpperCase();
   const next: Inherited = { ...from };
   if (tag === 'B' || tag === 'STRONG' || /^H[1-6]$/.test(tag) || tag === 'TH') next.bold = true;
@@ -303,7 +279,6 @@ function inherit(el: Element, from: Inherited): Inherited {
   if (tag === 'PRE') next.pre = true;
   const align = el.getAttribute('align');
   if (align && CSS_JUSTIFY[align.toLowerCase()]) next.align = CSS_JUSTIFY[align.toLowerCase()];
-  const style = parseStyle(el.getAttribute('style'));
   const weight = style.get('font-weight');
   if (weight) next.bold = weight === 'bold' || weight === 'bolder' || Number(weight) >= 600;
   const fontStyle = style.get('font-style');
@@ -416,20 +391,34 @@ function patchOf(state: Inherited, trusted: boolean): RunPropsPatch {
 
 /** 我们自己、Word、WPS 写的 HTML：格式可以照单全收。 */
 export function isTrustedHtml(html: string): boolean {
-  return /data-uw-fragment|urn:schemas-microsoft-com:office|mso-[a-z-]+\s*:|class="?Mso/i.test(html);
+  return /data-uw-fragment|urn:schemas-microsoft-com:office|mso-[a-z-]+\s*:|\bclass\s*=\s*(?:"(?:[^"]*\s)?Mso|'(?:[^']*\s)?Mso|Mso)/i.test(
+    html,
+  );
 }
 
 const samePatch = (a: RunPropsPatch, b: RunPropsPatch) => JSON.stringify(a) === JSON.stringify(b);
+
+function skippedStyle(style: Map<string, string>): boolean {
+  return (
+    style.get('display')?.toLowerCase() === 'none' ||
+    style.get('mso-hide')?.toLowerCase() === 'all' ||
+    style.get('mso-list')?.toLowerCase() === 'ignore'
+  );
+}
 
 /**
  * 剪贴板 HTML 读成段落。空白按 CSS 的 `white-space: normal` 折叠（段首尾的去掉），
  * `pre` / `pre-wrap` 里原样保留、其中的换行拆段；`&nbsp;` 当普通空格 —— 浏览器与 Word
  * 都拿它表示「连续的第二个空格」，不是真的不断行空格。段里的 `<br>` 是软换行（run 文字里的
- * `\n`，控制器插成 `w:br`），`pre` 里的制表符原样是 `\t`（插成 `w:tab`）。图片、脚本、样式表跳过。
+ * `\n`，控制器插成 `w:br`），`pre` 里的制表符原样是 `\t`（插成 `w:tab`）。图片与脚本跳过；可信来源的内嵌样式表只用于读取格式，不输出文字。
  */
 export function htmlToParagraphs(html: string, parser: DOMParser): PasteParagraph[] {
   const trusted = isTrustedHtml(html);
-  const root = parser.parseFromString(html, 'text/html').body;
+  const doc = parser.parseFromString(html, 'text/html');
+  const root = doc.body;
+  const styleOf = clipboardStyleReader(doc, trusted);
+  const rootStyle = styleOf(root);
+  if (skippedStyle(rootStyle)) return [];
   const paragraphs: PasteParagraph[] = [];
   let current: PasteParagraph | undefined;
   /** 当前段最后一个字是不是空白（折叠用）；段首视为空白，于是段首的空白被吃掉。 */
@@ -489,14 +478,9 @@ export function htmlToParagraphs(html: string, parser: DOMParser): PasteParagrap
       const el = child as Element;
       const tag = el.tagName.toUpperCase();
       if (SKIP.has(tag)) continue;
-      const style = parseStyle(el.getAttribute('style'));
+      const style = styleOf(el);
       // mso-list:Ignore 是 Word 把列表编号写成的正文字（「1.」+ 一串空格），编号不是正文。
-      if (
-        style.get('display') === 'none' ||
-        style.get('mso-hide') === 'all' ||
-        style.get('mso-list')?.toLowerCase() === 'ignore'
-      )
-        continue;
+      if (skippedStyle(style)) continue;
       // Word 用 <o:p>&nbsp;</o:p> 占住空段落的段落标记，那个空格不是正文。
       if (tag === 'O:P' && !el.textContent?.replace(/[\s\u00a0]/g, '')) continue;
       // 带 page-break-before 的 <br> 是 Word 写的分页符（常在下一段的段首），段首也要留住，记成 U+000C。
@@ -519,7 +503,7 @@ export function htmlToParagraphs(html: string, parser: DOMParser): PasteParagrap
         }
         continue;
       }
-      const next = inherit(el, state);
+      const next = inherit(el, state, style);
       if (!BLOCKS.has(tag)) {
         walk(el, next);
         continue;
@@ -530,14 +514,21 @@ export function htmlToParagraphs(html: string, parser: DOMParser): PasteParagrap
       close(EXPLICIT.has(tag));
     }
   }
-  walk(root, {
-    bold: false,
-    italic: false,
-    underline: undefined,
-    strike: false,
-    vertAlign: 'baseline',
-    pre: false,
-  });
+  walk(
+    root,
+    inherit(
+      root,
+      {
+        bold: false,
+        italic: false,
+        underline: undefined,
+        strike: false,
+        vertAlign: 'baseline',
+        pre: false,
+      },
+      rootStyle,
+    ),
+  );
   close(false);
   return paragraphs;
 }
