@@ -189,9 +189,76 @@ try {
   assert(host.querySelector('[role=status]').textContent.length > 0, '单行控件拒绝软换行时显示错误');
   singleView.dispose();
 
+  // Word 的显示用空格不能代替制表位，显式首尾空格也不能被 HTML 空白规则吃掉。
+  const spaceDoc = await UltimateWord.load(listDocx());
+  const spaceView = spaceDoc.mount(host, { mode: 'edit' });
+  const spaceInput = host.querySelector('textarea');
+  const spaceTarget = spaceDoc.find('普通正文')[0];
+  spaceView.select({ start: spaceTarget.end, end: spaceTarget.start });
+  const wordSpaces = `<style>
+    .WordTabs {mso-tab-count:2;font-weight:bold;}
+    .WordSpaces {mso-spacerun:'yes';}
+  </style><p class=MsoNormal><span class=WordSpaces>  </span>姓名<span class=WordTabs> &nbsp;    </span><span class=WordSpaces>甲  乙  </span></p>`;
+  paste(spaceInput, wordSpaces, '不应使用纯文本');
+  const expectedSpaces = '  姓名\t\t甲  乙  ';
+  const spaceParagraph = spaceDoc.query('paragraph')[3];
+  const spaceRange = spaceDoc.rangeOf(spaceParagraph.id);
+  assert(spaceDoc.query('paragraph').length === 4, 'Word 空格与制表位粘贴不新增段落');
+  assert(spaceParagraph.runs.flatMap((r) => r.content).filter((c) => c.kind === 'tab').length === 2,
+    'Word tab-count 还原成两个模型制表位');
+  assert(spaceParagraph.runs.filter((r) => r.content.some((c) => c.kind === 'tab')).every((r) => r.props.bold),
+    '制表位保留类样式中的字符格式');
+  spaceView.select(spaceRange);
+  const copiedSpaces = copyHtml(spaceInput);
+  assert(copiedSpaces.get('text/plain') === expectedSpaces, 'Word 首尾空格和连续空格完整进入模型');
+  assert(copiedSpaces.get('text/html').includes('mso-tab-count:1'), '复制为 Word 可识别的制表位标记');
+  assert(spaceView.rectsOf(spaceDoc.find('甲  乙')[0]).length > 0, '制表位后的文字可定位');
+  before(spaceInput, 'historyUndo');
+  assert(spaceDoc.find('普通正文').length === 1, 'Word 空白粘贴整次撤销恢复原文');
+  assert(same(spaceView.selection, spaceTarget), '撤销恢复原有完整选区');
+  before(spaceInput, 'historyRedo');
+  spaceView.select(spaceDoc.rangeOf(spaceDoc.query('paragraph')[3].id));
+  assert(copyHtml(spaceInput).get('text/plain') === expectedSpaces, '重做保留全部制表位和空格');
+  const spaceReopened = await UltimateWord.load(await spaceDoc.toDocx());
+  spaceView.dispose();
+  const spaceReopenedView = spaceReopened.mount(host, { mode: 'edit' });
+  spaceReopenedView.select(spaceReopened.rangeOf(spaceReopened.query('paragraph')[3].id));
+  assert(copyHtml(host.querySelector('textarea')).get('text/plain') === expectedSpaces, 'DOCX 导出回读保留全部空白');
+  assert(spaceReopened.query('paragraph')[3].runs.flatMap((r) => r.content).filter((c) => c.kind === 'tab').length === 2,
+    'DOCX 回读中的制表位仍为 tab 而非空格');
+  spaceReopenedView.dispose();
+
+  const roundtripView = spaceDoc.mount(host, { mode: 'edit' });
+  const roundtripInput = host.querySelector('textarea');
+  roundtripView.select(spaceDoc.find('第二项')[0]);
+  paste(roundtripInput, copiedSpaces.get('text/html'), copiedSpaces.get('text/plain'));
+  roundtripView.select(spaceDoc.rangeOf(spaceDoc.query('paragraph')[1].id));
+  assert(copyHtml(roundtripInput).get('text/plain') === expectedSpaces, '复制 HTML 再粘贴保持同样空白');
+  // 纯制表位选区也必须走 HTML 通路，不能被当成无内容丢弃。
+  const tabRun = spaceDoc.query('paragraph')[1].runs.find((r) => r.content.some((c) => c.kind === 'tab'));
+  const tabStart = { nodeId: tabRun.id, contentIndex: tabRun.content.findIndex((c) => c.kind === 'tab'), offset: 0 };
+  roundtripView.select({ start: tabStart, end: { ...tabStart, offset: 1 } });
+  const loneTab = copyHtml(roundtripInput);
+  assert(loneTab.get('text/plain') === '\t', '单个制表位可以独立复制');
+  roundtripView.select(spaceDoc.find('第三项')[0]);
+  paste(roundtripInput, loneTab.get('text/html'), loneTab.get('text/plain'));
+  roundtripView.select(spaceDoc.rangeOf(spaceDoc.query('paragraph')[2].id));
+  assert(copyHtml(roundtripInput).get('text/plain') === '\t', '单个制表位可以独立粘贴');
+  roundtripView.dispose();
+
+  const protectedDoc = await UltimateWord.load(choiceControlDocx());
+  const protectedView = protectedDoc.mount(host, { mode: 'edit' });
+  const protectedRange = protectedDoc.find('一般')[0];
+  protectedView.select(protectedRange);
+  paste(host.querySelector('textarea'), wordSpaces);
+  assert(protectedDoc.find('一般').length === 1 && !protectedDoc.canUndo,
+    'Word 空白标记仍不能绕过下拉控件输入限制');
+  assert(same(protectedView.selection, protectedRange), '受保护的空白粘贴失败保留选区');
+  protectedView.dispose();
+
   // 留一份结果用于可视验收。
-  const finalView = breaksReopened.mount(host, { mode: 'edit' });
-  finalView.select(breaksReopened.find('边界软换行')[0]);
+  const finalView = spaceReopened.mount(host, { mode: 'edit' });
+  finalView.select(spaceReopened.find('甲  乙')[0]);
   finalView.focus();
   result.textContent = `PASS ${passed} 项`;
 } catch (error) { result.textContent = `FAIL ${passed} 项后\n${error.stack ?? error}`; }

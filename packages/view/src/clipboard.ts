@@ -119,6 +119,8 @@ function backgroundStyle(props: FragmentRun['props']): string[] {
 const PAGE_BREAK_HTML = '<br clear="all" style="mso-special-character:line-break;page-break-before:always">';
 /** 显式标记真实软换行，避免段末或纯换行片段被当成网页编辑器的占位 br。 */
 const SOFT_BREAK_HTML = '<br style="mso-special-character:line-break">';
+/** Word 用空白 span 表示制表位；保留原始 tab，让 pre-wrap 下的浏览器也能显示。 */
+const TAB_HTML = '<span style="mso-tab-count:1">\t</span>';
 
 /**
  * 片段写成剪贴板 HTML。一段一个 `<p>`（含空段 —— 选到下一段开头时末尾那个空 `<p>`
@@ -130,7 +132,7 @@ export function fragmentToHtml(fragment: RichFragment): string {
       const runs = p.runs
         .map(
           (r) =>
-            `<span style="${escapeAttr(runStyle(r.props))}">${escapeText(r.text).replace(/\n/g, SOFT_BREAK_HTML).replace(/\f/g, PAGE_BREAK_HTML)}</span>`,
+            `<span style="${escapeAttr(runStyle(r.props))}">${escapeText(r.text).replace(/\t/g, TAB_HTML).replace(/\n/g, SOFT_BREAK_HTML).replace(/\f/g, PAGE_BREAK_HTML)}</span>`,
         )
         .join('');
       return `<p style="margin:0;white-space:pre-wrap;text-align:${CSS_ALIGN[p.justification]}">${runs}</p>`;
@@ -224,6 +226,8 @@ interface Inherited {
   emphasis?: EmphasisMark | undefined;
   shading?: Shading | undefined;
   pre: boolean;
+  /** Word 的显式空格与 pre 不同：不把 HTML 源码换行拆成段落。 */
+  spaces: boolean;
   align?: Justification | undefined;
 }
 
@@ -316,6 +320,11 @@ function inherit(el: Element, from: Inherited, style: Map<string, string>): Inhe
   if (emphasis) next.emphasis = readEmphasis(emphasis) ?? next.emphasis;
   const whiteSpace = style.get('white-space');
   if (whiteSpace) next.pre = whiteSpace.startsWith('pre') || whiteSpace === 'break-spaces';
+  const spacerun = style
+    .get('mso-spacerun')
+    ?.replace(/^['"]|['"]$/g, '')
+    .toLowerCase();
+  if (spacerun === 'yes' || spacerun === 'no') next.spaces = spacerun === 'yes';
   const textAlign = style.get('text-align');
   if (textAlign && CSS_JUSTIFY[textAlign.toLowerCase()]) next.align = CSS_JUSTIFY[textAlign.toLowerCase()];
   return next;
@@ -400,6 +409,26 @@ export function isTrustedHtml(html: string): boolean {
 
 const samePatch = (a: RunPropsPatch, b: RunPropsPatch) => JSON.stringify(a) === JSON.stringify(b);
 
+/**
+ * Word HTML 的 tab-count 数量不等于 span 内空格数量（微软 WDK 的 Moufiltr.htm 有 2 个 tab、11 个空格）。
+ * https://github.com/microsoft/Windows-driver-samples/blob/main/input/moufiltr/Moufiltr.htm
+ * 仅转换行内纯空白标记，免得异常 HTML 吞掉正文；单标记最多展开一万个，避免坏数值撑爆粘贴。
+ */
+function tabCount(el: Element, style: Map<string, string>): number | undefined {
+  const value = style.get('mso-tab-count');
+  if (el.tagName.toUpperCase() !== 'SPAN' || !value || !/^\d+$/.test(value)) return undefined;
+  const count = Number(value);
+  if (count < 1 || count > 10_000 || !/^[ \t\r\n\u00a0]*$/.test(el.textContent ?? '')) return undefined;
+  if (
+    [...el.querySelectorAll('*')].some((child) => {
+      const tag = child.tagName.toUpperCase();
+      return tag === 'BR' || BLOCKS.has(tag) || SKIP.has(tag);
+    })
+  )
+    return undefined;
+  return count;
+}
+
 function skippedStyle(style: Map<string, string>): boolean {
   return (
     style.get('display')?.toLowerCase() === 'none' ||
@@ -425,14 +454,16 @@ export function htmlToParagraphs(html: string, parser: DOMParser): PasteParagrap
   let current: PasteParagraph | undefined;
   /** 当前段最后一个字是不是空白（折叠用）；段首视为空白，于是段首的空白被吃掉。 */
   let space = true;
-  /** 最后一段文字来自 `pre`：段尾的空格是原文，不是排版源码里的缩进。 */
-  let preserved = false;
+  /** 只裁掉段末可折叠的源码空格，不能连同前面 mso-spacerun / pre 的真实空格一起删。 */
+  let trailingSpaces = 0;
+  let spacesBeforePlaceholder = 0;
   /** 普通 HTML 的末尾 br 只占位；显式软换行必须留在模型里。 */
   let trailingPlaceholder = false;
   const open = (state: Inherited): PasteParagraph => {
     current = { ...(trusted && state.align ? { justification: state.align } : {}), runs: [] };
     space = true;
-    preserved = false;
+    trailingSpaces = 0;
+    spacesBeforePlaceholder = 0;
     trailingPlaceholder = false;
     return current;
   };
@@ -441,21 +472,23 @@ export function htmlToParagraphs(html: string, parser: DOMParser): PasteParagrap
     // 单个占位 br 仍代表一个空段；多个 br 只能去掉最后一个，不能拆成多个段落。
     const keepPlaceholder = trailingPlaceholder;
     const runs = current.runs;
-    const trimEnd = () => {
+    const trimEnd = (count: number) => {
       let last = runs.at(-1);
       while (last) {
-        if (!preserved) last.text = last.text.replace(/ +$/, '');
+        const removed = Math.min(count, last.text.length);
+        if (removed) last.text = last.text.slice(0, -removed);
+        count -= removed;
         if (last.text) return last;
         runs.pop();
         last = runs.at(-1);
       }
       return undefined;
     };
-    const last = trimEnd();
+    const last = trimEnd(trailingSpaces);
     if (last && trailingPlaceholder) {
       last.text = last.text.replace(/\n$/, '');
       // 占位前的空格也在段末；可能来自另一个带格式的 run。
-      trimEnd();
+      trimEnd(spacesBeforePlaceholder);
     }
     if (runs.length || keepEmpty || keepPlaceholder) paragraphs.push(current);
     current = undefined;
@@ -468,9 +501,10 @@ export function htmlToParagraphs(html: string, parser: DOMParser): PasteParagrap
     if (last && samePatch(last.patch, patch)) last.text += text;
     else paragraph.runs.push({ text, patch });
     // br 后仅有源码空白时仍是段末占位；跨格式的尾空白会在 close 中一起清掉。
-    if (state.pre || /[^ ]/.test(text)) trailingPlaceholder = false;
+    if (state.pre || state.spaces || /[^ ]/.test(text)) trailingPlaceholder = false;
+    const tail = text.match(/ +$/)?.[0].length ?? 0;
+    trailingSpaces = state.pre || state.spaces ? 0 : tail === text.length ? trailingSpaces + tail : tail;
     space = text.endsWith(' ');
-    preserved = state.pre;
   };
   function text(value: string, state: Inherited): void {
     if (state.pre) {
@@ -486,8 +520,10 @@ export function htmlToParagraphs(html: string, parser: DOMParser): PasteParagrap
       return;
     }
     // Word 的 HTML 源码按行宽折行，折在两个汉字之间的换行不是空格（CSS Text 3 的分段规则）。
-    let collapsed = value.replace(CJK_WRAP, '$1').replace(/[ \t\n\r\f]+/g, ' ');
-    if (space) collapsed = collapsed.replace(/^ /, '');
+    let collapsed = state.spaces
+      ? value.replace(/[\t\n\r\f]+/g, ' ')
+      : value.replace(CJK_WRAP, '$1').replace(/[ \t\n\r\f]+/g, ' ');
+    if (space && !state.spaces) collapsed = collapsed.replace(/^ /, '');
     append(collapsed.replace(/\u00a0/g, ' '), state);
   }
   function walk(node: Node, state: Inherited): void {
@@ -516,12 +552,21 @@ export function htmlToParagraphs(html: string, parser: DOMParser): PasteParagrap
       }
       // 先记录换行，等段末再判断普通 br 是否只是占位；段首 br 后面可能还有正文。
       if (tag === 'BR') {
+        const before = trailingSpaces;
         append('\n', inherit(el, state, style));
+        spacesBeforePlaceholder = before;
         trailingPlaceholder = style.get('mso-special-character')?.toLowerCase() !== 'line-break';
         space = true;
         continue;
       }
       const next = inherit(el, state, style);
+      const tabs = tabCount(el, style);
+      if (tabs !== undefined) {
+        append('\t'.repeat(tabs), next);
+        // 标记后的源码换行不额外插空格；显式 spacerun 仍会原样保留。
+        space = true;
+        continue;
+      }
       if (!BLOCKS.has(tag)) {
         walk(el, next);
         continue;
@@ -543,6 +588,7 @@ export function htmlToParagraphs(html: string, parser: DOMParser): PasteParagrap
         strike: false,
         vertAlign: 'baseline',
         pre: false,
+        spaces: false,
       },
       rootStyle,
     ),

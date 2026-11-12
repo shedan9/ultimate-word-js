@@ -32,6 +32,88 @@ const base: ResolvedRunProps = {
 const parse = (html: string) => htmlToParagraphs(html, new DOMParser());
 
 describe('剪贴板 HTML', () => {
+  it('Word 制表位按数量还原，丢弃显示用空格，类样式和段首段末同样生效', () => {
+    const paragraphs = parse(`<style>.Tabs {mso-tab-count:2;font-weight:bold;}</style>
+      <p class=MsoNormal><span style="mso-tab-count:1">&nbsp;   </span>甲<span class=Tabs><b>&nbsp; &nbsp;</b></span>乙<span style="mso-tab-count:1"></span></p>`);
+    expect(paragraphs[0]?.runs.map((r) => [r.text, r.patch.bold])).toEqual([
+      ['\t甲', false],
+      ['\t\t', true],
+      ['乙\t', false],
+    ]);
+  });
+
+  it.each(['0', '-1', '1.5', 'NaN', 'Infinity', '99999999999999999999', '10001'])(
+    '无效或过大的 Word 制表位数量 %s 保留可见文字且不抛错',
+    (count) => {
+      expect(
+        parse(`<p class=MsoNormal>甲<span style="mso-tab-count:${count}">  </span>乙</p>`)[0]
+          ?.runs.map((r) => r.text)
+          .join(''),
+      ).toBe('甲 乙');
+      expect(
+        parse(`<p class=MsoNormal>甲<span style="mso-tab-count:${count}"> 乙 </span>丙</p>`)[0]
+          ?.runs.map((r) => r.text)
+          .join(''),
+      ).toBe('甲 乙 丙');
+    },
+  );
+
+  it('制表位标记不吞正文，不应用块容器，隐藏和编号占位仍跳过', () => {
+    const paragraphs = parse(
+      `<p class=MsoNormal style="mso-tab-count:2">甲<span style="mso-tab-count:1">正文</span><span style="mso-tab-count:2;display:none"> </span><span style="mso-tab-count:2;mso-list:Ignore"> </span>乙</p>`,
+    );
+    expect(paragraphs[0]?.runs.map((r) => r.text).join('')).toBe('甲正文乙');
+  });
+
+  it.each(['\t', '\t\t', '\t正文\t', '甲\t\n\t乙'])('自己复制的制表位片段 %j 往返保留数量与段落', (text) => {
+    const html = fragmentToHtml({ paragraphs: [{ justification: 'left', runs: [{ text, props: base }] }] });
+    expect(html).toContain('mso-tab-count:1');
+    expect(parse(html)).toHaveLength(1);
+    expect(
+      parse(html)[0]
+        ?.runs.map((r) => r.text)
+        .join(''),
+    ).toBe(text);
+  });
+
+  it('Word 显式连续空格保留首尾和纯空格段，嵌套格式与引号值同样生效', () => {
+    const paragraphs = parse(`<style>.Spaces {mso-spacerun:'yes';}</style>
+      <p class=MsoNormal><span class=Spaces>  <b>甲  乙</b>  </span> \n</p>
+      <p class=MsoNormal><span style='mso-spacerun:"yes"'> &nbsp; </span></p>`);
+    expect(paragraphs.map((p) => p.runs.map((r) => r.text).join(''))).toEqual(['  甲  乙  ', '   ']);
+    expect(paragraphs[0]?.runs.find((r) => r.text.includes('甲'))?.patch.bold).toBe(true);
+  });
+
+  it('显式空格后的源码空白仅删源码部分，段末普通 br 仍去占位，内部换行保留', () => {
+    const paragraphs =
+      parse(`<p class=MsoNormal>甲<span style="mso-spacerun:yes">  </span><b>&nbsp;</b><br><i>&nbsp;</i> </p>
+      <p class=MsoNormal>乙<span style="mso-spacerun:yes">  </span><br>丙</p>
+      <p class=MsoNormal>丁<span style="mso-spacerun:yes">  </span><br style="mso-special-character:line-break"></p>`);
+    expect(paragraphs.map((p) => p.runs.map((r) => r.text).join(''))).toEqual(['甲  ', '乙  \n丙', '丁  \n']);
+  });
+
+  it('带制表位标记的非文字子元素仍按原有换行和块边界读取', () => {
+    const paragraphs = parse(
+      '<p class=MsoNormal>甲<span style="mso-tab-count:1"><br style="mso-special-character:line-break"></span>乙</p>',
+    );
+    expect(paragraphs[0]?.runs.map((r) => r.text).join('')).toBe('甲\n乙');
+  });
+
+  it('mso-spacerun:no 恢复空白折叠，未标记普通网页空白策略不变', () => {
+    expect(
+      parse(
+        '<p class=MsoNormal><span style="mso-spacerun:yes"> 甲 <span style="mso-spacerun:no"> 乙  丙 </span> 丁 </span></p>',
+      )[0]
+        ?.runs.map((r) => r.text)
+        .join(''),
+    ).toBe(' 甲 乙 丙  丁 ');
+    expect(
+      parse('<p> 甲   乙 </p>')[0]
+        ?.runs.map((r) => r.text)
+        .join(''),
+    ).toBe('甲 乙');
+  });
+
   it('Word 的段落与字符类样式继承字号、字体分桶和对齐，内联样式覆盖类样式', () => {
     const html = `<html><head><style><!--
       body { font-size:12pt; font-family:"Times New Roman"; }

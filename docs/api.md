@@ -812,6 +812,12 @@ Ctrl/Cmd+X 与系统菜单；复制保留选区，剪切折叠到起点，并作
 复制出的软换行带 `mso-special-character:line-break` 标记，段首、段末、连续换行及纯换行选区均保留在原段内（2026-11-12）。
 粘贴 Word 的同类标记也按真实软换行处理，包含内嵌类样式中的标记；普通网页段末仅最后一个未标记 `<br>` 作为占位去掉，
 单个占位 `<br>` 表示一个空段。原先在段首立即拆段、段末一律删换行，会使复制后的段落结构与文字不一致。
+**Word 制表位与显式空格（2026-11-12）**：纯空白 `<span>` 的 `mso-tab-count:N`（正整数，单标记最多 10000 个）
+还原成 N 个真实制表位，忽略其中显示用的空格；复制制表位也写出 `mso-tab-count:1`。
+`mso-spacerun:yes` 保留首尾与连续空格（含纯空格段、嵌套格式和类样式），不会像 `pre` 一样把源码换行拆段；
+`no` 恢复普通空白折叠。段末仅裁可折叠的源码空白，避免误删相邻显式空格。
+非法 / 过大的数量以及含正文或非文字内容的标记沿用普通解析，隐藏和编号占位仍跳过。
+制表位标记的用法可见[微软 WDK 的 HTML 原文](https://github.com/microsoft/Windows-driver-samples/blob/main/input/moufiltr/Moufiltr.htm)；Word 客户端粘贴验收仍需人工执行。
 低层入口：`@uw/model` 的 `fragmentOfRange`，`@uw/view` 的 `fragmentToHtml` / `htmlToParagraphs` / 控制器 `insertParagraphs`。
 
 **Word 类样式（2026-11-12）**：可信来源 HTML 的内嵌 `<style>` 中，标签、类、id、通配及其简单组合和分组选择器会参与格式读取。
