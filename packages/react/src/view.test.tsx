@@ -49,6 +49,7 @@ function fakeDocument() {
         toPNG: () => Promise.reject(new Error('假视图')),
         on: () => ({ dispose: () => undefined }),
         decorate: (range) => {
+          if (disposed) throw new Error('视图已销毁');
           const item = { range, dispose: vi.fn() };
           view.decorations.push(item);
           return { update: vi.fn(), dispose: item.dispose };
@@ -374,7 +375,7 @@ describe('useDecoration', () => {
   }
   it('视图与 range 都在时挂一条装饰；按值比，同样的 range 新对象不重挂；变了才换', () => {
     const { doc, views } = fakeDocument();
-    render(<UltimateWordView doc={doc} />);
+    doc.mount(document.createElement('div'));
     const view = views[0] as FakeView;
     const range = () => ({ start: at('r0'), end: at('r0', 2) });
     render(<Highlight view={view} range={range()} cls="hit" />);
@@ -388,4 +389,45 @@ describe('useDecoration', () => {
     render(<Highlight view={view} range={null} cls="hit" />);
     expect(view.decorations[1]?.dispose).toHaveBeenCalledTimes(1);
   });
+
+  it.each(['doc', 'mode', 'pageGap', 'hide'] as const)(
+    '同次更新 %s 与高亮范围时跳过已销毁视图，向新视图挂装饰',
+    (change) => {
+      const first = fakeDocument();
+      const second = fakeDocument();
+      function Probe({ updated }: { updated: boolean }) {
+        const [view, setView] = useState<UwView | null>(null);
+        useDecoration(
+          view,
+          { start: at('r0'), end: at('r0', updated ? 3 : 2) },
+          {
+            className: updated ? 'new-hit' : 'hit',
+          },
+        );
+        if (updated && change === 'hide') return null;
+        return (
+          <UltimateWordView
+            doc={updated && change === 'doc' ? second.doc : first.doc}
+            onViewChange={setView}
+            {...(updated && change === 'mode' ? { mode: 'edit' } : {})}
+            {...(updated && change === 'pageGap' ? { pageGap: 8 } : {})}
+          />
+        );
+      }
+      render(<Probe updated={false} />);
+      const previous = first.views[0] as FakeView;
+      expect(previous.decorations).toHaveLength(1);
+      render(<Probe updated />);
+      expect(previous.dispose).toHaveBeenCalledTimes(1);
+      expect(previous.decorations).toHaveLength(1);
+      expect(previous.decorations[0]?.dispose).toHaveBeenCalledTimes(1);
+      if (change !== 'hide') {
+        const current = (change === 'doc' ? second.views[0] : first.views[1]) as FakeView;
+        expect(current.decorations).toHaveLength(1);
+        expect(current.decorations[0]?.range.end.offset).toBe(3);
+        act(() => root?.unmount());
+        expect(current.decorations[0]?.dispose).toHaveBeenCalledTimes(1);
+      }
+    },
+  );
 });

@@ -438,6 +438,53 @@ try {
   assert(document.querySelector('[data-input="key-string"]') === stringDraft && stringDraft.value === '字符串草稿', '重新添加同文数字 key 不影响字符串 key 的状态');
   keyRoot.unmount(); await frame();
   assert(keyView === null && !stringDraft.isConnected && document.querySelector('#app').childElementCount === 0, '混合 key 回归卸载后视图与气泡清理完整');
+  // onViewChange 的状态更新尚未渲染时，父组件的装饰 effect 仍可能拿到刚销毁的旧视图。
+  const highlightErrors = [];
+  const highlightRoot = createRoot(document.querySelector('#app'), { onUncaughtError: error => highlightErrors.push(error) });
+  const highlight = { doc: remountDoc, mode: 'preview', pageGap: 24, shown: true, revision: 0 };
+  let highlightView;
+  const highlightRange = () => {
+    const range = highlight.doc.find('原文')[0];
+    return { start: range.start, end: { ...range.start, offset: range.start.offset + (highlight.revision % 2 ? 1 : 2) } };
+  };
+  function HighlightProbe() {
+    const [view, setView] = useState(null);
+    useDecoration(view, highlightRange(), { className: `react-hit-${highlight.revision}`, style: { background: '#ffd33d55' } });
+    const onViewChange = next => { highlightView = next; setView(next); };
+    return highlight.shown ? h(UltimateWordView, {
+      doc: highlight.doc, mode: highlight.mode, pageGap: highlight.pageGap,
+      className: 'viewer', virtualize: false, onViewChange,
+    }) : null;
+  }
+  const renderHighlight = () => highlightRoot.render(h(StrictMode, null, h(HighlightProbe)));
+  renderHighlight();
+  assert(await until(() => highlightView?.root.querySelector('.react-hit-0')), 'StrictMode 下通过 onViewChange 状态挂上高亮');
+  for (const change of ['pageGap', 'mode', 'doc', 'hide', 'show']) {
+    const previous = highlightView;
+    const oldHit = document.querySelector(`[class="react-hit-${highlight.revision}"]`);
+    highlight.revision++;
+    if (change === 'pageGap') highlight.pageGap = 8;
+    if (change === 'mode') highlight.mode = 'edit';
+    if (change === 'doc') highlight.doc = replacementDoc;
+    if (change === 'hide') highlight.shown = false;
+    if (change === 'show') highlight.shown = true;
+    renderHighlight();
+    assert(await until(() => highlightErrors.length || (change === 'hide'
+      ? highlightView === null && document.querySelector('#app').childElementCount === 0
+      : highlightView && highlightView !== previous && highlightView.root.querySelector(`.react-hit-${highlight.revision}`))), `${change} 与高亮更新同次提交完成`);
+    assert(highlightErrors.length === 0, `${change} 不向已销毁视图添加装饰，无 React 错误`);
+    assert(!oldHit?.isConnected && !previous?.root.isConnected, `${change} 清理旧视图与旧高亮`);
+    if (change !== 'hide') {
+      const nodes = highlightView.root.querySelectorAll('[data-decoration]');
+      const rects = highlightView.rectsOf(highlightRange());
+      assert(nodes.length === rects.length && nodes.length > 0, `${change} 只保留当前范围的高亮`);
+      const box = nodes[0].getBoundingClientRect();
+      assert(near(box.left, rects[0].x) && near(box.top, rects[0].y) && near(box.width, rects[0].width), `${change} 高亮几何对应新视图与新范围`);
+    }
+  }
+  const finalHighlightView = highlightView;
+  highlightRoot.unmount(); await frame();
+  assert(highlightView === null && !finalHighlightView.root.isConnected && document.querySelectorAll('#app [data-decoration]').length === 0, '高亮回归卸载后状态、视图与装饰全部清理');
   result.textContent = `PASS: ${passed} react browser assertions`;
 } catch (error) {
   if (error !== null) result.textContent = `FAIL after ${passed}: ${error.stack}`;

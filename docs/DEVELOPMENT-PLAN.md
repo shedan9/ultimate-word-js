@@ -1340,6 +1340,12 @@ await view.toPNG(2);     // 第 3 页（页序号从 0 起，与 scrollTo({ page
   - 新增 React 1 项回归（总计 38 项），先复现换序丢失草稿与重复 key 警告，再验证修复；真实浏览器新增 11 项断言（130 项），含 StrictMode、独立 offset 定位与卸载清理。
     全量 typecheck / test（21 个任务、1924 项测试，含坐标真值闸门）、lint 与全量构建通过。
 
+- ✅ **React 高亮与视图同次更新**（2026-11-12）：通过 `onViewChange` 保存视图的父组件，在切 doc / mode / pageGap 或隐藏视图时同时改高亮，
+  被动 effect 仍拿着旧视图状态，原来会向已销毁视图加装饰、抛错卸载页面。
+  - 清理时以内部 WeakSet 标记本封装销毁的句柄，`useDecoration` 跳过，等新视图状态再挂最新范围 / 选项；弱引用不延长视图寿命、不新增公共 API。
+  - 新增 React 4 项回归（总计 42 项），假视图也拒绝销毁后的装饰调用；浏览器新增 25 项断言（155 项），覆盖 StrictMode、隐藏后恢复、高亮几何与最终清理。
+  - 全量 typecheck / test（21 个任务、1928 项测试，含坐标真值闸门）、lint 与全量构建通过。
+
 ### Phase 7 — 编辑态
 - ✅ **模型层文字事务地基**（2026-09-13）：`@uw/model` 的 `createTextEditor()`。
   同步 `tx` 原子提交，命令失败整批回滚；段内 `insertText` / `deleteRange` 支持跨 run 与文字片段，

@@ -1101,6 +1101,10 @@ function Viewer({ url }: { url: string }) {
 >   取消原因由加载器拒绝后进入 `error`，非 Error 原因转成 Error，`loading` 结束且 `doc` 为 null；Blob 读取仍须等读取返回才能报告取消。
 >   来源变化或卸载只取消本次请求，不反向取消宿主 signal，迟到结果不发布；请求完成或清理时移除外部监听，成功后取消不影响已加载文档。
 > - `useDecoration` 的 range 与 options 按**值**比 —— 调用方每次渲染都会造新对象
+>   通过 `onViewChange` 保存视图时，可在同次更新里切 doc / 构造选项、隐藏视图并改变高亮范围 / 选项。
+>   hook 跳过组件已销毁的旧句柄，等新视图状态后挂最新高亮；隐藏时清理，重新显示后恢复。
+>   原来父组件的被动 effect 可能先于新视图状态更新执行，向已销毁视图加装饰时报错（2026-11-12 修复）；
+>   内部 WeakSet 只记录本封装销毁的视图，不延长句柄寿命，宿主自行 mount 的视图仍须自行管理生命周期。
 
 编辑态直接使用 `<UltimateWordView doc={doc} mode="edit" onViewChange={setView} />`（2026-11-11 补齐原先遗漏的 mode 传递）。
 `mode` 默认 `'preview'`；切换模式会销毁旧视图再挂新视图，`ref` 和 `onViewChange` 跟着更新。

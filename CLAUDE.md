@@ -475,7 +475,12 @@ SVG 当图片用时看不见宿主 `@font-face`，本页用到的族与外部图
 换序 / 缩放 / 重挂各自保留草稿，移除只影响对应气泡，重新添加从新子树开始，同类型同值继续拒绝重复。
 新增 React 1 项回归与浏览器 11 项断言，覆盖 StrictMode、独立定位、移除 / 重加与最终清理。
 全量 typecheck / test（21 个任务、1924 项测试，含坐标真值闸门）、lint、全量构建与 React 浏览器回归（130 项断言）通过。
-判据是接线：React Vitest 38 项（jsdom + 真实加载 / 假视图）+ `/tests/react.html` 130 项。**浏览器回归页在被遮住的
+**React 高亮与视图同次更新**（2026-11-12）：父组件通过 `onViewChange` 保存视图时，切 doc / mode / pageGap 或隐藏视图，
+若同时改变高亮范围 / 选项，父组件的被动 effect 会先拿旧状态给已销毁视图加装饰，抛错并卸载页面。
+封装清理时用内部 WeakSet 标记旧句柄，`useDecoration` 跳过，等待新视图状态后挂最新范围；不延长视图寿命、不新增公共 API。
+新增 React 4 项回归；真实浏览器新增 25 项断言，覆盖 StrictMode、隐藏后恢复、新范围 / 样式与几何、卸载清理。
+全量 typecheck / test（21 个任务、1928 项测试，含坐标真值闸门）、lint、全量构建与 React 浏览器回归（155 项断言）通过。
+判据是接线：React Vitest 42 项（jsdom + 真实加载 / 假视图）+ `/tests/react.html` 155 项。**浏览器回归页在被遮住的
 标签页里会永远停在「正在验证…」**（`document.hidden` 下 rAF 不跑）—— 用 headless Chrome + CDP
 轮询 `#result` 跑最稳：`node apps/playground/tests/run.mjs`（七个页面 view / virtual-text / annotations /
 scroll / facade / print / react 一口气跑完，要先起调试台）。

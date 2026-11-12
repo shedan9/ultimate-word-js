@@ -19,6 +19,7 @@ import type { CSSProperties, ReactNode, Ref } from 'react';
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { UwDocument, UwView, ViewOptions, ZoomSpec } from 'ultimate-word';
+import { disposedViews } from './disposed-views.ts';
 import type { OverlayEntry, OverlayKey, OverlaySpec } from './overlays.ts';
 import { disposeOverlays, reconcileOverlays } from './overlays.ts';
 
@@ -89,6 +90,7 @@ export const UltimateWordView = forwardRef<UwView | null, UltimateWordViewProps>
     setView(next);
     return () => {
       applied.current.view = null;
+      disposedViews.add(next);
       setView(null);
       next.dispose();
     };
