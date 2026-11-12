@@ -256,9 +256,87 @@ try {
   assert(same(protectedView.selection, protectedRange), '受保护的空白粘贴失败保留选区');
   protectedView.dispose();
 
+  // 清直接格式会重新露出目标样式；可信源的关闭状态必须成为显式覆盖。
+  const decorationDoc = await UltimateWord.load(listDocx());
+  const decorationView = decorationDoc.mount(host, { mode: 'edit' });
+  const decorationInput = host.querySelector('textarea');
+  const decoratedRange = decorationDoc.find('普通正文')[0];
+  decorationDoc.tx((tx) => {
+    tx.addStyle({ id: 'Decorated', name: '装饰样式', paraProps: {
+      shading: { pattern: 'clear', color: 'auto', fill: 'EEEEEE' },
+    }, runProps: {
+      highlight: 'yellow', shading: { pattern: 'clear', color: 'auto', fill: 'D9D9D9' }, emphasis: 'dot',
+    } });
+    tx.setParagraphProps(decoratedRange, { styleId: 'Decorated' });
+  });
+  const decoratedParagraph = () => decorationDoc.query('paragraph')[3];
+  const decorationProps = (doc, text) => {
+    const hit = doc.find(text).at(-1);
+    const style = doc.layout.pages.flatMap((p) => p.blocks).filter((b) => b.kind === 'paragraph')
+      .flatMap((p) => p.lines).flatMap((l) => l.line.fragments).find((f) => f.runId === hit?.start.nodeId)?.style;
+    if (!style) throw new Error(`缺少布局文字 ${text}`);
+    return { ...style, highlight: style.highlight ?? 'none', emphasis: style.emphasis?.mark ?? 'none' };
+  };
+  const noDecoration = (doc, text, label) => {
+    const props = decorationProps(doc, text);
+    assert(props?.highlight === 'none', `${label}无高亮`);
+    assert(props?.shading?.pattern === 'nil', `${label}无字符底纹`);
+    assert(props?.emphasis === 'none', `${label}无着重号`);
+  };
+  assert(decorationProps(decorationDoc, '普通正文').highlight === 'yellow', '目标确实从段落样式继承高亮');
+  assert(decorationProps(decorationDoc, '普通正文').emphasis === 'dot', '目标确实从段落样式继承着重号');
+  decorationView.select(decorationDoc.find('第一项')[0]);
+  const plainSource = copyHtml(decorationInput);
+  const middle = decorationDoc.find('通正')[0];
+  decorationView.select({ start: middle.end, end: middle.start });
+  paste(decorationInput, plainSource.get('text/html'), plainSource.get('text/plain'));
+  noDecoration(decorationDoc, '第一项', '自己的普通文字粘贴后');
+  assert(decorationProps(decorationDoc, '普').highlight === 'yellow' && decorationProps(decorationDoc, '文').emphasis === 'dot',
+    '粘贴两侧的原文字仍保留目标样式装饰');
+  assert(decorationDoc.layout.pages.flatMap((p) => p.blocks).some((p) => p.id === decoratedParagraph().id && p.frame?.shading?.fill === 'EEEEEE'),
+    '字符装饰关闭不清掉段落底纹');
+  assert(decorationView.rectsOf(decorationDoc.find('第一项').at(-1)).length > 0, '关闭装饰后的文字仍可定位');
+  before(decorationInput, 'historyUndo');
+  assert(decorationDoc.find('普通正文').length === 1, '关闭源装饰的粘贴一次撤销恢复原文');
+  assert(decorationProps(decorationDoc, '通正').highlight === 'yellow', '撤销恢复目标样式装饰');
+  assert(same(decorationView.selection, middle), '撤销恢复被替换的完整选区');
+  before(decorationInput, 'historyRedo');
+  noDecoration(decorationDoc, '第一项', '重做后');
+  before(decorationInput, 'historyUndo');
+
+  decorationView.select(middle);
+  const decoratedSource = `<style>.Off {mso-highlight:none;text-emphasis:none;}</style><p class=MsoNormal>普通源<span style="background:lime;mso-highlight:green">高亮源</span><span style="background:#123456">底纹源</span><span style="text-emphasis:filled dot">着重源<span class=Off>关闭源</span></span></p>`;
+  paste(decorationInput, decoratedSource);
+  noDecoration(decorationDoc, '普通源', 'Word 普通文字');
+  noDecoration(decorationDoc, '关闭源', 'Word 显式关闭');
+  const sourceHighlight = decorationProps(decorationDoc, '高亮源');
+  assert(sourceHighlight.highlight === 'green' && sourceHighlight.shading.pattern === 'nil' && sourceHighlight.emphasis === 'none',
+    'Word 高亮源仅保留自身高亮');
+  const sourceShading = decorationProps(decorationDoc, '底纹源');
+  assert(sourceShading.highlight === 'none' && sourceShading.shading.fill === '123456' && sourceShading.emphasis === 'none',
+    'Word 底纹源不被目标样式高亮遮挡');
+  const sourceEmphasis = decorationProps(decorationDoc, '着重源');
+  assert(sourceEmphasis.emphasis === 'dot' && sourceEmphasis.highlight === 'none' && sourceEmphasis.shading.pattern === 'nil',
+    'Word 着重源仅保留自身着重号');
+  const decorationReopened = await UltimateWord.load(await decorationDoc.toDocx());
+  noDecoration(decorationReopened, '普通源', 'DOCX 回读普通文字');
+  noDecoration(decorationReopened, '关闭源', 'DOCX 回读显式关闭');
+  assert(decorationProps(decorationReopened, '高亮源').highlight === 'green', 'DOCX 回读保留源高亮');
+  assert(decorationProps(decorationReopened, '底纹源').shading.fill === '123456', 'DOCX 回读保留源底纹');
+  assert(decorationProps(decorationReopened, '着重源').emphasis === 'dot', 'DOCX 回读保留源着重号');
+  decorationView.dispose();
+
+  // 普通网页继续采用合并格式策略。
+  const webDecorationView = decorationReopened.mount(host, { mode: 'edit' });
+  webDecorationView.select(decorationReopened.find('文').at(-1));
+  paste(host.querySelector('textarea'), '<p>网页继承</p>');
+  assert(decorationProps(decorationReopened, '网页继承').highlight === 'yellow' && decorationProps(decorationReopened, '网页继承').emphasis === 'dot',
+    '普通网页仍继承目标样式装饰');
+  webDecorationView.dispose();
+
   // 留一份结果用于可视验收。
-  const finalView = spaceReopened.mount(host, { mode: 'edit' });
-  finalView.select(spaceReopened.find('甲  乙')[0]);
+  const finalView = decorationReopened.mount(host, { mode: 'edit' });
+  finalView.select(decorationReopened.find('普通源')[0]);
   finalView.focus();
   result.textContent = `PASS ${passed} 项`;
 } catch (error) { result.textContent = `FAIL ${passed} 项后\n${error.stack ?? error}`; }

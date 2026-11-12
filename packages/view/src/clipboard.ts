@@ -338,11 +338,15 @@ const HIGHLIGHT_BY_HEX: ReadonlyMap<string, string> = new Map(
 function readBackground(style: Map<string, string>, next: Inherited): void {
   const mso = style.get('mso-highlight');
   if (mso !== undefined) {
-    const name = mso in HIGHLIGHT_COLORS ? mso : HIGHLIGHT_BY_HEX.get(parseColor(mso) ?? '');
+    const name =
+      mso === 'none' || mso in HIGHLIGHT_COLORS ? mso : HIGHLIGHT_BY_HEX.get(parseColor(mso) ?? '');
     if (name !== undefined) {
       next.highlight = name;
-      next.shading = undefined;
-      return;
+      // none 只关闭高亮：background 仍可能表达独立的字符底纹，不能一起丢掉。
+      if (name !== 'none') {
+        next.shading = undefined;
+        return;
+      }
     }
   }
   const background = style.get('background') ?? style.get('background-color');
@@ -384,11 +388,11 @@ function patchOf(state: Inherited, trusted: boolean): RunPropsPatch {
     vertAlign: state.vertAlign,
     ...(state.size !== undefined ? { size: state.size } : {}),
     ...(state.color !== undefined ? { color: state.color } : {}),
-    // 与开关同理，源里没有就清掉：光标左边的高亮不该染到粘进来的字上。
-    // 清成 null（回到样式值）而不是写 none，免得每个粘进来的 run 都多一个 `<w:highlight w:val="none"/>`
-    highlight: state.highlight ?? null,
-    shading: state.shading ?? null,
-    emphasis: state.emphasis === undefined || state.emphasis === 'none' ? null : state.emphasis,
+    // 可信粘贴要保留源的关闭状态。null 只删除直接格式，会重新露出目标样式的高亮 / 底纹 / 着重号；
+    // 必须写 none / nil 才能盖掉目标的样式层，且新增的直接格式会跟随撤销与 DOCX 回写。
+    highlight: state.highlight ?? 'none',
+    shading: state.shading ?? { pattern: 'nil', color: 'auto', fill: 'auto' },
+    emphasis: state.emphasis ?? 'none',
     ...(ascii || eastAsia
       ? {
           fonts: {

@@ -1,7 +1,21 @@
 // @vitest-environment jsdom
-import type { ResolvedRunProps } from '@uw/model';
+import { createDiagnosticSink } from '@uw/core';
+import type { CascadeContext, ResolvedRunProps, RunProps, Style } from '@uw/model';
+import {
+  createTextEditor,
+  DEFAULT_SECTION_PROPS,
+  DEFAULT_SETTINGS,
+  EMPTY_NUMBERING,
+  EMPTY_THEME,
+  parseStyles,
+  rangeOfNode,
+  resolveRunProps,
+  walkParagraphs,
+} from '@uw/model';
+import { highlightFill, shadingFill } from '@uw/render-dom';
 import { describe, expect, it } from 'vitest';
 import { fragmentToHtml, htmlToParagraphs, isTrustedHtml } from './clipboard.ts';
+import { createEditingController } from './editing.ts';
 
 const base: ResolvedRunProps = {
   fonts: { ascii: 'Times New Roman', hAnsi: 'Times New Roman', eastAsia: '仿宋', cs: '', hint: 'eastAsia' },
@@ -30,8 +44,167 @@ const base: ResolvedRunProps = {
   langEastAsia: 'zh-CN',
 };
 const parse = (html: string) => htmlToParagraphs(html, new DOMParser());
+const noShading = { pattern: 'nil', color: 'auto', fill: 'auto' } as const;
+
+/** 四种来源都会在删掉直接格式后重新级联；不能只在无样式的空文档里验证粘贴。 */
+function decoratedTarget(layer: 'defaults' | 'paragraph' | 'character' | 'direct') {
+  const decoration: RunProps = {
+    highlight: 'yellow',
+    shading: { pattern: 'clear', color: 'auto', fill: 'D9D9D9' },
+    emphasis: 'dot',
+  };
+  const style: Style = {
+    id: 'Decorated',
+    type: layer === 'paragraph' ? 'paragraph' : 'character',
+    name: 'Decorated',
+    basedOn: undefined,
+    next: undefined,
+    isDefault: false,
+    paraProps: {},
+    runProps: decoration,
+    tableProps: {},
+    rowProps: {},
+    cellProps: {},
+    conditional: new Map(),
+  };
+  const ctx: CascadeContext = {
+    styles: {
+      ...parseStyles(undefined, createDiagnosticSink()),
+      defaults: { paraProps: {}, runProps: layer === 'defaults' ? decoration : {} },
+      chainOf: (id) => (id === 'Decorated' ? [style] : []),
+    },
+    theme: EMPTY_THEME,
+    settings: DEFAULT_SETTINGS,
+    numbering: EMPTY_NUMBERING,
+  };
+  const editor = createTextEditor({
+    sections: [
+      {
+        id: 's',
+        props: DEFAULT_SECTION_PROPS,
+        blocks: [
+          {
+            kind: 'paragraph',
+            id: 'p',
+            props: layer === 'paragraph' ? { styleId: 'Decorated' } : {},
+            runs: [
+              {
+                kind: 'run',
+                id: 'r',
+                props:
+                  layer === 'direct' ? decoration : layer === 'character' ? { styleId: 'Decorated' } : {},
+                content: [{ kind: 'text', text: '前后' }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  const state = createEditingController(editor);
+  const propsOf = (text: string) => {
+    const paragraph = [...walkParagraphs(editor.body)][0];
+    const run = paragraph?.runs.find((r) =>
+      r.content.some((c) => c.kind === 'text' && c.text.includes(text)),
+    );
+    if (!paragraph || !run) throw new Error(`缺少测试文字 ${text}`);
+    return resolveRunProps(ctx, paragraph.props, run.props);
+  };
+  return { editor, state, propsOf };
+}
 
 describe('剪贴板 HTML', () => {
+  it.each(['defaults', 'paragraph', 'character', 'direct'] as const)(
+    '可信粘贴显式盖掉目标 %s 的高亮、底纹和着重号，撤销重做与周围文字不受影响',
+    (layer) => {
+      const { editor, state, propsOf } = decoratedTarget(layer);
+      const at = { nodeId: 'r', contentIndex: 0, offset: 1 };
+      state.select({ start: at, end: at });
+      state.insertParagraphs(
+        parse(
+          `<p class=MsoNormal>普通<span style="background:lime;mso-highlight:green">高亮</span><span style="background:#123456">底纹</span><span style="text-emphasis:filled dot">着重</span></p>`,
+        ),
+      );
+      const plain = propsOf('普通');
+      expect(plain.highlight).toBe('none');
+      expect(shadingFill(plain.shading)).toBeUndefined();
+      expect(plain.emphasis).toBe('none');
+      expect(highlightFill(propsOf('高亮').highlight)).toBe('#00ff00');
+      expect(shadingFill(propsOf('高亮').shading)).toBeUndefined();
+      expect(propsOf('高亮').emphasis).toBe('none');
+      expect(propsOf('底纹').highlight).toBe('none');
+      expect(shadingFill(propsOf('底纹').shading)).toBe('#123456');
+      expect(propsOf('底纹').emphasis).toBe('none');
+      expect(propsOf('着重').emphasis).toBe('dot');
+      expect(propsOf('着重').highlight).toBe('none');
+      expect(shadingFill(propsOf('着重').shading)).toBeUndefined();
+      expect(propsOf('前').highlight).toBe('yellow');
+      expect(propsOf('后').emphasis).toBe('dot');
+      const pasted = editor.body;
+      editor.undo();
+      expect([...walkParagraphs(editor.body)][0]?.runs[0]?.content).toEqual([{ kind: 'text', text: '前后' }]);
+      expect(propsOf('前后').highlight).toBe('yellow');
+      editor.redo();
+      expect(editor.body).toEqual(pasted);
+      expect(shadingFill(propsOf('普通').shading)).toBeUndefined();
+    },
+  );
+
+  it('普通网页粘贴仍继承目标装饰，自己的普通文字复制后明确关闭装饰', () => {
+    const { editor, state, propsOf } = decoratedTarget('paragraph');
+    const at = { nodeId: 'r', contentIndex: 0, offset: 1 };
+    state.select({ start: at, end: at });
+    state.insertParagraphs(parse('<p>网页</p>'));
+    expect(propsOf('网页').highlight).toBe('yellow');
+    expect(shadingFill(propsOf('网页').shading)).toBe('#d9d9d9');
+    expect(propsOf('网页').emphasis).toBe('dot');
+    const paragraph = [...walkParagraphs(editor.body)][0];
+    const range = paragraph && rangeOfNode(paragraph);
+    if (!range) throw new Error('缺少测试段落');
+    state.select(range);
+    state.insertParagraphs(
+      parse(
+        fragmentToHtml({
+          paragraphs: [{ justification: 'left', runs: [{ text: '自有普通', props: base }] }],
+        }),
+      ),
+    );
+    expect(propsOf('自有普通').highlight).toBe('none');
+    expect(shadingFill(propsOf('自有普通').shading)).toBeUndefined();
+    expect(propsOf('自有普通').emphasis).toBe('none');
+  });
+
+  it.each(['background:transparent', 'background:none', 'mso-highlight:none'])(
+    '源内部显式关闭 %s 与着重号，不会继承外层或重新露出目标样式',
+    (background) => {
+      const { state, propsOf } = decoratedTarget('paragraph');
+      const at = { nodeId: 'r', contentIndex: 0, offset: 1 };
+      state.select({ start: at, end: at });
+      state.insertParagraphs(
+        parse(
+          `<style>.Off {${background};text-emphasis:none;}</style><p class=MsoNormal><span style="background:lime;mso-highlight:green;text-emphasis:filled dot">开启<span class=Off>关闭</span></span></p>`,
+        ),
+      );
+      expect(propsOf('开启').highlight).toBe('green');
+      expect(propsOf('开启').emphasis).toBe('dot');
+      expect(propsOf('关闭').highlight).toBe('none');
+      expect(shadingFill(propsOf('关闭').shading)).toBeUndefined();
+      expect(propsOf('关闭').emphasis).toBe('none');
+    },
+  );
+
+  it('mso-highlight:none 只关闭高亮，源里的独立底纹仍可继承、覆盖或显式清除', () => {
+    const runs =
+      parse(
+        `<p class=MsoNormal><span style="background:#123456"><span style="mso-highlight:none">继承</span><span style="mso-highlight:none;background:blue">覆盖</span><span style="mso-highlight:none;background:transparent">清除</span></span></p>`,
+      )[0]?.runs ?? [];
+    expect(runs.map((r) => [r.text, r.patch.highlight, r.patch.shading])).toEqual([
+      ['继承', 'none', { pattern: 'clear', color: 'auto', fill: '123456' }],
+      ['覆盖', 'none', { pattern: 'clear', color: 'auto', fill: '0000FF' }],
+      ['清除', 'none', noShading],
+    ]);
+  });
+
   it('Word 制表位按数量还原，丢弃显示用空格，类样式和段首段末同样生效', () => {
     const paragraphs = parse(`<style>.Tabs {mso-tab-count:2;font-weight:bold;}</style>
       <p class=MsoNormal><span style="mso-tab-count:1">&nbsp;   </span>甲<span class=Tabs><b>&nbsp; &nbsp;</b></span>乙<span style="mso-tab-count:1"></span></p>`);
@@ -195,7 +368,7 @@ describe('剪贴板 HTML', () => {
       patch: {
         shading: { pattern: 'clear', color: 'auto', fill: '0000FF' },
         underline: 'none',
-        emphasis: null,
+        emphasis: 'none',
       },
     });
     expect(runs.map((r) => r.text).join('')).toBe('正文\f下一页');
@@ -291,7 +464,14 @@ describe('剪贴板 HTML', () => {
     });
     expect(isTrustedHtml(html)).toBe(true);
     const fonts = { ascii: 'Times New Roman', hAnsi: 'Times New Roman', eastAsia: '仿宋' };
-    const common = { strike: false, size: 320, fonts, highlight: null, shading: null, emphasis: null };
+    const common = {
+      strike: false,
+      size: 320,
+      fonts,
+      highlight: 'none',
+      shading: noShading,
+      emphasis: 'none',
+    };
     expect(parse(html)).toEqual([
       {
         justification: 'center',
@@ -332,9 +512,9 @@ style='font:7.0pt "Times New Roman"'>&nbsp;&nbsp; </span></span><![endif]><b>要
       underline: 'none',
       strike: false,
       vertAlign: 'baseline',
-      highlight: null,
-      shading: null,
-      emphasis: null,
+      highlight: 'none',
+      shading: noShading,
+      emphasis: 'none',
     } as const;
     expect(parse(html)).toEqual([
       {
@@ -384,9 +564,9 @@ style='font:7.0pt "Times New Roman"'>&nbsp;&nbsp; </span></span><![endif]><b>要
     expect(html).toContain('background:#d9d9d9');
     const runs = parse(html)[0]?.runs ?? [];
     expect(runs.map((r) => [r.text, r.patch.highlight, r.patch.shading])).toEqual([
-      ['亮', 'darkYellow', null],
-      ['纹', null, { pattern: 'clear', color: 'auto', fill: 'D9D9D9' }],
-      ['素', null, null],
+      ['亮', 'darkYellow', noShading],
+      ['纹', 'none', { pattern: 'clear', color: 'auto', fill: 'D9D9D9' }],
+      ['素', 'none', noShading],
     ]);
 
     // Word 自己写 CSS 色名；段落（块）上的背景是段落底纹，不能铺到 run 上
@@ -395,8 +575,8 @@ style='font:7.0pt "Times New Roman"'>&nbsp;&nbsp; </span></span><![endif]><b>要
 </body></html>`;
     const wordRuns = parse(word)[0]?.runs ?? [];
     expect(wordRuns.map((r) => [r.text, r.patch.highlight, r.patch.shading])).toEqual([
-      ['绿', 'green', null],
-      ['普通', null, null],
+      ['绿', 'green', noShading],
+      ['普通', 'none', noShading],
     ]);
   });
 
@@ -419,7 +599,7 @@ style='font:7.0pt "Times New Roman"'>&nbsp;&nbsp; </span></span><![endif]><b>要
     expect(runs.map((r) => [r.text, r.patch.emphasis])).toEqual([
       ['重', 'dot'],
       ['圈', 'circle'],
-      ['素', null],
+      ['素', 'none'],
     ]);
     const web = parse('<p><span style="text-emphasis:filled sesame">点</span></p>')[0]?.runs ?? [];
     expect(web[0]?.patch).not.toHaveProperty('emphasis');
