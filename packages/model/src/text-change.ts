@@ -35,6 +35,12 @@ export interface TextChangeSet {
   /** 每项的位置相对上一项应用后的树；undo 返回逆序、反向的修改。 */
   changes: TextChange[];
   paragraphIds: NodeId[];
+  /** 编辑器生成的历史动作；手工构造的位置映射可省略。仅含纯数据，不携带视图选区。 */
+  history?: {
+    action: 'commit' | 'undo' | 'redo';
+    /** 本次提交并入上一个输入单元；撤销时应恢复该单元首次输入前的选区。 */
+    merged: boolean;
+  };
 }
 
 /** 插入点上的位置跟随哪一侧。选区端点与光标可按各自语义选择。 */

@@ -109,7 +109,8 @@ describe('编辑输入状态', () => {
     if (undo) state.apply(undo);
     expect(texts()).toEqual(['甲', '乙']);
     state.insert('前');
-    expect(texts()).toEqual(['甲前', '乙']);
+    // 撤销合段恢复退格前第二段段首的光标，而不是逆映射到前段末尾。
+    expect(texts()).toEqual(['甲', '前乙']);
   });
   it('组合期不改模型，确认只提交一次，取消保留选区文字', () => {
     const { editor, state, texts } = setup('旧字');

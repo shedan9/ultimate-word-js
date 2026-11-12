@@ -389,6 +389,25 @@ describe('文字事务', () => {
 });
 
 describe('撤销合并与位置映射', () => {
+  it('变更集标明提交、合并与历史方向，克隆或修改返回值不污染历史', () => {
+    const editor = createTextEditor(parse(), { now: () => 0 });
+    const first = insert(editor, pos(editor.body), '甲', true);
+    expect(first.history).toEqual({ action: 'commit', merged: false });
+    const second = insert(editor, pos(editor.body, 1), '乙', true);
+    expect(second.history).toEqual({ action: 'commit', merged: true });
+    expect(structuredClone(second)).toEqual(second);
+    if (second.history) second.history.action = 'undo';
+    const undo = must(editor.undo());
+    expect(undo.history).toEqual({ action: 'undo', merged: false });
+    if (undo.history) undo.history.action = 'commit';
+    expect(editor.redo()?.history).toEqual({ action: 'redo', merged: false });
+    editor.breakHistory();
+    expect(insert(editor, pos(editor.body, 2), '丙', true).history).toEqual({
+      action: 'commit',
+      merged: false,
+    });
+  });
+
   it('相邻输入在时间窗内合并，提交返回的变更仍只含本次输入', () => {
     let time = 0;
     const editor = createTextEditor(parse(), { now: () => time });

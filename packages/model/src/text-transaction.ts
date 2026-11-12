@@ -489,11 +489,15 @@ function samePosition(a: DocPosition, b: DocPosition): boolean {
   return a.nodeId === b.nodeId && a.contentIndex === b.contentIndex && a.offset === b.offset;
 }
 
-function changeSet(changes: readonly TextChange[]): TextChangeSet {
+function changeSet(
+  changes: readonly TextChange[],
+  history: NonNullable<TextChangeSet['history']>,
+): TextChangeSet {
   // 不把历史里的数组交给调用方，避免外部修改破坏后续撤销和位置映射。
   return {
     changes: structuredClone([...changes]),
     paragraphIds: [...new Set(changes.flatMap((c) => c.affectedParagraphIds ?? [c.paragraphId]))],
+    history,
   };
 }
 
@@ -547,7 +551,10 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
     from.pop();
     to.push(entry);
     body = backwards ? entry.before : entry.after;
-    return changeSet(backwards ? invertTextChanges(entry.changes) : entry.changes);
+    return changeSet(backwards ? invertTextChanges(entry.changes) : entry.changes, {
+      action: backwards ? 'undo' : 'redo',
+      merged: false,
+    });
   }
 
   return {
@@ -2217,7 +2224,7 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
         body = after;
         redo.length = 0;
         group = input !== undefined && limit > 0 ? { entry, last: input, time } : undefined;
-        return changeSet(changes);
+        return changeSet(changes, { action: 'commit', merged: merge });
       } finally {
         open = false;
         active = false;

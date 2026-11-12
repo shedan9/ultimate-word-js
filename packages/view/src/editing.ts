@@ -1,5 +1,6 @@
 /** 输入状态只存模型位置；组合文字暂存，compositionend 才提交一个撤销单元。 */
 import type {
+  Body,
   BuiltinStyleName,
   DocPosition,
   DocRange,
@@ -199,6 +200,30 @@ export function createEditingController(
   let compositionRange: DocRange | undefined;
   let anchor: DocPosition | undefined;
   let focus: DocPosition | undefined;
+  type SelectionSnapshot = { anchor: DocPosition | undefined; focus: DocPosition | undefined };
+  type SelectionHistory = { before: SelectionSnapshot | undefined; after: SelectionSnapshot };
+  // 每个视图各存自己的选区；弱键跟着模型历史快照释放，不在文档模型里保存视图状态。
+  const history = new WeakMap<Body, SelectionHistory>();
+  let knownBody = editor.body;
+  let recordingBody: Body | undefined;
+  let applied: TextChangeSet | undefined;
+  function snapshot(): SelectionSnapshot {
+    return { anchor: anchor && { ...anchor }, focus: focus && { ...focus } };
+  }
+  function rememberAfter(): void {
+    if (recordingBody !== editor.body) return;
+    const entry = history.get(recordingBody);
+    if (entry) entry.after = snapshot();
+  }
+  function transact(...args: Parameters<TextEditor['tx']>): TextChangeSet | undefined {
+    recordingBody = undefined;
+    const change = editor.tx(...args);
+    // 门面会在 tx 返回前同步广播；直接使用模型编辑器时由这里补上同一条应用路径。
+    if (change && knownBody !== editor.body) controller.apply(change);
+    // 同步监听者可能已经提交下一笔，外层命令收尾不能覆盖下一笔的历史选区。
+    if (change !== applied) recordingBody = undefined;
+    return change;
+  }
   const equal = (a: DocPosition, b: DocPosition) =>
     a.nodeId === b.nodeId && a.contentIndex === b.contentIndex && a.offset === b.offset;
   type ListParagraph = ReturnType<ParagraphQuery>[number];
@@ -230,7 +255,7 @@ export function createEditingController(
     const starts = items.map((p) => paragraphStart(p.id));
     editor.breakHistory();
     pending = undefined;
-    editor.tx((tx) => {
+    transact((tx) => {
       for (const [i, item] of items.entries()) {
         const current = item.props.numbering.level;
         const level = Math.min(MAX_LIST_LEVEL, Math.max(0, current + (direction === 'in' ? 1 : -1)));
@@ -246,7 +271,7 @@ export function createEditingController(
     editor.breakHistory();
     pending = undefined;
     // 段落格式不拆 run、不动位置，选区原样有效。
-    editor.tx((tx) => {
+    transact((tx) => {
       tx.setParagraphProps({ start: at, end: at }, patch);
     });
   }
@@ -294,7 +319,7 @@ export function createEditingController(
     if (!paragraphs.length) return;
     editor.breakHistory();
     pending = undefined;
-    editor.tx((tx) => {
+    transact((tx) => {
       const id = define
         ? tx.addStyle(builtinStyleDefinition(define, (x) => styleInfo(x) !== undefined, defaultStyle))
         : styleId;
@@ -326,6 +351,7 @@ export function createEditingController(
     anchor = { ...range.start };
     focus = { ...range.end };
     selection = order > 0 ? { start: { ...focus }, end: { ...anchor } } : structuredClone(range);
+    rememberAfter();
   }
   function collapse(at: DocPosition): void {
     select({ start: at, end: at });
@@ -379,7 +405,7 @@ export function createEditingController(
       host?.runs.find((r) => r.id === first.nodeId)?.props ?? host?.props.markRunProps ?? {};
     // 拆段会把对齐带进新段；源段对齐改过之后，下一段先还原成原段落自己的直接格式。
     const original = host?.props.justification ?? null;
-    editor.tx(
+    transact(
       (tx) => {
         if (!equal(range.start, range.end)) at = tx.deleteRange(range);
         let changed = false;
@@ -441,6 +467,7 @@ export function createEditingController(
     },
     select(range) {
       if (composing) return;
+      recordingBody = undefined;
       editor.breakHistory();
       pending = undefined;
       select(range);
@@ -473,7 +500,7 @@ export function createEditingController(
       let next = range;
       editor.breakHistory();
       // 空段落的折叠光标由模型改段落标记；非空段落内折叠时模型无修改，格式暂存到下一次输入。
-      const change = editor.tx((tx) => {
+      const change = transact((tx) => {
         next = tx.setRunProps(range, patch);
       });
       if (collapsed) {
@@ -489,7 +516,7 @@ export function createEditingController(
       const backward = focus !== undefined && !collapsed && equal(focus, range.start);
       let next = range;
       editor.breakHistory();
-      const change = editor.tx((tx) => {
+      const change = transact((tx) => {
         next = tx.clearRunProps(range);
       });
       pending = collapsed && !change ? { ...CLEAR_RUN_PROPS } : undefined;
@@ -499,7 +526,7 @@ export function createEditingController(
       if (!selection || composing) return;
       const range = selection;
       editor.breakHistory();
-      editor.tx((tx) => {
+      transact((tx) => {
         tx.clearParagraphProps(range);
       });
     },
@@ -510,7 +537,7 @@ export function createEditingController(
       const active = current.length > 0 && current.every((p) => p.props.justification === justification);
       editor.breakHistory();
       // 段落格式不拆 run、不动位置，选区与方向原样保留，无需重新 select。
-      editor.tx((tx) => {
+      transact((tx) => {
         tx.setParagraphProps(range, { justification: active ? 'left' : justification });
       });
     },
@@ -529,7 +556,7 @@ export function createEditingController(
         let at = from;
         editor.breakHistory();
         pending = undefined;
-        editor.tx((tx) => {
+        transact((tx) => {
           at = tx.insertRow(from, 'below');
         });
         collapse(at);
@@ -556,7 +583,7 @@ export function createEditingController(
           : Math.max(0, (Math.ceil(value / unit) - 1) * unit);
       editor.breakHistory();
       pending = undefined;
-      editor.tx((tx) => {
+      transact((tx) => {
         for (const [i, item] of items.entries()) {
           const at = starts[i];
           const { left, leftChars } = item.props.indent;
@@ -601,7 +628,7 @@ export function createEditingController(
       if (!patches.some(Boolean)) return;
       editor.breakHistory();
       pending = undefined;
-      editor.tx((tx) => {
+      transact((tx) => {
         for (const [i, patch] of patches.entries()) {
           const at = starts[i];
           if (at && patch) tx.setParagraphProps({ start: at, end: at }, { indent: patch });
@@ -620,7 +647,7 @@ export function createEditingController(
       editor.breakHistory();
       pending = undefined;
       // 行单位与自动间距都压过 before，必须一起清掉，否则写进去的 12pt 不生效。
-      editor.tx((tx) => {
+      transact((tx) => {
         tx.setParagraphProps(range, {
           spacing: { before: spaced ? 0 : SPACE_BEFORE, beforeLines: 0, beforeAutospacing: false },
         });
@@ -632,7 +659,7 @@ export function createEditingController(
       editor.breakHistory();
       pending = undefined;
       // 多倍行距的 line 以 1/240 行计；lineRule 必须一起写，否则固定值行距会把 240 读成 12pt。
-      editor.tx((tx) => {
+      transact((tx) => {
         tx.setParagraphProps(range, { spacing: { line: 240 * multiple, lineRule: 'auto' } });
       });
     },
@@ -652,7 +679,7 @@ export function createEditingController(
       const starts = items.map((p) => paragraphStart(p.id));
       editor.breakHistory();
       pending = undefined;
-      editor.tx((tx) => {
+      transact((tx) => {
         const numId = active ? 0 : (reuse ?? tx.addList(kind));
         for (const [i, item] of items.entries()) {
           const start = starts[i];
@@ -689,7 +716,7 @@ export function createEditingController(
       let at = range.start;
       editor.breakHistory();
       pending = undefined;
-      editor.tx((tx) => {
+      transact((tx) => {
         if (!equal(range.start, range.end)) at = tx.deleteRange(range);
         at = tx.splitParagraph(tx.insertInline(at, 'pageBreak'));
       });
@@ -716,7 +743,7 @@ export function createEditingController(
       const next =
         current !== undefined && tailEnd && equal(range.end, tailEnd) ? styleInfo(current)?.next : undefined;
       const restyle = next !== undefined && next !== current && styleInfo(next) ? next : undefined;
-      editor.tx((tx) => {
+      transact((tx) => {
         if (!equal(range.start, range.end)) at = tx.deleteRange(range);
         // 换样式时新段落一点直接格式都不带：标题的居中、加粗、字号不该带进正文
         at = tx.splitParagraph(at, restyle === undefined ? {} : { inherit: false });
@@ -743,7 +770,7 @@ export function createEditingController(
       if (!selection || composing || equal(selection.start, selection.end)) return;
       const range = selection;
       let at = range.start;
-      editor.tx((tx) => {
+      transact((tx) => {
         at = tx.deleteRange(range);
         // 先验证删除范围；剪贴板写入抛错时整笔事务回滚，不能丢失原文。
         write();
@@ -774,13 +801,14 @@ export function createEditingController(
           direction === 'backward' ? { start: next, end: range.end } : { start: range.start, end: next };
       }
       let at = range.start;
-      editor.tx((tx) => {
+      transact((tx) => {
         at = tx.deleteRange(range);
       });
       collapse(at);
     },
     move(direction, extend = false, granularity = 'grapheme') {
       if (!selection || composing) return;
+      recordingBody = undefined;
       editor.breakHistory();
       pending = undefined;
       if (!extend && !equal(selection.start, selection.end)) {
@@ -828,7 +856,20 @@ export function createEditingController(
       editor.breakHistory();
     },
     apply(change) {
-      if (selection) {
+      if (change === applied && knownBody === editor.body) return;
+      const previous = knownBody;
+      const before = snapshot();
+      knownBody = editor.body;
+      applied = change;
+      recordingBody = undefined;
+      const action = change.history?.action;
+      const entry = history.get(action === 'undo' ? previous : knownBody);
+      const restore = action === 'undo' ? entry?.before : action === 'redo' ? entry?.after : undefined;
+      if (restore) {
+        if (restore.anchor && restore.focus) select({ start: restore.anchor, end: restore.focus });
+        else selection = anchor = focus = undefined;
+      }
+      if (!restore && selection) {
         const backward = focus && equal(focus, selection.start);
         const range = mapTextRange(selection, change);
         try {
@@ -843,6 +884,15 @@ export function createEditingController(
         }
       }
       if (compositionRange) compositionRange = mapTextRange(compositionRange, change);
+      if (action === 'undo' || action === 'redo') pending = undefined;
+      if (action === 'commit') {
+        history.set(knownBody, {
+          // 中途挂载的视图不知道整个输入单元的起始选区，撤销时仍按变更映射。
+          before: change.history?.merged ? history.get(previous)?.before : before,
+          after: snapshot(),
+        });
+        recordingBody = knownBody;
+      }
     },
   };
   const first = [...walkParagraphs(editor.body)][0];

@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>选区历史浏览器回归</title>
+<style>
+body { margin: 0; font: 14px/1.5 system-ui; }
+#result { position: fixed; inset: 0 0 auto; z-index: 20; background: white; }
+#host { margin: 70px 30px; height: 600px; overflow: auto; }
+#second { margin: 0 30px; height: 200px; overflow: auto; }
+</style>
+<pre id="result">正在验证…</pre><div id="host"></div><div id="second"></div>
+<script type="module">
+import { UltimateWord } from 'ultimate-word';
+import { listDocx } from './list-fixture.ts';
+
+const result = document.querySelector('#result');
+const host = document.querySelector('#host');
+const second = document.querySelector('#second');
+let passed = 0;
+function assert(value, label) { if (!value) throw new Error(label); passed++; }
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const frame = () => new Promise(requestAnimationFrame);
+try {
+  const doc = await UltimateWord.load(listDocx());
+  const view = doc.mount(host, { mode: 'edit' });
+  const other = doc.mount(second, { mode: 'edit', zoom: 0.7 });
+  await frame();
+  const input = host.querySelector('textarea');
+  const start = doc.find('普通正文')[0].start;
+  const at = (offset) => ({ ...start, offset: start.offset + offset });
+  const range = (from, to = from) => ({ start: at(from), end: at(to) });
+  const before = (inputType, data = null) => {
+    const event = new InputEvent('beforeinput', { inputType, data, bubbles: true, cancelable: true });
+    input.dispatchEvent(event);
+    assert(event.defaultPrevented, `${inputType} 接入编辑器`);
+  };
+  const key = (key, modifiers = {}) => input.dispatchEvent(new KeyboardEvent('keydown', {
+    key, ...modifiers, bubbles: true, cancelable: true,
+  }));
+  const caretAt = (position) => {
+    const rect = view.caretRect(position);
+    return rect && Math.abs(parseFloat(input.style.left) - rect.x) < 1 &&
+      Math.abs(parseFloat(input.style.top) - rect.y) < 1;
+  };
+  const changes = [];
+  view.on('selection:change', (selection) => changes.push(selection));
+
+  view.select(range(3, 1));
+  other.select(range(4));
+  view.focus();
+  before('insertText', '替换');
+  const replaced = view.selection;
+  const otherReplaced = other.selection;
+  assert(doc.find('普替换文').length === 1, '反向选区输入替换原文字');
+  view.select(range(0));
+  other.select(range(0));
+  before('historyUndo');
+  assert(same(view.selection, range(1, 3)), '撤销恢复被替换的选区');
+  assert(same(other.selection, range(4)), '另一个视图恢复自己的光标');
+  assert(caretAt(at(1)), '撤销后的输入节点跟随反向选区 focus');
+  assert(same(changes.at(-1), view.selection), '选区事件报告恢复后的范围');
+  key('ArrowRight', { shiftKey: true });
+  assert(same(view.selection, range(2, 3)), '恢复的反向选区继续扩选时保留原锚点');
+  before('historyRedo');
+  assert(same(view.selection, replaced), '导航不覆盖重做时的输入后光标');
+  assert(same(other.selection, otherReplaced), '第二个视图重做不采用第一个视图的位置');
+  before('historyUndo');
+
+  view.select(range(3, 1));
+  key('b', { ctrlKey: true });
+  const formatted = view.selection;
+  assert(doc.query('paragraph')[3].runs.some((run) => run.props.bold), '局部格式拆分 run');
+  before('historyUndo');
+  assert(same(view.selection, range(1, 3)) && caretAt(at(1)), '撤销格式恢复原节点与选区方向');
+  before('historyRedo');
+  assert(same(view.selection, formatted), '重做格式恢复拆分后的节点位置');
+  assert(caretAt(formatted.start), '重做格式仍是反向选区');
+  before('historyUndo');
+
+  view.select(range(2));
+  before('insertText', '连');
+  before('insertText', '续');
+  const typed = view.selection;
+  view.select(range(0));
+  key('z', { ctrlKey: true });
+  assert(doc.find('连续').length === 0 && same(view.selection, range(2)), '键盘一次撤销连续输入并恢复最初光标');
+  key('z', { ctrlKey: true, shiftKey: true });
+  assert(doc.find('连续').length === 1 && same(view.selection, typed), '键盘重做恢复完整输入与最终光标');
+  before('historyUndo');
+
+  view.select(range(3, 1));
+  input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+  input.dispatchEvent(new CompositionEvent('compositionend', { data: '中文', bubbles: true }));
+  const composed = view.selection;
+  assert(doc.find('普中文文').length === 1, '组合输入替换选区');
+  before('historyUndo');
+  assert(same(view.selection, range(1, 3)) && caretAt(at(1)), '撤销组合提交恢复反向范围');
+  before('historyRedo');
+  assert(same(view.selection, composed), '重做组合提交恢复光标');
+  before('historyUndo');
+
+  view.select(range(2));
+  key('Enter');
+  const split = view.selection;
+  assert(doc.query('paragraph').length === 5, '拆段产生新位置');
+  key('Backspace');
+  assert(doc.query('paragraph').length === 4, '段首退格合段');
+  before('historyUndo');
+  assert(same(view.selection, split), '撤销合段恢复第二段段首光标');
+  before('insertText', '新');
+  assert(doc.find('新正文').length === 1 && doc.find('普通新').length === 0, '撤销后输入落在恢复的第二段');
+  const reopened = await UltimateWord.load(await doc.toDocx());
+  assert(reopened.find('新正文').length === 1, '历史跳转后继续编辑可导出再加载');
+  assert(input === host.querySelector('textarea'), '输入与历史跳转始终保留常驻输入节点');
+  before('historyUndo');
+  before('historyUndo');
+  view.select(range(3, 1));
+  before('insertText', '演示');
+  before('historyUndo');
+  view.focus();
+  assert(same(view.selection, range(1, 3)) && caretAt(at(1)), '最终恢复的范围与候选位置可视验收');
+  result.textContent = `PASS ${passed} 项`;
+} catch (error) { result.textContent = `FAIL ${passed} 项后\n${error.stack ?? error}`; }
+</script>
+</html>

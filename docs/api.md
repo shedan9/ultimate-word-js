@@ -749,7 +749,9 @@ editor.breakHistory(); // 光标移动、焦点切换等输入边界中断合并
 
 `TextChangeSet` 是可结构化克隆的数据：`paragraphIds` 标出受影响段落，`changes` 按执行顺序
 记录 `{ paragraphId, nodeId, contentIndex, offset, deletedText, insertedText }`，每项位置相对
-上一项应用后的树。结构记录带 `moves` / `inverseMoves`（片段区间迁移）及 `affectedParagraphIds`，其文字字段为空，不应按普通插入处理。undo 返回逆序的反向修改，redo 返回正向修改。
+上一项应用后的树。编辑器生成的变更集还带 `history: { action: 'commit' | 'undo' | 'redo', merged: boolean }`，
+用于输入层辨认历史方向与连续输入合并，不包含视图状态；手工构造的位置映射可以省略该字段。
+结构记录带 `moves` / `inverseMoves`（片段区间迁移）及 `affectedParagraphIds`，其文字字段为空，不应按普通插入处理。undo 返回逆序的反向修改，redo 返回正向修改。
 `mapTextPosition(pos, changes, 'before' | 'after')` 映射旧位置，默认跟随插入点之后；
 删除区内的位置收拢到删除点。`mapTextRange` 默认排除两端新插入的文字，折叠范围保持折叠。
 **这些函数返回新位置，不会自动修改已存的批注 / 选区**；删除区内部的原始偏移会丢失，
@@ -772,6 +774,12 @@ console.log(doc.canUndo, doc.canRedo, view.selection);
 光标来自布局索引的字缝；空段落通过附加位置元数据定位，不插入占位字形，不改变行高。
 点击 / 拖选、左右按字素移动（含 Shift 扩选）、上下按实际布局行移动（支持跨页）、Enter 拆段、
 Backspace / Delete 删除或合段、纯文本多行粘贴和 Ctrl/Cmd+Z 撤销均已接通。
+
+**选区历史（2026-11-12）**：撤销恢复事务开始前的选中范围与选择方向，重做恢复编辑命令完成后的光标 / 范围。
+替换输入、删除、格式拆 run、拆段合段、粘贴与 IME 使用同一条路径；连续输入合并后恢复首次输入前与末次输入后的状态。
+移动光标或改选区不覆盖历史；同一文档的每个编辑视图各自恢复自己的选区。成功 undo / redo 清掉折叠光标上的暂存字符格式，
+预提交检查失败则保留当前选区。视图只记录挂载期间见过的历史；新挂载或重挂的视图对未知历史按位置映射，不继承旧视图的光标。
+
 Ctrl / Option + 左右键按词移动，支持 Shift 扩选；右键到下一个分词片段末尾，左键到片段开头，
 跳过空白，标点与 emoji 单独停靠。双击选中点击字符所属的词，段尾选择最后一个词。
 分词与字素切分使用 `Intl.Segmenter('zh')`，跨 run / 文字片段拼接，不跨对象或段落。
@@ -859,7 +867,7 @@ textarea 常驻挂载容器，提交后更新页树与全部挂载视图，重�
 取消 / 失焦丢弃未提交组合串。缩放与滚动会刷新输入位置。
 
 当前复用段落布局缓存，级联、分页和视图更新仍完整执行；行内局部重排、编号样式选择、图片 / docx 片段粘贴、屏幕阅读器编辑、
-完整选区历史仍待实现；公开事件（`document:change` / `selection:change` 等）见 §11。
+公开事件（`document:change` / `selection:change` 等）见 §11。
 浏览器回归 `/tests/editing.html` 使用组合事件验证接线；系统拼音候选窗的实际行为仍需人工验证。
 
 ### 10.3 段落布局缓存 🟢
