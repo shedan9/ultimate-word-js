@@ -440,7 +440,15 @@ describe('doc.bindings', () => {
     expect(events).toEqual([]);
     expect(d.canUndo).toBe(false);
     expect(d.canRedo).toBe(true);
-    expect(new Uint8Array(await (await d.toDocx()).arrayBuffer())).toEqual(original);
+    // ZIP 条目时间戳不是文档内容；主动跨过其两秒精度，逐部件验证失败没有改坏导出。
+    const later = Date.now() + 4000;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(later);
+      expect(unzip(new Uint8Array(await (await d.toDocx()).arrayBuffer()))).toEqual(unzip(original));
+    } finally {
+      vi.useRealTimers();
+    }
     d.redo();
     expect(d.bindings.list().find((b) => b.key === 'applicant')?.value).toBe('历史值');
     expect([...pending]).toEqual(staged);
@@ -743,7 +751,7 @@ describe('doc.bindings', () => {
     expect(d.layout).toBe(layout);
     expect([...d.bindings.pending]).toEqual(pending);
     expect(d.canUndo).toBe(false);
-    expect(new Uint8Array(await (await d.toDocx()).arrayBuffer())).toEqual(original);
+    expect(unzip(new Uint8Array(await (await d.toDocx()).arrayBuffer()))).toEqual(unzip(original));
     expect(d.bindings.apply()).toBeDefined();
     expect(d.bindings.pending.size).toBe(0);
     d.undo();
@@ -878,7 +886,9 @@ describe('doc.bindings', () => {
       d.bindings.list().map((b) => [b.key, b.value]),
     );
     d.undo();
-    expect(await (await d.toDocx()).arrayBuffer()).toEqual(await original.arrayBuffer());
+    expect(unzip(new Uint8Array(await (await d.toDocx()).arrayBuffer()))).toEqual(
+      unzip(new Uint8Array(await original.arrayBuffer())),
+    );
     d.redo();
     expect(d.bindings.list().find((b) => b.key === 'firstChild')).toBeUndefined();
   });
@@ -930,7 +940,7 @@ describe('doc.bindings', () => {
       expect(layouts).toBe(0);
       expect(d.bindings.list()).toEqual(before);
       expect([...d.bindings.pending]).toEqual(pending);
-      expect(new Uint8Array(await (await d.toDocx()).arrayBuffer())).toEqual(original);
+      expect(unzip(new Uint8Array(await (await d.toDocx()).arrayBuffer()))).toEqual(unzip(original));
       expect(d.canRedo).toBe(true);
       d.redo();
       expect(d.bindings.list().find((b) => b.key === 'applicant')?.value).toBe('历史值');
@@ -1548,7 +1558,7 @@ describe('doc.bindings', () => {
       expect(d.bindings.pending.get('applicant')).toBe('李四');
       expect(d.find('张三')).toHaveLength(2);
       expect(d.find('李四')).toHaveLength(0);
-      expect(new Uint8Array(await (await d.toDocx()).arrayBuffer())).toEqual(original);
+      expect(unzip(new Uint8Array(await (await d.toDocx()).arrayBuffer()))).toEqual(unzip(original));
       d.undo();
       expect(d.find('张三')).toHaveLength(0);
       d.redo();
