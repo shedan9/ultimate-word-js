@@ -117,6 +117,8 @@ function backgroundStyle(props: FragmentRun['props']): string[] {
 
 /** Word 写分页符的原样：粘进 Word 仍是分页符，浏览器与我们自己都认 `page-break-before`。 */
 const PAGE_BREAK_HTML = '<br clear="all" style="mso-special-character:line-break;page-break-before:always">';
+/** 显式标记真实软换行，避免段末或纯换行片段被当成网页编辑器的占位 br。 */
+const SOFT_BREAK_HTML = '<br style="mso-special-character:line-break">';
 
 /**
  * 片段写成剪贴板 HTML。一段一个 `<p>`（含空段 —— 选到下一段开头时末尾那个空 `<p>`
@@ -128,7 +130,7 @@ export function fragmentToHtml(fragment: RichFragment): string {
       const runs = p.runs
         .map(
           (r) =>
-            `<span style="${escapeAttr(runStyle(r.props))}">${escapeText(r.text).replace(/\n/g, '<br>').replace(/\f/g, PAGE_BREAK_HTML)}</span>`,
+            `<span style="${escapeAttr(runStyle(r.props))}">${escapeText(r.text).replace(/\n/g, SOFT_BREAK_HTML).replace(/\f/g, PAGE_BREAK_HTML)}</span>`,
         )
         .join('');
       return `<p style="margin:0;white-space:pre-wrap;text-align:${CSS_ALIGN[p.justification]}">${runs}</p>`;
@@ -425,19 +427,37 @@ export function htmlToParagraphs(html: string, parser: DOMParser): PasteParagrap
   let space = true;
   /** 最后一段文字来自 `pre`：段尾的空格是原文，不是排版源码里的缩进。 */
   let preserved = false;
+  /** 普通 HTML 的末尾 br 只占位；显式软换行必须留在模型里。 */
+  let trailingPlaceholder = false;
   const open = (state: Inherited): PasteParagraph => {
     current = { ...(trusted && state.align ? { justification: state.align } : {}), runs: [] };
     space = true;
+    preserved = false;
+    trailingPlaceholder = false;
     return current;
   };
   const close = (keepEmpty: boolean) => {
     if (!current) return;
-    const last = current.runs.at(-1);
-    // 块末尾的 <br> 只是结束这一行（浏览器不为它多画一行），不是软换行。
-    if (last) last.text = last.text.replace(/\n$/, '');
-    if (last && !preserved) last.text = last.text.replace(/ +$/, '');
-    if (last && !last.text) current.runs.pop();
-    if (current.runs.length || keepEmpty) paragraphs.push(current);
+    // 单个占位 br 仍代表一个空段；多个 br 只能去掉最后一个，不能拆成多个段落。
+    const keepPlaceholder = trailingPlaceholder;
+    const runs = current.runs;
+    const trimEnd = () => {
+      let last = runs.at(-1);
+      while (last) {
+        if (!preserved) last.text = last.text.replace(/ +$/, '');
+        if (last.text) return last;
+        runs.pop();
+        last = runs.at(-1);
+      }
+      return undefined;
+    };
+    const last = trimEnd();
+    if (last && trailingPlaceholder) {
+      last.text = last.text.replace(/\n$/, '');
+      // 占位前的空格也在段末；可能来自另一个带格式的 run。
+      trimEnd();
+    }
+    if (runs.length || keepEmpty || keepPlaceholder) paragraphs.push(current);
     current = undefined;
   };
   const append = (text: string, state: Inherited) => {
@@ -447,6 +467,8 @@ export function htmlToParagraphs(html: string, parser: DOMParser): PasteParagrap
     const last = paragraph.runs.at(-1);
     if (last && samePatch(last.patch, patch)) last.text += text;
     else paragraph.runs.push({ text, patch });
+    // br 后仅有源码空白时仍是段末占位；跨格式的尾空白会在 close 中一起清掉。
+    if (state.pre || /[^ ]/.test(text)) trailingPlaceholder = false;
     space = text.endsWith(' ');
     preserved = state.pre;
   };
@@ -492,15 +514,11 @@ export function htmlToParagraphs(html: string, parser: DOMParser): PasteParagrap
         space = true;
         continue;
       }
-      // 有字的段里 <br> 是软换行；空段里的 <br> 是浏览器给空行占位的（<div><br></div>），就是一个空段。
+      // 先记录换行，等段末再判断普通 br 是否只是占位；段首 br 后面可能还有正文。
       if (tag === 'BR') {
-        if (current?.runs.length) {
-          append('\n', state);
-          space = true;
-        } else {
-          current ??= open(state);
-          close(true);
-        }
+        append('\n', inherit(el, state, style));
+        trailingPlaceholder = style.get('mso-special-character')?.toLowerCase() !== 'line-break';
+        space = true;
         continue;
       }
       const next = inherit(el, state, style);

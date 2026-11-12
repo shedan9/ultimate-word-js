@@ -388,4 +388,54 @@ style='font:7.0pt "Times New Roman"'>&nbsp;&nbsp; </span></span><![endif]><b>要
       "<p class=MsoNormal><span><br clear=all style='mso-special-character:line-break;page-break-before:always'></span>后<br>尾</p></body></html>";
     expect(parse(word).map((p) => p.runs.map((r) => r.text).join(''))).toEqual(['前', '\f后\n尾']);
   });
+
+  it.each(['\n', '\n\n', '\n正文', '正文\n', '正文\n\n', '\n正文\n'])(
+    '自己复制的软换行片段 %j 往返保留原段落与全部换行',
+    (text) => {
+      const paragraphs = parse(
+        fragmentToHtml({
+          paragraphs: [{ justification: 'left', runs: [{ text, props: base }] }],
+        }),
+      );
+      expect(paragraphs).toHaveLength(1);
+      expect(paragraphs[0]?.runs.map((r) => r.text).join('')).toBe(text);
+    },
+  );
+
+  it('跨格式 run 的段末换行与后续空段分别保留', () => {
+    const paragraphs = parse(
+      fragmentToHtml({
+        paragraphs: [
+          {
+            justification: 'center',
+            runs: [
+              { text: '正文', props: base },
+              { text: '\n\n', props: { ...base, bold: true } },
+            ],
+          },
+          { justification: 'left', runs: [] },
+        ],
+      }),
+    );
+    expect(paragraphs).toHaveLength(2);
+    expect(paragraphs[0]?.runs.map((r) => [r.text, r.patch.bold])).toEqual([
+      ['正文', false],
+      ['\n\n', true],
+    ]);
+    expect(paragraphs[1]?.runs).toEqual([]);
+  });
+
+  it('Word 显式软换行在段首、段末及纯换行段保留，类样式同样生效', () => {
+    const paragraphs = parse(`<style>.Soft {mso-special-character:line-break;}</style>
+      <p class=MsoNormal><br class=Soft>正文<br class=Soft></p>
+      <p class=MsoNormal><span><br style="mso-special-character:line-break"></span></p>`);
+    expect(paragraphs.map((p) => p.runs.map((r) => r.text).join(''))).toEqual(['\n正文\n', '\n']);
+  });
+
+  it('网页段首与连续换行仍在同一段，段末占位只去掉最后一个普通 br', () => {
+    const paragraphs = parse(
+      '<p><br>正文<br><br><b>&nbsp;</b><i>&nbsp;</i></p><div><br></div><p><br><br></p><p>普通<b> </b><br></p>',
+    );
+    expect(paragraphs.map((p) => p.runs.map((r) => r.text).join(''))).toEqual(['\n正文\n', '', '\n', '普通']);
+  });
 });

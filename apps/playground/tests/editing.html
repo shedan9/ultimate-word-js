@@ -272,7 +272,7 @@ try {
   const softText = doc.find('软一')[0];
   view.select({ start: softText.start, end: doc.find('软二')[0].end });
   const softCopy = clipboard('copy').data;
-  assert(softCopy.getData('text/html').includes('软一<br>软二') && softCopy.getData('text/plain') === '软一\n软二', '复制把软换行写成 <br>');
+  assert(softCopy.getData('text/html').includes('软一<br style="mso-special-character:line-break">软二') && softCopy.getData('text/plain') === '软一\n软二', '复制把软换行写成带明确标记的 <br>');
   doc.undo();
   view.select({ start: position(0), end: position(0) });
   const wrappedText = '自动折行复制测试'.repeat(90);

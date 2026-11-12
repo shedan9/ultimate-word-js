@@ -22,6 +22,8 @@ const ALL = [
   'print',
   'react',
   'editing',
+  'history',
+  'clipboard',
   'template',
 ];
 const pages = process.argv.length > 2 ? process.argv.slice(2) : ALL;
