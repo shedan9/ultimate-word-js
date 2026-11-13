@@ -334,9 +334,48 @@ try {
     '普通网页仍继承目标样式装饰');
   webDecorationView.dispose();
 
+  // 函数颜色中的空白不能拆开 RGB，也不能从 URL / 渐变内部捡出颜色词。
+  const rgbDoc = await UltimateWord.load(listDocx());
+  const rgbView = rgbDoc.mount(host, { mode: 'edit' });
+  const rgbInput = host.querySelector('textarea');
+  const rgbTarget = rgbDoc.find('普通正文')[0];
+  rgbView.select({ start: rgbTarget.end, end: rgbTarget.start });
+  paste(rgbInput, `<style>.Rgb {background:rgb(18, 52, 86) !important;}</style><p class=MsoNormal><span class=Rgb style="background:red">类底纹</span><span style='background:url("image red blue.png") center / cover no-repeat rgb(86, 52, 18)'>内联底纹</span><span class=Rgb style="mso-highlight:rgb(0, 255, 0)">函数高亮</span><span style='background:url("image red blue.png")'>图片占位</span><span style="background:linear-gradient( red , blue )">渐变占位</span></p>`);
+  const rgbAfter = rgbView.selection;
+  const rgbColors = (document) => {
+    assert(decorationProps(document, '类底纹').shading.fill === '123456', '类样式 RGB 底纹完整进入布局且遵循 important');
+    assert(decorationProps(document, '内联底纹').shading.fill === '563412', '简写背景的 RGB 不被 URL 内颜色词覆盖');
+    assert(decorationProps(document, '函数高亮').highlight === 'green', 'RGB 高亮仍优先于字符底纹');
+    assert(decorationProps(document, '函数高亮').shading.pattern === 'nil', '高亮不重复生成字符底纹');
+    assert(decorationProps(document, '图片占位').shading.pattern === 'nil', 'URL 里的颜色词不生成底纹');
+    assert(decorationProps(document, '渐变占位').shading.pattern === 'nil', '渐变里的颜色词不生成底纹');
+  };
+  rgbColors(rgbDoc);
+  assert(rgbView.rectsOf(rgbDoc.find('内联底纹')[0]).length > 0, 'RGB 底纹文字仍可定位');
+  rgbView.select(rgbDoc.rangeOf(rgbDoc.query('paragraph')[3].id));
+  const rgbCopied = copyHtml(rgbInput);
+  assert(rgbCopied.get('text/html').includes('background:#123456') && rgbCopied.get('text/html').includes('background:#563412'),
+    '复制把 RGB 底纹规范化成可往返的十六进制颜色');
+  before(rgbInput, 'historyUndo');
+  assert(rgbDoc.find('普通正文').length === 1 && rgbDoc.find('类底纹').length === 0, 'RGB 底纹粘贴整次撤销恢复原文');
+  assert(same(rgbView.selection, rgbTarget), 'RGB 底纹撤销恢复完整反向选区');
+  before(rgbInput, 'historyRedo');
+  assert(same(rgbView.selection, rgbAfter), 'RGB 底纹重做恢复光标');
+  rgbColors(rgbDoc);
+  const rgbReopened = await UltimateWord.load(await rgbDoc.toDocx());
+  rgbColors(rgbReopened);
+  rgbView.select(rgbDoc.find('第二项')[0]);
+  paste(rgbInput, rgbCopied.get('text/html'));
+  assert(rgbDoc.find('类底纹').length === 2 && rgbDoc.find('内联底纹').length === 2, 'RGB 底纹复制后可再次粘贴');
+  const rgbPastedParagraph = rgbDoc.query('paragraph')[1];
+  assert(rgbPastedParagraph.runs.some((r) => r.props.shading?.fill === '123456') &&
+    rgbPastedParagraph.runs.some((r) => r.props.shading?.fill === '563412'), '复制再粘贴保留两种 RGB 底纹');
+  before(rgbInput, 'historyUndo');
+  rgbView.dispose();
+
   // 留一份结果用于可视验收。
-  const finalView = decorationReopened.mount(host, { mode: 'edit' });
-  finalView.select(decorationReopened.find('普通源')[0]);
+  const finalView = rgbReopened.mount(host, { mode: 'edit' });
+  finalView.select(rgbReopened.find('类底纹')[0]);
   finalView.focus();
   result.textContent = `PASS ${passed} 项`;
 } catch (error) { result.textContent = `FAIL ${passed} 项后\n${error.stack ?? error}`; }

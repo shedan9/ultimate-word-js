@@ -335,6 +335,29 @@ const HIGHLIGHT_BY_HEX: ReadonlyMap<string, string> = new Map(
   Object.entries(HIGHLIGHT_COLORS).map(([name, hex]) => [hex.slice(1).toUpperCase(), name]),
 );
 
+/** 只在顶层空白处分词：RGB 内的空格不能拆色值，URL / 渐变 / 字符串里的颜色词也不能漏出来。 */
+function backgroundTokens(value: string): string[] {
+  const tokens: string[] = [];
+  let quote = '';
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (ch === '\\') i++;
+    else if (quote) {
+      if (ch === quote) quote = '';
+    } else if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === '(') depth++;
+    else if (ch === ')') depth = Math.max(0, depth - 1);
+    else if (depth === 0 && ch !== undefined && /\s/.test(ch)) {
+      if (i > start) tokens.push(value.slice(start, i));
+      start = i + 1;
+    }
+  }
+  if (start < value.length) tokens.push(value.slice(start));
+  return tokens;
+}
+
 function readBackground(style: Map<string, string>, next: Inherited): void {
   const mso = style.get('mso-highlight');
   if (mso !== undefined) {
@@ -352,8 +375,7 @@ function readBackground(style: Map<string, string>, next: Inherited): void {
   const background = style.get('background') ?? style.get('background-color');
   if (background === undefined) return;
   // `background` 简写可能带着图片、位置；只取第一个认得出的颜色词
-  const fill = background
-    .split(/\s+/)
+  const fill = backgroundTokens(background)
     .map((word) => parseColor(word))
     .find((c) => c !== undefined);
   if (fill === undefined || fill === 'auto') {

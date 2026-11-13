@@ -580,6 +580,41 @@ style='font:7.0pt "Times New Roman"'>&nbsp;&nbsp; </span></span><![endif]><b>要
     ]);
   });
 
+  it.each([
+    'background:rgb(18, 52, 86)',
+    'background-color:rgb(18, 52, 86)',
+    'background:RGB(18, 52, 86)',
+    'background:rgb(18,\t52,\n86) no-repeat',
+    'background:none repeat scroll rgb(18, 52, 86)',
+    'background:url("red blue.png") center / cover no-repeat rgb(18, 52, 86)',
+    'background:linear-gradient(red, blue) rgb(18, 52, 86)',
+  ])('可信来源的字符底纹完整读取函数颜色 %s', (declaration) => {
+    const runs = parse(`<p class=MsoNormal><span style='${declaration}'>底纹</span></p>`)[0]?.runs;
+    expect(runs?.[0]?.patch.shading).toEqual({ pattern: 'clear', color: 'auto', fill: '123456' });
+    expect(runs?.[0]?.patch.highlight).toBe('none');
+  });
+
+  it('类样式中的 RGB 底纹遵循优先级，mso 高亮仍优先于背景', () => {
+    const runs = parse(`<style>.Rgb {background:rgb(18, 52, 86) !important;}</style>
+      <p class=MsoNormal><span class=Rgb style="background:red">底纹</span><span class=Rgb style="mso-highlight:rgb(0, 255, 0)">高亮</span></p>`)[0]
+      ?.runs;
+    expect(runs?.map((r) => [r.text, r.patch.highlight, r.patch.shading])).toEqual([
+      ['底纹', 'none', { pattern: 'clear', color: 'auto', fill: '123456' }],
+      ['高亮', 'green', noShading],
+    ]);
+  });
+
+  it.each([
+    'url("image red blue.png")',
+    'url(image\\ red\\ blue.png)',
+    'linear-gradient( red , blue )',
+    'image-set(url("red.png") 1x, url("blue.png") 2x)',
+    '"image red blue"',
+  ])('背景函数或字符串里的颜色词不被误当作字符底纹 %s', (background) => {
+    const runs = parse(`<p class=MsoNormal><span style='background:${background}'>普通</span></p>`)[0]?.runs;
+    expect(runs?.[0]?.patch.shading).toEqual(noShading);
+  });
+
   it('着重号：复制写 text-emphasis（中文的点在字下），读回成 w:em；不在可信来源里的不带', () => {
     const html = fragmentToHtml({
       paragraphs: [
