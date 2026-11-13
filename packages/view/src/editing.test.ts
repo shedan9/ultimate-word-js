@@ -1076,6 +1076,80 @@ describe('列表层级', () => {
     expect(props('二')).toEqual({ italic: true, color: '00FF00' });
   });
 
+  it('粘贴的部分字体桶按光标处补齐，不沿用前一块，跨段与制表位同样处理', () => {
+    const fonts = {
+      ascii: 'Courier New',
+      hAnsi: 'Arial',
+      eastAsia: '宋体',
+      cs: 'Arial',
+      hint: 'eastAsia',
+    } as const;
+    const { editor, state, texts } = setup([
+      { kind: 'run', id: 'r', props: { fonts }, content: [{ kind: 'text', text: '前后' }] },
+    ]);
+    const original = editor.body;
+    state.select({ start: at('r', 1), end: at('r', 1) });
+    state.insertParagraphs([
+      {
+        runs: [
+          { text: '甲', patch: { fonts: { ascii: 'Calibri' } } },
+          { text: '乙\t', patch: { fonts: { hAnsi: 'Times New Roman' } } },
+        ],
+      },
+      {
+        runs: [
+          { text: '丙', patch: { fonts: { eastAsia: '仿宋' } } },
+          { text: '丁', patch: {} },
+        ],
+      },
+    ]);
+    const fontOf = (text: string) =>
+      [...walkParagraphs(editor.body)]
+        .flatMap((p) => p.runs)
+        .find((r) => r.content.some((c) => c.kind === 'text' && c.text === text))?.props.fonts;
+    expect(texts()).toEqual(['前甲乙\t', '丙丁后']);
+    expect(fontOf('甲')).toEqual({ ...fonts, ascii: 'Calibri' });
+    expect(fontOf('乙')).toEqual({ ...fonts, hAnsi: 'Times New Roman' });
+    expect(fontOf('丙')).toEqual({ ...fonts, eastAsia: '仿宋' });
+    expect(fontOf('丁')).toEqual(fonts);
+    expect(fontOf('前')).toEqual(fonts);
+    expect(fontOf('后')).toEqual(fonts);
+    const pasted = editor.body;
+    editor.undo();
+    expect(editor.body).toBe(original);
+    editor.redo();
+    expect(editor.body).toBe(pasted);
+  });
+
+  it('折叠清格式后粘贴部分字体，不恢复目标被清除的桶', () => {
+    const { editor, state } = setup([
+      {
+        kind: 'run',
+        id: 'r',
+        props: { fonts: { ascii: 'Courier New', eastAsia: '宋体' } },
+        content: [{ kind: 'text', text: '前后' }],
+      },
+    ]);
+    state.select({ start: at('r', 1), end: at('r', 1) });
+    state.clearRunFormat();
+    expect(state.pendingFormat?.fonts).toBeNull();
+    state.insertParagraphs([
+      {
+        runs: [
+          { text: '甲', patch: { fonts: { hAnsi: 'Arial' } } },
+          { text: '乙', patch: {} },
+        ],
+      },
+    ]);
+    const runs = [...walkParagraphs(editor.body)][0]?.runs ?? [];
+    const fontOf = (text: string) =>
+      runs.find((r) => r.content.some((c) => c.kind === 'text' && c.text === text))?.props.fonts;
+    expect(fontOf('甲')).toEqual({ hAnsi: 'Arial' });
+    expect(fontOf('乙')).toBeUndefined();
+    expect(fontOf('前')).toEqual({ ascii: 'Courier New', eastAsia: '宋体' });
+    expect(fontOf('后')).toEqual({ ascii: 'Courier New', eastAsia: '宋体' });
+  });
+
   it('Tab / Shift+Enter 的控制器入口：替换选区、用暂存格式、一次撤销；接着打字落进同一 run', () => {
     const { editor, state, texts } = setup('甲乙');
     state.select({ start: at('r', 1), end: at('r', 2) });

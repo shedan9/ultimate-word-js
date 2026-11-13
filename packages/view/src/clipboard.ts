@@ -398,9 +398,11 @@ function patchOf(state: Inherited, trusted: boolean): RunPropsPatch {
       ...(state.strike ? { strike: true } : {}),
       ...(state.vertAlign !== 'baseline' ? { vertAlign: state.vertAlign } : {}),
     };
-  // Word 只在一款字体上写 font-family 时（纯中文或纯西文的 run），它就是四个桶共同的字体；
+  // Word 只在一款字体上写 font-family 时（纯中文或纯西文的 run），它就是三个已支持桶共同的字体；
   // 写了 mso-* 的桶以 mso-* 为准。一个都没写就不动 —— 沿用光标处的字体，而不是清成样式值。
   const ascii = state.ascii ?? state.family;
+  // Word 可只写扩展拉丁桶；不能依附在 ascii 的分支上，否则整桶会静默丢失。
+  const hAnsi = state.hAnsi ?? ascii;
   const eastAsia = state.eastAsia ?? state.family;
   return {
     bold: state.bold,
@@ -415,10 +417,11 @@ function patchOf(state: Inherited, trusted: boolean): RunPropsPatch {
     highlight: state.highlight ?? 'none',
     shading: state.shading ?? { pattern: 'nil', color: 'auto', fill: 'auto' },
     emphasis: state.emphasis ?? 'none',
-    ...(ascii || eastAsia
+    ...(ascii || hAnsi || eastAsia
       ? {
           fonts: {
-            ...(ascii ? { ascii, hAnsi: state.hAnsi ?? ascii } : {}),
+            ...(ascii ? { ascii } : {}),
+            ...(hAnsi ? { hAnsi } : {}),
             ...(eastAsia ? { eastAsia } : {}),
           },
         }

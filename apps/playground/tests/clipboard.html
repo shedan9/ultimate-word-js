@@ -373,9 +373,73 @@ try {
   before(rgbInput, 'historyUndo');
   rgbView.dispose();
 
+  // Word 可以只声明一个字体桶；它不能依赖 ASCII 桶存在，也不能抹掉其他目标字体。
+  const fontDoc = await UltimateWord.load(listDocx());
+  const fontView = fontDoc.mount(host, { mode: 'edit' });
+  const fontInput = host.querySelector('textarea');
+  const targetFonts = { ascii: 'Courier New', hAnsi: 'Arial', eastAsia: '宋体', cs: 'Arial', hint: 'default' };
+  fontDoc.tx((tx) => tx.setRunProps(fontDoc.find('普通正文')[0], { fonts: targetFonts }));
+  const fontTarget = fontDoc.find('通正')[0];
+  fontView.select({ start: fontTarget.end, end: fontTarget.start });
+  const fontSource = `<style>.Latin {mso-hansi-font-family:'Times New Roman';}</style><p class=MsoNormal><span class=Latin>Latin é</span><span style="mso-fareast-font-family:仿宋">中文</span><span style="mso-hansi-font-family:Calibri;mso-tab-count:1">   </span></p><p>普通源</p>`;
+  paste(fontInput, fontSource);
+  const fontAfter = fontView.selection;
+  const fontKeys = ['ascii', 'hAnsi', 'eastAsia', 'cs', 'hint'];
+  const expectFonts = (doc, text, patch, label) => {
+    const actual = runOf(doc, text)?.props.fonts;
+    const expected = { ...targetFonts, ...patch };
+    assert(actual && fontKeys.every((key) => actual[key] === expected[key]), label);
+  };
+  const verifyFonts = (doc) => {
+    expectFonts(doc, 'Latin é', { hAnsi: 'Times New Roman' }, '独立 hAnsi 生效且保留目标 ASCII / 中文字体');
+    expectFonts(doc, '中文', { eastAsia: '仿宋' }, '下一块仅改中文字体，不串用前一块的 hAnsi');
+    expectFonts(doc, '普通源', {}, '跨段未声明字体的文字恢复原目标全部字体桶');
+    expectFonts(doc, '普', {}, '粘贴前侧原文保留直接字体');
+    const suffix = doc.find('文').at(-1);
+    const suffixFonts = doc.query('paragraph').flatMap((p) => p.runs).find((r) => r.id === suffix.start.nodeId)?.props.fonts;
+    assert(suffixFonts && fontKeys.every((key) => suffixFonts[key] === targetFonts[key]), '粘贴后侧原文保留直接字体');
+    const tab = doc.query('paragraph').flatMap((p) => p.runs).find((r) => r.content.some((c) => c.kind === 'tab'));
+    assert(tab.props.fonts.hAnsi === 'Calibri' && tab.props.fonts.ascii === targetFonts.ascii &&
+      tab.props.fonts.eastAsia === targetFonts.eastAsia, '独立 hAnsi 的制表位同样保留其余桶');
+    const fragments = doc.layout.pages.flatMap((p) => p.blocks).filter((b) => b.kind === 'paragraph')
+      .flatMap((p) => p.lines).flatMap((l) => l.line.fragments);
+    assert(fragments.some((f) => f.text.includes('Latin') && f.font === 'Courier New'), 'ASCII 文字按保留的目标字体排版');
+    assert(fragments.some((f) => f.text.includes('é') && f.font === 'Times New Roman'), '扩展拉丁文字按源 hAnsi 字体排版');
+    assert(fragments.some((f) => f.text.includes('中文') && f.font === '仿宋'), '中文文字按源 eastAsia 字体排版');
+  };
+  verifyFonts(fontDoc);
+  assert(fontView.rectsOf(fontDoc.find('Latin é')[0]).length > 0, '独立字体混排文字可以定位');
+  before(fontInput, 'historyUndo');
+  assert(fontDoc.find('普通正文').length === 1 && fontDoc.find('Latin é').length === 0, '多段字体粘贴一次撤销恢复原文');
+  assert(same(fontView.selection, fontTarget), '字体粘贴撤销恢复完整反向选区');
+  before(fontInput, 'historyRedo');
+  assert(same(fontView.selection, fontAfter), '字体粘贴重做恢复末段光标');
+  verifyFonts(fontDoc);
+  const fontReopened = await UltimateWord.load(await fontDoc.toDocx());
+  verifyFonts(fontReopened);
+  fontView.select(fontDoc.find('Latin é')[0]);
+  const fontCopied = copyHtml(fontInput);
+  assert(fontCopied.get('text/html').includes("mso-hansi-font-family:'Times New Roman'") &&
+    fontCopied.get('text/html').includes("mso-ascii-font-family:'Courier New'"), '复制输出独立源 hAnsi 与保留的目标 ASCII');
+  fontView.select(fontDoc.find('第二项')[0]);
+  paste(fontInput, fontCopied.get('text/html'));
+  const recopied = fontDoc.query('paragraph')[1].runs.find((r) => r.content.some((c) => c.kind === 'text' && c.text.includes('Latin é')));
+  assert(recopied.props.fonts.hAnsi === 'Times New Roman' && recopied.props.fonts.ascii === 'Courier New' &&
+    recopied.props.fonts.eastAsia === '宋体', '复制再粘贴完整保留独立字体桶');
+  fontView.dispose();
+
+  const protectedFontDoc = await UltimateWord.load(choiceControlDocx());
+  const protectedFontView = protectedFontDoc.mount(host, { mode: 'edit' });
+  const protectedFontRange = protectedFontDoc.find('一般')[0];
+  protectedFontView.select(protectedFontRange);
+  paste(host.querySelector('textarea'), fontSource);
+  assert(protectedFontDoc.find('一般').length === 1 && !protectedFontDoc.canUndo, '独立字体粘贴仍受模板控件保护');
+  assert(same(protectedFontView.selection, protectedFontRange), '独立字体粘贴被拒绝后保留选区');
+  protectedFontView.dispose();
+
   // 留一份结果用于可视验收。
-  const finalView = rgbReopened.mount(host, { mode: 'edit' });
-  finalView.select(rgbReopened.find('类底纹')[0]);
+  const finalView = fontReopened.mount(host, { mode: 'edit' });
+  finalView.select(fontReopened.find('Latin é')[0]);
   finalView.focus();
   result.textContent = `PASS ${passed} 项`;
 } catch (error) { result.textContent = `FAIL ${passed} 项后\n${error.stack ?? error}`; }

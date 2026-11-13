@@ -423,6 +423,12 @@ export function createEditingController(
             for (const key of touched)
               if (!(key in run.patch)) reset[key] = destination[key as keyof RunProps] ?? null;
             const patch: RunPropsPatch = { ...(reset as RunPropsPatch), ...format, ...run.patch };
+            // 模型的 fonts 补丁整组替换；粘贴只声明一个桶时，其余桶仍取原光标处，不能丢掉或串到前一块。
+            // 折叠清格式暂存的 null 同样是有效基准，不能借补桶把已清掉的目标字体恢复出来。
+            if (run.patch.fonts) {
+              const fonts = format?.fonts !== undefined ? format.fonts : destination.fonts;
+              patch.fonts = { ...fonts, ...run.patch.fonts };
+            }
             for (const key of Object.keys(patch)) touched.add(key);
             // 段内的 \t / \n / \f 是制表位、软换行与分页符（Tab、Shift+Enter、HTML 的 <br>），不是分段。
             for (const piece of run.text.replace(/\r/g, '').split(/([\t\n\f])/)) {

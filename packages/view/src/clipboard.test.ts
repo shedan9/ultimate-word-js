@@ -309,6 +309,55 @@ describe('剪贴板 HTML', () => {
     expect(runs[0]?.patch.fonts?.ascii).toBe('Times New Roman');
   });
 
+  it.each([
+    ['mso-hansi-font-family:Arial', { hAnsi: 'Arial' }],
+    ['mso-hansi-font-family:Arial;mso-fareast-font-family:仿宋', { hAnsi: 'Arial', eastAsia: '仿宋' }],
+    ['mso-ascii-font-family:Calibri', { ascii: 'Calibri', hAnsi: 'Calibri' }],
+    ['font-family:宋体;mso-hansi-font-family:Arial', { ascii: '宋体', hAnsi: 'Arial', eastAsia: '宋体' }],
+  ])('Word 独立字体桶 %s 不依赖 ASCII 桶出现', (style, fonts) => {
+    expect(
+      parse(`<p class=MsoNormal><span style="${style}">中文é</span></p>`)[0]?.runs[0]?.patch.fonts,
+    ).toEqual(fonts);
+  });
+
+  it('独立 hAnsi 字体沿类样式继承，内联覆盖与无字体兄弟分别保留', () => {
+    const runs = parse(
+      `<style>.Latin {mso-hansi-font-family:Arial;}</style><p class=MsoNormal><span class=Latin>继承<span style="mso-fareast-font-family:仿宋">混排</span><span style="mso-hansi-font-family:Calibri">覆盖</span></span>普通</p>`,
+    )[0]?.runs;
+    expect(runs?.map((r) => [r.text, r.patch.fonts])).toEqual([
+      ['继承', { hAnsi: 'Arial' }],
+      ['混排', { hAnsi: 'Arial', eastAsia: '仿宋' }],
+      ['覆盖', { hAnsi: 'Calibri' }],
+      ['普通', undefined],
+    ]);
+  });
+
+  it('解析得到的独立字体桶粘贴后保留目标其余桶，下一块重新取原目标字体', () => {
+    const { editor, state, propsOf } = decoratedTarget('direct');
+    const fonts = { ascii: 'Courier New', hAnsi: 'Arial', eastAsia: '宋体', hint: 'eastAsia' } as const;
+    editor.tx((tx) => {
+      tx.setRunProps(
+        {
+          start: { nodeId: 'r', contentIndex: 0, offset: 0 },
+          end: { nodeId: 'r', contentIndex: 0, offset: 2 },
+        },
+        { fonts },
+      );
+    });
+    const at = { nodeId: 'r', contentIndex: 0, offset: 1 };
+    state.select({ start: at, end: at });
+    state.insertParagraphs(
+      parse(
+        `<p class=MsoNormal><span style="mso-hansi-font-family:Calibri">扩展é</span><span style="mso-fareast-font-family:仿宋">中文</span>普通</p>`,
+      ),
+    );
+    expect(propsOf('扩展é').fonts).toMatchObject({ ...fonts, hAnsi: 'Calibri' });
+    expect(propsOf('中文').fonts).toMatchObject({ ...fonts, eastAsia: '仿宋' });
+    expect(propsOf('普通').fonts).toMatchObject(fonts);
+    expect(propsOf('前').fonts).toMatchObject(fonts);
+    expect(propsOf('后').fonts).toMatchObject(fonts);
+  });
+
   it('规则按选择器优先级与源码顺序合并，不受 class 属性里名字顺序影响', () => {
     const paragraphs = parse(`<style>
       #target { font-size:20pt; }
