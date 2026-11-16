@@ -692,9 +692,77 @@ try {
   assert(same(protectedPositionView.selection, protectedPositionRange), '升降粘贴被拒绝后保留选区');
   protectedPositionView.dispose();
 
+  // 缩放同时改变字形与推进宽度，不能与字符间距或字体变体混用。
+  const scaleSource = `<style>.Wide {mso-font-width:150% !important}.Normal {mso-font-width:100%}.Narrow {mso-font-width:50%}</style><p class=MsoNormal style="font-family:仿宋;font-size:16pt;text-align:left">标准<span class=Wide style="mso-font-width:200%">扩展<span class=Normal>恢复</span></span><span class=Narrow>压缩</span></p><p class=MsoNormal>末段</p>`;
+  const scaleDoc = await UltimateWord.load(listDocx());
+  scaleDoc.tx((tx) => {
+    const range = tx.replaceText(scaleDoc.find('普通正文')[0], '前中后');
+    tx.setRunProps(range, { scale: 200 });
+  });
+  const scaleView = scaleDoc.mount(host, { mode: 'edit' });
+  const scaleInput = host.querySelector('textarea');
+  const scaleTarget = scaleDoc.find('中')[0];
+  scaleView.select({ start: scaleTarget.end, end: scaleTarget.start });
+  paste(scaleInput, scaleSource);
+  const scaleAfter = scaleView.selection;
+  const verifyScale = (doc) => {
+    for (const [text, scale] of [['标准', 100], ['扩展', 150], ['恢复', 100], ['压缩', 50], ['末段', 100]]) {
+      assert(runOf(doc, text).props.scale === scale, `${text} 保留源字符缩放`);
+    }
+    assert(runOf(doc, '前').props.scale === 200 && runOf(doc, '后').props.scale === 200, '缩放粘贴不改变两侧原文');
+    const normalWidth = widths(doc, '标准')[0];
+    assert(Math.abs(widths(doc, '扩展')[0] - normalWidth * 1.5) < 0.01, '扩展文字实际推进宽度为标准的 150%');
+    assert(Math.abs(widths(doc, '压缩')[0] - normalWidth * .5) < 0.01, '压缩文字实际推进宽度为标准的 50%');
+    assert(Math.abs(widths(doc, '恢复')[0] - normalWidth) < 0.01, '显式标准比例恢复实际字宽');
+  };
+  verifyScale(scaleDoc);
+  let scaleGlyphs = [];
+  for (let i = 0; i < 20; i++) {
+    await frame();
+    scaleGlyphs = [...host.querySelectorAll('svg text.uw-frag')];
+    if (scaleGlyphs.some((el) => el.textContent === '扩展')) break;
+  }
+  assert(scaleGlyphs.find((el) => el.textContent === '扩展')?.getAttribute('transform') === 'scale(1.5 1)', '实际 SVG 字形横向扩展 150%');
+  assert(scaleGlyphs.find((el) => el.textContent === '压缩')?.getAttribute('transform') === 'scale(0.5 1)', '实际 SVG 字形横向压缩 50%');
+  assert(!scaleGlyphs.find((el) => el.textContent === '恢复')?.hasAttribute('transform'), '标准比例不附加字形变换');
+  assert(scaleView.rectsOf(scaleDoc.find('压缩')[0]).length > 0, '压缩文字仍可定位');
+  before(scaleInput, 'historyUndo');
+  assert(scaleDoc.find('前中后').length === 1 && runOf(scaleDoc, '前中后').props.scale === 200, '多段缩放粘贴一次撤销恢复原文');
+  assert(same(scaleView.selection, scaleTarget), '缩放粘贴撤销恢复反向选区');
+  before(scaleInput, 'historyRedo');
+  assert(same(scaleView.selection, scaleAfter), '缩放粘贴重做恢复光标');
+  verifyScale(scaleDoc);
+  const scaleReopened = await UltimateWord.load(await scaleDoc.toDocx());
+  verifyScale(scaleReopened);
+  scaleView.select(scaleDoc.find('标准扩展恢复压缩')[0]);
+  const scaleCopied = copyHtml(scaleInput);
+  const scaleHtml = scaleCopied.get('text/html');
+  assert(scaleCopied.get('text/plain') === '标准扩展恢复压缩', '字符缩放不改变纯文本');
+  assert(scaleHtml.includes('mso-font-width:100%') && scaleHtml.includes('mso-font-width:150%') && scaleHtml.includes('mso-font-width:50%'), '复制写出标准、扩展与压缩比例');
+  scaleView.select(scaleDoc.find('第一项')[0]);
+  paste(scaleInput, scaleHtml);
+  const scaleRepeated = scaleDoc.query('paragraph')[0];
+  for (const [text, scale] of [['标准', 100], ['扩展', 150], ['恢复', 100], ['压缩', 50]]) {
+    assert(scaleRepeated.runs.find((r) => r.content.some((c) => c.kind === 'text' && c.text.includes(text)))?.props.scale === scale, `${text} 复制再粘贴保留缩放`);
+  }
+  before(scaleInput, 'historyUndo');
+  scaleView.select(scaleDoc.find('后')[0]);
+  paste(scaleInput, '<p style="font-stretch:50%;transform:scaleX(.5)">网页</p>');
+  assert(runOf(scaleDoc, '网页').props.scale === 200, '普通网页仍合并目标缩放');
+  scaleView.dispose();
+
+  const protectedScaleDoc = await UltimateWord.load(choiceControlDocx());
+  const protectedScaleView = protectedScaleDoc.mount(host, { mode: 'edit' });
+  const protectedScaleRange = protectedScaleDoc.find('一般')[0];
+  protectedScaleView.select(protectedScaleRange);
+  paste(host.querySelector('textarea'), scaleSource);
+  assert(protectedScaleDoc.find('一般').length === 1 && !protectedScaleDoc.canUndo, '字符缩放粘贴仍受模板控件保护');
+  assert(same(protectedScaleView.selection, protectedScaleRange), '缩放粘贴被拒绝后保留选区');
+  protectedScaleView.dispose();
+
   // 留一份结果用于可视验收。
-  const finalView = positionReopened.mount(host, { mode: 'edit' });
-  finalView.select(positionReopened.find('提升')[0]);
+  const finalView = scaleReopened.mount(host, { mode: 'edit' });
+  finalView.select(scaleReopened.find('扩展')[0]);
   finalView.focus();
   result.textContent = `PASS ${passed} 项`;
 } catch (error) { result.textContent = `FAIL ${passed} 项后\n${error.stack ?? error}`; }

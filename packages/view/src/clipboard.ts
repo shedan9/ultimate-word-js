@@ -64,6 +64,8 @@ function runStyle(props: FragmentRun['props']): string {
     `font-size:${props.size / TWIP_PER_PT}pt`,
     // 标准间距也要写零：省略会在粘贴时继承目标的加宽 / 紧缩。
     `letter-spacing:${props.charSpacing / TWIP_PER_PT}pt`,
+    // 标准比例也要显式传递，否则粘进压缩 / 扩展的文字中会改变字宽与断行。
+    `mso-font-width:${props.scale}%`,
     // 升降与上下标是两种独立格式；零也要带上，避免继承粘贴目标的升降。
     `mso-text-raise:${props.position / TWIP_PER_PT}pt`,
     ...(props.position !== 0 ? [`position:relative;top:${-props.position / TWIP_PER_PT}pt`] : []),
@@ -231,6 +233,7 @@ interface Inherited {
   color?: string | undefined;
   size?: number;
   charSpacing?: number;
+  scale?: number;
   position?: number;
   ascii?: string | undefined;
   hAnsi?: string | undefined;
@@ -272,6 +275,14 @@ function parseLength(value: string, quantum: number): number | undefined {
   if (!match[2] && amount !== 0) return undefined;
   const twips = Math.round((amount * (match[2] === 'px' ? 0.75 : 1) * TWIP_PER_PT) / quantum) * quantum;
   return Number.isSafeInteger(twips) ? twips : undefined;
+}
+
+/** w:w 只存 1–600 的整数百分比；不把字体变体选择或盒变换误当成字形缩放。 */
+function parseScale(value: string): number | undefined {
+  const match = /^\+?(\d+)%$/.exec(value.trim());
+  const scale = match?.[1] === undefined ? NaN : Number(match[1]);
+  // 边界来自 Open XML SDK 的 CT_TextScale 校验，避免非法 HTML 产生不能回写的比例。
+  return Number.isInteger(scale) && scale >= 1 && scale <= 600 ? scale : undefined;
 }
 
 function parseColor(value: string): string | undefined {
@@ -353,6 +364,9 @@ function inherit(el: Element, from: Inherited, style: Map<string, string>): Inhe
         ? 0
         : parseLength(spacing, 1);
   if (charSpacing !== undefined) next.charSpacing = charSpacing;
+  const fontWidth = style.get('mso-font-width');
+  const scale = fontWidth === undefined ? undefined : parseScale(fontWidth);
+  if (scale !== undefined) next.scale = scale;
   const raise = style.get('mso-text-raise');
   // w:position 只有半磅精度，直接量化，避免先取整 twip 再取半磅造成二次舍入。
   const position = raise === undefined ? undefined : parseLength(raise, TWIP_PER_PT / 2);
@@ -464,6 +478,7 @@ function patchOf(state: Inherited, trusted: boolean): RunPropsPatch {
     doubleStrike: state.doubleStrike,
     vertAlign: state.vertAlign,
     charSpacing: state.charSpacing ?? 0,
+    scale: state.scale ?? 100,
     position: state.position ?? 0,
     ...(state.size !== undefined ? { size: state.size } : {}),
     ...(state.color !== undefined ? { color: state.color } : {}),

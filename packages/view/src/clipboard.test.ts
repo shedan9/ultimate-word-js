@@ -116,6 +116,105 @@ function decoratedTarget(layer: 'defaults' | 'paragraph' | 'character' | 'direct
 
 describe('剪贴板 HTML', () => {
   it.each(['defaults', 'paragraph', 'character', 'direct'] as const)(
+    '复制的字符缩放覆盖目标 %s，保留两侧原文与历史',
+    (layer) => {
+      const { editor, state, propsOf } = decoratedTarget(layer, { scale: 200 });
+      const at = { nodeId: 'r', contentIndex: 0, offset: 1 };
+      state.select({ start: at, end: at });
+      state.insertParagraphs(
+        parse(
+          fragmentToHtml({
+            paragraphs: [
+              {
+                justification: 'left',
+                runs: [
+                  { text: '标准', props: base },
+                  { text: '压缩', props: { ...base, scale: 50 } },
+                  { text: '扩展', props: { ...base, scale: 150 } },
+                ],
+              },
+            ],
+          }),
+        ),
+      );
+      const verify = () => {
+        expect(propsOf('标准').scale).toBe(100);
+        expect(propsOf('压缩').scale).toBe(50);
+        expect(propsOf('扩展').scale).toBe(150);
+        expect(propsOf('前').scale).toBe(200);
+        expect(propsOf('后').scale).toBe(200);
+      };
+      verify();
+      const pasted = editor.body;
+      editor.undo();
+      expect(propsOf('前后').scale).toBe(200);
+      editor.redo();
+      expect(editor.body).toEqual(pasted);
+      verify();
+    },
+  );
+
+  it('复制缩放始终写百分比，标准比例与合法边界可往返', () => {
+    const scales = [100, 1, 50, 150, 600];
+    const html = fragmentToHtml({
+      paragraphs: [
+        {
+          justification: 'left',
+          runs: scales.map((scale) => ({
+            text: String(scale),
+            props: { ...base, scale },
+          })),
+        },
+      ],
+    });
+    for (const scale of scales) expect(html).toContain(`mso-font-width:${scale}%`);
+    expect(parse(html)[0]?.runs.map((run) => run.patch.scale)).toEqual(scales);
+  });
+
+  it('可信源缺省缩放为标准，普通网页继续合并目标缩放', () => {
+    expect(
+      parse('<p class=MsoNormal>缺省<span style="font-stretch:50%;transform:scaleX(.5)">定位</span></p>')[0]
+        ?.runs[0]?.patch.scale,
+    ).toBe(100);
+    const { state, propsOf } = decoratedTarget('direct', { scale: 200 });
+    const at = { nodeId: 'r', contentIndex: 0, offset: 1 };
+    state.select({ start: at, end: at });
+    state.insertParagraphs(parse('<p style="font-stretch:50%;transform:scaleX(.5)">网页</p>'));
+    expect(propsOf('网页').scale).toBe(200);
+  });
+
+  it('缩放按类与内联优先级继承，显式标准比例覆盖父级', () => {
+    const parsed = parse(
+      '<style>.Wide {mso-font-width:150% !important}.Normal {mso-font-width:100%}</style><p class=MsoNormal style="mso-font-width:50%">外层<span class=Wide style="mso-font-width:200%">扩展<span class=Normal>标准</span></span>恢复</p>',
+    );
+    expect(parsed[0]?.runs.map((run) => [run.text, run.patch.scale])).toEqual([
+      ['外层', 50],
+      ['扩展', 150],
+      ['标准', 100],
+      ['恢复', 50],
+    ]);
+  });
+
+  it.each([
+    '0%',
+    '-50%',
+    '601%',
+    '125.5%',
+    '50',
+    'normal',
+    '1e2%',
+    'Infinity%',
+    '50% tail',
+    'calc(50% + 1%)',
+  ])('非法或不支持的缩放 %s 保留源继承', (value) => {
+    expect(
+      parse(
+        `<p class=MsoNormal style="mso-font-width:75%"><span style="mso-font-width:${value}">正文</span></p>`,
+      )[0]?.runs[0]?.patch.scale,
+    ).toBe(75);
+  });
+
+  it.each(['defaults', 'paragraph', 'character', 'direct'] as const)(
     '复制的字符升降覆盖目标 %s 的升降，保留原文与历史',
     (layer) => {
       const { editor, state, propsOf } = decoratedTarget(layer, { position: 80 });
@@ -858,6 +957,7 @@ describe('剪贴板 HTML', () => {
     const common = {
       strike: false,
       charSpacing: 0,
+      scale: 100,
       position: 0,
       doubleStrike: false,
       color: 'auto',
@@ -905,6 +1005,7 @@ style='font:7.0pt "Times New Roman"'>&nbsp;&nbsp; </span></span><![endif]><b>要
     const off = {
       italic: false,
       charSpacing: 0,
+      scale: 100,
       position: 0,
       underline: 'none',
       strike: false,
