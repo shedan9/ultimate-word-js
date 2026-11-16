@@ -64,6 +64,9 @@ function runStyle(props: FragmentRun['props']): string {
     `font-size:${props.size / TWIP_PER_PT}pt`,
     // 标准间距也要写零：省略会在粘贴时继承目标的加宽 / 紧缩。
     `letter-spacing:${props.charSpacing / TWIP_PER_PT}pt`,
+    // 升降与上下标是两种独立格式；零也要带上，避免继承粘贴目标的升降。
+    `mso-text-raise:${props.position / TWIP_PER_PT}pt`,
+    ...(props.position !== 0 ? [`position:relative;top:${-props.position / TWIP_PER_PT}pt`] : []),
     `font-weight:${props.bold ? 'bold' : 'normal'}`,
     `font-style:${props.italic ? 'italic' : 'normal'}`,
     `text-decoration:${decorations.length ? decorations.join(' ') : 'none'}`,
@@ -228,6 +231,7 @@ interface Inherited {
   color?: string | undefined;
   size?: number;
   charSpacing?: number;
+  position?: number;
   ascii?: string | undefined;
   hAnsi?: string | undefined;
   eastAsia?: string | undefined;
@@ -258,16 +262,15 @@ function parseSize(value: string): number | undefined {
   return pt > 0 ? Math.round(pt * 2) * (TWIP_PER_PT / 2) : undefined;
 }
 
-/** 字符间距可为负，精度是 twip；不能沿用字号的正数限制或半磅量化。 */
-function parseCharSpacing(value: string): number | undefined {
+/** 有符号的绝对长度按目标属性精度量化；间距是 twip，升降是半磅，不能沿用字号的正数限制。 */
+function parseLength(value: string, quantum: number): number | undefined {
   const v = value.trim().toLowerCase();
-  if (v === 'normal') return 0;
   const match = /^([+-]?(?:\d+(?:\.\d+)?|\.\d+))(pt|px)?$/.exec(v);
   if (!match?.[1]) return undefined;
   const amount = Number(match[1]);
   // CSS 只有零长度可以省单位；未知相对单位交给已读取的源格式继承。
   if (!match[2] && amount !== 0) return undefined;
-  const twips = Math.round(amount * (match[2] === 'px' ? 0.75 : 1) * TWIP_PER_PT);
+  const twips = Math.round((amount * (match[2] === 'px' ? 0.75 : 1) * TWIP_PER_PT) / quantum) * quantum;
   return Number.isSafeInteger(twips) ? twips : undefined;
 }
 
@@ -343,8 +346,17 @@ function inherit(el: Element, from: Inherited, style: Map<string, string>): Inhe
   const twips = size && parseSize(size);
   if (twips) next.size = twips;
   const spacing = style.get('letter-spacing');
-  const charSpacing = spacing === undefined ? undefined : parseCharSpacing(spacing);
+  const charSpacing =
+    spacing === undefined
+      ? undefined
+      : spacing.trim().toLowerCase() === 'normal'
+        ? 0
+        : parseLength(spacing, 1);
   if (charSpacing !== undefined) next.charSpacing = charSpacing;
+  const raise = style.get('mso-text-raise');
+  // w:position 只有半磅精度，直接量化，避免先取整 twip 再取半磅造成二次舍入。
+  const position = raise === undefined ? undefined : parseLength(raise, TWIP_PER_PT / 2);
+  if (position !== undefined) next.position = position;
   const family = style.get('font-family');
   if (family) next.family = firstFamily(family);
   const ascii = style.get('mso-ascii-font-family');
@@ -452,6 +464,7 @@ function patchOf(state: Inherited, trusted: boolean): RunPropsPatch {
     doubleStrike: state.doubleStrike,
     vertAlign: state.vertAlign,
     charSpacing: state.charSpacing ?? 0,
+    position: state.position ?? 0,
     ...(state.size !== undefined ? { size: state.size } : {}),
     ...(state.color !== undefined ? { color: state.color } : {}),
     // 可信粘贴要保留源的关闭状态。null 只删除直接格式，会重新露出目标样式的高亮 / 底纹 / 着重号；

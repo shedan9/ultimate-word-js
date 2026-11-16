@@ -116,6 +116,109 @@ function decoratedTarget(layer: 'defaults' | 'paragraph' | 'character' | 'direct
 
 describe('剪贴板 HTML', () => {
   it.each(['defaults', 'paragraph', 'character', 'direct'] as const)(
+    '复制的字符升降覆盖目标 %s 的升降，保留原文与历史',
+    (layer) => {
+      const { editor, state, propsOf } = decoratedTarget(layer, { position: 80 });
+      const at = { nodeId: 'r', contentIndex: 0, offset: 1 };
+      state.select({ start: at, end: at });
+      state.insertParagraphs(
+        parse(
+          fragmentToHtml({
+            paragraphs: [
+              {
+                justification: 'left',
+                runs: [
+                  { text: '标准', props: base },
+                  { text: '提升', props: { ...base, position: 30 } },
+                  { text: '降低', props: { ...base, position: -20 } },
+                ],
+              },
+            ],
+          }),
+        ),
+      );
+      const verify = () => {
+        expect(propsOf('标准').position).toBe(0);
+        expect(propsOf('提升').position).toBe(30);
+        expect(propsOf('降低').position).toBe(-20);
+        expect(propsOf('前').position).toBe(80);
+        expect(propsOf('后').position).toBe(80);
+      };
+      verify();
+      const pasted = editor.body;
+      editor.undo();
+      expect(propsOf('前后').position).toBe(80);
+      editor.redo();
+      expect(editor.body).toEqual(pasted);
+      verify();
+    },
+  );
+
+  it('复制升降写独立的 mso-text-raise 与反向 top，保留上下标', () => {
+    const html = fragmentToHtml({
+      paragraphs: [
+        {
+          justification: 'left',
+          runs: [
+            { text: '标准', props: base },
+            { text: '提升', props: { ...base, position: 30, vertAlign: 'superscript' } },
+            { text: '降低', props: { ...base, position: -20, vertAlign: 'subscript' } },
+          ],
+        },
+      ],
+    });
+    expect(html).toContain('mso-text-raise:0pt');
+    expect(html).toContain('mso-text-raise:1.5pt');
+    expect(html).toContain('position:relative;top:-1.5pt');
+    expect(html).toContain('mso-text-raise:-1pt');
+    expect(html).toContain('position:relative;top:1pt');
+    expect(parse(html)[0]?.runs.map((run) => [run.text, run.patch.position, run.patch.vertAlign])).toEqual([
+      ['标准', 0, 'baseline'],
+      ['提升', 30, 'superscript'],
+      ['降低', -20, 'subscript'],
+    ]);
+  });
+
+  it('可信字符升降按半磅读取 pt / px，缺省归零且不把普通 top 当字符格式', () => {
+    const parsed = parse(
+      '<p class=MsoNormal>缺省<span style="mso-text-raise:+1.5pt">提升</span><span style="mso-text-raise:-2px">降低</span><span style="mso-text-raise:.249pt">量化</span><span style="position:relative;top:-3pt">定位</span></p>',
+    );
+    expect(parsed[0]?.runs.map((run) => [run.text, run.patch.position])).toEqual([
+      ['缺省', 0],
+      ['提升', 30],
+      ['降低', -30],
+      ['量化定位', 0],
+    ]);
+    const { state, propsOf } = decoratedTarget('direct', { position: 80 });
+    const at = { nodeId: 'r', contentIndex: 0, offset: 1 };
+    state.select({ start: at, end: at });
+    state.insertParagraphs(parse('<p style="position:relative;top:0">网页</p>'));
+    expect(propsOf('网页').position).toBe(80);
+  });
+
+  it('升降按内联与类优先级继承，零覆盖父级且与上下标独立', () => {
+    const parsed = parse(
+      '<style>.Raised {mso-text-raise:3pt !important}.Normal {mso-text-raise:0}</style><p class=MsoNormal style="mso-text-raise:-1pt">外层<span class=Raised style="mso-text-raise:1pt">提升<sup class=Normal>上标</sup></span>恢复</p>',
+    );
+    expect(parsed[0]?.runs.map((run) => [run.text, run.patch.position, run.patch.vertAlign])).toEqual([
+      ['外层', -20, 'baseline'],
+      ['提升', 60, 'baseline'],
+      ['上标', 0, 'superscript'],
+      ['恢复', -20, 'baseline'],
+    ]);
+  });
+
+  it.each(['1em', '10%', '2', 'normal', '1..2pt', 'Infinitypt', '2pt tail', 'calc(1pt + 2px)'])(
+    '不支持或非法升降 %s 不破坏源继承',
+    (value) => {
+      const parsed = parse(
+        `<p class=MsoNormal style="mso-text-raise:-1pt"><span style="mso-text-raise:${value}">正文</span></p>`,
+      );
+      expect(parsed[0]?.runs[0]?.patch.position).toBe(-20);
+    },
+  );
+
+  it.each(['defaults', 'paragraph', 'character', 'direct'] as const)(
     '复制的字符间距覆盖目标 %s 的间距，保留原文与历史',
     (layer) => {
       const { editor, state, propsOf } = decoratedTarget(layer, { charSpacing: 80 });
@@ -755,6 +858,7 @@ describe('剪贴板 HTML', () => {
     const common = {
       strike: false,
       charSpacing: 0,
+      position: 0,
       doubleStrike: false,
       color: 'auto',
       size: 320,
@@ -801,6 +905,7 @@ style='font:7.0pt "Times New Roman"'>&nbsp;&nbsp; </span></span><![endif]><b>要
     const off = {
       italic: false,
       charSpacing: 0,
+      position: 0,
       underline: 'none',
       strike: false,
       doubleStrike: false,

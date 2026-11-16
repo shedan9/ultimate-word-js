@@ -614,9 +614,87 @@ try {
   assert(same(protectedSpacingView.selection, protectedSpacingRange), '间距粘贴被拒绝后保留选区');
   protectedSpacingView.dispose();
 
+  // 升降不等于上下标：分别验证格式、实际绘字位置与目标格式隔离。
+  const positionSource = `<style>.Raised {mso-text-raise:3pt !important}.Lowered {mso-text-raise:-2px}.Level {mso-text-raise:0}</style><p class=MsoNormal style="font-family:仿宋;font-size:16pt;text-align:left">标准<span class=Raised style="mso-text-raise:9pt">提升<span class=Level>归零</span></span><span class=Lowered>降低</span><sup style="mso-text-raise:1pt">上标</sup></p><p class=MsoNormal>末段</p>`;
+  const positionDoc = await UltimateWord.load(listDocx());
+  positionDoc.tx((tx) => {
+    const range = tx.replaceText(positionDoc.find('普通正文')[0], '前中后');
+    tx.setRunProps(range, { position: 80 });
+  });
+  const positionView = positionDoc.mount(host, { mode: 'edit' });
+  const positionInput = host.querySelector('textarea');
+  const positionTarget = positionDoc.find('中')[0];
+  positionView.select({ start: positionTarget.end, end: positionTarget.start });
+  paste(positionInput, positionSource);
+  const positionAfter = positionView.selection;
+  const verifyPosition = (doc) => {
+    for (const [text, position] of [['标准', 0], ['提升', 60], ['归零', 0], ['降低', -30], ['上标', 20], ['末段', 0]]) {
+      assert(runOf(doc, text).props.position === position, `${text} 保留源字符升降`);
+    }
+    assert(runOf(doc, '上标').props.vertAlign === 'superscript', '字符升降与上标独立保留');
+    assert(runOf(doc, '前').props.position === 80 && runOf(doc, '后').props.position === 80, '升降粘贴不改变两侧原文');
+    const fragments = doc.layout.pages.flatMap((p) => p.blocks).filter((b) => b.kind === 'paragraph')
+      .flatMap((p) => p.lines).flatMap((l) => l.line.fragments);
+    for (const [text, position] of [['标准', 0], ['提升', 60], ['归零', 0], ['降低', -30]]) {
+      assert(fragments.find((f) => f.text === text)?.style.position === position, `${text} 的升降进入绘制格式`);
+    }
+  };
+  verifyPosition(positionDoc);
+  let positionGlyphs = [];
+  for (let i = 0; i < 20; i++) {
+    await frame();
+    positionGlyphs = [...host.querySelectorAll('svg text.uw-frag')];
+    if (positionGlyphs.some((el) => el.textContent === '提升')) break;
+  }
+  const glyphY = (text) => Number(positionGlyphs.find((el) => el.textContent === text)?.getAttribute('y'));
+  assert(Math.abs(glyphY('标准') - glyphY('提升') - 3) < 0.001, '实际 SVG 基线提升 3pt');
+  assert(Math.abs(glyphY('降低') - glyphY('标准') - 1.5) < 0.001, '实际 SVG 基线降低 1.5pt');
+  assert(Math.abs(glyphY('归零') - glyphY('标准')) < 0.001, '显式零恢复实际基线');
+  assert(positionView.rectsOf(positionDoc.find('提升')[0]).length > 0, '提升文字仍可定位');
+  before(positionInput, 'historyUndo');
+  assert(positionDoc.find('前中后').length === 1 && runOf(positionDoc, '前中后').props.position === 80, '多段升降粘贴一次撤销恢复原文');
+  assert(same(positionView.selection, positionTarget), '升降粘贴撤销恢复反向选区');
+  before(positionInput, 'historyRedo');
+  assert(same(positionView.selection, positionAfter), '升降粘贴重做恢复光标');
+  verifyPosition(positionDoc);
+  const positionReopened = await UltimateWord.load(await positionDoc.toDocx());
+  verifyPosition(positionReopened);
+  positionView.select(positionDoc.find('标准提升归零降低上标')[0]);
+  const positionCopied = copyHtml(positionInput);
+  assert(positionCopied.get('text/plain') === '标准提升归零降低上标', '升降不改变纯文本');
+  const positionHtml = positionCopied.get('text/html');
+  assert(positionHtml.includes('mso-text-raise:0pt') && positionHtml.includes('mso-text-raise:3pt') && positionHtml.includes('mso-text-raise:-1.5pt'), '复制写出零、正负升降值');
+  assert(positionHtml.includes('position:relative;top:-3pt') && positionHtml.includes('position:relative;top:1.5pt'), '复制的 HTML 另写反向 top 供浏览器显示');
+  const positionPreview = document.body.appendChild(document.createElement('div'));
+  try {
+    positionPreview.innerHTML = positionHtml;
+    const spans = [...positionPreview.querySelectorAll('p > span')];
+    const spanTop = (text) => spans.find((el) => el.textContent === text).getBoundingClientRect().top;
+    assert(Math.abs(spanTop('标准') - spanTop('提升') - 4) < 0.01, '复制 HTML 在浏览器也提升 3pt');
+    assert(Math.abs(spanTop('降低') - spanTop('标准') - 2) < 0.01, '复制 HTML 在浏览器也降低 1.5pt');
+  } finally { positionPreview.remove(); }
+  positionView.select(positionDoc.find('第一项')[0]);
+  paste(positionInput, positionHtml);
+  const positionRepeated = positionDoc.query('paragraph')[0];
+  assert(positionRepeated.runs.find((r) => r.content.some((c) => c.kind === 'text' && c.text.includes('提升')))?.props.position === 60, '复制再粘贴保留提升位置');
+  before(positionInput, 'historyUndo');
+  positionView.select(positionDoc.find('后')[0]);
+  paste(positionInput, '<p style="position:relative;top:0">网页</p>');
+  assert(runOf(positionDoc, '网页').props.position === 80, '普通网页保留目标升降');
+  positionView.dispose();
+
+  const protectedPositionDoc = await UltimateWord.load(choiceControlDocx());
+  const protectedPositionView = protectedPositionDoc.mount(host, { mode: 'edit' });
+  const protectedPositionRange = protectedPositionDoc.find('一般')[0];
+  protectedPositionView.select(protectedPositionRange);
+  paste(host.querySelector('textarea'), positionSource);
+  assert(protectedPositionDoc.find('一般').length === 1 && !protectedPositionDoc.canUndo, '升降粘贴仍受模板控件保护');
+  assert(same(protectedPositionView.selection, protectedPositionRange), '升降粘贴被拒绝后保留选区');
+  protectedPositionView.dispose();
+
   // 留一份结果用于可视验收。
-  const finalView = spacingReopened.mount(host, { mode: 'edit' });
-  finalView.select(spacingReopened.find('加宽')[0]);
+  const finalView = positionReopened.mount(host, { mode: 'edit' });
+  finalView.select(positionReopened.find('提升')[0]);
   finalView.focus();
   result.textContent = `PASS ${passed} 项`;
 } catch (error) { result.textContent = `FAIL ${passed} 项后\n${error.stack ?? error}`; }
