@@ -65,6 +65,8 @@ function runStyle(props: FragmentRun['props']): string {
     `font-weight:${props.bold ? 'bold' : 'normal'}`,
     `font-style:${props.italic ? 'italic' : 'normal'}`,
     `text-decoration:${decorations.length ? decorations.join(' ') : 'none'}`,
+    // 单线与双线共用 line-through 开关，需另带线型才能在复制后还原双删除线。
+    ...(props.doubleStrike ? ['text-line-through:double'] : []),
     // Word 的 HTML 用这个私有属性区分双线 / 波浪线；浏览器照样只画单线。
     ...(props.underline !== 'none' && props.underline !== 'single' && props.underline !== ''
       ? [`text-underline:${props.underline}`]
@@ -214,6 +216,7 @@ interface Inherited {
   italic: boolean;
   underline: string | undefined;
   strike: boolean;
+  doubleStrike: boolean;
   vertAlign: 'baseline' | 'superscript' | 'subscript';
   color?: string | undefined;
   size?: number;
@@ -279,7 +282,10 @@ function inherit(el: Element, from: Inherited, style: Map<string, string>): Inhe
   if (tag === 'B' || tag === 'STRONG' || /^H[1-6]$/.test(tag) || tag === 'TH') next.bold = true;
   if (tag === 'I' || tag === 'EM' || tag === 'CITE') next.italic = true;
   if (tag === 'U' || tag === 'INS') next.underline = 'single';
-  if (tag === 'S' || tag === 'STRIKE' || tag === 'DEL') next.strike = true;
+  if (tag === 'S' || tag === 'STRIKE' || tag === 'DEL') {
+    next.strike = true;
+    next.doubleStrike = false;
+  }
   if (tag === 'SUP') next.vertAlign = 'superscript';
   if (tag === 'SUB') next.vertAlign = 'subscript';
   if (tag === 'PRE') next.pre = true;
@@ -293,6 +299,16 @@ function inherit(el: Element, from: Inherited, style: Map<string, string>): Inhe
   if (decoration) {
     next.underline = decoration.includes('underline') ? (next.underline ?? 'single') : undefined;
     next.strike = decoration.includes('line-through');
+    next.doubleStrike = false;
+  }
+  // 与 text-underline 一样，线型只修饰已开启的装饰；none 可以显式关闭外层删除线。
+  const lineThrough = style.get('text-line-through')?.toLowerCase();
+  if (lineThrough === 'none') {
+    next.strike = false;
+    next.doubleStrike = false;
+  } else if ((next.strike || next.doubleStrike) && (lineThrough === 'double' || lineThrough === 'single')) {
+    next.doubleStrike = lineThrough === 'double';
+    next.strike = !next.doubleStrike;
   }
   const underline = style.get('text-underline');
   if (underline && next.underline) next.underline = underline === 'none' ? undefined : underline;
@@ -395,7 +411,7 @@ function patchOf(state: Inherited, trusted: boolean): RunPropsPatch {
       ...(state.bold ? { bold: true } : {}),
       ...(state.italic ? { italic: true } : {}),
       ...(state.underline ? { underline: 'single' } : {}),
-      ...(state.strike ? { strike: true } : {}),
+      ...(state.strike || state.doubleStrike ? { strike: true } : {}),
       ...(state.vertAlign !== 'baseline' ? { vertAlign: state.vertAlign } : {}),
     };
   // Word 只在一款字体上写 font-family 时（纯中文或纯西文的 run），它就是三个已支持桶共同的字体；
@@ -409,6 +425,7 @@ function patchOf(state: Inherited, trusted: boolean): RunPropsPatch {
     italic: state.italic,
     underline: state.underline ?? 'none',
     strike: state.strike,
+    doubleStrike: state.doubleStrike,
     vertAlign: state.vertAlign,
     ...(state.size !== undefined ? { size: state.size } : {}),
     ...(state.color !== undefined ? { color: state.color } : {}),
@@ -615,6 +632,7 @@ export function htmlToParagraphs(html: string, parser: DOMParser): PasteParagrap
         italic: false,
         underline: undefined,
         strike: false,
+        doubleStrike: false,
         vertAlign: 'baseline',
         pre: false,
         spaces: false,

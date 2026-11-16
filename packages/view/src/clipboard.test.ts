@@ -47,11 +47,12 @@ const parse = (html: string) => htmlToParagraphs(html, new DOMParser());
 const noShading = { pattern: 'nil', color: 'auto', fill: 'auto' } as const;
 
 /** 四种来源都会在删掉直接格式后重新级联；不能只在无样式的空文档里验证粘贴。 */
-function decoratedTarget(layer: 'defaults' | 'paragraph' | 'character' | 'direct') {
+function decoratedTarget(layer: 'defaults' | 'paragraph' | 'character' | 'direct', extra: RunProps = {}) {
   const decoration: RunProps = {
     highlight: 'yellow',
     shading: { pattern: 'clear', color: 'auto', fill: 'D9D9D9' },
     emphasis: 'dot',
+    ...extra,
   };
   const style: Style = {
     id: 'Decorated',
@@ -114,6 +115,72 @@ function decoratedTarget(layer: 'defaults' | 'paragraph' | 'character' | 'direct
 }
 
 describe('剪贴板 HTML', () => {
+  it.each(['defaults', 'paragraph', 'character', 'direct'] as const)(
+    '可信粘贴分别关闭或替换目标 %s 的双删除线，历史与周围原文不受影响',
+    (layer) => {
+      const { editor, state, propsOf } = decoratedTarget(layer, { doubleStrike: true });
+      const at = { nodeId: 'r', contentIndex: 0, offset: 1 };
+      state.select({ start: at, end: at });
+      state.insertParagraphs(
+        parse('<p class=MsoNormal>普通<s>单线</s><s style="text-line-through:double">双线</s></p>'),
+      );
+      const verify = () => {
+        expect(propsOf('普通')).toMatchObject({ strike: false, doubleStrike: false });
+        expect(propsOf('单线')).toMatchObject({ strike: true, doubleStrike: false });
+        expect(propsOf('双线')).toMatchObject({ strike: false, doubleStrike: true });
+        expect(propsOf('前').doubleStrike).toBe(true);
+        expect(propsOf('后').doubleStrike).toBe(true);
+      };
+      verify();
+      const pasted = editor.body;
+      editor.undo();
+      expect(propsOf('前后').doubleStrike).toBe(true);
+      editor.redo();
+      expect(editor.body).toEqual(pasted);
+      verify();
+    },
+  );
+
+  it('双删除线复制后往返保留，普通文字与单线仍分别关闭双线', () => {
+    const html = fragmentToHtml({
+      paragraphs: [
+        {
+          justification: 'left',
+          runs: [
+            { text: '双线', props: { ...base, doubleStrike: true, underline: 'double' } },
+            { text: '普通', props: base },
+            { text: '单线', props: { ...base, strike: true } },
+          ],
+        },
+      ],
+    });
+    expect(html).toContain('text-line-through:double');
+    const runs = parse(html)[0]?.runs;
+    expect(runs?.map((r) => [r.text, r.patch.strike, r.patch.doubleStrike, r.patch.underline])).toEqual([
+      ['双线', false, true, 'double'],
+      ['普通', false, false, 'none'],
+      ['单线', true, false, 'none'],
+    ]);
+  });
+
+  it('类样式双删除线可被内层关闭或改成单线，未知值保留已有状态', () => {
+    const runs = parse(`<style>.Double {text-line-through:double} .Off {text-line-through:none}</style>
+      <p class=MsoNormal><s class=Double>双线<span class=Off>关闭</span><span style="text-decoration:none">无装饰</span><s>单线</s><span style="text-line-through:single">显式单线</span><span style="text-line-through:unknown">仍双线</span></s></p>`)[0]
+      ?.runs;
+    expect(runs?.map((r) => [r.text, r.patch.strike, r.patch.doubleStrike])).toEqual([
+      ['双线', false, true],
+      ['关闭无装饰', false, false],
+      ['单线显式单线', true, false],
+      ['仍双线', false, true],
+    ]);
+  });
+
+  it('网页双删除线仍合并成单线开关，不覆盖目标双删除线', () => {
+    expect(parse('<s style="text-line-through:double">网页</s>')[0]?.runs).toEqual([
+      { text: '网页', patch: { strike: true } },
+    ]);
+  });
+
   it.each(['defaults', 'paragraph', 'character', 'direct'] as const)(
     '可信粘贴显式盖掉目标 %s 的高亮、底纹和着重号，撤销重做与周围文字不受影响',
     (layer) => {
@@ -515,6 +582,7 @@ describe('剪贴板 HTML', () => {
     const fonts = { ascii: 'Times New Roman', hAnsi: 'Times New Roman', eastAsia: '仿宋' };
     const common = {
       strike: false,
+      doubleStrike: false,
       size: 320,
       fonts,
       highlight: 'none',
@@ -560,6 +628,7 @@ style='font:7.0pt "Times New Roman"'>&nbsp;&nbsp; </span></span><![endif]><b>要
       italic: false,
       underline: 'none',
       strike: false,
+      doubleStrike: false,
       vertAlign: 'baseline',
       highlight: 'none',
       shading: noShading,

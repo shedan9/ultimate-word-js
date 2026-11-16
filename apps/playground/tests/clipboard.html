@@ -437,9 +437,54 @@ try {
   assert(same(protectedFontView.selection, protectedFontRange), '独立字体粘贴被拒绝后保留选区');
   protectedFontView.dispose();
 
+  // 双删除线是独立开关；不能只关 strike，也不能把双线复制成单线。
+  const strikeDoc = await UltimateWord.load(listDocx());
+  const strikeView = strikeDoc.mount(host, { mode: 'edit' });
+  const strikeInput = host.querySelector('textarea');
+  strikeDoc.tx((tx) => tx.setRunProps(strikeDoc.find('普通正文')[0], { doubleStrike: true }));
+  const strikeTarget = strikeDoc.find('通正')[0];
+  strikeView.select({ start: strikeTarget.end, end: strikeTarget.start });
+  paste(strikeInput, `<style>.Double {text-line-through:double}</style><p class=MsoNormal>无线<s>单线</s><s class=Double>双线<span style="text-line-through:none">关闭</span></s></p>`);
+  const strikeAfter = strikeView.selection;
+  const verifyStrikes = (doc) => {
+    for (const [text, strike, doubleStrike] of [
+      ['无线', false, false], ['单线', true, false], ['双线', false, true], ['关闭', false, false],
+    ]) {
+      const props = runOf(doc, text).props;
+      assert(props.strike === strike && props.doubleStrike === doubleStrike, `${text} 的单双删除线开关独立保留`);
+      const fragments = doc.layout.pages.flatMap((p) => p.blocks).filter((b) => b.kind === 'paragraph')
+        .flatMap((p) => p.lines).flatMap((l) => l.line.fragments).filter((f) => f.text.includes(text));
+      assert(fragments.length > 0 && fragments.every((f) => f.style.strike === strike && f.style.doubleStrike === doubleStrike),
+        `${text} 的最终布局使用对应删除线`);
+    }
+    assert(runOf(doc, '普').props.doubleStrike && runOf(doc, '文').props.doubleStrike, '周围原文继续保留双删除线');
+  };
+  verifyStrikes(strikeDoc);
+  assert(strikeView.rectsOf(strikeDoc.find('双线')[0]).length > 0, '双删除线文字可定位');
+  before(strikeInput, 'historyUndo');
+  assert(strikeDoc.find('普通正文').length === 1 && runOf(strikeDoc, '普通正文').props.doubleStrike, '删除线粘贴一次撤销恢复原文和双线');
+  assert(same(strikeView.selection, strikeTarget), '删除线粘贴撤销恢复反向选区');
+  before(strikeInput, 'historyRedo');
+  assert(same(strikeView.selection, strikeAfter), '删除线粘贴重做恢复光标');
+  verifyStrikes(strikeDoc);
+  const strikeReopened = await UltimateWord.load(await strikeDoc.toDocx());
+  verifyStrikes(strikeReopened);
+  strikeView.select(strikeDoc.find('双线')[0]);
+  const strikeCopied = copyHtml(strikeInput);
+  assert(strikeCopied.get('text/html').includes('text-line-through:double'), '复制双删除线携带线型');
+  strikeView.select(strikeDoc.find('第二项')[0]);
+  paste(strikeInput, strikeCopied.get('text/html'));
+  const repeatedDouble = strikeDoc.query('paragraph')[1].runs.find((r) => r.content.some((c) => c.kind === 'text' && c.text.includes('双线')));
+  assert(repeatedDouble.props.doubleStrike && !repeatedDouble.props.strike, '复制再粘贴仍是双线');
+  before(strikeInput, 'historyUndo');
+  strikeView.select(strikeDoc.find('双线')[0]);
+  paste(strikeInput, '<p>网页</p>');
+  assert(runOf(strikeDoc, '网页').props.doubleStrike, '网页合并格式继续继承目标双删除线');
+  strikeView.dispose();
+
   // 留一份结果用于可视验收。
-  const finalView = fontReopened.mount(host, { mode: 'edit' });
-  finalView.select(fontReopened.find('Latin é')[0]);
+  const finalView = strikeReopened.mount(host, { mode: 'edit' });
+  finalView.select(strikeReopened.find('双线')[0]);
   finalView.focus();
   result.textContent = `PASS ${passed} 项`;
 } catch (error) { result.textContent = `FAIL ${passed} 项后\n${error.stack ?? error}`; }

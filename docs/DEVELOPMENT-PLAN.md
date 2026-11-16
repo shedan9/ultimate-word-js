@@ -1483,6 +1483,13 @@ await view.toPNG(2);     // 第 3 页（页序号从 0 起，与 scrollTo({ page
     覆盖 ASCII / 扩展拉丁 / 中文实际排版字体、复制再粘贴、反向选区撤销重做、控件拒绝与 DOCX 导出回读。
     可视验证见 [独立字体桶](./screenshots/clipboard-font-buckets.png)；Word 客户端粘贴仍待人工验收。
   - 全量 typecheck / test（2019 项，含坐标真值闸门）、lint、全量构建与 11 页浏览器回归（1389 项断言）通过。
+- ✅ **剪贴板双删除线**（2026-11-16）：此前可信粘贴漏写 doubleStrike，普通源文字会继承目标双线；复制源双线又退成单线。
+  - 可信粘贴分别输出 strike / doubleStrike，源的无线 / 单线 / 双线盖掉目标四层格式；复制双线另写 `text-line-through:double`，
+    解析内联 / 类样式的 double / single / none，线型只修饰已开启的删除线。内层单线 / 无装饰与未知值按既有继承规则处理。
+    网页仍只带单删除线开关且只加不减，不改变目标双线；源下划线单独保留。
+  - 新增解析 / 编辑 7 项回归；剪贴板浏览器回归 174 → 211 项，覆盖最终布局、原文、反向选区撤销重做、
+    复制再粘贴与 DOCX 导出回读。可视验收见 [双删除线往返](./screenshots/clipboard-double-strike.png)；Word 客户端粘贴仍待人工验收。
+  - 全量 typecheck / test（2026 项，含坐标真值闸门）、lint、构建与 11 页浏览器回归（1426 项断言）通过。
 - ✅ **制表位与软换行**（2026-09-23）：事务 `insertInline(position, 'tab' | 'lineBreak')`；`deleteRange` 可删制表位 / 换行 /
   符号 / 连字符（换成空 text 保留槽位，对象与域仍拒绝）；落在这类片段上的位置能继续输入与拆段。布局给制表位前后、
   换行后（下一行行首）补光标锚点，按字导航把可删片段算一个字。非列表位置 Tab 插制表位、Shift+Tab 留给浏览器，
