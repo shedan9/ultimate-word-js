@@ -71,7 +71,12 @@ function runStyle(props: FragmentRun['props']): string {
     ...(props.underline !== 'none' && props.underline !== 'single' && props.underline !== ''
       ? [`text-underline:${props.underline}`]
       : []),
-    ...(/^[0-9a-f]{6}$/i.test(props.color) ? [`color:#${props.color}`] : []),
+    // auto 也是源格式：省略会让粘贴继承目标颜色，写成黑色又会丢掉自动颜色的语义。
+    ...(props.color === 'auto'
+      ? ['color:windowtext']
+      : /^[0-9a-f]{6}$/i.test(props.color)
+        ? [`color:#${props.color}`]
+        : []),
     ...(props.vertAlign === 'baseline'
       ? []
       : [`vertical-align:${props.vertAlign === 'superscript' ? 'super' : 'sub'}`]),

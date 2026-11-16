@@ -482,9 +482,82 @@ try {
   assert(runOf(strikeDoc, '网页').props.doubleStrike, '网页合并格式继续继承目标双删除线');
   strikeView.dispose();
 
+  // 自动颜色必须写进 HTML，否则跨文档粘贴会继承目标红色。
+  const colorSourceDoc = await UltimateWord.load(listDocx());
+  colorSourceDoc.tx((tx) => tx.replaceText(colorSourceDoc.find('普通正文')[0], '自动黑色'));
+  colorSourceDoc.tx((tx) => tx.setRunProps(colorSourceDoc.find('黑色')[0], { color: '000000' }));
+  const colorSourceView = colorSourceDoc.mount(host, { mode: 'edit' });
+  colorSourceView.select(colorSourceDoc.find('自动黑色')[0]);
+  const colorCopied = copyHtml(host.querySelector('textarea'));
+  const colorHtml = colorCopied.get('text/html');
+  assert(colorHtml.includes('color:windowtext') && colorHtml.includes('color:#000000'), '复制区分自动颜色与显式黑色');
+  assert(colorCopied.get('text/plain') === '自动黑色', '写颜色不改变复制的纯文本');
+  colorSourceView.dispose();
+
+  const colorDoc = await UltimateWord.load(listDocx());
+  colorDoc.tx((tx) => {
+    const range = tx.replaceText(colorDoc.find('普通正文')[0], '前中后');
+    tx.setRunProps(range, { color: 'FF0000' });
+  });
+  const colorView = colorDoc.mount(host, { mode: 'edit' });
+  const colorInput = host.querySelector('textarea');
+  const colorTarget = colorDoc.find('中')[0];
+  colorView.select({ start: colorTarget.end, end: colorTarget.start });
+  paste(colorInput, colorHtml);
+  const colorAfter = colorView.selection;
+  const verifyColors = (doc) => {
+    assert(runOf(doc, '自动').props.color === 'auto', '粘贴保留源自动颜色');
+    assert(runOf(doc, '黑色').props.color === '000000', '粘贴保留源显式黑色');
+    assert(runOf(doc, '前').props.color === 'FF0000' && runOf(doc, '后').props.color === 'FF0000', '周围原文仍是红色');
+    const fragments = doc.layout.pages.flatMap((p) => p.blocks).filter((b) => b.kind === 'paragraph')
+      .flatMap((p) => p.lines).flatMap((l) => l.line.fragments);
+    for (const [text, color] of [['自动', 'auto'], ['黑色', '000000']]) {
+      assert(fragments.some((f) => f.text.includes(text) && f.style.color === color), `${text} 的最终布局保留源颜色`);
+    }
+  };
+  verifyColors(colorDoc);
+  // 初次挂载要等可见页开始绘制；IntersectionObserver 不保证在第一个 rAF 前回调。
+  let colorGlyphs = [];
+  for (let i = 0; i < 10; i++) {
+    await frame();
+    colorGlyphs = [...host.querySelectorAll('svg text.uw-frag')];
+    if (colorGlyphs.some((el) => el.textContent === '自动')) break;
+  }
+  assert(colorGlyphs.some((el) => el.textContent === '自动' && el.getAttribute('fill') === '#000000'), '自动颜色实际绘制为黑色');
+  assert(colorGlyphs.some((el) => el.textContent === '前' && el.getAttribute('fill') === '#ff0000'), '粘贴前侧原文实际绘制为红色');
+  assert(colorView.rectsOf(colorDoc.find('自动')[0]).length > 0, '自动颜色文字可以定位');
+  before(colorInput, 'historyUndo');
+  assert(colorDoc.find('前中后').length === 1 && runOf(colorDoc, '前中后').props.color === 'FF0000', '颜色粘贴一次撤销恢复红色原文');
+  assert(same(colorView.selection, colorTarget), '颜色粘贴撤销恢复完整反向选区');
+  before(colorInput, 'historyRedo');
+  assert(same(colorView.selection, colorAfter), '颜色粘贴重做恢复光标');
+  verifyColors(colorDoc);
+  const colorReopened = await UltimateWord.load(await colorDoc.toDocx());
+  verifyColors(colorReopened);
+  colorView.select(colorDoc.find('自动黑色')[0]);
+  const colorRecopied = copyHtml(colorInput).get('text/html');
+  assert(colorRecopied.includes('color:windowtext') && colorRecopied.includes('color:#000000'), '跨文档粘贴后再次复制仍区分颜色语义');
+  colorView.select(colorDoc.find('第一项')[0]);
+  paste(colorInput, colorRecopied);
+  assert(colorDoc.find('自动黑色').length === 2, '自动颜色可再次粘贴');
+  before(colorInput, 'historyUndo');
+  colorView.select(colorDoc.find('后')[0]);
+  paste(colorInput, '<p style="color:windowtext">网页</p>');
+  assert(runOf(colorDoc, '网页').props.color === 'FF0000', '普通网页仍按合并策略继承目标颜色');
+  colorView.dispose();
+
+  const protectedColorDoc = await UltimateWord.load(choiceControlDocx());
+  const protectedColorView = protectedColorDoc.mount(host, { mode: 'edit' });
+  const protectedColorRange = protectedColorDoc.find('一般')[0];
+  protectedColorView.select(protectedColorRange);
+  paste(host.querySelector('textarea'), colorHtml);
+  assert(protectedColorDoc.find('一般').length === 1 && !protectedColorDoc.canUndo, '自动颜色粘贴仍受模板控件保护');
+  assert(same(protectedColorView.selection, protectedColorRange), '自动颜色粘贴被拒绝后保留选区');
+  protectedColorView.dispose();
+
   // 留一份结果用于可视验收。
-  const finalView = strikeReopened.mount(host, { mode: 'edit' });
-  finalView.select(strikeReopened.find('双线')[0]);
+  const finalView = colorReopened.mount(host, { mode: 'edit' });
+  finalView.select(colorReopened.find('自动')[0]);
   finalView.focus();
   result.textContent = `PASS ${passed} 项`;
 } catch (error) { result.textContent = `FAIL ${passed} 项后\n${error.stack ?? error}`; }

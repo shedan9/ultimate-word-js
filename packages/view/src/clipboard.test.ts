@@ -116,6 +116,82 @@ function decoratedTarget(layer: 'defaults' | 'paragraph' | 'character' | 'direct
 
 describe('剪贴板 HTML', () => {
   it.each(['defaults', 'paragraph', 'character', 'direct'] as const)(
+    '复制的自动颜色显式覆盖目标 %s 的颜色，保留周围文字与历史',
+    (layer) => {
+      const { editor, state, propsOf } = decoratedTarget(layer, { color: 'FF0000' });
+      const at = { nodeId: 'r', contentIndex: 0, offset: 1 };
+      state.select({ start: at, end: at });
+      state.insertParagraphs(
+        parse(
+          fragmentToHtml({
+            paragraphs: [
+              {
+                justification: 'left',
+                runs: [
+                  { text: '自动', props: base },
+                  { text: '蓝色', props: { ...base, color: '0000FF' } },
+                ],
+              },
+            ],
+          }),
+        ),
+      );
+      const verify = () => {
+        expect(propsOf('自动').color).toBe('auto');
+        expect(propsOf('蓝色').color).toBe('0000FF');
+        expect(propsOf('前').color).toBe('FF0000');
+        expect(propsOf('后').color).toBe('FF0000');
+      };
+      verify();
+      const pasted = editor.body;
+      editor.undo();
+      expect(propsOf('前后').color).toBe('FF0000');
+      editor.redo();
+      expect(editor.body).toEqual(pasted);
+      verify();
+    },
+  );
+
+  it('复制自动颜色使用 windowtext，显式黑色与自动颜色不混同', () => {
+    const html = fragmentToHtml({
+      paragraphs: [
+        {
+          justification: 'left',
+          runs: [
+            { text: '自动', props: base },
+            { text: '黑色', props: { ...base, color: '000000' } },
+          ],
+        },
+      ],
+    });
+    expect(html).toContain('color:windowtext');
+    expect(html).toContain('color:#000000');
+    expect(parse(html)[0]?.runs.map((run) => [run.text, run.patch.color])).toEqual([
+      ['自动', 'auto'],
+      ['黑色', '000000'],
+    ]);
+  });
+
+  it('自动颜色保留对外层颜色的覆盖，网页与未提供源颜色的可信文字仍沿用目标颜色', () => {
+    const parsed = parse(
+      `<style>.Auto {color:windowtext}</style><p class=MsoNormal style="color:red"><span class=Auto>自动</span>红色</p>`,
+    );
+    expect(parsed[0]?.runs.map((run) => [run.text, run.patch.color])).toEqual([
+      ['自动', 'auto'],
+      ['红色', 'FF0000'],
+    ]);
+    for (const html of ['<p style="color:windowtext">网页</p>', '<p class=MsoNormal>缺省</p>']) {
+      const { state, propsOf } = decoratedTarget('direct', { color: 'FF0000' });
+      const at = { nodeId: 'r', contentIndex: 0, offset: 1 };
+      state.select({ start: at, end: at });
+      const paragraphs = parse(html);
+      expect(paragraphs[0]?.runs[0]?.patch).not.toHaveProperty('color');
+      state.insertParagraphs(paragraphs);
+      expect(propsOf(html.includes('网页') ? '网页' : '缺省').color).toBe('FF0000');
+    }
+  });
+
+  it.each(['defaults', 'paragraph', 'character', 'direct'] as const)(
     '可信粘贴分别关闭或替换目标 %s 的双删除线，历史与周围原文不受影响',
     (layer) => {
       const { editor, state, propsOf } = decoratedTarget(layer, { doubleStrike: true });
@@ -583,6 +659,7 @@ describe('剪贴板 HTML', () => {
     const common = {
       strike: false,
       doubleStrike: false,
+      color: 'auto',
       size: 320,
       fonts,
       highlight: 'none',
