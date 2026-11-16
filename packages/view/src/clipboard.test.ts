@@ -116,6 +116,102 @@ function decoratedTarget(layer: 'defaults' | 'paragraph' | 'character' | 'direct
 
 describe('剪贴板 HTML', () => {
   it.each(['defaults', 'paragraph', 'character', 'direct'] as const)(
+    '复制的字符间距覆盖目标 %s 的间距，保留原文与历史',
+    (layer) => {
+      const { editor, state, propsOf } = decoratedTarget(layer, { charSpacing: 80 });
+      const at = { nodeId: 'r', contentIndex: 0, offset: 1 };
+      state.select({ start: at, end: at });
+      const html = fragmentToHtml({
+        paragraphs: [
+          {
+            justification: 'left',
+            runs: [
+              { text: '标准', props: base },
+              { text: '加宽', props: { ...base, charSpacing: 25 } },
+              { text: '紧缩', props: { ...base, charSpacing: -15 } },
+            ],
+          },
+        ],
+      });
+      state.insertParagraphs(parse(html));
+      const verify = () => {
+        expect(propsOf('标准').charSpacing).toBe(0);
+        expect(propsOf('加宽').charSpacing).toBe(25);
+        expect(propsOf('紧缩').charSpacing).toBe(-15);
+        expect(propsOf('前').charSpacing).toBe(80);
+        expect(propsOf('后').charSpacing).toBe(80);
+      };
+      verify();
+      const pasted = editor.body;
+      editor.undo();
+      expect(propsOf('前后').charSpacing).toBe(80);
+      editor.redo();
+      expect(editor.body).toEqual(pasted);
+      verify();
+    },
+  );
+
+  it('复制间距按 twip 精度写 pt，包含显式零间距', () => {
+    const html = fragmentToHtml({
+      paragraphs: [
+        {
+          justification: 'left',
+          runs: [
+            { text: '零', props: base },
+            { text: '正', props: { ...base, charSpacing: 1 } },
+            { text: '负', props: { ...base, charSpacing: -1 } },
+          ],
+        },
+      ],
+    });
+    expect(html).toContain('letter-spacing:0pt');
+    expect(html).toContain('letter-spacing:0.05pt');
+    expect(html).toContain('letter-spacing:-0.05pt');
+    expect(parse(html)[0]?.runs.map((run) => [run.text, run.patch.charSpacing])).toEqual([
+      ['零', 0],
+      ['正', 1],
+      ['负', -1],
+    ]);
+  });
+
+  it('可信间距读取 pt / px 与 normal，源中缺省为零，网页继续合并目标间距', () => {
+    const parsed = parse(
+      `<p class=MsoNormal>缺省<span style="letter-spacing:+1.25pt">加宽</span><span style="letter-spacing:-2px">紧缩</span><span style="letter-spacing:.125pt">量化</span></p>`,
+    );
+    expect(parsed[0]?.runs.map((run) => [run.text, run.patch.charSpacing])).toEqual([
+      ['缺省', 0],
+      ['加宽', 25],
+      ['紧缩', -30],
+      ['量化', 3],
+    ]);
+    expect(parse('<p style="letter-spacing:3pt">网页</p>')[0]?.runs[0]?.patch).not.toHaveProperty(
+      'charSpacing',
+    );
+  });
+
+  it('内联与类样式按优先级继承间距，normal 和无单位零可以关闭外层间距', () => {
+    const parsed = parse(
+      `<style>body {letter-spacing:2pt}.Wide {letter-spacing:3pt !important}.Normal {letter-spacing:NORMAL}</style><p class=MsoNormal>外层<span class=Wide style="letter-spacing:1pt">优先<span class=Normal>标准</span><span style="letter-spacing:0">归零</span></span>恢复</p>`,
+    );
+    expect(parsed[0]?.runs.map((run) => [run.text, run.patch.charSpacing])).toEqual([
+      ['外层', 40],
+      ['优先', 60],
+      ['标准归零', 0],
+      ['恢复', 40],
+    ]);
+  });
+
+  it.each(['1em', '10%', '2', '1..2pt', 'Infinitypt', '2pt tail', 'calc(1pt + 2px)'])(
+    '不支持或非法间距 %s 不破坏源继承',
+    (value) => {
+      const parsed = parse(
+        `<p class=MsoNormal style="letter-spacing:-1pt"><span style="letter-spacing:${value}">正文</span></p>`,
+      );
+      expect(parsed[0]?.runs[0]?.patch.charSpacing).toBe(-20);
+    },
+  );
+
+  it.each(['defaults', 'paragraph', 'character', 'direct'] as const)(
     '复制的自动颜色显式覆盖目标 %s 的颜色，保留周围文字与历史',
     (layer) => {
       const { editor, state, propsOf } = decoratedTarget(layer, { color: 'FF0000' });
@@ -658,6 +754,7 @@ describe('剪贴板 HTML', () => {
     const fonts = { ascii: 'Times New Roman', hAnsi: 'Times New Roman', eastAsia: '仿宋' };
     const common = {
       strike: false,
+      charSpacing: 0,
       doubleStrike: false,
       color: 'auto',
       size: 320,
@@ -703,6 +800,7 @@ style='font:7.0pt "Times New Roman"'>&nbsp;&nbsp; </span></span><![endif]><b>要
 <!--EndFragment--></body></html>`;
     const off = {
       italic: false,
+      charSpacing: 0,
       underline: 'none',
       strike: false,
       doubleStrike: false,

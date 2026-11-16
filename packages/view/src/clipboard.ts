@@ -62,6 +62,8 @@ function runStyle(props: FragmentRun['props']): string {
     ...(hAnsi ? [`mso-hansi-font-family:${cssFont(hAnsi)}`] : []),
     ...(eastAsia ? [`mso-fareast-font-family:${cssFont(eastAsia)}`] : []),
     `font-size:${props.size / TWIP_PER_PT}pt`,
+    // 标准间距也要写零：省略会在粘贴时继承目标的加宽 / 紧缩。
+    `letter-spacing:${props.charSpacing / TWIP_PER_PT}pt`,
     `font-weight:${props.bold ? 'bold' : 'normal'}`,
     `font-style:${props.italic ? 'italic' : 'normal'}`,
     `text-decoration:${decorations.length ? decorations.join(' ') : 'none'}`,
@@ -225,6 +227,7 @@ interface Inherited {
   vertAlign: 'baseline' | 'superscript' | 'subscript';
   color?: string | undefined;
   size?: number;
+  charSpacing?: number;
   ascii?: string | undefined;
   hAnsi?: string | undefined;
   eastAsia?: string | undefined;
@@ -253,6 +256,19 @@ function parseSize(value: string): number | undefined {
   const pt = Number(m[1]) * (m[2].toLowerCase() === 'px' ? 0.75 : 1);
   // 半磅是 w:sz 的精度，落在半磅上免得写出 Word 存不下的字号。
   return pt > 0 ? Math.round(pt * 2) * (TWIP_PER_PT / 2) : undefined;
+}
+
+/** 字符间距可为负，精度是 twip；不能沿用字号的正数限制或半磅量化。 */
+function parseCharSpacing(value: string): number | undefined {
+  const v = value.trim().toLowerCase();
+  if (v === 'normal') return 0;
+  const match = /^([+-]?(?:\d+(?:\.\d+)?|\.\d+))(pt|px)?$/.exec(v);
+  if (!match?.[1]) return undefined;
+  const amount = Number(match[1]);
+  // CSS 只有零长度可以省单位；未知相对单位交给已读取的源格式继承。
+  if (!match[2] && amount !== 0) return undefined;
+  const twips = Math.round(amount * (match[2] === 'px' ? 0.75 : 1) * TWIP_PER_PT);
+  return Number.isSafeInteger(twips) ? twips : undefined;
 }
 
 function parseColor(value: string): string | undefined {
@@ -326,6 +342,9 @@ function inherit(el: Element, from: Inherited, style: Map<string, string>): Inhe
   const size = style.get('font-size');
   const twips = size && parseSize(size);
   if (twips) next.size = twips;
+  const spacing = style.get('letter-spacing');
+  const charSpacing = spacing === undefined ? undefined : parseCharSpacing(spacing);
+  if (charSpacing !== undefined) next.charSpacing = charSpacing;
   const family = style.get('font-family');
   if (family) next.family = firstFamily(family);
   const ascii = style.get('mso-ascii-font-family');
@@ -432,6 +451,7 @@ function patchOf(state: Inherited, trusted: boolean): RunPropsPatch {
     strike: state.strike,
     doubleStrike: state.doubleStrike,
     vertAlign: state.vertAlign,
+    charSpacing: state.charSpacing ?? 0,
     ...(state.size !== undefined ? { size: state.size } : {}),
     ...(state.color !== undefined ? { color: state.color } : {}),
     // 可信粘贴要保留源的关闭状态。null 只删除直接格式，会重新露出目标样式的高亮 / 底纹 / 着重号；
