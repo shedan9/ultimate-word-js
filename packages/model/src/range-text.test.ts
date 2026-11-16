@@ -40,6 +40,24 @@ function setup(xml: string) {
 const p = (text: string) => `<w:p><w:r><w:t>${text}</w:t></w:r></w:p>`;
 
 describe('模型选区纯文本', () => {
+  it('缩进带级联后的全部单位，反向选区相同且片段不共享可变缩进对象', () => {
+    const { body, range, paragraphs } = setup(
+      '<w:p><w:pPr><w:ind w:left="400" w:right="200" w:firstLine="640" w:firstLineChars="200"/></w:pPr><w:r><w:t>源段</w:t></w:r></w:p><w:p/>',
+    );
+    const fragment = fragmentOfRange(body, range);
+    expect(fragment.paragraphs[0]?.indent).toMatchObject({
+      left: 400,
+      right: 200,
+      firstLine: 640,
+      firstLineChars: 200,
+    });
+    expect(fragmentOfRange(body, { start: range.end, end: range.start })).toEqual(fragment);
+    expect(fragment.paragraphs[1]?.indent?.left).toBe(0);
+    const indent = required(fragment.paragraphs[0]?.indent);
+    indent.left = 999;
+    expect(paragraphs[0]?.props.indent.left).toBe(400);
+    expect(structuredClone(fragment)).toEqual(fragment);
+  });
   it('跨样式与片段精确截取 UTF-16 范围，反向选区一致', () => {
     const { body, range } = setup(
       '<w:p><w:r><w:t>甲e</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>\u0301😀</w:t><w:t>乙丙</w:t></w:r></w:p>',

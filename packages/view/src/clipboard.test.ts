@@ -15,6 +15,7 @@ import {
 import { highlightFill, shadingFill } from '@uw/render-dom';
 import { describe, expect, it } from 'vitest';
 import { fragmentToHtml, htmlToParagraphs, isTrustedHtml } from './clipboard.ts';
+import { ZERO_INDENT } from './clipboard-indent.ts';
 import { createEditingController } from './editing.ts';
 
 const base: ResolvedRunProps = {
@@ -970,6 +971,7 @@ describe('剪贴板 HTML', () => {
     expect(parse(html)).toEqual([
       {
         justification: 'center',
+        indent: ZERO_INDENT,
         runs: [
           {
             text: '版    本',
@@ -988,7 +990,7 @@ describe('剪贴板 HTML', () => {
           },
         ],
       },
-      { justification: 'both', runs: [] },
+      { justification: 'both', indent: ZERO_INDENT, runs: [] },
     ]);
   });
 
@@ -1018,6 +1020,7 @@ style='font:7.0pt "Times New Roman"'>&nbsp;&nbsp; </span></span><![endif]><b>要
     expect(parse(html)).toEqual([
       {
         justification: 'center',
+        indent: ZERO_INDENT,
         runs: [
           {
             text: '2026',
@@ -1040,8 +1043,8 @@ style='font:7.0pt "Times New Roman"'>&nbsp;&nbsp; </span></span><![endif]><b>要
           },
         ],
       },
-      { runs: [] },
-      { runs: [{ text: '要点', patch: { ...off, bold: true } }] },
+      { indent: ZERO_INDENT, runs: [] },
+      { indent: ZERO_INDENT, runs: [{ text: '要点', patch: { ...off, bold: true } }] },
     ]);
   });
 

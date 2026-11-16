@@ -403,8 +403,27 @@ export function createEditingController(
     // 要显式还原成光标处原来的直接格式，否则「粗体 + 普通」粘出来是两段粗体。
     const destination: RunProps =
       host?.runs.find((r) => r.id === first.nodeId)?.props ?? host?.props.markRunProps ?? {};
-    // 拆段会把对齐带进新段；源段对齐改过之后，下一段先还原成原段落自己的直接格式。
-    const original = host?.props.justification ?? null;
+    // 拆段会带走源段的直接格式；恢复每个缩进字段的原值或缺席，不能让源字符单位渗入末段。
+    const original: ParaPropsPatch = {
+      justification: host?.props.justification ?? null,
+      indent: host?.props.indent
+        ? Object.fromEntries(
+            [
+              'left',
+              'right',
+              'firstLine',
+              'hanging',
+              'leftChars',
+              'rightChars',
+              'firstLineChars',
+              'hangingChars',
+            ].map((key) => [
+              key,
+              host.props.indent?.[key as keyof NonNullable<typeof host.props.indent>] ?? null,
+            ]),
+          )
+        : null,
+    };
     transact(
       (tx) => {
         if (!equal(range.start, range.end)) at = tx.deleteRange(range);
@@ -414,7 +433,7 @@ export function createEditingController(
         for (const [i, paragraph] of paragraphs.entries()) {
           if (i > 0) {
             at = tx.splitParagraph(at);
-            if (changed) tx.setParagraphProps({ start: at, end: at }, { justification: original });
+            if (changed) tx.setParagraphProps({ start: at, end: at }, original);
             changed = false;
           }
           for (const run of paragraph.runs) {
@@ -444,8 +463,14 @@ export function createEditingController(
                 at = tx.setRunProps({ start: { ...at, offset: at.offset - length }, end: at }, patch).end;
             }
           }
-          if (paragraph.justification && i < paragraphs.length - 1) {
-            tx.setParagraphProps({ start: at, end: at }, { justification: paragraph.justification });
+          if ((paragraph.justification || paragraph.indent) && i < paragraphs.length - 1) {
+            tx.setParagraphProps(
+              { start: at, end: at },
+              {
+                ...(paragraph.justification ? { justification: paragraph.justification } : {}),
+                ...(paragraph.indent ? { indent: paragraph.indent } : {}),
+              },
+            );
             changed = true;
           }
         }

@@ -8,7 +8,7 @@
  *
  * 粘贴分两种来源，取舍不同（Word 的「保留源格式 / 合并格式」）：
  * - **可信**：我们自己（`data-uw-fragment`）或 Word / WPS（`mso-` 属性、Office 命名空间）。
- *   带字体、字号、颜色与段落对齐，没写的开关（加粗 / 斜体…）按「没有」写 —— 否则粘进加粗的
+ *   带字体、字号、颜色、段落对齐与缩进，没写的开关（加粗 / 斜体…）按「没有」写 —— 否则粘进加粗的
  *   标题里，源里不加粗的字也跟着加粗，与复制时看到的不一致
  * - **网页**：只带加粗 / 斜体 / 下划线 / 删除线 / 上下标，且只加不减。网页的字体（Arial、
  *   微软雅黑）和 px 字号进了公文就是一段排版不对的字，度量包里多半还没有这款字体
@@ -19,12 +19,14 @@ import { emphasisOf } from '@uw/layout';
 import type {
   EmphasisMark,
   FragmentRun,
+  Indent,
   Justification,
   RichFragment,
   RunPropsPatch,
   Shading,
 } from '@uw/model';
 import { HIGHLIGHT_COLORS, highlightFill, shadingFill } from '@uw/render-dom';
+import { clipboardIndentStyle, readClipboardIndent, ZERO_INDENT } from './clipboard-indent.ts';
 import { clipboardStyleReader } from './clipboard-styles.ts';
 
 /** 粘贴进来的一段文字；补丁在光标处继承来的格式之上再改。 */
@@ -32,9 +34,10 @@ export interface PasteRun {
   text: string;
   patch: RunPropsPatch;
 }
-/** 粘贴进来的一段；`justification` 只在可信来源里读得到。 */
+/** 粘贴进来的一段；对齐与缩进只从可信来源读取，沿用源段落标记的生效边界。 */
 export interface PasteParagraph {
   justification?: Justification;
+  indent?: Indent;
   runs: PasteRun[];
 }
 
@@ -149,7 +152,13 @@ export function fragmentToHtml(fragment: RichFragment): string {
             `<span style="${escapeAttr(runStyle(r.props))}">${escapeText(r.text).replace(/\t/g, TAB_HTML).replace(/\n/g, SOFT_BREAK_HTML).replace(/\f/g, PAGE_BREAK_HTML)}</span>`,
         )
         .join('');
-      return `<p style="margin:0;white-space:pre-wrap;text-align:${CSS_ALIGN[p.justification]}">${runs}</p>`;
+      const indent = p.indent ? { ...ZERO_INDENT, ...p.indent } : undefined;
+      const attribute = indent ? ` data-uw-indent="${escapeAttr(JSON.stringify(indent))}"` : '';
+      const geometry = indent ? `;${clipboardIndentStyle(indent)}` : '';
+      // em 的参照取源段首字号；字符单位的精确值仍留在片段里，由目标文档按自己的首字度量。
+      const size = p.runs[0]?.props.size;
+      const fontSize = indent && size ? `;font-size:${size / TWIP_PER_PT}pt` : '';
+      return `<p${attribute} style="margin:0;white-space:pre-wrap;text-align:${CSS_ALIGN[p.justification]}${geometry}${fontSize}">${runs}</p>`;
     })
     .join('');
   return `<meta charset="utf-8"><div data-uw-fragment="1">${body}</div>`;
@@ -247,6 +256,7 @@ interface Inherited {
   /** Word 的显式空格与 pre 不同：不把 HTML 源码换行拆成段落。 */
   spaces: boolean;
   align?: Justification | undefined;
+  indent?: Required<Indent>;
 }
 
 const firstFamily = (value: string) =>
@@ -314,6 +324,7 @@ const CSS_JUSTIFY: Readonly<Record<string, Justification>> = {
 function inherit(el: Element, from: Inherited, style: Map<string, string>): Inherited {
   const tag = el.tagName.toUpperCase();
   const next: Inherited = { ...from };
+  if (BLOCKS.has(tag) || tag === 'BODY') next.indent = readClipboardIndent(el, style, from.indent);
   if (tag === 'B' || tag === 'STRONG' || /^H[1-6]$/.test(tag) || tag === 'TH') next.bold = true;
   if (tag === 'I' || tag === 'EM' || tag === 'CITE') next.italic = true;
   if (tag === 'U' || tag === 'INS') next.underline = 'single';
@@ -559,7 +570,11 @@ export function htmlToParagraphs(html: string, parser: DOMParser): PasteParagrap
   /** 普通 HTML 的末尾 br 只占位；显式软换行必须留在模型里。 */
   let trailingPlaceholder = false;
   const open = (state: Inherited): PasteParagraph => {
-    current = { ...(trusted && state.align ? { justification: state.align } : {}), runs: [] };
+    current = {
+      ...(trusted && state.align ? { justification: state.align } : {}),
+      ...(trusted ? { indent: { ...ZERO_INDENT, ...state.indent } } : {}),
+      runs: [],
+    };
     space = true;
     trailingSpaces = 0;
     spacesBeforePlaceholder = 0;

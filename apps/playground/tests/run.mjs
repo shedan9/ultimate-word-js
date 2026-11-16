@@ -24,6 +24,7 @@ const ALL = [
   'editing',
   'history',
   'clipboard',
+  'clipboard-indent',
   'template',
 ];
 const pages = process.argv.length > 2 ? process.argv.slice(2) : ALL;

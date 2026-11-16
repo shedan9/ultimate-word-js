@@ -2,16 +2,17 @@ import type { NodeId, ResolvedBody, RunContent } from './nodes.ts';
 import { walkParagraphs } from './nodes.ts';
 import { buildRunOrder, compareDocPositions, contentLength, rangeOfNode } from './order.ts';
 import type { DocPosition, DocRange } from './position.ts';
-import type { Justification, ResolvedRunProps } from './props.ts';
+import type { Indent, Justification, ResolvedRunProps } from './props.ts';
 
 /** 选区里的一段文字与它**级联后**的格式：剪贴板的另一头不认识我们的样式表，只能带最终值。 */
 export interface FragmentRun {
   text: string;
   props: ResolvedRunProps;
 }
-/** 选区触及的一个段落；首末段只含选中的那部分文字，段落属性只带对齐（其余排版属性依赖目标文档的网格与样式）。 */
+/** 选区触及的段落；首末段只含选中的文字，缩进保留字符单位，避免跨文档粘贴后丢失语义。 */
 export interface FragmentParagraph {
   justification: Justification;
+  indent?: Indent;
   runs: FragmentRun[];
 }
 /** 富文本复制的中间结果：纯数据，HTML 的生成在 `@uw/view`（model 不碰 DOM 与 CSS）。 */
@@ -104,7 +105,7 @@ export function fragmentOfRange(
         push(contentText(content).slice(from, to), run.props);
       }
     }
-    return { justification: paragraph.props.justification, runs };
+    return { justification: paragraph.props.justification, indent: { ...paragraph.props.indent }, runs };
   });
   return { paragraphs: selected };
 }

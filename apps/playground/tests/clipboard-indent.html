@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>剪贴板段落缩进浏览器回归</title>
+<style>
+body { margin: 0; font: 14px/1.5 system-ui; }
+#result { position: fixed; inset: 0 0 auto; z-index: 20; background: white; }
+#host { margin: 70px 30px; height: 650px; overflow: auto; }
+</style>
+<pre id="result">正在验证…</pre><div id="host"></div>
+<script type="module">
+import { UltimateWord } from 'ultimate-word';
+import { choiceControlDocx, listDocx, tableDocx, templateControlsDocx } from './list-fixture.ts';
+
+const result = document.querySelector('#result');
+const host = document.querySelector('#host');
+let passed = 0;
+function assert(value, label) { if (!value) throw new Error(label); passed++; }
+const stable = (value) => Array.isArray(value) ? value.map(stable) : value && typeof value === 'object'
+  ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, stable(item)])) : value;
+const same = (a, b) => JSON.stringify(stable(a)) === JSON.stringify(stable(b));
+const frame = () => new Promise(requestAnimationFrame);
+const zero = { left:0, right:0, firstLine:0, hanging:0, leftChars:0, rightChars:0, firstLineChars:0, hangingChars:0 };
+function paste(input, html) {
+  const event = new Event('paste', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'clipboardData', { value: { getData: (type) => type === 'text/html' ? html : '' } });
+  input.dispatchEvent(event);
+  assert(event.defaultPrevented, '粘贴由编辑器接管');
+}
+function copy(input) {
+  const data = new Map();
+  const event = new Event('copy', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'clipboardData', { value: { setData: (type, value) => data.set(type, value) } });
+  input.dispatchEvent(event);
+  return data;
+}
+function history(input, type) {
+  input.dispatchEvent(new InputEvent('beforeinput', { inputType: type, bubbles: true, cancelable: true }));
+}
+const paragraphOf = (doc, text) => doc.query('paragraph').find((p) => p.runs.some((r) => r.id === doc.find(text)[0]?.start.nodeId));
+const linesOf = (doc, paragraph) => doc.layout.pages.flatMap((page) => page.blocks)
+  .filter((b) => b.kind === 'paragraph' && b.id === paragraph.id).flatMap((p) => p.lines.map((l) => l.line));
+const content = '这是一段用于验证复制粘贴缩进的正文，需要超过一行，确保首行和后续行分别按各自缩进排版。'.repeat(3);
+const sourceHtml = `<style>
+p.MsoNormal {font-size:16pt;font-family:仿宋;margin:0 12pt 0 24pt;text-indent:32pt;mso-char-indent-count:2;}
+p.Hanging {margin-left:48pt;text-indent:-24pt;mso-char-indent-count:-1.5;}
+p.Reset {margin:0;text-indent:0;mso-char-indent-count:0;}
+</style><p class=MsoNormal>首行缩进${content}</p><p class="MsoNormal Hanging">悬挂缩进${content}</p><p class=Reset>无缩进</p><p></p>`;
+try {
+  const doc = await UltimateWord.load(listDocx());
+  const view = doc.mount(host, { mode:'edit' });
+  await frame();
+  const input = host.querySelector('textarea');
+  const seed = doc.find('普通正文')[0];
+  const originalIndent = { left:600, right:200, firstLineChars:100, hangingChars:50 };
+  doc.tx((tx) => tx.setParagraphProps(seed, { indent:originalIndent }));
+  view.select({ start:seed.end, end:seed.start });
+  const originalSelection = view.selection;
+  const originalProps = paragraphOf(doc, '普通正文').props.indent;
+  paste(input, sourceHtml);
+  const pastedSelection = view.selection;
+  const first = paragraphOf(doc, '首行缩进');
+  const hanging = paragraphOf(doc, '悬挂缩进');
+  assert(first.props.indent.left === 480 && first.props.indent.right === 240, 'Word 类样式左右缩进入模');
+  assert(first.props.indent.firstLineChars === 200 && first.props.indent.hangingChars === 0, '源首行字符单位覆盖目标悬挂');
+  assert(hanging.props.indent.left === 960 && hanging.props.indent.hangingChars === 150, '源悬挂字符单位独立');
+  assert(same(paragraphOf(doc, '无缩进').props.indent, zero), '无缩进源段显式清零目标各字段');
+  assert(same(doc.query('paragraph').at(-1).props.indent, originalProps), '末块保留目标缩进');
+  const firstLines = linesOf(doc, first);
+  const hangingLines = linesOf(doc, hanging);
+  assert(firstLines.length > 1 && hangingLines.length > 1, '长段落确实换行');
+  assert(firstLines[0].fragments[0].x === 1120 && firstLines[1].fragments[0].x === 480, '首行与后续行的实际 x 按 24pt + 2字 / 24pt 排版');
+  assert(hangingLines[0].fragments[0].x === 480 && hangingLines[1].fragments[0].x === 960, '悬挂首行与后续行的实际 x 分别为 24pt / 48pt');
+  assert(view.rectsOf(doc.find('首行缩进')[0]).length > 0, '缩进后的文字可定位');
+  const expectedRight = doc.layout.pages[0].geometry.content.width - 240;
+  assert(firstLines.every((l) => l.fragments.every((f) => f.x + f.width <= expectedRight + 1)), '右缩进限制每行的实际文字宽度');
+  history(input, 'historyUndo');
+  assert(doc.find('普通正文').length === 1 && doc.find('首行缩进').length === 0, '多段缩进粘贴单次撤销');
+  assert(same(view.selection, originalSelection), '撤销恢复原反向选区');
+  assert(same(paragraphOf(doc, '普通正文').props.indent, originalProps), '撤销恢复目标原缩进');
+  history(input, 'historyRedo');
+  assert(same(view.selection, pastedSelection), '重做恢复粘贴后光标');
+  assert(paragraphOf(doc, '首行缩进').props.indent.firstLineChars === 200, '重做恢复源字符缩进');
+  const reopened = await UltimateWord.load(await doc.toDocx());
+  for (const text of ['首行缩进', '悬挂缩进', '无缩进']) {
+    assert(same(paragraphOf(reopened, text).props.indent, paragraphOf(doc, text).props.indent), `${text} 的缩进导出回读一致`);
+    assert(same(linesOf(reopened, paragraphOf(reopened, text)).map((l) => l.fragments.map((f) => f.x)), linesOf(doc, paragraphOf(doc, text)).map((l) => l.fragments.map((f) => f.x))), `${text} 导出回读行坐标一致`);
+  }
+  // 选择到下一段开头，确保复制包含第一段的段落标记。
+  const firstRange = doc.rangeOf(first.id);
+  const hangingRange = doc.rangeOf(hanging.id);
+  view.select({ start:firstRange.start, end:hangingRange.start });
+  const copied = copy(input);
+  assert(copied.get('text/plain').endsWith('\n'), '复制段落标记保留换行');
+  assert(copied.get('text/html').includes('data-uw-indent='), '复制 HTML 保留全部缩进字段');
+  assert(copied.get('text/html').includes('mso-char-indent-count:2'), '复制 HTML 向 Word 提供字符缩进');
+  view.dispose();
+
+  const dest = await UltimateWord.load(listDocx());
+  const destView = dest.mount(host, { mode:'edit' });
+  const destInput = host.querySelector('textarea');
+  destView.select(dest.find('普通正文')[0]);
+  paste(destInput, copied.get('text/html'));
+  assert(same(paragraphOf(dest, '首行缩进').props.indent, first.props.indent), '跨文档复制粘贴保留全部字段');
+  assert(same(linesOf(dest, paragraphOf(dest, '首行缩进')).map((l) => l.fragments.map((f) => f.x)), firstLines.map((l) => l.fragments.map((f) => f.x))), '跨文档复制粘贴行坐标保持一致');
+  // 单段没有源段落标记：继续合并到目标段落格式。
+  destView.select(dest.find('第二项')[0]);
+  const secondIndent = paragraphOf(dest, '第二项').props.indent;
+  paste(destInput, '<p class=MsoNormal style="margin-left:99pt;text-indent:-88pt">段内粘贴</p>');
+  assert(same(paragraphOf(dest, '段内粘贴').props.indent, secondIndent), '段内粘贴保留原目标段落缩进');
+  destView.dispose();
+
+  const web = await UltimateWord.load(listDocx());
+  const webView = web.mount(host, { mode:'edit' });
+  const webRange = web.find('普通正文')[0];
+  web.tx((tx) => tx.setParagraphProps(webRange, { indent:originalIndent }));
+  webView.select(webRange);
+  paste(host.querySelector('textarea'), '<p style="margin-left:99pt;text-indent:-88pt">网页首段</p><p>网页末段</p>');
+  assert(paragraphOf(web, '网页首段').props.indent.left === 600 && paragraphOf(web, '网页首段').props.indent.firstLineChars === 100, '网页多段粘贴沿用目标缩进');
+  webView.dispose();
+
+  for (const [bytes, text] of [[choiceControlDocx(), '一般'], [templateControlsDocx(), '已归档'], [templateControlsDocx(), '文字字段请在编辑模式下填写']]) {
+    const locked = await UltimateWord.load(bytes);
+    const lockedView = locked.mount(host, { mode:'edit' });
+    const range = locked.find(text)[0];
+    lockedView.select(range);
+    const oldIndent = paragraphOf(locked, text).props.indent;
+    paste(host.querySelector('textarea'), sourceHtml);
+    assert(locked.find(text).length === 1 && locked.find('首行缩进').length === 0, '输入限制拒绝缩进多段粘贴');
+    assert(!locked.canUndo && same(lockedView.selection, range), '保护失败保留选区与历史');
+    assert(same(paragraphOf(locked, text).props.indent, oldIndent), '保护失败不残留缩进补丁');
+    lockedView.dispose();
+  }
+  // 表格单元格中的段落与正文走相同缩进语义，末块仍留在原格。
+  const table = await UltimateWord.load(tableDocx());
+  const tableView = table.mount(host, { mode:'edit' });
+  const cell = paragraphOf(table, '格甲');
+  tableView.select(table.rangeOf(cell.id));
+  paste(host.querySelector('textarea'), '<p class=MsoNormal style="margin-left:12pt;text-indent:16pt">格内缩进</p><p>格内末段</p>');
+  assert(paragraphOf(table, '格内缩进').props.indent.left === 240, '单元格内源缩进生效');
+  assert(table.query('table').length === 1 && tableView.rectsOf(table.find('格内缩进')[0]).length > 0, '格内粘贴保持表结构与定位');
+  const tableReopened = await UltimateWord.load(await table.toDocx());
+  assert(paragraphOf(tableReopened, '格内缩进').props.indent.firstLine === 320, '格内缩进导出回读');
+  tableView.dispose();
+
+  reopened.mount(host, { mode:'edit' });
+  result.textContent = `PASS ${passed} 项`;
+} catch (error) { result.textContent = `FAIL ${passed} 项后\n${error.stack ?? error}`; }
+</script>
+</html>

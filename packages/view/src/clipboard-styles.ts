@@ -63,7 +63,28 @@ function declarations(text: string): Map<string, Declaration> {
     const raw = decl.slice(colon + 1).trim();
     const important = /!\s*important\s*$/i.test(raw);
     const value = raw.replace(/\s*!\s*important\s*$/i, '').trim();
-    if (value && (important || !out.get(name)?.important)) out.set(name, { value, important });
+    if (property === 'margin') {
+      // 简写必须在级联前拆开：否则类规则的 margin 会盖住后来的内联 margin-left。
+      const parts = value.split(/\s+/);
+      if (
+        parts.length < 1 ||
+        parts.length > 4 ||
+        parts.some(
+          (part) => !/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:pt|px|in|cm|mm|pc|gd|em|%)?$|^auto$/i.test(part),
+        )
+      )
+        return;
+      const [top, right = top, bottom = top, left = right] = parts;
+      for (const [side, v] of [
+        ['top', top],
+        ['right', right],
+        ['bottom', bottom],
+        ['left', left],
+      ] as const) {
+        const longhand = `margin-${side}`;
+        if (v && (important || !out.get(longhand)?.important)) out.set(longhand, { value: v, important });
+      }
+    } else if (value && (important || !out.get(name)?.important)) out.set(name, { value, important });
   };
   for (let i = 0; i < clean.length; i++) {
     const ch = clean[i];
