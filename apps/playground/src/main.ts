@@ -13,15 +13,9 @@
  * 换一台没有中文字体的机器打开，断行点与基线一个都不会动。
  */
 import { twipsToPt } from '@uw/core';
-import type {
-  CommentSpan,
-  DecorationHandle,
-  DocRange,
-  OverlayHandle,
-  UwDocument,
-  UwView,
-} from 'ultimate-word';
+import type { CommentSpan, DecorationHandle, OverlayHandle, UwDocument, UwView } from 'ultimate-word';
 import { UltimateWord } from 'ultimate-word';
+import { createSearchPanel } from './search-panel.ts';
 import { createTemplatePanel } from './template-panel.ts';
 
 const app = document.querySelector<HTMLElement>('#app');
@@ -45,7 +39,7 @@ app.innerHTML = `
     <button type="button" class="toc" disabled>更新目录</button>
     <button type="button" class="fill-template" disabled>填写模板</button>
     <button type="button" class="export" disabled>导出 docx</button>
-    <label class="find">查找 <input type="search" placeholder="回车到下一处" disabled><span class="hits"></span></label>
+    <button type="button" class="find-replace" disabled>查找替换</button>
     <span class="status">把一份 .docx 拖进来</span>
   </header>
   <div class="stage"></div>
@@ -60,14 +54,16 @@ const textLayerInput = app.querySelector<HTMLInputElement>('.text-layer') as HTM
 const editInput = app.querySelector<HTMLInputElement>('.edit-mode') as HTMLInputElement;
 const virtualizeInput = app.querySelector<HTMLInputElement>('.virtualize') as HTMLInputElement;
 const fileInput = app.querySelector<HTMLInputElement>('input[type=file]') as HTMLInputElement;
-const findInput = app.querySelector<HTMLInputElement>('input[type=search]') as HTMLInputElement;
-const hitsLabel = app.querySelector<HTMLElement>('.hits') as HTMLElement;
 const exportButton = app.querySelector<HTMLButtonElement>('.export') as HTMLButtonElement;
 const tocButton = app.querySelector<HTMLButtonElement>('.toc') as HTMLButtonElement;
 const revisionSelect = app.querySelector<HTMLSelectElement>('.revisions') as HTMLSelectElement;
 const commentsInput = app.querySelector<HTMLInputElement>('.show-comments') as HTMLInputElement;
 const commentCount = app.querySelector<HTMLElement>('.comment-count') as HTMLElement;
 const templatePanel = createTemplatePanel(app.querySelector('.fill-template') as HTMLButtonElement, app);
+const search = createSearchPanel(
+  app.querySelector('.find-replace') as HTMLButtonElement,
+  app.querySelector('header') as HTMLElement,
+);
 
 let doc: UwDocument | undefined;
 let view: UwView | undefined;
@@ -109,7 +105,7 @@ function remount(): void {
     const target = opened.rangeOfBookmark(href.slice(1));
     if (target !== undefined) current.scrollTo(target, { align: 'start', behavior: 'smooth' });
   });
-  search.rerun();
+  search.attach(opened, current, editInput.checked);
   comments.render();
 }
 
@@ -195,45 +191,6 @@ const comments = (() => {
   return { render, clear };
 })();
 
-/**
- * 查找 = `doc.find`（模型）→ `view.decorate`（视图）→ `view.scrollTo`（视图）三步，
- * api.md §15 的第一条配方。装饰在缩放后自己跟着走，重挂视图后按同一串字重搜一遍。
- */
-const search = (() => {
-  let ranges: DocRange[] = [];
-  let marks: DecorationHandle[] = [];
-  let cursor = -1;
-  const clear = () => {
-    for (const m of marks) m.dispose();
-    marks = [];
-    ranges = [];
-    cursor = -1;
-    hitsLabel.textContent = '';
-  };
-  const run = (query: string) => {
-    clear();
-    if (doc === undefined || view === undefined || query.length === 0) return;
-    ranges = doc.find(query, { limit: 500 });
-    marks = ranges.map((r) => view?.decorate(r, { className: 'hit' }) as DecorationHandle);
-    hitsLabel.textContent = ranges.length === 0 ? '无' : `${ranges.length} 处`;
-  };
-  const go = (step: number) => {
-    if (ranges.length === 0 || view === undefined) return;
-    marks[cursor]?.dispose();
-    if (cursor >= 0) marks[cursor] = view.decorate(ranges[cursor] as DocRange, { className: 'hit' });
-    cursor = (cursor + step + ranges.length) % ranges.length;
-    marks[cursor]?.dispose();
-    marks[cursor] = view.decorate(ranges[cursor] as DocRange, { className: 'hit hit-current' });
-    view.scrollTo(ranges[cursor] as DocRange, { align: 'center', behavior: 'smooth' });
-    hitsLabel.textContent = `${cursor + 1} / ${ranges.length}`;
-  };
-  return {
-    rerun: () => run(findInput.value),
-    clear,
-    go,
-  };
-})();
-
 async function openFile(file: File): Promise<void> {
   status.textContent = `正在读 ${file.name}…`;
   try {
@@ -243,7 +200,6 @@ async function openFile(file: File): Promise<void> {
     });
     const ms = performance.now() - t0;
     fileName = file.name;
-    findInput.disabled = false;
     exportButton.disabled = false;
     tocButton.disabled = false;
     revisionSelect.disabled = false;
@@ -306,21 +262,13 @@ revisionSelect.addEventListener('change', () => {
   doc.setRevisionView(revisionSelect.value as 'final' | 'markup' | 'original');
   const count = doc.revisions().length;
   status.textContent = `${count} 处修订 · 换视图重排 ${(performance.now() - t0).toFixed(1)}ms · ${doc.pageCount} 页`;
-  search.rerun();
+  search.refresh();
 });
 debugInput.addEventListener('change', remount);
 textLayerInput.addEventListener('change', remount);
 virtualizeInput.addEventListener('change', remount);
 editInput.addEventListener('change', remount);
 commentsInput.addEventListener('change', comments.render);
-findInput.addEventListener('input', search.rerun);
-findInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    search.go(e.shiftKey ? -1 : 1);
-  }
-});
-
 document.addEventListener('dragover', (e) => e.preventDefault());
 document.addEventListener('drop', (e) => {
   e.preventDefault();

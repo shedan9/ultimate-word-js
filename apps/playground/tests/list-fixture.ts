@@ -280,3 +280,20 @@ export function shellControlDocx(): Uint8Array {
       ),
   );
 }
+
+/** 查找跨格式、保护内容与长文结果计数，全部由同一份调试台真实文件入口加载。 */
+export function searchPanelDocx(long = false): Uint8Array {
+  if (long) return docxOf(`<w:p><w:r><w:t>${'甲 '.repeat(505)}</w:t></w:r></w:p>`);
+  const control = (pr: string) =>
+    `<w:sdt><w:sdtPr>${pr}</w:sdtPr><w:sdtContent><w:r><w:t>目标</w:t></w:r></w:sdtContent></w:sdt>`;
+  return docxOf(
+    '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>目</w:t></w:r><w:r><w:t>标 目标 ABC abc</w:t></w:r></w:p>' +
+      '<w:p>' +
+      control('<w:lock w:val="contentLocked"/>') +
+      '</w:p>' +
+      '<w:p>' +
+      control('<w:dropDownList><w:listItem w:displayText="目标" w:value="a"/></w:dropDownList>') +
+      '</w:p>' +
+      '<w:p><w:r><w:t>末尾目标</w:t></w:r></w:p>',
+  );
+}

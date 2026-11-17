@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>调试台查找替换回归</title>
+<style>body { margin: 0; font: 14px/1.5 system-ui; } iframe { width: 100%; height: 900px; border: 0; }</style>
+<pre id="result">正在验证…</pre><iframe src="/" title="调试台"></iframe>
+<script type="module">
+import { UltimateWord } from 'ultimate-word';
+import { searchPanelDocx } from './list-fixture.ts';
+
+const result = document.querySelector('#result');
+const iframe = document.querySelector('iframe');
+let passed = 0;
+const assert = (ok, label) => { if (!ok) throw new Error(label); passed++; result.textContent = `进行中 ${passed}：${label}`; };
+const until = async (fn) => {
+  const start = performance.now();
+  while (!fn()) { if (performance.now() - start > 10000) throw new Error('等待页面更新超时'); await new Promise((r) => setTimeout(r, 20)); }
+};
+try {
+  await until(() => iframe.contentDocument?.querySelector('.find-replace'));
+  const win = iframe.contentWindow;
+  const page = iframe.contentDocument;
+  const $ = (selector) => page.querySelector(selector);
+  const click = (selector) => $(selector).click();
+  const input = (selector, text) => { $(selector).value = text; $(selector).dispatchEvent(new win.Event('input', { bubbles: true })); };
+  const key = (selector, key, options = {}) => $(selector).dispatchEvent(new win.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...options }));
+  const load = async (long = false) => {
+    const name = long ? '长文查找.docx' : '查找替换.docx';
+    const data = new win.DataTransfer();
+    data.items.add(new win.File([searchPanelDocx(long)], name));
+    $('input[type=file]').files = data.files;
+    $('input[type=file]').dispatchEvent(new win.Event('change', { bubbles: true }));
+    await until(() => $('.status').textContent.includes(`${name} ·`));
+  };
+  let exported;
+  const originalUrl = win.URL.createObjectURL.bind(win.URL);
+  win.URL.createObjectURL = (blob) => { exported = blob; return originalUrl(blob); };
+  win.HTMLAnchorElement.prototype.click = () => {};
+  const snapshot = async () => {
+    exported = undefined;
+    click('.export');
+    await until(() => exported !== undefined);
+    return UltimateWord.load(new Uint8Array(await exported.arrayBuffer()));
+  };
+  const summary = () => $('.search-summary').textContent;
+  const toggleEdit = () => { $('.edit-mode').checked = !$('.edit-mode').checked; $('.edit-mode').dispatchEvent(new win.Event('change')); };
+  assert($('.find-replace').disabled, '未加载文档禁用面板入口');
+  await load();
+  assert(!$('.find-replace').disabled && $('#search-panel').hidden, '加载文件后启用入口但不自动展开');
+  click('.find-replace');
+  assert(!$('#search-panel').hidden && page.activeElement === $('#search-query'), '展开聚焦查找字段');
+  assert($('.find-replace').getAttribute('aria-expanded') === 'true', '入口报告展开状态');
+  assert(summary().includes('请输入') && $('.search-next').disabled, '空查询有指引且禁用导航');
+  input('#search-query', '目标');
+  assert(summary().includes('1 / 5'), '跨格式与受保护内容均可查找');
+  assert($('.hit-current') !== null, '当前项在文档中高亮');
+  assert($('.search-one').disabled && $('.search-all').disabled && $('#search-replacement').disabled, '预览模式只允许查找');
+  click('.search-prev');
+  assert(summary().includes('5 / 5'), '上一处从首项循环到末项');
+  key('#search-query', 'Enter');
+  assert(summary().includes('1 / 5'), 'Enter 循环到第一处');
+  key('#search-query', 'Enter', { shiftKey: true });
+  assert(summary().includes('5 / 5'), 'Shift+Enter 查找上一处');
+  key('#search-query', 'Enter', { isComposing: true });
+  assert(summary().includes('5 / 5'), '组合输入期间不接管 Enter');
+  input('#search-query', 'ABC');
+  assert(summary().includes('1 / 2'), '默认不区分大小写');
+  $('.search-case input').checked = true;
+  $('.search-case input').dispatchEvent(new win.Event('change'));
+  assert(summary().includes('1 / 1'), '大小写选项重新查找');
+  input('#search-query', '不存在');
+  assert(summary().includes('没有匹配') && $('.search-next').disabled, '无命中禁用导航');
+  input('#search-query', '目标');
+  toggleEdit();
+  assert(!$('.search-one').disabled && !$('#search-replacement').disabled && !$('#search-panel').hidden, '切换编辑模式重挂后保留面板与查询');
+  input('#search-replacement', '目标新增');
+  click('.search-one');
+  assert(summary().includes('已替换 1 处') && summary().includes('2 / 5'), '替换串包含查询时跳过刚插入文字');
+  let doc = await snapshot();
+  assert(doc.find('目标新增').length === 1, '替换跨 run 的当前项可导出回读');
+  const changed = doc.find('目标新增')[0];
+  assert(doc.query('run').find((r) => r.id === changed.start.nodeId).props.bold === true, '替换保留命中首字的格式');
+  click('.search-undo');
+  doc = await snapshot();
+  assert(doc.find('目标新增').length === 0 && doc.find('目标').length === 5, '面板撤销恢复原文并刷新查询');
+  assert(!$('.search-redo').disabled, '撤销后启用重做');
+  click('.search-redo');
+  doc = await snapshot();
+  assert(doc.find('目标新增').length === 1, '面板重做恢复替换');
+  click('.search-undo');
+  input('#search-query', '目标');
+  click('.search-next'); click('.search-next');
+  assert(summary().includes('3 / 5'), '导航到内容锁命中');
+  input('#search-replacement', '失败草稿');
+  click('.search-one');
+  assert(summary().includes('无法替换') && $('.search-summary').classList.contains('search-error'), '当前项受保护时就地报错');
+  assert($('#search-replacement').value === '失败草稿' && summary().includes('3 / 5'), '失败保留替换草稿和当前项');
+  assert(!$('.search-redo').disabled, '失败保留原重做历史');
+  doc = await snapshot();
+  assert(doc.find('失败草稿').length === 0 && doc.find('目标').length === 5, '失败原子回滚且导出未变');
+  click('.search-next'); click('.search-one');
+  assert(summary().includes('无法替换') && summary().includes('4 / 5'), '下拉框命中同样拒绝自由替换');
+  input('#search-replacement', '$&');
+  click('.search-all');
+  assert(summary().includes('已替换 3 处，跳过 2 处'), '全部替换处理所有可编辑项并报告保护数量');
+  doc = await snapshot();
+  assert(doc.find('$&').length === 3 && doc.find('目标').length === 2, '普通字符串替换不展开美元符号');
+  click('.search-undo');
+  doc = await snapshot();
+  assert(doc.find('$&').length === 0 && doc.find('目标').length === 5, '全部替换单次撤销恢复三处');
+  click('.search-redo');
+  assert(summary().includes('1 / 2'), '重做后查询指向剩余受保护内容');
+  click('.search-undo');
+  input('#search-replacement', '');
+  click('.search-all');
+  doc = await snapshot();
+  assert(doc.find('目标').length === 2 && doc.find('末尾').length === 1, '空替换删除可编辑命中且保留周边文字');
+  click('.search-undo');
+  input('#search-query', 'ABC');
+  input('#search-replacement', '大小写');
+  click('.search-all');
+  doc = await snapshot();
+  assert(doc.find('大小写').length === 1 && doc.find('abc', { matchCase: true }).length === 1, '全部替换使用与查找相同的大小写选项');
+  key('#search-query', 'Escape');
+  assert($('#search-panel').hidden && page.activeElement === $('.find-replace'), 'Esc 关闭并恢复入口焦点');
+  assert($('.hit') === null && $('.find-replace').getAttribute('aria-expanded') === 'false', '关闭清理装饰与展开状态');
+  click('.find-replace');
+  assert($('#search-replacement').value === '大小写' && $('#search-query').value === 'ABC', '重开保留查找替换草稿');
+  toggleEdit();
+  assert($('.search-one').disabled && $('.search-undo').disabled, '退出编辑模式禁用全部修改动作');
+  await load(true);
+  assert($('#search-panel').hidden, '换文件关闭旧面板');
+  click('.find-replace');
+  input('#search-query', '甲');
+  assert(summary().includes('1 / 505'), '长文计数包含超过 500 处的全部命中');
+  click('.search-prev');
+  assert(summary().includes('505 / 505') && $('.hit-current') !== null, '可导航到普通高亮上限外的命中');
+  toggleEdit();
+  input('#search-replacement', '乙');
+  click('.search-all');
+  assert(summary().includes('已替换 505 处'), '全部替换不受普通高亮上限限制');
+  doc = await snapshot();
+  assert(doc.find('甲').length === 0 && doc.find('乙').length === 505, '长文全部替换导出完整');
+  click('.search-undo');
+  assert(summary().includes('1 / 505'), '长文全部替换仍只有一个撤销单元');
+  const editor = $('.stage textarea');
+  editor.dispatchEvent(new win.InputEvent('beforeinput', { inputType: 'insertText', data: '甲', bubbles: true, cancelable: true }));
+  assert(summary().includes('/ 506'), '文档普通输入后自动重查，不沿用旧结果');
+  click('.search-undo');
+  assert(summary().includes('/ 505'), '普通输入撤销同样自动重查');
+  key('#search-query', 'Enter', { keyCode: 229 });
+  assert(summary().includes('1 / 505'), '兼容组合输入的 229 键码');
+  click('.search-close');
+  assert($('#search-panel').hidden, '关闭按钮可收起面板');
+  iframe.style.width = '375px';
+  await new Promise((r) => setTimeout(r, 50));
+  click('.find-replace');
+  const header = $('header');
+  assert(header.clientHeight <= win.innerHeight * 0.45 + 1, '窄屏展开工具栏不超过视口高度的 45%');
+  assert($('#search-query').getBoundingClientRect().top >= 0 && $('#search-query').getBoundingClientRect().bottom <= header.getBoundingClientRect().bottom, '窄屏展开后查询框完整可见');
+  const panelBox = $('#search-panel').getBoundingClientRect();
+  assert(panelBox.left >= 0 && panelBox.right <= win.innerWidth, '窄屏表单不横向溢出');
+  iframe.style.width = '667px'; iframe.style.height = '375px';
+  await new Promise((r) => setTimeout(r, 50));
+  assert(header.clientHeight <= win.innerHeight * 0.45 + 1, '横屏低视口同样留出命中阅读空间');
+  result.textContent = `PASS ${passed} 项断言`;
+} catch (error) {
+  result.textContent = `FAIL 第 ${passed + 1} 项\n${error.stack ?? error}`;
+  console.error(error);
+}
+</script>
+</html>

@@ -1,0 +1,122 @@
+/* 浅色表单沿用模板面板的纸色与蓝色动作；工具栏里保持整行，窄屏按阅读顺序换行。 */
+.search-panel {
+  --search-paper: #fff;
+  --search-ink: #1f2328;
+  --search-muted: #57606a;
+  --search-rule: #8c959f;
+  --search-action: #0969da;
+  --search-error: #cf222e;
+  color-scheme: light;
+  box-sizing: border-box;
+  flex: 0 0 100%;
+  min-width: 0;
+  padding: 16px;
+  border-radius: 8px;
+  background: var(--search-paper);
+  color: var(--search-ink);
+}
+.search-panel[hidden] {
+  display: none;
+}
+.search-row,
+.search-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.search-row {
+  flex-wrap: wrap;
+}
+.search-row + .search-row {
+  margin-top: 8px;
+}
+.search-row > label:first-child {
+  width: 48px;
+  font-weight: 600;
+}
+.search-panel input:not([type="checkbox"]) {
+  box-sizing: border-box;
+  flex: 1 1 180px;
+  min-width: 0;
+  max-width: 360px;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--search-rule);
+  border-radius: 6px;
+  background: var(--search-paper);
+  color: var(--search-ink);
+  font: inherit;
+}
+.search-panel button {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--search-rule);
+  border-radius: 6px;
+  background: var(--search-paper);
+  color: var(--search-ink);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.search-panel .search-all {
+  background: var(--search-action);
+  border-color: var(--search-action);
+  color: #fff;
+}
+.search-panel .search-case {
+  min-height: 44px;
+}
+.search-close {
+  margin-left: auto;
+}
+.search-panel button:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+.search-panel button:active:not(:disabled) {
+  filter: brightness(0.9);
+}
+.search-panel :is(button, input):focus-visible {
+  outline: 2px solid var(--search-action);
+  outline-offset: 2px;
+}
+.search-panel :disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.search-summary {
+  margin: 12px 0 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.search-help {
+  margin: 4px 0 0;
+  color: var(--search-muted);
+}
+.search-panel .search-error {
+  color: var(--search-error);
+}
+@media (max-width: 600px), (max-height: 600px) {
+  /* 工具栏展开后不能遮住视口中央的命中；表单在工具栏内部滚动，键盘焦点仍能自动露出。 */
+  header:has(.search-panel:not([hidden])) {
+    box-sizing: border-box;
+    max-height: 45dvh;
+    overflow-y: auto;
+    scroll-padding-block: 12px;
+  }
+}
+@media (max-width: 600px) {
+  .search-panel {
+    padding: 12px;
+    font-size: 16px;
+  }
+  .search-panel input:not([type="checkbox"]) {
+    flex-basis: calc(100% - 56px);
+    max-width: none;
+  }
+  .search-actions {
+    flex-wrap: wrap;
+  }
+  .search-row > .search-actions {
+    flex: 1 1 auto;
+  }
+}
