@@ -34,11 +34,28 @@ try {
   assert(input === host.querySelector('textarea') && document.activeElement === input, '重排保留输入节点与焦点');
   assert(preview.root.textContent.includes('测试'), '同一文档的预览视图同步重排');
   input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+  const preedit = (value) => {
+    input.value = value;
+    input.dispatchEvent(new InputEvent('input', { inputType: 'insertCompositionText', data: value, isComposing: true, bubbles: true }));
+    return input.getBoundingClientRect();
+  };
+  const shortPreedit = preedit('j');
+  const longPreedit = preedit('j d k la');
+  const caret = view.caretRect(view.selection.end);
+  const style = getComputedStyle(input);
+  assert(style.outlineStyle === 'none' && style.boxShadow === 'none' && style.borderTopWidth === '0px', '聚焦时字缝没有表单边框');
+  assert(shortPreedit.width > 2 && longPreedit.width > shortPreedit.width && preedit('j').width === shortPreedit.width, '组合串随输入和退格伸缩');
+  assert(Math.abs(shortPreedit.x - caret.x) < 1 && Math.abs(shortPreedit.y - caret.y) < 1, '组合串起点与正文光标重合');
+  const originalSize = parseFloat(style.fontSize);
+  view.setZoom(1.5);
+  assert(Math.abs(parseFloat(style.fontSize) - originalSize * 1.5) < 0.1, '组合期间缩放同步更新字号');
+  view.setZoom(1);
   input.value = '中文';
   input.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertCompositionText', data: '中文', isComposing: true, bubbles: true }));
   assert(doc.find('测试中文').length === 0, '组合期不写模型');
   input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true }));
   input.dispatchEvent(new CompositionEvent('compositionend', { data: '中文', bubbles: true }));
+  assert(input.getBoundingClientRect().width === 2 && input.value === '', '上屏后收回到插入光标');
   before('insertText', '中文');
   assert(doc.find('测试中文').length === 1 && doc.find('中文中文').length === 0, 'IME 提交一次，尾随输入不重复');
   const count = doc.query('paragraph').length;

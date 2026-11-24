@@ -41,7 +41,7 @@ export type FormatQuery = (
   range: DocRange,
   pending?: RunPropsPatch,
 ) => readonly (Pick<ResolvedRunProps, 'bold' | 'italic' | 'underline'> &
-  Partial<Pick<ResolvedRunProps, 'vertAlign'>>)[];
+  Partial<Pick<ResolvedRunProps, 'vertAlign' | 'fonts' | 'size' | 'color'>>)[];
 /**
  * 选区触及段落的级联对齐、编号、缩进与段距。`charUnit` 是字符单位缩进里一个字的宽度（twips，
  * 见 `@uw/layout` 的 `indentCharUnit`）；没有它就换算不了 `w:leftChars`，Ctrl+T 遇到字符单位时不动。

@@ -7,6 +7,7 @@ import type {
   TextChangeSet,
   TextEditor,
 } from '@uw/model';
+import { cssColor, defaultFontFamily } from '@uw/render-dom';
 import { fragmentToHtml, htmlToParagraphs } from './clipboard.ts';
 import type { DomView } from './dom.ts';
 import type { FormatQuery, ParagraphQuery, ParagraphStyleInfo, ToggleFormat } from './editing.ts';
@@ -67,7 +68,12 @@ const HEADING_CODES: Readonly<Record<string, BuiltinStyleName>> = {
 };
 
 /** textarea 常驻容器，重排只替换页树，不能打断操作系统持有的 IME 节点。 */
-export function mountEditing(container: Element, view: DomView, binding: EditingBinding): DomEditing {
+export function mountEditing(
+  container: Element,
+  view: DomView,
+  binding: EditingBinding,
+  fontFamily = defaultFontFamily,
+): DomEditing {
   const doc = container.ownerDocument;
   const win = doc.defaultView;
   const state = createEditingController(binding.editor, binding.format, binding.paragraphFormat, {
@@ -83,9 +89,23 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
   input.setAttribute('aria-multiline', 'true');
   input.autocomplete = 'off';
   input.spellcheck = false;
-  // 坐标来自 caretRect；输入节点本身同时显示组合串与系统光标。
+  input.wrap = 'off';
+  // 文档内的焦点由原生插入光标和选区标明；宿主的表单样式不应在字缝画出输入框。
   input.style.cssText =
-    'position:fixed;z-index:10;resize:none;padding:0;border:0;background:transparent;color:CanvasText;caret-color:CanvasText;font:16px sans-serif;overflow:hidden;min-width:2px;';
+    'position:fixed;z-index:10;pointer-events:none;appearance:none;resize:none;' +
+    'margin:0;padding:0;border:0;border-radius:0;outline:none;box-shadow:none;' +
+    'background:transparent;color:black;caret-color:currentColor;font:16px serif;' +
+    'box-sizing:border-box;overflow:hidden;min-width:2px;min-height:0;field-sizing:content;';
+  const autoWidth = win?.CSS?.supports('field-sizing', 'content');
+  let compositionSize: number | undefined;
+  function sizeInput(): void {
+    if (state.composing && autoWidth) input.style.width = 'auto';
+    else {
+      input.style.width = '2px';
+      // 较早的浏览器没有 field-sizing，先收窄再量，退格时也能缩回。
+      if (state.composing && input.value) input.style.width = `${input.scrollWidth + 1}px`;
+    }
+  }
   const status = doc.createElement('span');
   status.setAttribute('role', 'status');
   status.style.cssText = 'position:fixed;bottom:8px;left:8px;background:Canvas;color:CanvasText;z-index:11';
@@ -113,15 +133,23 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
       input.style.visibility = 'hidden';
       return;
     }
-    const rect = view.caretRect(state.focus ?? range.end);
+    const at = state.focus ?? range.end;
+    const rect = view.caretRect(at);
     input.style.visibility = rect ? 'visible' : 'hidden';
     input.style.opacity = doc.activeElement === input ? '1' : '0';
-    input.style.pointerEvents = 'none';
     if (rect) {
       input.style.left = `${rect.x}px`;
       input.style.top = `${rect.y}px`;
-      input.style.height = `${Math.max(rect.height, 16)}px`;
-      input.style.width = state.composing ? '240px' : '2px';
+      input.style.height = `${rect.height}px`;
+      input.style.lineHeight = input.style.height;
+      if (state.composing && compositionSize) {
+        const line = view.index.caretRect(at);
+        if (line?.height) input.style.fontSize = `${(compositionSize * rect.height) / line.height}px`;
+      } else input.style.fontSize = `${Math.min(rect.height, 16)}px`;
+      input.style.caretColor = state.composing ? 'currentColor' : 'black';
+      input.style.maxWidth = `calc(100vw - ${rect.x}px)`;
+      input.style.backgroundColor = state.composing ? 'white' : 'transparent';
+      sizeInput();
     }
     if (doc.activeElement === input)
       decoration = view.decorate(range, { style: { background: 'Highlight', opacity: '0.3' } });
@@ -391,7 +419,16 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
   }
   function compositionStart(): void {
     suppressCommit = undefined;
-    run(() => state.compositionStart());
+    run(() => {
+      state.compositionStart();
+      const range = state.selection;
+      const format = range && binding.format?.(range, state.pendingFormat)[0];
+      compositionSize = format?.size;
+      input.style.fontFamily = fontFamily(format?.fonts?.ascii || format?.fonts?.eastAsia || '');
+      input.style.fontWeight = format?.bold ? 'bold' : 'normal';
+      input.style.fontStyle = format?.italic ? 'italic' : 'normal';
+      input.style.color = cssColor(format?.color ?? 'auto');
+    });
   }
   function compositionEnd(event: CompositionEvent): void {
     if (!state.composing) return;
@@ -448,6 +485,7 @@ export function mountEditing(container: Element, view: DomView, binding: Editing
     'input',
     () => {
       if (!state.composing) input.value = '';
+      else if (!autoWidth) sizeInput();
     },
     inputEventOptions,
   );

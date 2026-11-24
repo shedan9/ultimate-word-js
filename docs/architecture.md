@@ -875,7 +875,8 @@ HYPERLINK 域给的链接没变）写在 `resolve-body.ts` 的 `ResolveCache` �
 
 **正文不是 contenteditable。** 正文是绝对定位的只读 DOM；
 常驻 textarea 跟随光标接管输入事件；原设计的隐藏 contenteditable 改为 textarea，
-以便保留原生组合串和光标，同时避免浏览器富文本修改正文。中文输入法是这个设计的直接原因：
+以便保留原生组合串和光标，同时避免浏览器富文本修改正文。输入框平时收至字缝，组合时采用插入处的字符格式，
+宽度随组合串伸缩，字号随视图缩放。焦点由原生光标与选区表示。
 
 ```mermaid
 sequenceDiagram
@@ -888,7 +889,7 @@ sequenceDiagram
   IME->>H: compositionstart
   H->>V: 进入组合态
   IME->>H: compositionupdate "zhong"
-  V->>V: 光标处渲染临时预览层
+  H->>H: 在光标处显示原生组合串
   Note over V,M: 组合期不进模型 · 不产生 undo 单元 · 不触发重排
   IME->>H: compositionend "中"
   H->>M: doc.tx(t => t.insertText(pos, "中"))

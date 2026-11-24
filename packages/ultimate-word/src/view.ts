@@ -226,13 +226,15 @@ export function createView(
       if (Math.abs(next - zoom) < 1e-6) return;
       zoom = next;
       inner.setZoom(zoom);
+      input?.refresh();
       viewportChanged();
     });
     observer.observe(container);
   }
   observe();
   let input: DomEditing | undefined;
-  if (options.mode === 'edit' && editing !== undefined) input = mountEditing(container, inner, editing);
+  if (options.mode === 'edit' && editing !== undefined)
+    input = mountEditing(container, inner, editing, options.fontFamily);
   const stopSelection = input?.onSelectionChange((range) => events.emit('selection:change', range ?? null));
   const unsubscribe = updates?.subscribe((next) => {
     layout = next;
