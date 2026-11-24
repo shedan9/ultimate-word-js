@@ -13,7 +13,7 @@
 
 ## 1. 快速开始 🟢
 
-仓库根目录执行 `pnpm pack:lib` 可生成安装包。将 `dist/ultimate-word-0.1.0.tgz` 复制到前端项目，执行 `npm install ./ultimate-word-0.1.0.tgz` 后即可导入。
+仓库根目录执行 `pnpm pack:lib` 可生成安装包。将 `dist/ultimate-word-0.1.1.tgz` 复制到前端项目，执行 `npm install ./ultimate-word-0.1.1.tgz` 后即可导入。
 
 ```ts
 import { UltimateWord } from 'ultimate-word';

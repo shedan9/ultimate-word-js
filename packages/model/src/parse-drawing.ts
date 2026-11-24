@@ -24,7 +24,7 @@
  * 图片都走这条路 —— 公文的红头与印章尤其常见。解析 `style` 的外框与定位
  * 与 `v:imagedata@r:id`，够把图画在对的地方。~~`v:line` / `v:rect` 这些真的 VML 图形
  * 仍然只得到一个占位框~~ —— 2026-10-12 起直线 / 矩形 / 圆角矩形 / 椭圆 / 直线连接符
- * 按几何画（见下面「形状」），组合见下面「组合与画布」，自定义路径（`v:shape@path`）仍是占位框。
+ * 按几何画（见下面「形状」），组合见下面「组合与画布」。自定义路径支持显式线段与闭合直边轮廓。
  *
  * `position:absolute` 的形状是**浮动**的，折成与 `wp:anchor` 同一份 `DrawingAnchor`
  * （`vmlAnchor`）。原来一律当内嵌：WPS 从 PDF 转出来的文件把页脚里的每一小段字都放进
@@ -156,15 +156,13 @@ export function parsePict(pict: XmlElement, idPrefix: string, opts: DrawingParse
   // 文本框常是 `v:rect` / `v:roundrect`，不是 `v:shape` —— 不能等找到图片形状才认
   if (root !== undefined) vmlTextBox(root, style, opts, out);
   // 纯形状：没有图片、不是文本框、几何认得出来
-  const imaged = shape !== undefined && child(shape, 'v:imagedata') !== undefined;
-  if (root !== undefined && !imaged && out.textBox === undefined) {
+  const relId = vmlImageRel(shape);
+  if (root !== undefined && relId === undefined && out.textBox === undefined) {
     put(out, 'shape', vmlShapeStyle(root, style, line, false));
   }
   if (shape === undefined) return out;
 
   put(out, 'alt', nonEmpty(attr(shape, 'alt') ?? attr(shape, 'o:title')));
-  const data = child(shape, 'v:imagedata');
-  const relId = data === undefined ? undefined : (attr(data, 'r:id') ?? attr(data, 'o:relid'));
   if (relId !== undefined) out.image = { id: `${idPrefix}${relId}`, relId };
   return out;
 }
@@ -379,6 +377,7 @@ const PRESET_GEOMETRY: Readonly<Record<string, ShapeGeometry>> = {
 /** 开放路径：没有内部（填充不画）、两端能带箭头 */
 function isOpenGeometry(geometry: ShapeGeometry | undefined): boolean {
   return (
+    (typeof geometry === 'object' && geometry.kind === 'segment') ||
     geometry === 'line' ||
     geometry === 'bentConnector2' ||
     geometry === 'bentConnector3' ||
@@ -683,6 +682,9 @@ function vmlShapeStyle(
   line: VmlLine | undefined,
   textBox: boolean,
 ): ShapeStyle | undefined {
+  // 带 src 的旧式图片即使没有包内关系，也要保留图片占位。
+  const image = child(shape, 'v:imagedata');
+  if (!textBox && image && nonEmpty(attr(image, 'src'))) return undefined;
   const geometry = vmlGeometry(shape);
   if (geometry === undefined && !textBox) return undefined;
   const out: ShapeStyle = {};
@@ -720,9 +722,9 @@ function vmlShapeStyle(
 }
 
 /**
- * VML 元素 → 几何。`v:shape` 只认连接符（`o:connectortype` 或形状类型 `#_x0000_t32` 直线 /
- * `t33` `t34` 肘形 / `t38` 曲线，编号就是 DrawingML 预设几何的老编号）与文本框（`#_x0000_t202`，矩形）
- * —— 别的 `v:shape` 是一条自定义路径，认不出
+ * VML 元素 → 几何。`v:shape` 优先识别连接符（`o:connectortype` 或形状类型 `#_x0000_t32` 直线 /
+ * `t33` `t34` 肘形 / `t38` 曲线，编号就是 DrawingML 预设几何的老编号）与文本框（`#_x0000_t202`，矩形）。
+ * 其余形状尝试读取显式坐标路径。
  */
 function vmlGeometry(shape: XmlElement): ShapeGeometry | undefined {
   switch (shape.name) {
@@ -741,11 +743,45 @@ function vmlGeometry(shape: XmlElement): ShapeGeometry | undefined {
       if (type.endsWith('_x0000_t34')) return 'bentConnector3';
       if (type.endsWith('_x0000_t38')) return 'curvedConnector3';
       if (type.endsWith('_x0000_t202')) return 'rect';
-      return undefined;
+      return vmlLiteralPath(shape);
     }
     default:
       return undefined;
   }
+}
+
+/** 转档工具常把页眉线写成一条很薄的闭合路径，页脚线写成外框中间的线段。
+ * 只接受一个 m、一个 l 点列和可选的 x 闭合；公式、曲线与多段路径继续走原降级。
+ */
+function vmlLiteralPath(shape: XmlElement): ShapeGeometry | undefined {
+  const path = attr(shape, 'path')?.trim();
+  if (!path || !attr(shape, 'coordsize')) return undefined;
+  const match = /^m([^l]+)l([^xe]+)(x\s*)?e$/i.exec(path);
+  if (!match) return undefined;
+  const coordinates = (part: string) =>
+    part
+      .trim()
+      .split(/\s*,\s*|\s+/)
+      .map((v) => (/^[+-]?\d+$/.test(v) ? Number(v) : NaN));
+  const start = coordinates(match[1] ?? '');
+  const rest = coordinates(match[2] ?? '');
+  const closed = match[3] !== undefined;
+  if (start.length !== 2 || rest.length % 2 || (closed ? rest.length < 4 : rest.length !== 2))
+    return undefined;
+  const values = [...start, ...rest];
+  if (!values.every(Number.isSafeInteger)) return undefined;
+  const size = coordinates(attr(shape, 'coordsize') ?? '');
+  const origin = coordinates(attr(shape, 'coordorigin') ?? '0,0');
+  if (size.length !== 2 || origin.length !== 2 || ![...size, ...origin].every(Number.isSafeInteger))
+    return undefined;
+  const [w = 0, h = 0] = size;
+  const [x = 0, y = 0] = origin;
+  if (w <= 0 || h <= 0) return undefined;
+  const points: [number, number][] = [];
+  for (let i = 0; i < values.length; i += 2) {
+    points.push([((values[i] as number) - x) / w, ((values[i + 1] as number) - y) / h]);
+  }
+  return { kind: closed ? 'polygon' : 'segment', points };
 }
 
 /**
@@ -1339,13 +1375,7 @@ function vmlMembers(
     if (!VML_MEMBERS.has(el.name)) continue;
     const line = vmlLine(el, coordNumber);
     const content: Omit<GroupMember, 'x' | 'y' | 'width' | 'height'> = {};
-    const data = child(el, 'v:imagedata');
-    const relId =
-      data === undefined
-        ? el.name === 'v:image'
-          ? attr(el, 'r:id')
-          : undefined
-        : (attr(data, 'r:id') ?? attr(data, 'o:relid'));
+    const relId = vmlImageRel(el);
     if (relId !== undefined) content.image = { id: `${idPrefix}${relId}`, relId };
     vmlTextBox(el, style, opts, content);
     if (content.image === undefined && content.textBox === undefined) {
@@ -1381,10 +1411,18 @@ function vmlRoot(pict: XmlElement, withImage: XmlElement | undefined): XmlElemen
   return (withImage === undefined ? undefined : roots.find(holds)) ?? roots[0];
 }
 
-/** 带 `v:imagedata` 的形状优先；一个都没有时退回第一个形状（只为拿尺寸画占位框） */
+/** 某些导出器给纯形状也加空的 imagedata；只有实际引用资源才按图片处理。 */
+function vmlImageRel(shape: XmlElement | undefined): string | undefined {
+  if (shape === undefined) return undefined;
+  const data = child(shape, 'v:imagedata');
+  if (data !== undefined) return nonEmpty(attr(data, 'r:id')) ?? nonEmpty(attr(data, 'o:relid'));
+  return shape.name === 'v:image' ? nonEmpty(attr(shape, 'r:id')) : undefined;
+}
+
+/** 引用了图片的形状优先；一个都没有时退回第一个形状（只为拿尺寸画占位框） */
 function findShape(pict: XmlElement): XmlElement | undefined {
   const shapes = descendants(pict, 'v:shape');
-  return shapes.find((s) => child(s, 'v:imagedata') !== undefined) ?? shapes[0];
+  return shapes.find((s) => vmlImageRel(s) !== undefined) ?? shapes[0];
 }
 
 function parseStyle(style: string | undefined): Record<string, string> {

@@ -52,11 +52,20 @@ const RED_RULE = `<w:r><mc:AlternateContent>
 const FOOTER_LINE = `<w:r><w:pict><v:line style="position:absolute;z-index:1;mso-position-horizontal-relative:page;mso-position-vertical-relative:page"
   from="90pt,760pt" to="300pt,750pt" strokecolor="#0000ff" strokeweight="1pt"><v:stroke dashstyle="dash"/></v:line></w:pict></w:r>`;
 
+// 来自页眉与页脚的两种几何写法，测试仅保留形状与坐标。
+const RULE_FRAME =
+  'position:absolute;margin-left:90.1pt;width:415pt;height:0.5pt;mso-position-horizontal-relative:page;mso-position-vertical-relative:page';
+const HEADER_BAR = `<w:r><w:pict><v:shape style="${RULE_FRAME};margin-top:55.15pt" coordsize="8300,10"
+  path="m0,0l8300,0,8300,9,0,9,0,0xe" fillcolor="#000000" stroked="f"><v:imagedata o:title=""/></v:shape></w:pict></w:r>`;
+const FOOTER_RULE = `<w:r><w:pict><v:shape style="${RULE_FRAME};margin-top:766.3pt" coordsize="8300,10"
+  path="m0,4l8300,4e" filled="f"><v:stroke weight="0.48pt" color="#000000"/><v:imagedata o:title=""/></v:shape></w:pict></w:r>`;
+
 function makeDocx(): Uint8Array {
   const body = `<w:document><w:body>
     <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>某某市人民政府文件</w:t></w:r>${RED_RULE}</w:p>
     <w:p><w:r><w:t>正文</w:t></w:r></w:p>
     <w:sectPr>
+      <w:headerReference w:type="default" r:id="rId8"/>
       <w:footerReference w:type="default" r:id="rId9"/>
       <w:pgSz w:w="11906" w:h="16838"/>
       <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>
@@ -68,6 +77,7 @@ function makeDocx(): Uint8Array {
         <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
         <Default Extension="xml" ContentType="application/xml"/>
         <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+        <Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>
         <Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>
       </Types>`,
     ),
@@ -76,9 +86,14 @@ function makeDocx(): Uint8Array {
     ),
     'word/document.xml': encoder.encode(body),
     'word/_rels/document.xml.rels': encoder.encode(
-      rels(`<Relationship Id="rId9" Type="${OFFICE_REL}/footer" Target="footer1.xml"/>`),
+      rels(
+        `<Relationship Id="rId8" Type="${OFFICE_REL}/header" Target="header1.xml"/><Relationship Id="rId9" Type="${OFFICE_REL}/footer" Target="footer1.xml"/>`,
+      ),
     ),
-    'word/footer1.xml': encoder.encode(`<w:ftr><w:p>${FOOTER_LINE}<w:r><w:t>第1页</w:t></w:r></w:p></w:ftr>`),
+    'word/header1.xml': encoder.encode(`<w:hdr><w:p>${HEADER_BAR}</w:p></w:hdr>`),
+    'word/footer1.xml': encoder.encode(
+      `<w:ftr><w:p>${FOOTER_LINE}${FOOTER_RULE}<w:r><w:t>第1页</w:t></w:r></w:p></w:ftr>`,
+    ),
   });
 }
 
@@ -126,6 +141,25 @@ describe('带分隔线的公文版头 docx 端到端', () => {
       'stroke-dasharray': '4 3',
     });
     expect(blue?.attrs.transform).toBe('translate(0 1510) scale(1 -1)');
+  });
+
+  it('页眉填充条和页脚实线按原路径绘制，保留细线在外框内的偏移', () => {
+    const paths = collect(root, (n) => n.tag === 'path' && (n.attrs.class ?? '').includes('uw-shape'));
+    expect(paths.map((p) => p.attrs)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          d: 'M90.1 55.15 L505.1 55.15 L505.1 55.6 L90.1 55.6 L90.1 55.15 Z',
+          fill: '#000000',
+        }),
+        expect.objectContaining({
+          d: 'M90.1 766.5 L505.1 766.5',
+          stroke: '#000000',
+          'stroke-width': '0.48',
+          fill: 'none',
+        }),
+      ]),
+    );
+    for (const path of paths) expect(path.attrs['stroke-dasharray']).toBeUndefined();
   });
 
   it('一个虚线占位框都没有', () => {

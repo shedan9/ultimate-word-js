@@ -12,12 +12,12 @@
 
 ## 当前进度
 
-`ultimate-word` 0.1.0 提供浏览器端 DOCX 分页预览、正文编辑、查找替换和 DOCX 导出。可以直接运行调试台，也可以把门面库安装到自己的前端项目。
+`ultimate-word` 0.1.1 提供浏览器端 DOCX 分页预览、正文编辑、查找替换和 DOCX 导出。可以直接运行调试台，也可以把门面库安装到自己的前端项目。
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm --filter @uw/playground dev   # 打开终端显示的网址，选择一份 .docx
-pnpm pack:lib                      # 在仓库根目录生成 dist/ultimate-word-0.1.0.tgz
+pnpm pack:lib                      # 在仓库根目录生成 dist/ultimate-word-0.1.1.tgz
 ```
 
 调试台可用仓库内的 `apps/fidelity/fixtures/gongwen-01.docx` 试用。勾选「编辑」后修改正文，点击「导出 docx」下载副本。集成方式见[安装包使用说明](./packages/ultimate-word/README.md)。

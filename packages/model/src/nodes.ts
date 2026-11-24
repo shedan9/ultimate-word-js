@@ -202,7 +202,7 @@ export interface TextBoxRef {
 /**
  * 形状的外观。颜色是 RRGGBB（主题色已在解析时换算）；`fill` / `stroke` 缺席 = 不填 / 不画线。
  *
- * 几何只带**名字与一个调整值**，不在这里算路径：路径要按外框尺寸算，外框是布局之后才
+ * 预设几何带名字与调整值，VML 字面路径保留相对外框的顶点：路径要按外框尺寸算，外框是布局之后才
  * 定下来的东西（内嵌对象跟着行走、浮动对象按参照物换算），渲染层手上才有最终的那个框
  */
 export interface ShapeStyle {
@@ -233,6 +233,8 @@ export interface ShapeStyle {
  * `flowChartDecision` = 菱形……）解析时就折成基本形状；直线连接符折成 `line`
  */
 export type ShapeGeometry =
+  /** VML 显式线段或闭合多边形。坐标相对于图形外框，可落在 0–1 之外。 */
+  | { kind: 'segment' | 'polygon'; points: [number, number][] }
   | 'rect'
   | 'roundRect'
   | 'ellipse'

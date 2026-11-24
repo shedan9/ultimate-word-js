@@ -218,13 +218,41 @@ describe('w:pict（VML）', () => {
   it('带 imagedata 的形状优先 —— 装饰性形状排在前面时不能被它顶掉', () => {
     const [obj] = objects(
       `<w:p><w:r><w:pict>
-        <v:shape style="width:10pt;height:10pt"/>
+        <v:shape style="width:10pt;height:10pt"><v:imagedata o:title=""/></v:shape>
         <v:shape style="width:50pt;height:20pt"><v:imagedata r:id="rId2"/></v:shape>
       </w:pict></w:r></w:p>`,
     );
     expect(obj?.image?.relId).toBe('rId2');
     expect(obj?.width).toBe(1000);
   });
+
+  it('自定义线段按形状自己的坐标原点和大小映射，允许反向端点', () => {
+    const [obj] = objects(`<w:p><w:r><w:pict><v:shape coordsize="200,10" coordorigin="10,-4"
+      path="m210,0l10,0e" filled="f"><v:imagedata o:title=""/></v:shape></w:pict></w:r></w:p>`);
+    expect(obj?.shape?.geometry).toEqual({
+      kind: 'segment',
+      points: [
+        [1, 0.4],
+        [0, 0.4],
+      ],
+    });
+  });
+
+  it('含 src 的图片继续保留占位', () => {
+    const [obj] = objects(`<w:p><w:r><w:pict><v:shape coordsize="20,20" path="m0,0l20,0e">
+      <v:imagedata src="local-image.png"/></v:shape></w:pict></w:r></w:p>`);
+    expect(obj?.shape).toBeUndefined();
+  });
+
+  it.each(['m0,0c1,2,3,4,5,6e', 'm0,0l@1,0e', 'm0,0l10,,3e', 'm0,0l10,0,5xe'])(
+    '无法完整解析的路径保留占位 %s',
+    (path) => {
+      const [obj] = objects(
+        `<w:p><w:r><w:pict><v:shape coordsize="20,20" path="${path}"/></w:pict></w:r></w:p>`,
+      );
+      expect(obj?.shape).toBeUndefined();
+    },
+  );
 
   it('认不出尺寸时留 0 —— 零尺寸占位比编一个错尺寸强（行不会跟着错位）', () => {
     const [obj] = objects(`<w:p><w:r><w:pict><v:rect style="width:50%"/></w:pict></w:r></w:p>`);

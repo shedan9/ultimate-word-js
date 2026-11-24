@@ -1,6 +1,6 @@
 {
   "name": "ultimate-word",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "面向中文公文与报告的 DOCX 预览、编辑与导出引擎",

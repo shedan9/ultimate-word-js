@@ -7,7 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 自研布局引擎的 Word（OOXML）在线预览 / 编辑库，定位是**中文公文 / 周报 / 报告类文档的高保真引擎**。
 保真度由自己算的排版决定，**不依赖浏览器排版** —— 所以「用 CSS 让它看起来差不多」永远不是正确答案。
 
-门面包 0.1.0 可在根目录用 `pnpm pack:lib` 打成独立安装包。工作区继续读源码，分发包使用合并后的 ESM 与类型声明。
+门面包 0.1.1 可在根目录用 `pnpm pack:lib` 打成独立安装包。工作区继续读源码，分发包使用合并后的 ESM 与类型声明。
+
+0.1.1 修正旧式 VML 页眉页脚细线：显式坐标的线段与闭合直边路径按原坐标绘制，空图片标签允许继续解析路径。
 
 当前进度：Phase 0 已完成（地基 + 行高穿刺 + 基线穿刺 + CI），Phase 1 的**解析链已完整**，
 **Phase 2 全部做完了**（DOM 渲染器 v1 已落地），**Phase 3 与 Phase 4 也全部做完了** —— `layoutDocument()`

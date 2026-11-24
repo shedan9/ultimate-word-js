@@ -5,7 +5,7 @@
 将安装包复制到你的项目并运行：
 
 ```sh
-npm install ./ultimate-word-0.1.0.tgz
+npm install ./ultimate-word-0.1.1.tgz
 ```
 
 页面提供一个文档容器，例如 `<div id="document"></div>`。将用户选中的 `File` 传给以下函数：

@@ -28,7 +28,7 @@ export interface Box {
  * 各几何的调整值缺省（`a:avLst` 没写时，规范 `presetShapeDefinitions.xml` 里的 `avLst`）
  * 与上限（`pin 0 adj max`，超出的夹回来）。上限是短边比例的那几种都是 50000
  */
-const ADJUST: Partial<Record<NonNullable<ShapeStyle['geometry']>, { def: number; max: number }>> = {
+const ADJUST: Partial<Record<Extract<ShapeStyle['geometry'], string>, { def: number; max: number }>> = {
   roundRect: { def: 16667, max: 50000 },
   triangle: { def: 50000, max: 100000 },
   parallelogram: { def: 25000, max: 100000 },
@@ -38,7 +38,7 @@ const ADJUST: Partial<Record<NonNullable<ShapeStyle['geometry']>, { def: number;
 };
 
 function adjust(shape: ShapeStyle): number {
-  const spec = ADJUST[shape.geometry ?? 'rect'];
+  const spec = typeof shape.geometry === 'string' ? ADJUST[shape.geometry] : undefined;
   if (spec === undefined) return 0;
   return Math.min(spec.max, Math.max(0, shape.adjust ?? spec.def)) / 100000;
 }
@@ -57,7 +57,12 @@ export function shapeOutline(shape: ShapeStyle, box: Box): RElement {
   const { x, y, width: w, height: h } = box;
   const ss = Math.min(w, h);
   const a = adjust(shape);
-  switch (shape.geometry ?? 'rect') {
+  const geometry = shape.geometry ?? 'rect';
+  if (typeof geometry === 'object') {
+    const d = openPathD(openPath(shape, box));
+    return el('path', { d: geometry.kind === 'polygon' ? `${d} Z` : d });
+  }
+  switch (geometry) {
     case 'rect':
       return el('rect', { x: fmt(x), y: fmt(y), width: fmt(w), height: fmt(h) });
     case 'roundRect': {
@@ -161,6 +166,7 @@ export function shapeOutline(shape: ShapeStyle, box: Box): RElement {
 /** 开放路径（直线与连接符）：没有内部、两端能带箭头 */
 export function isOpenGeometry(geometry: ShapeStyle['geometry']): boolean {
   return (
+    (typeof geometry === 'object' && geometry.kind === 'segment') ||
     geometry === 'line' ||
     geometry === 'bentConnector2' ||
     geometry === 'bentConnector3' ||
@@ -184,6 +190,9 @@ export interface OpenPath {
  */
 export function openPath(shape: ShapeStyle, box: Box): OpenPath {
   const { x, y, width: w, height: h } = box;
+  if (typeof shape.geometry === 'object') {
+    return { points: shape.geometry.points.map(([px, py]) => [x + px * w, y + py * h]), curve: false };
+  }
   const k = (shape.adjust ?? 50000) / 100000;
   switch (shape.geometry) {
     case 'bentConnector2':
