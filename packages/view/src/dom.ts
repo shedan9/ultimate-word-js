@@ -180,12 +180,16 @@ export function mountView(container: Element, layout: DocumentLayout, options: V
     }
   }
 
-  function paint(wanted: Set<number>): void {
-    for (let i = 0; i < slots.length; i++) {
-      const slot = slots[i] as PageSlot;
+  function refreshPaint(pages = slots, settings = opts, visiblePages = visible): void {
+    const all = printing || settings.virtualize === false || win?.IntersectionObserver === undefined;
+    const wanted = all
+      ? new Set(pages.map((_, i) => i))
+      : pagesToRender(pages.length, visiblePages, settings.overscan ?? 2);
+    for (let i = 0; i < pages.length; i++) {
+      const slot = pages[i] as PageSlot;
       if (wanted.has(i)) {
         if (slot.painting.firstChild !== null) continue;
-        const svg = renderPage(slot.page, opts) as SVGSVGElement;
+        const svg = renderPage(slot.page, settings) as SVGSVGElement;
         svg.style.cssText = 'display:block;width:100%;height:100%';
         slot.painting.append(svg);
         slot.shell.dataset.rendered = 'true';
@@ -196,33 +200,29 @@ export function mountView(container: Element, layout: DocumentLayout, options: V
     }
   }
 
-  function refreshPaint(): void {
-    const all = printing || opts.virtualize === false || observer === undefined;
-    paint(all ? new Set(slots.map((_, i) => i)) : pagesToRender(slots.length, visible, opts.overscan ?? 2));
-  }
-
   function observe(): void {
     observer?.disconnect();
     observer = undefined;
-    visible = new Set();
     if (opts.virtualize !== false && win?.IntersectionObserver !== undefined) {
       const indices = new Map<Element, number>(slots.map((slot, index) => [slot.shell, index]));
       const activeRoot = root;
+      // 新观察器只累计自己收到的交集；首份报告到达前，连续编辑仍可沿用已知可见页。
+      const measured = new Set<number>();
       observer = new win.IntersectionObserver((entries) => {
         if (destroyed || root !== activeRoot) return;
         for (const entry of entries) {
           const index = indices.get(entry.target);
           if (index === undefined) continue;
-          if (entry.isIntersecting) visible.add(index);
-          else visible.delete(index);
+          if (entry.isIntersecting) measured.add(index);
+          else measured.delete(index);
         }
+        visible = measured;
         refreshPaint();
         notifyViewport();
       });
       // root:null 让浏览器同时考虑窗口与所有祖先滚动容器的裁剪。
       for (const slot of slots) observer.observe(slot.shell);
-    }
-    refreshPaint();
+    } else visible.clear();
   }
 
   function notifyViewport(): void {
@@ -318,6 +318,7 @@ export function mountView(container: Element, layout: DocumentLayout, options: V
   const initial = makeRoot(layout, opts, view.lines);
   root = initial.root;
   slots = initial.slots;
+  refreshPaint();
   container.replaceChildren(root);
   observe();
   const annotations = createAnnotations(() => ({ root, pages: slots, index: view.index }), doc);
@@ -409,12 +410,15 @@ export function mountView(container: Element, layout: DocumentLayout, options: V
     },
     update(next, nextOptions = {}) {
       assertLive();
-      layout = next;
       const merged = { ...opts, ...nextOptions };
       validate(merged);
       // 先构建新索引与 DOM，调用方的字体解析器抛错时保留旧视图。
       const nextView = createReadonlyView(next, measurePages);
       const nextState = makeRoot(next, merged, nextView.lines);
+      // 删掉末页时滚动位置会被夹回新的末页。先在新页树画好这些页，再一次替换。
+      const lastPage = nextState.slots.length - 1;
+      const nextVisible = new Set(lastPage < 0 ? [] : [...visible].map((i) => Math.min(i, lastPage)));
+      refreshPaint(nextState.slots, merged, nextVisible);
       const focused = doc.activeElement;
       const restoreFocus =
         win !== null &&
@@ -423,6 +427,8 @@ export function mountView(container: Element, layout: DocumentLayout, options: V
         root.contains(focused);
       observer?.disconnect();
       root.replaceWith(nextState.root);
+      layout = next;
+      visible = nextVisible;
       root = nextState.root;
       slots = nextState.slots;
       opts = merged;

@@ -29,7 +29,13 @@ try {
   const input = host.querySelector('textarea');
   assert(input === document.activeElement, '编辑输入获得焦点');
   const before = (type, data) => input.dispatchEvent(new InputEvent('beforeinput', { inputType: type, data, bubbles: true, cancelable: true }));
+  const ink = () => view.root.querySelector('[data-page="0"] .uw-painting svg')?.textContent;
+  // 首次相交报告是异步的；先确认已画出正文，随后对每次编辑的检查都在事件返回时同步进行。
+  const paintDeadline = performance.now() + 4000;
+  while (!ink() && performance.now() < paintDeadline) await frame();
+  assert(ink(), '输入前第一页已有可见正文');
   before('insertText', '测试');
+  assert(ink()?.includes('测试'), '输入返回时已绘制新文字，不能等下一帧再补画');
   assert(doc.find('测试').length === 1, '输入提交到模型与查找');
   assert(input === host.querySelector('textarea') && document.activeElement === input, '重排保留输入节点与焦点');
   assert(preview.root.textContent.includes('测试'), '同一文档的预览视图同步重排');
@@ -55,6 +61,7 @@ try {
   assert(doc.find('测试中文').length === 0, '组合期不写模型');
   input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true }));
   input.dispatchEvent(new CompositionEvent('compositionend', { data: '中文', bubbles: true }));
+  assert(ink()?.includes('中文'), '连续输入与拼音上屏之间无需等待可见页回调');
   assert(input.getBoundingClientRect().width === 2 && input.value === '', '上屏后收回到插入光标');
   before('insertText', '中文');
   assert(doc.find('测试中文').length === 1 && doc.find('中文中文').length === 0, 'IME 提交一次，尾随输入不重复');
