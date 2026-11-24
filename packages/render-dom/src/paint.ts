@@ -56,7 +56,7 @@ import type {
   TabLeader,
 } from '@uw/layout';
 import { borderThicknessFactor, contentHeightOf } from '@uw/layout';
-import { defaultFontFamily } from './font-stack.ts';
+import { defaultFontFamily, halfWidthAsciiFamily } from './font-stack.ts';
 import {
   dashArray,
   isOpenGeometry,
@@ -111,7 +111,7 @@ export interface RenderOptions {
 
 interface Ctx {
   zoom: number;
-  fontFamily: (family: string) => string;
+  fontFamily: RenderOptions['fontFamily'];
   cls: (name: string) => string;
   imageHref: (id: string) => string | undefined;
   debug: boolean;
@@ -130,7 +130,7 @@ function context(opts: RenderOptions): Ctx {
   const prefix = opts.classPrefix ?? 'uw';
   return {
     zoom: opts.zoom ?? 1,
-    fontFamily: opts.fontFamily ?? defaultFontFamily,
+    fontFamily: opts.fontFamily,
     cls: (name) => `${prefix}-${name}`,
     imageHref: opts.imageHref ?? (() => undefined),
     debug: opts.debug === true,
@@ -497,17 +497,23 @@ function paintFragment(frag: LineFragment, x0: Twips, baseline: Twips, ctx: Ctx)
   const style = frag.style;
   const scale = style.scale / 100;
   const xs = frag.glyphX.map((x) => pt(x0 + x) / (scale === 0 ? 1 : scale));
+  const ascii =
+    ctx.fontFamily === undefined && frag.script === 'latin'
+      ? halfWidthAsciiFamily(frag.font, frag.text)
+      : undefined;
   const attrs: Record<string, string> = {
     class: ctx.cls('frag'),
     'data-run': frag.runId,
     x: fmtList(xs),
     y: fmt(baselineOf(frag, baseline)),
-    'font-family': ctx.fontFamily(frag.font),
+    'font-family': ascii ?? (ctx.fontFamily ?? defaultFontFamily)(frag.font),
     'font-size': fmt(pt(frag.fontSize)),
     fill: cssColor(style.color),
     // SVG 不折叠空白，但也不会自动保留 —— 不写这一条，行首行尾的空格会被吃掉
     'xml:space': 'preserve',
   };
+  // 通用等宽字体的字宽常为 0.6 em；按数字 0 的宽度校准字形，逐字 x 仍由 Word 度量决定。
+  if (ascii !== undefined) attrs.style = 'font-size-adjust:ch-width 0.5';
   if (style.bold) attrs['font-weight'] = 'bold';
   if (style.italic) attrs['font-style'] = 'italic';
   if (scale !== 1 && scale !== 0) attrs.transform = `scale(${fmt(scale)} 1)`;

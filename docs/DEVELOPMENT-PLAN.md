@@ -615,6 +615,7 @@ await view.toPNG(2);     // 第 3 页（页序号从 0 起，与 scrollTo({ page
   一页一个 `<svg>`，**viewBox 的单位是 pt** —— 与 `*.truth.json` 同一套坐标，
   肉眼比对不用换算；逐字 x 走 `<text x="x1 x2 …">`；缩放只改 `<svg>` 的 width / height，
   布局结果一个字节不动（§4.1 的「缩放永不触发重排」在这里落地）
+  - 2026-11-24 修复宋体等中文字体缺失时的英文字距。纯 ASCII 片段优先用原字体，等宽后备字形按半个字号绘制，正文与选区层共用。[字距对比](screenshots/halfwidth-ascii.png)
   - 分成两个入口：主入口只到「纯数据元素树 → 标记文本」（**不碰 DOM**，单测跑在纯 Node 里，
     也是截图回归的入口），`@uw/render-dom/dom` 才建真 DOM。这不是洁癖 —— workspace 包的
     `exports` 直接指向 `src/*.ts`，主入口牵进 `dom.ts` 会让 `@uw/fidelity` 这种 Node 工具

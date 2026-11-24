@@ -12,16 +12,27 @@
  * 那份表回答「Word 用的是哪款字体」，这份表回答「本机拿什么画」。
  */
 
-/** 开发计划 §2.1 A 类（中文）的替代字体，与那张表一一对应 */
-const CJK_STACKS: Record<string, string> = {
-  宋体: "SimSun, '宋体', 'Noto Serif CJK SC', 'Source Han Serif SC', serif",
-  仿宋: "FangSong, '仿宋', 'Noto Serif CJK SC', 'Source Han Serif SC', serif",
-  黑体: "SimHei, '黑体', 'Noto Sans CJK SC', 'Source Han Sans SC', sans-serif",
-  楷体: "KaiTi, '楷体', 'LXGW WenKai', 'Noto Serif CJK SC', serif",
-  等线: "DengXian, '等线', 'Noto Sans CJK SC', 'Source Han Sans SC', sans-serif",
-  微软雅黑: "'Microsoft YaHei', '微软雅黑', 'Noto Sans CJK SC', 'Source Han Sans SC', sans-serif",
-  新宋体: "NSimSun, '新宋体', 'Noto Serif CJK SC', serif",
-};
+/** 原字体缺失时，半角等宽的西文字形要能放进布局给的 0.5 em。 */
+function cjkStack(names: string, substitutes: string, halfWidthAscii = false) {
+  return {
+    regular: `${names}, ${substitutes}`,
+    ascii: halfWidthAscii ? `${names}, 'Noto Sans Mono CJK SC', Osaka-Mono, monospace` : undefined,
+  };
+}
+
+const SERIF = "'Noto Serif CJK SC', 'Source Han Serif SC', serif";
+const SANS = "'Noto Sans CJK SC', 'Source Han Sans SC', sans-serif";
+
+/** 开发计划 §2.1 A 类（中文）的替代字体。等线与微软雅黑的 ASCII 使用比例宽度。 */
+const CJK_STACKS = new Map([
+  ['宋体', cjkStack("SimSun, '宋体'", SERIF, true)],
+  ['仿宋', cjkStack("FangSong, '仿宋'", SERIF, true)],
+  ['黑体', cjkStack("SimHei, '黑体'", SANS, true)],
+  ['楷体', cjkStack("KaiTi, '楷体'", "'LXGW WenKai', 'Noto Serif CJK SC', serif", true)],
+  ['等线', cjkStack("DengXian, '等线'", SANS)],
+  ['微软雅黑', cjkStack("'Microsoft YaHei', '微软雅黑'", SANS)],
+  ['新宋体', cjkStack("NSimSun, '新宋体'", "'Noto Serif CJK SC', serif", true)],
+]);
 
 /** 英文名也要认：同一款字体在 `w:rFonts` 里两种写法都出现得到 */
 const ALIASES: Record<string, string> = {
@@ -51,6 +62,17 @@ const LATIN_GENERIC: Record<string, string> = {
   wingdings: 'serif',
 };
 
+function cjkFamily(family: string) {
+  const name = family.trim();
+  return CJK_STACKS.get(ALIASES[name.toLowerCase()] ?? name);
+}
+
+/** 只替换半角 ASCII 片段的后备字体，中文和全角标点继续按各自字体栈绘制。 */
+export function halfWidthAsciiFamily(family: string, text: string): string | undefined {
+  const ascii = cjkFamily(family)?.ascii;
+  return ascii !== undefined && /^[ -~]+$/.test(text) ? ascii : undefined;
+}
+
 /**
  * 默认的字体栈。字体名为空时退到 serif —— 空串在布局里表示「四个桶都没指定」，
  * 那时用的是 `defaultFont`，这里没有更多信息可用。
@@ -58,7 +80,7 @@ const LATIN_GENERIC: Record<string, string> = {
 export function defaultFontFamily(family: string): string {
   if (family === '') return 'serif';
   const key = family.toLowerCase();
-  const cjk = CJK_STACKS[family] ?? CJK_STACKS[ALIASES[key] ?? ''];
+  const cjk = cjkFamily(family)?.regular;
   if (cjk !== undefined) return cjk;
   const generic = LATIN_GENERIC[key] ?? 'serif';
   // 带空格 / 中文的名字必须加引号，否则 CSS 会把它当成多个关键字

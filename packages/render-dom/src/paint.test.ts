@@ -214,6 +214,21 @@ describe('文字片段', () => {
     expect(t.attrs['xml:space']).toBe('preserve');
   });
 
+  it('宋体英文先找原字体，再用等宽字形匹配半角坐标', () => {
+    const latin = frag({ font: 'SimSun', script: 'latin', text: 'iW', glyphX: [0, 160], width: 320 });
+    const p = paragraphPage(line({ fragments: [latin, frag(), { ...latin, font: 'Arial' }] }));
+    const [ascii, chinese, proportional] = collect(buildPage(p), 'text');
+    expect(ascii?.attrs['font-family']).toMatch(/^SimSun, '宋体', .*monospace$/);
+    expect(ascii?.attrs.style).toContain('font-size-adjust:ch-width 0.5');
+    expect(ascii?.attrs.x).toBe('0 8');
+    expect(chinese?.attrs['font-family']).toContain('Noto Serif CJK SC');
+    expect(chinese?.attrs.style).toBeUndefined();
+    expect(proportional?.attrs.style).toBeUndefined();
+    const custom = collect(buildPage(p, { fontFamily: () => 'HostFont' }), 'text')[0];
+    expect(custom?.attrs['font-family']).toBe('HostFont');
+    expect(custom?.attrs.style).toBeUndefined();
+  });
+
   it('w:position 抬基线，上标再抬一次 —— 两者可叠加', () => {
     const raised = { ...STYLE, position: 20, vertAlign: 'superscript' as const };
     const svg = buildPage(paragraphPage(line({ fragments: [frag({ style: raised })] })));

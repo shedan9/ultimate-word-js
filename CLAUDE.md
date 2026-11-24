@@ -11,6 +11,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 0.1.1 修正旧式 VML 页眉页脚细线：显式坐标的线段与闭合直边路径按原坐标绘制，空图片标签允许继续解析路径。
 
+宋体等半角等宽中文字体缺失时，渲染器为纯 ASCII 片段选等宽后备字形，并按 0.5 em 校准字宽。
+
 当前进度：Phase 0 已完成（地基 + 行高穿刺 + 基线穿刺 + CI），Phase 1 的**解析链已完整**，
 **Phase 2 全部做完了**（DOM 渲染器 v1 已落地），**Phase 3 与 Phase 4 也全部做完了** —— `layoutDocument()`
 把段落与表格摞进一页页的版心，每一行都有了页号与 y，`LineLayout` 的 `baseline` 终于能拼成

@@ -40,7 +40,8 @@ function lineText(
         text.attrs.lengthAdjust = 'spacingAndGlyphs';
       }
       text.attrs.fill = 'transparent';
-      text.attrs.style = 'user-select:text;-webkit-user-select:text;pointer-events:all;cursor:text';
+      const selectionStyle = 'user-select:text;-webkit-user-select:text;pointer-events:all;cursor:text';
+      text.attrs.style = [text.attrs.style, selectionStyle].filter(Boolean).join(';');
       text.attrs['data-content-index'] = String(fragment.contentIndex);
       text.attrs['data-offset'] = String(fragment.offset);
       return text;

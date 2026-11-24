@@ -27,7 +27,7 @@
  */
 export const PACKAGE_NAME = '@uw/render-dom';
 
-export * from './font-stack.ts';
+export { defaultFontFamily } from './font-stack.ts';
 export * from './image.ts';
 export * from './paint.ts';
 export * from './tree.ts';
