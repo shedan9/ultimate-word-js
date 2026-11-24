@@ -38,3 +38,18 @@ jobs:
       # typecheck 与 test 走 turbo，与本地 `pnpm turbo run typecheck test` 完全同一条命令
       - name: Typecheck + Test
         run: pnpm turbo run typecheck test
+
+      - name: 验证独立安装包
+        run: |
+          pnpm pack:lib
+          consumer=$(mktemp -d)
+          cp dist/ultimate-word-*.tgz packages/ultimate-word/tests/installed.mts "$consumer/"
+          cd "$consumer"
+          npm init -y >/dev/null
+          npm install --ignore-scripts --no-audit --no-fund ./ultimate-word-*.tgz
+          "$GITHUB_WORKSPACE/node_modules/.bin/tsc" --noEmit --strict --module nodenext --target es2023 --lib es2023,dom,dom.iterable installed.mts
+          node --input-type=module -e "
+            import { readFile } from 'node:fs/promises';
+            import { verifyInstalled } from './installed.mts';
+            await verifyInstalled(await readFile(process.env.GITHUB_WORKSPACE + '/apps/fidelity/fixtures/gongwen-01.docx'));
+          "

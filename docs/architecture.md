@@ -215,6 +215,8 @@ flowchart BT
 
 ### 3.2 现状
 
+工作区包通过 TypeScript 源码互相引用。分发时，门面库将内部实现与公开类型合并，保留 XML、ZIP 与字体解码的第三方依赖。
+
 | 包 | 状态 |
 |---|---|
 | `@uw/core` | 🟢 `units.ts` · `errors.ts`（`UwError`）· `diagnostics.ts`（`Diagnostic` / `DiagnosticSink`） |

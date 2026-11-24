@@ -12,7 +12,15 @@
 
 ## 当前进度
 
-Phase 0（地基与验证性穿刺）—— **穿刺已通过**。
+`ultimate-word` 0.1.0 提供浏览器端 DOCX 分页预览、正文编辑、查找替换和 DOCX 导出。可以直接运行调试台，也可以把门面库安装到自己的前端项目。
+
+```sh
+pnpm install --frozen-lockfile
+pnpm --filter @uw/playground dev   # 打开终端显示的网址，选择一份 .docx
+pnpm pack:lib                      # 在仓库根目录生成 dist/ultimate-word-0.1.0.tgz
+```
+
+调试台可用仓库内的 `apps/fidelity/fixtures/gongwen-01.docx` 试用。勾选「编辑」后修改正文，点击「导出 docx」下载副本。集成方式见[安装包使用说明](./packages/ultimate-word/README.md)。
 
 ## 环境
 
@@ -33,13 +41,16 @@ pnpm --filter @uw/docs dev       # 文档站 + 在线预览（http://localhost:5
 
 ```
 packages/
-  core/          @uw/core        单位、几何、错误、事件、日志、类型     ← units.ts 已可用
-  ooxml/         @uw/ooxml       OPC(zip) + XML → 原始 OOXML 树         ← Phase 1
-  model/         @uw/model       文档模型 + 样式级联 + 编号 + 事务      ← Phase 1
-  fonts/         @uw/fonts       字体表解析、度量、替换表、缓存         ← 行高规则已可用
-  layout/        @uw/layout      布局引擎                               ← Phase 2
-  render-dom/    @uw/render-dom  绝对定位 DOM 渲染器                    ← Phase 2
-  view/          @uw/view        屏幕坐标、虚拟化、原生选区与缩放     ← Phase 6
+  ultimate-word/  对外的 ESM 门面与类型声明
+  react/          React 视图与 hooks
+  core/           单位、几何与诊断
+  ooxml/          OPC 与 XML 解析
+  model/          文档模型、样式级联与编辑事务
+  fonts/          字体度量与替换
+  layout/         断行、分页与表格布局
+  render-dom/     页面绘制
+  view/           视口、选区与输入
+  serialize/      DOCX 回写
 apps/
   playground/    调试台（Vite 8）
   docs/          文档站（VitePress）：docs/*.md + 在线预览 demo

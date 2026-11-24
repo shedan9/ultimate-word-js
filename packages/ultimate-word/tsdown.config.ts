@@ -3,8 +3,14 @@ import { defineConfig } from 'tsdown';
 export default defineConfig({
   entry: ['src/index.ts'],
   format: ['esm'],
+  tsconfig: '../tsconfig.dist.json',
   dts: true,
   clean: true,
-  // 内部包走各自的产物；fontkit 只在 `fonts.register()` 里动态 import，不进主 chunk
-  external: [/^@uw\//],
+  fixedExtension: true,
+  platform: 'browser',
+  // 分发包收进内部实现和公开签名，第三方运行时依赖交给宿主打包器解析。
+  deps: {
+    alwaysBundle: [/^@uw\//],
+    onlyBundle: [],
+  },
 });

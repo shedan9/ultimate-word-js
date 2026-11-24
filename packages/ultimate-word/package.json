@@ -1,18 +1,24 @@
 {
   "name": "ultimate-word",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "门面包：load / mount / find / query / 字体注册表，把 @uw/* 收成 api.md 的形状",
+  "description": "面向中文公文与报告的 DOCX 预览、编辑与导出引擎",
   "exports": {
     ".": "./src/index.ts"
   },
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepack": "tsdown"
   },
   "dependencies": {
+    "fast-xml-parser": "^5.10.1",
+    "fflate": "^0.8.3",
+    "fontkit": "^2.0.4"
+  },
+  "devDependencies": {
     "@uw/core": "workspace:*",
     "@uw/fonts": "workspace:*",
     "@uw/layout": "workspace:*",
@@ -20,9 +26,19 @@
     "@uw/ooxml": "workspace:*",
     "@uw/render-dom": "workspace:*",
     "@uw/serialize": "workspace:*",
-    "@uw/view": "workspace:*"
-  },
-  "devDependencies": {
+    "@uw/view": "workspace:*",
     "tsdown": "^0.22.14"
+  },
+  "license": "MIT",
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.mts",
+        "import": "./dist/index.mjs"
+      }
+    }
   }
 }

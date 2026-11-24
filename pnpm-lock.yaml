@@ -251,6 +251,16 @@ importers:
 
   packages/ultimate-word:
     dependencies:
+      fast-xml-parser:
+        specifier: ^5.10.1
+        version: 5.10.1
+      fflate:
+        specifier: ^0.8.3
+        version: 0.8.3
+      fontkit:
+        specifier: ^2.0.4
+        version: 2.0.4
+    devDependencies:
       '@uw/core':
         specifier: workspace:*
         version: link:../core
@@ -275,7 +285,6 @@ importers:
       '@uw/view':
         specifier: workspace:*
         version: link:../view
-    devDependencies:
       tsdown:
         specifier: ^0.22.14
         version: 0.22.14(typescript@7.0.2)

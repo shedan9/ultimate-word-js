@@ -10,6 +10,7 @@
     "node": ">=24.12.0"
   },
   "scripts": {
+    "pack:lib": "pnpm --filter ultimate-word pack --pack-destination dist",
     "build": "turbo run build",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
