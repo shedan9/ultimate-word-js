@@ -16,7 +16,8 @@
 function cjkStack(names: string, substitutes: string, halfWidthAscii = false) {
   return {
     regular: `${names}, ${substitutes}`,
-    ascii: halfWidthAscii ? `${names}, 'Noto Sans Mono CJK SC', Osaka-Mono, monospace` : undefined,
+    // macOS 的 Osaka-Mono 在粗体或斜体下会匹配到比例字面，窄字母右侧因此出现空洞。
+    ascii: halfWidthAscii ? `${names}, Menlo, 'Noto Sans Mono CJK SC', monospace` : undefined,
   };
 }
 
@@ -68,9 +69,8 @@ function cjkFamily(family: string) {
 }
 
 /** 只替换半角 ASCII 片段的后备字体，中文和全角标点继续按各自字体栈绘制。 */
-export function halfWidthAsciiFamily(family: string, text: string): string | undefined {
-  const ascii = cjkFamily(family)?.ascii;
-  return ascii !== undefined && /^[ -~]+$/.test(text) ? ascii : undefined;
+export function halfWidthAsciiFamily(family: string): string | undefined {
+  return cjkFamily(family)?.ascii;
 }
 
 /**

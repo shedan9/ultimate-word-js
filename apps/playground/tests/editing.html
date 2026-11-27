@@ -752,6 +752,45 @@ try {
   }
   const lastPen = latinInk.getEndPositionOfChar(letters.length - 1).matrixTransform(latinInk.getScreenCTM());
   assert(Math.abs(lastPen.x - scriptView.caretRect(scriptView.selection.end).x) < 1, '英文末字的推进终点与输入光标一致');
+  // 封面标题的 21.5pt 粗体曾在 macOS 退到比例字面；同时覆盖斜体匹配和同一片段内的弯引号。
+  const headingText = 'juldladaldalkdald';
+  const mixedText = 'Wi’ll';
+  scriptDoc.tx((t) => {
+    const styleId = t.addStyle({ id: 'CoverTitle', name: '封面标题', paraProps: { justification: 'center' },
+      runProps: { fonts: { ascii: '宋体', hAnsi: '宋体', eastAsia: '宋体' }, size: 430, bold: true } });
+    t.setParagraphProps(scriptRange(), { styleId });
+    t.clearRunProps(scriptRange());
+  });
+  const titleEnd = scriptRange().end;
+  scriptView.select({ start: titleEnd, end: titleEnd });
+  scriptBefore('insertText', headingText);
+  for (const [bold, italic] of [[true, false], [false, true], [true, true]]) {
+    if (italic) scriptDoc.tx((t) => t.setRunProps(scriptRange(), { bold, italic }));
+    for (const selector of ['.uw-painting text', 'tspan.uw-frag']) {
+      const text = [...scriptHost.querySelectorAll(selector)].find(el => el.textContent === headingText);
+      assert(text && getComputedStyle(text).fontWeight === (bold ? '700' : '400')
+        && getComputedStyle(text).fontStyle === (italic ? 'italic' : 'normal'), '标题继承字号与字形样式');
+      assert([...headingText].every((_, i) => Math.abs(text.getEndPositionOfChar(i).x
+        - text.getStartPositionOfChar(i).x - 10.75) < 0.1), '标题绘制与选区的宽窄字母都占 10.75pt');
+    }
+  }
+  scriptView.select(scriptDoc.find(headingText)[0]);
+  scriptBefore('insertText', mixedText);
+  for (const selector of ['.uw-painting text', 'tspan.uw-frag']) {
+    const text = [...scriptHost.querySelectorAll(selector)].find(el => el.textContent === mixedText);
+    assert(text && [...mixedText].every((ch, i) => ch === '’' || Math.abs(text.getEndPositionOfChar(i).x
+      - text.getStartPositionOfChar(i).x - 10.75) < 0.1), '弯引号两侧的英文仍使用半角字形');
+  }
+  scriptDoc.tx((t) => t.setRunProps(scriptDoc.find(mixedText)[0], { scale: 80, spacing: 20 }));
+  const inkMixed = [...scriptHost.querySelectorAll('.uw-painting text')].find(el => el.textContent === mixedText);
+  const nativeMixed = [...scriptHost.querySelectorAll('tspan.uw-frag')].find(el => el.textContent === mixedText);
+  for (const [i, ch] of [...mixedText].entries()) {
+    if (ch === '’') continue;
+    for (const point of ['getStartPositionOfChar', 'getEndPositionOfChar']) {
+      const screenX = (el) => el[point](i).matrixTransform(el.getScreenCTM()).x;
+      assert(Math.abs(screenX(inkMixed) - screenX(nativeMixed)) < 0.1, '压缩混排英文的选区与实际字形重合');
+    }
+  }
   scriptView.dispose(); scriptHost.remove();
   result.textContent = `PASS ${passed} 项`;
 } catch (error) { result.textContent = `FAIL ${passed} 项后\n${error.stack ?? error}`; }

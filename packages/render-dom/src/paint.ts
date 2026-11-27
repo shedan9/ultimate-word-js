@@ -497,23 +497,17 @@ function paintFragment(frag: LineFragment, x0: Twips, baseline: Twips, ctx: Ctx)
   const style = frag.style;
   const scale = style.scale / 100;
   const xs = frag.glyphX.map((x) => pt(x0 + x) / (scale === 0 ? 1 : scale));
-  const ascii =
-    ctx.fontFamily === undefined && frag.script === 'latin'
-      ? halfWidthAsciiFamily(frag.font, frag.text)
-      : undefined;
   const attrs: Record<string, string> = {
     class: ctx.cls('frag'),
     'data-run': frag.runId,
     x: fmtList(xs),
     y: fmt(baselineOf(frag, baseline)),
-    'font-family': ascii ?? (ctx.fontFamily ?? defaultFontFamily)(frag.font),
+    'font-family': (ctx.fontFamily ?? defaultFontFamily)(frag.font),
     'font-size': fmt(pt(frag.fontSize)),
     fill: cssColor(style.color),
     // SVG 不折叠空白，但也不会自动保留 —— 不写这一条，行首行尾的空格会被吃掉
     'xml:space': 'preserve',
   };
-  // 通用等宽字体的字宽常为 0.6 em；按数字 0 的宽度校准字形，逐字 x 仍由 Word 度量决定。
-  if (ascii !== undefined) attrs.style = 'font-size-adjust:ch-width 0.5';
   if (style.bold) attrs['font-weight'] = 'bold';
   if (style.italic) attrs['font-style'] = 'italic';
   if (scale !== 1 && scale !== 0) attrs.transform = `scale(${fmt(scale)} 1)`;
@@ -522,6 +516,28 @@ function paintFragment(frag: LineFragment, x0: Twips, baseline: Twips, ctx: Ctx)
   // 域求值的结果：与编号相反，它**要**能被复制与 Ctrl+F 搜到，标出来是因为它不可编辑 ——
   // 文件里存的是上次算出来的旧值，这串字反查不到 DocPosition（见 CharItem.field）
   if (frag.field === true) attrs['data-field'] = '1';
+  const ascii =
+    ctx.fontFamily === undefined && frag.script === 'latin' ? halfWidthAsciiFamily(frag.font) : undefined;
+  if (ascii !== undefined) {
+    const halfWidth = (text: string): Record<string, string> => ({
+      'font-family': ascii,
+      style: 'font-size-adjust:ch-width 0.5',
+      // 选区用 textLength 表达横向缩放，字形宽里不能混入字距或两端对齐留出的空白。
+      ...(scale !== 0 && scale !== 1
+        ? { textLength: fmt(pt(frag.fontSize) * 0.5 * text.length), lengthAdjust: 'spacingAndGlyphs' }
+        : {}),
+    });
+    if (/^[ -~]+$/.test(frag.text)) Object.assign(attrs, halfWidth(frag.text));
+    else if (/[ -~]/.test(frag.text)) {
+      // 同一拉丁片段可以含弯引号等非 ASCII 字。只校准半角子串，整段仍共享布局的逐字 x。
+      const parts = frag.text.split(/([ -~]+)/).filter(Boolean);
+      return el(
+        'text',
+        attrs,
+        parts.map((part) => textEl('tspan', /^[ -~]/.test(part) ? halfWidth(part) : {}, part)),
+      );
+    }
+  }
   return textEl('text', attrs, frag.text);
 }
 

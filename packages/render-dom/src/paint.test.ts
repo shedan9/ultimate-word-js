@@ -218,7 +218,7 @@ describe('文字片段', () => {
     const latin = frag({ font: 'SimSun', script: 'latin', text: 'iW', glyphX: [0, 160], width: 320 });
     const p = paragraphPage(line({ fragments: [latin, frag(), { ...latin, font: 'Arial' }] }));
     const [ascii, chinese, proportional] = collect(buildPage(p), 'text');
-    expect(ascii?.attrs['font-family']).toMatch(/^SimSun, '宋体', .*monospace$/);
+    expect(ascii?.attrs['font-family']).toMatch(/^SimSun, '宋体', Menlo, .*monospace$/);
     expect(ascii?.attrs.style).toContain('font-size-adjust:ch-width 0.5');
     expect(ascii?.attrs.x).toBe('0 8');
     expect(chinese?.attrs['font-family']).toContain('Noto Serif CJK SC');
@@ -227,6 +227,27 @@ describe('文字片段', () => {
     const custom = collect(buildPage(p, { fontFamily: () => 'HostFont' }), 'text')[0];
     expect(custom?.attrs['font-family']).toBe('HostFont');
     expect(custom?.attrs.style).toBeUndefined();
+  });
+
+  it('同一片段内只有半角子串换字体，弯引号和重音字母沿用原栈', () => {
+    const mixed = frag({
+      font: 'SimHei',
+      script: 'latin',
+      text: '“Wi”café',
+      glyphX: [0, 320, 480, 640, 960, 1120, 1280, 1440],
+    });
+    const p = paragraphPage(line({ fragments: [mixed] }));
+    const [parent] = collect(buildPage(p), 'text');
+    expect(parent?.attrs.x).toBe('0 16 24 32 48 56 64 72');
+    expect(parent?.attrs['font-family']).toContain('Noto Sans CJK SC');
+    expect(parent?.children.map((part) => [part.text, part.attrs.style])).toEqual([
+      ['“', undefined],
+      ['Wi', 'font-size-adjust:ch-width 0.5'],
+      ['”', undefined],
+      ['caf', 'font-size-adjust:ch-width 0.5'],
+      ['é', undefined],
+    ]);
+    expect(collect(buildPage(p, { fontFamily: () => 'HostFont' }), 'tspan')).toEqual([]);
   });
 
   it('w:position 抬基线，上标再抬一次 —— 两者可叠加', () => {

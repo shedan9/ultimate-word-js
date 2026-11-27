@@ -36,8 +36,20 @@ function lineText(
       if (fragment.style.scale !== 100 && fragment.style.scale !== 0) {
         delete text.attrs.transform;
         text.attrs.x = fmtList(fragment.glyphX.map((x) => twipsToPt(originX + x)));
-        text.attrs.textLength = fmt(twipsToPt(fragment.width));
-        text.attrs.lengthAdjust = 'spacingAndGlyphs';
+        // 弯引号与半角英文可能共用片段。整段一起拉伸会把标点的宽度差摊到每个字母上。
+        let index = 0;
+        for (const span of text.children.length ? text.children : [text]) {
+          const start = fragment.glyphX[index] ?? fragment.x;
+          index += Array.from(span.text ?? '').length;
+          const end = fragment.glyphX[index] ?? fragment.x + fragment.width;
+          const naturalLength = span.attrs.textLength;
+          span.attrs.textLength = fmt(
+            naturalLength === undefined
+              ? twipsToPt(end - start)
+              : (Number(naturalLength) * fragment.style.scale) / 100,
+          );
+          span.attrs.lengthAdjust = 'spacingAndGlyphs';
+        }
       }
       text.attrs.fill = 'transparent';
       const selectionStyle = 'user-select:text;-webkit-user-select:text;pointer-events:all;cursor:text';
