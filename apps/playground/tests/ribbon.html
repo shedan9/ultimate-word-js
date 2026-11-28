@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>编辑功能区回归</title>
+<pre id="result">正在验证…</pre>
+<iframe src="/" title="调试台" style="width:100%;height:700px;border:0"></iframe>
+<script type="module">
+import { UltimateWord } from 'ultimate-word';
+import fixture from '../../fidelity/fixtures/gongwen-01.docx?url';
+
+const result = document.querySelector('#result');
+const iframe = document.querySelector('iframe');
+let passed = 0;
+function assert(value, label) {
+  if (!value) throw new Error(label);
+  passed++;
+}
+async function until(test) {
+  const start = performance.now();
+  while (!test()) {
+    if (performance.now() - start > 10000) throw new Error('等待调试台更新超时');
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+try {
+  await until(() => iframe.contentDocument?.querySelector('#edit-ribbon'));
+  const page = iframe.contentDocument;
+  const win = iframe.contentWindow;
+  const $ = (selector) => page.querySelector(selector);
+  const ribbon = $('#edit-ribbon');
+  const control = (name) => ribbon.querySelector(`button[aria-label="${name}"], select[aria-label="${name}"], input[aria-label="${name}"]`);
+  const press = async (name) => { control(name).click(); await Promise.resolve(); };
+  const on = (name) => control(name).getAttribute('aria-pressed');
+  const change = async (name, value) => {
+    const el = control(name);
+    el.focus();
+    el.value = value;
+    el.dispatchEvent(new win.Event('change', { bubbles: true }));
+    await Promise.resolve();
+  };
+  const transfer = new win.DataTransfer();
+  transfer.items.add(new win.File([await (await fetch(fixture)).blob()], '回归.docx'));
+  $('input[type=file]').files = transfer.files;
+  $('input[type=file]').dispatchEvent(new win.Event('change'));
+  await until(() => $('.uw-doc'));
+  assert(ribbon.hidden, '预览态收起功能区');
+  $('.edit-mode').click();
+  assert(!ribbon.hidden && control('字号').value === '22', '进入编辑态显示首段字号');
+  const editor = $('.stage textarea');
+  const key = async (key, options) => {
+    editor.dispatchEvent(new win.KeyboardEvent('keydown', { key, ...options, cancelable: true, bubbles: true }));
+    await Promise.resolve();
+  };
+  await press('加粗');
+  assert(on('加粗') === 'true' && control('撤销').disabled, '折叠光标切换格式只暂存');
+  await change('字体', '楷体');
+  await change('字号', '14');
+  await change('字体颜色', '#226688');
+  assert(page.activeElement === editor, '使用下拉框和选色后可继续在原处输入');
+  editor.dispatchEvent(new win.CompositionEvent('compositionstart', { bubbles: true }));
+  await Promise.resolve();
+  assert(control('加粗').disabled, '中文组合期间禁用格式');
+  editor.dispatchEvent(new win.CompositionEvent('compositionend', { data: '验证', bubbles: true }));
+  await Promise.resolve();
+  assert(!control('撤销').disabled && on('加粗') === 'true', '组合提交后同步历史与字形状态');
+  let exported;
+  const originalUrl = win.URL.createObjectURL.bind(win.URL);
+  win.URL.createObjectURL = (blob) => { exported = blob; return originalUrl(blob); };
+  win.HTMLAnchorElement.prototype.click = () => {};
+  $('.export').click();
+  await until(() => exported);
+  const saved = await UltimateWord.load(new Uint8Array(await exported.arrayBuffer()));
+  const range = saved.find('验证')[0];
+  const props = saved.query('run').find((r) => r.id === range?.start.nodeId)?.props;
+  assert(props?.bold && props.size === 280 && props.fonts.eastAsia === '楷体' && props.color === '226688', '字符格式随新文字导出回读');
+  await key('ArrowLeft', { shiftKey: true });
+  await press('倾斜');
+  assert(on('倾斜') === 'true', '工具栏格式作用于反向选区');
+  await key('ArrowLeft', { shiftKey: true });
+  assert(on('倾斜') === 'mixed', '跨格式选区报告混合状态');
+  await key('i', { ctrlKey: true });
+  assert(on('倾斜') === 'true', '快捷键与功能区同步');
+  await press('标题 1');
+  assert(on('标题 1') === 'true', '套用标题样式');
+  await press('编号');
+  assert(on('编号') === 'true', '创建编号列表');
+  await press('撤销');
+  assert(on('编号') === 'false' && !control('重做').disabled, '撤销刷新列表和历史状态');
+  await press('重做');
+  assert(on('编号') === 'true', '重做恢复列表');
+  await press('右对齐');
+  assert(on('右对齐') === 'true', '更新段落对齐');
+  $('.edit-mode').click();
+  assert(ribbon.hidden && !$('.stage textarea'), '退出编辑态收起功能区');
+  $('.edit-mode').click();
+  assert(!ribbon.hidden && !control('撤销').disabled, '重新进入编辑模式沿用文档历史');
+  result.textContent = `PASS ${passed} 项断言`;
+} catch (error) {
+  result.textContent = `FAIL 第 ${passed + 1} 项\n${error.stack ?? error}`;
+}
+</script>
+</html>

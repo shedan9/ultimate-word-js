@@ -36,12 +36,15 @@ export type { ClientPoint, ClientRect } from '@uw/view';
 export type {
   DecorationHandle,
   DecorationOptions,
+  FormattingCommand,
+  FormattingState,
   OverlayHandle,
   OverlayOptions,
   OverlayPlacement,
   PngOptions,
   ScrollOptions,
   ScrollTarget,
+  ViewFormatting,
 } from '@uw/view/dom';
 export type { BindingInfo, Bindings, BindingValue, DateBindingValue } from './bindings.ts';
 export type {

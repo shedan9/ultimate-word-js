@@ -12,6 +12,8 @@ import { fragmentToHtml, htmlToParagraphs } from './clipboard.ts';
 import type { DomView } from './dom.ts';
 import type { FormatQuery, ParagraphQuery, ParagraphStyleInfo, ToggleFormat } from './editing.ts';
 import { createEditingController } from './editing.ts';
+import type { ViewFormatting } from './formatting.ts';
+import { applyFormatting, selectionFormatting } from './formatting.ts';
 import { moveVertically } from './vertical-navigation.ts';
 
 export interface EditingBinding {
@@ -30,6 +32,7 @@ export interface EditingBinding {
   subscribe(listener: (change: TextChangeSet) => void): () => void;
 }
 export interface DomEditing {
+  readonly formatting: ViewFormatting;
   readonly selection: DocRange | undefined;
   select(range: DocRange): void;
   focus(): void;
@@ -73,6 +76,7 @@ export function mountEditing(
   view: DomView,
   binding: EditingBinding,
   fontFamily = defaultFontFamily,
+  formatChanged?: () => void,
 ): DomEditing {
   const doc = container.ownerDocument;
   const win = doc.defaultView;
@@ -164,6 +168,7 @@ export function mountEditing(
     }
     if (!state.composing) input.value = '';
     refresh();
+    formatChanged?.();
   }
   function focus(): void {
     input.style.visibility = 'visible';
@@ -507,6 +512,21 @@ export function mountEditing(
   win?.addEventListener('resize', refresh);
   refresh();
   return {
+    formatting: {
+      read() {
+        if (dead) return undefined;
+        try {
+          return selectionFormatting(state, binding);
+        } catch (error) {
+          // 修订视图可以隐藏整行。模型选区仍在，当前显示树却没有可查询的端点。
+          if (error instanceof RangeError) return undefined;
+          throw error;
+        }
+      },
+      execute(command) {
+        if (!dead && !state.composing) run(() => applyFormatting(state, command));
+      },
+    },
     get selection() {
       return state.selection;
     },
@@ -514,6 +534,7 @@ export function mountEditing(
       preferredX = undefined;
       state.select(range);
       refresh();
+      formatChanged?.();
     },
     focus,
     refresh,

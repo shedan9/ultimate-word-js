@@ -27,6 +27,7 @@ const ALL = [
   'clipboard-indent',
   'template',
   'search',
+  'ribbon',
 ];
 const pages = process.argv.length > 2 ? process.argv.slice(2) : ALL;
 const port = 9333;

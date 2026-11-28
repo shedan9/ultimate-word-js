@@ -28,6 +28,7 @@ import type {
   PngOptions,
   ScrollOptions,
   ScrollTarget,
+  ViewFormatting,
 } from '@uw/view/dom';
 import { mountEditing, mountView } from '@uw/view/dom';
 import { Emitter } from './events.ts';
@@ -94,6 +95,8 @@ export interface ContentControlHit {
 }
 
 export interface ViewEvents {
+  /** 选区、暂存格式或重排改变后重新读取 formatting；同一轮编辑合并通知。 */
+  'format:change': undefined;
   /**
    * 编辑态的选区（含折叠的光标）按值变了：点击、拖选、方向键、输入、撤销后的映射都算，
    * 滚动与缩放不算。预览态没有模型选区（原生文字层的划词不对应 `DocRange`），不触发
@@ -116,6 +119,7 @@ export interface UwView extends Disposable {
   readonly root: HTMLElement;
   /** 当前生效的倍率。fit 模式下是算出来的那个数 */
   readonly zoom: number;
+  readonly formatting?: ViewFormatting | undefined;
   readonly selection?: DocRange | undefined;
   select?(range: DocRange): void;
   focus?(): void;
@@ -233,8 +237,17 @@ export function createView(
   }
   observe();
   let input: DomEditing | undefined;
+  let formatQueued = false;
+  function formatChanged(): void {
+    if (formatQueued || !events.has('format:change')) return;
+    formatQueued = true;
+    queueMicrotask(() => {
+      formatQueued = false;
+      if (!disposed) events.emit('format:change', undefined);
+    });
+  }
   if (options.mode === 'edit' && editing !== undefined)
-    input = mountEditing(container, inner, editing, options.fontFamily);
+    input = mountEditing(container, inner, editing, options.fontFamily, formatChanged);
   const stopSelection = input?.onSelectionChange((range) => events.emit('selection:change', range ?? null));
   const unsubscribe = updates?.subscribe((next) => {
     layout = next;
@@ -242,6 +255,7 @@ export function createView(
     zoom = resolveZoom(spec, container, layout, gap);
     inner.update(layout, { zoom });
     input?.refresh();
+    if (input) formatChanged();
     // 重排可能改了最宽的那一页，fit 模式的倍率跟着变
     if (Math.abs(zoom - before) > 1e-6) viewportChanged();
   });
@@ -269,6 +283,9 @@ export function createView(
     },
     get zoom() {
       return zoom;
+    },
+    get formatting() {
+      return input?.formatting;
     },
     get selection() {
       return input?.selection;

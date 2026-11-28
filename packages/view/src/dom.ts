@@ -469,3 +469,4 @@ export function mountView(container: Element, layout: DocumentLayout, options: V
 
 export type { DomEditing, EditingBinding } from './editing-dom.ts';
 export { mountEditing } from './editing-dom.ts';
+export type { FormattingCommand, FormattingState, ViewFormatting } from './formatting.ts';

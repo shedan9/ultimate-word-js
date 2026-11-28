@@ -768,6 +768,16 @@ editor.breakHistory(); // 光标移动、焦点切换等输入边界中断合并
 
 ### 10.2 门面编辑态与 IME 🟢
 
+编辑态的 `view.formatting` 供宿主实现工具栏。调用 `read()` 可取得当前选区的级联格式（字号单位为 twips），折叠光标包括待输入格式，混合字段为 `undefined`。无选区或正在组合输入时，整个结果为 `undefined`。预览视图没有 `formatting`。
+
+```ts
+view.formatting?.execute({ type: 'toggle', value: 'bold' });
+view.formatting?.execute({ type: 'style', value: 'heading 1' });
+view.focus?.();
+```
+
+`FormattingCommand` 支持字符补丁、字符格式切换与清除、对齐、列表、缩进和内建段落样式。`view.on('format:change', refresh)` 在微任务中通知宿主重读格式，同一轮命令合并通知。撤销和重做沿用文档的历史栈。
+
 ```ts
 const doc = await UltimateWord.load(bytes);
 const view = doc.mount('#container', { mode: 'edit' });

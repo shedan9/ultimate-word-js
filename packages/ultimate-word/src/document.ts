@@ -549,7 +549,11 @@ export class UwDocument {
             ? runPropsAtInsertion(this.#loaded.cascade, this.#editor.body, range.start, pending)
             : runPropsOfRange(this.#loaded.resolved, range),
         paragraphFormat: (range) =>
-          paragraphsOfRange(this.#loaded.resolved, range).map((p) => ({ ...p, charUnit: indentCharUnit(p) })),
+          paragraphsOfRange(this.#loaded.resolved, range).map((p) => ({
+            ...p,
+            styleId: p.props.styleId,
+            charUnit: indentCharUnit(p),
+          })),
         tabStop: this.#loaded.cascade.settings.defaultTabStop,
         styles: this.#loaded.cascade.styles
           .all()

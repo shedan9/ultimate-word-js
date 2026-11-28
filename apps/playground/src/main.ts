@@ -15,6 +15,7 @@
 import { twipsToPt } from '@uw/core';
 import type { CommentSpan, DecorationHandle, OverlayHandle, UwDocument, UwView } from 'ultimate-word';
 import { UltimateWord } from 'ultimate-word';
+import { createEditRibbon } from './edit-ribbon.ts';
 import { createSearchPanel } from './search-panel.ts';
 import { createTemplatePanel } from './template-panel.ts';
 
@@ -60,10 +61,10 @@ const revisionSelect = app.querySelector<HTMLSelectElement>('.revisions') as HTM
 const commentsInput = app.querySelector<HTMLInputElement>('.show-comments') as HTMLInputElement;
 const commentCount = app.querySelector<HTMLElement>('.comment-count') as HTMLElement;
 const templatePanel = createTemplatePanel(app.querySelector('.fill-template') as HTMLButtonElement, app);
-const search = createSearchPanel(
-  app.querySelector('.find-replace') as HTMLButtonElement,
-  app.querySelector('header') as HTMLElement,
-);
+const header = app.querySelector('header') as HTMLElement;
+const ribbon = createEditRibbon(header);
+editInput.setAttribute('aria-controls', 'edit-ribbon');
+const search = createSearchPanel(app.querySelector('.find-replace') as HTMLButtonElement, header);
 
 let doc: UwDocument | undefined;
 let view: UwView | undefined;
@@ -87,6 +88,7 @@ function remount(): void {
   // 外部链接照浏览器习惯开新标签页。编辑态点链接是放光标，不跳
   const current = view;
   const opened = doc;
+  ribbon.attach(opened, current);
   templatePanel.attach(opened, current);
   current.on('click:element', (hit) => {
     if (hit.kind === 'contentControl') {

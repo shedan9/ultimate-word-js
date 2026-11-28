@@ -49,6 +49,7 @@ export type FormatQuery = (
 export type ParagraphQuery = (range: DocRange) => readonly {
   id: NodeId;
   props: Pick<ResolvedParaProps, 'justification' | 'numbering' | 'indent' | 'spacing'>;
+  styleId?: string;
   charUnit?: number;
 }[];
 
@@ -98,6 +99,7 @@ export interface EditingController {
   readonly pendingFormat: RunPropsPatch | undefined;
   select(range: DocRange): void;
   toggleFormat(format: ToggleFormat): void;
+  setRunFormat(patch: RunPropsPatch): void;
   /** 选区清字符格式；非空段落的折叠光标只暂存到下一次输入，组合期不接管。 */
   clearRunFormat(): void;
   /** 选区触及的段落恢复样式格式，保留段落样式与字符格式。 */
@@ -527,6 +529,12 @@ export function createEditingController(
         : format === 'underline'
           ? { underline: active ? 'none' : 'single' }
           : { [format]: !active };
+      controller.setRunFormat(patch);
+    },
+    setRunFormat(patch) {
+      if (!selection || composing) return;
+      const range = selection;
+      const collapsed = equal(range.start, range.end);
       const backward = focus !== undefined && !collapsed && equal(focus, range.start);
       let next = range;
       editor.breakHistory();
