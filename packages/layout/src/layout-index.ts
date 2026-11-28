@@ -77,6 +77,8 @@ export interface IndexedLine {
   frame?: FrameKind;
 }
 
+export type EditingStory = 'body' | 'header' | 'footer';
+
 export interface LayoutIndex {
   /** 摊平后的全部行，**文档序**。可选文本层直接顺着它走（记得跳过 `repeated`） */
   readonly lines: readonly IndexedLine[];
@@ -88,11 +90,11 @@ export interface LayoutIndex {
    * 编号与域结果**不可定位** —— 编号不在 document.xml 里、域结果不是文件里那串字符，
    * 拿它们的位置去反查只会指到别处（见 `CharItem.numbering` / `CharItem.field`）。
    */
-  positionAt(point: LayoutPoint): DocPosition | undefined;
+  positionAt(point: LayoutPoint, story?: EditingStory): DocPosition | undefined;
   /** 一个 range 覆盖的矩形，一行一个（一行内的相邻片段已经并成一段） */
-  rectsOf(range: DocRange): LayoutRect[];
+  rectsOf(range: DocRange, page?: number, story?: EditingStory): LayoutRect[];
   /** 光标矩形：宽 0、高一行。`scrollTo` 与 overlay 锚定用它 */
-  caretRect(pos: DocPosition): LayoutRect | undefined;
+  caretRect(pos: DocPosition, page?: number): LayoutRect | undefined;
   /**
    * 文档序比较。任一端的 run 没排出来时返回 `undefined` ——
    * 空 run、`vMerge="continue"` 的格子、域的指令 run 都排不出任何一个字形，
@@ -173,7 +175,7 @@ export function buildLayoutIndex(doc: DocumentLayout): LayoutIndex {
   return {
     lines,
 
-    positionAt(point: LayoutPoint): DocPosition | undefined {
+    positionAt(point: LayoutPoint, story?: EditingStory): DocPosition | undefined {
       const bucket = byPage.get(point.page);
       if (bucket === undefined) return undefined;
       let best: IndexedLine | undefined;
@@ -181,6 +183,8 @@ export function buildLayoutIndex(doc: DocumentLayout): LayoutIndex {
       let bestDx = Number.POSITIVE_INFINITY;
       for (const li of bucket) {
         const l = lines[li] as IndexedLine;
+        if (story === 'body' ? l.frame === 'header' || l.frame === 'footer' : story && l.frame !== story)
+          continue;
         const dy = gap(point.y, l.top, l.top + l.line.height);
         const x0 = l.originX + l.line.x;
         const dx = gap(point.x, x0, x0 + l.line.width);
@@ -192,11 +196,11 @@ export function buildLayoutIndex(doc: DocumentLayout): LayoutIndex {
           bestDx = dx;
         }
       }
-      if (best === undefined) return undefined;
+      if (best === undefined || (story === 'body' && best.frame)) return undefined;
       return caretIn(best, point.x - best.originX);
     },
 
-    rectsOf(range: DocRange): LayoutRect[] {
+    rectsOf(range: DocRange, page?: number, story?: EditingStory): LayoutRect[] {
       const rel = compare(range.start, range.end);
       if (rel === undefined) return [];
       const [s, e] = rel === 1 ? [range.end, range.start] : [range.start, range.end];
@@ -208,6 +212,8 @@ export function buildLayoutIndex(doc: DocumentLayout): LayoutIndex {
       let curLine = -1;
       for (let li = 0; li < lines.length; li++) {
         const l = lines[li] as IndexedLine;
+        if (page !== undefined && page !== l.page) continue;
+        if (story && story !== (l.frame ?? 'body')) continue;
         for (const frag of l.line.fragments) {
           const span = coveredSpan(frag, order, so, s, eo, e);
           if (span === undefined) continue;
@@ -227,8 +233,21 @@ export function buildLayoutIndex(doc: DocumentLayout): LayoutIndex {
       return out;
     },
 
-    caretRect(pos: DocPosition): LayoutRect | undefined {
-      const point = anchors.get(anchorKey(pos));
+    caretRect(pos: DocPosition, page?: number): LayoutRect | undefined {
+      // 重复的页眉页脚在模型中共用位置，反查光标时以正在编辑的物理页为准。
+      let point = anchors.get(anchorKey(pos));
+      let anchor = empty.get(pos.nodeId);
+      if (page !== undefined && ((point && point.line.page !== page) || (anchor && anchor.page !== page))) {
+        point = undefined;
+        anchor = undefined;
+        for (const li of byPage.get(page) ?? []) {
+          const line = lines[li] as IndexedLine;
+          if (line.line.emptyPosition?.nodeId === pos.nodeId) anchor = line;
+          for (const item of line.line.caretAnchors ?? []) {
+            if (anchorKey(item.position) === anchorKey(pos)) point = { line, x: item.x };
+          }
+        }
+      }
       if (point)
         return {
           page: point.line.page,
@@ -237,7 +256,6 @@ export function buildLayoutIndex(doc: DocumentLayout): LayoutIndex {
           width: 0,
           height: point.line.line.height,
         };
-      const anchor = empty.get(pos.nodeId);
       if (anchor !== undefined && pos.contentIndex === 0 && pos.offset === 0)
         return {
           page: anchor.page,
@@ -251,6 +269,7 @@ export function buildLayoutIndex(doc: DocumentLayout): LayoutIndex {
       let tail: LayoutRect | undefined;
       for (const ref of refs) {
         const { line, frag } = fragAt(ref);
+        if (page !== undefined && page !== line.page) continue;
         if (frag.offset < 0 || frag.contentIndex !== pos.contentIndex) continue;
         const end = frag.offset + frag.text.length;
         if (pos.offset < frag.offset || pos.offset > end) continue;

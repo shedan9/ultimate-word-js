@@ -15,15 +15,17 @@ export function moveVertically(
   from: DocPosition,
   direction: 'up' | 'down',
   preferredX?: number,
+  frame?: { kind: 'header' | 'footer'; page: number },
 ): VerticalMove | undefined {
-  const caret = index.caretRect(from);
+  const caret = index.caretRect(from, frame?.page);
   if (!caret) return undefined;
   const x = preferredX ?? caret.x;
   const sign = direction === 'down' ? 1 : -1;
   const candidates = index.lines
     .filter(
       (line) =>
-        !line.frame &&
+        line.frame === frame?.kind &&
+        (frame === undefined || line.page === frame.page) &&
         !line.repeated &&
         (line.page === caret.page ? sign * (line.top - caret.y) > 0 : sign * (line.page - caret.page) > 0),
     )
@@ -32,7 +34,7 @@ export function moveVertically(
   for (const line of candidates) {
     if (best && (line.page !== best.page || line.top !== best.top)) break;
     for (const position of positionsIn(line)) {
-      const rect = index.caretRect(position);
+      const rect = index.caretRect(position, frame?.page);
       // 软换行的共享字缝归下一行；不能选一个反查后仍在原行的位置，否则向上键会卡住。
       if (!rect || rect.page !== line.page || rect.y !== line.top) continue;
       const distance = Math.abs(rect.x - x);

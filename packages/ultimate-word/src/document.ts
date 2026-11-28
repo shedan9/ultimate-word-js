@@ -27,6 +27,7 @@ import type {
   LoadedDocument,
   NodeId,
   QueryNode,
+  ResolvedBody,
   ResolvedRun,
   RevisionSpan,
   RevisionView,
@@ -44,6 +45,7 @@ import {
   compareDocPositions,
   contentControlSpans,
   createTextEditor,
+  editingBody,
   expandReplacement,
   findMatches,
   findText,
@@ -68,6 +70,7 @@ import {
 import type { OpcPackage } from '@uw/ooxml';
 import { imageHrefResolver } from '@uw/render-dom';
 import { serializeDocx } from '@uw/serialize';
+import type { EditingBinding } from '@uw/view/dom';
 import { Bindings } from './bindings.ts';
 import { Emitter } from './events.ts';
 import type { Disposable, ElementHit, UwView, ViewOptions } from './view.ts';
@@ -369,7 +372,7 @@ export class UwDocument {
 
   /**
    * 导出 docx（api.md §13）。**round-trip 安全**：没编辑过的文档每个部件与原文件逐字节相同；
-   * 编辑过的只重写正文（与新建列表时的编号定义），模型不认识的 XML（书签、修订、边框…）原样留着。
+   * 编辑正文、页眉或页脚时只补丁回写改过的部件，模型不认识的 XML（书签、修订、边框…）原样留着。
    *
    * 返回 Promise 是 api.md 定的形状 —— 现在的实现是同步的（几 MB 的 zip 压缩是毫秒级），
    * 留着异步是为了将来挪进 Worker 不改签名。
@@ -520,52 +523,65 @@ export class UwDocument {
     this.#imageHref ??= imageHrefResolver(this.#loaded.images);
     if (options.mode === 'edit' && !this.#reflow) throw new Error('文档未配置编辑重排');
     const owner = this;
-    const editor: TextEditor = {
-      get body() {
-        return owner.#editor.body;
-      },
-      get canUndo() {
-        return owner.canUndo;
-      },
-      get canRedo() {
-        return owner.canRedo;
-      },
-      tx: (callback, opts) => this.tx(callback, opts),
-      undo: () => this.undo(),
-      redo: () => this.redo(),
-      breakHistory: () => this.#editor.breakHistory(),
-    };
+    function bindingFor(relId?: string): EditingBinding {
+      const resolved = (): ResolvedBody => {
+        if (relId === undefined) return owner.#loaded.resolved;
+        const section = editor.body.sections[0];
+        const part = owner.#loaded.headerFooters[relId];
+        if (!section || !part) throw new Error(`缺少页眉页脚部件：${relId}`);
+        return { sections: [{ ...section, blocks: part.resolved }] };
+      };
+      const editor: TextEditor = {
+        get body() {
+          return editingBody(owner.#editor.body, relId);
+        },
+        get canUndo() {
+          return owner.canUndo;
+        },
+        get canRedo() {
+          return owner.canRedo;
+        },
+        tx: (callback, opts) =>
+          owner.tx(callback, relId === undefined ? opts : { ...opts, headerFooter: relId }),
+        undo: () => owner.undo(),
+        redo: () => owner.redo(),
+        breakHistory: () => owner.#editor.breakHistory(),
+      };
+      return {
+        editor,
+        text: (range) => textOfRange(resolved(), range, owner.#fieldValues),
+        fragment: (range) => fragmentOfRange(resolved(), range, owner.#fieldValues),
+        format: (range, pending) =>
+          pending
+            ? runPropsAtInsertion(owner.#loaded.cascade, editor.body, range.start, pending)
+            : runPropsOfRange(resolved(), range),
+        paragraphFormat: (range) =>
+          paragraphsOfRange(resolved(), range).map((p) => ({
+            ...p,
+            styleId: p.props.styleId,
+            charUnit: indentCharUnit(p),
+          })),
+        tabStop: owner.#loaded.cascade.settings.defaultTabStop,
+        styles: owner.#loaded.cascade.styles
+          .all()
+          .filter((s) => s.type === 'paragraph')
+          .map((s) => ({ id: s.id, name: s.name, next: s.next, isDefault: s.isDefault })),
+        subscribe: (listener) => {
+          owner.#listeners.add(listener);
+          return () => {
+            owner.#listeners.delete(listener);
+          };
+        },
+      };
+    }
+    const binding = bindingFor();
+    binding.headerFooter = bindingFor;
     return createView(
       container,
       this.layout,
       options,
       this.#imageHref,
-      {
-        editor,
-        text: (range) => textOfRange(this.#loaded.resolved, range, this.#fieldValues),
-        fragment: (range) => fragmentOfRange(this.#loaded.resolved, range, this.#fieldValues),
-        format: (range, pending) =>
-          pending
-            ? runPropsAtInsertion(this.#loaded.cascade, this.#editor.body, range.start, pending)
-            : runPropsOfRange(this.#loaded.resolved, range),
-        paragraphFormat: (range) =>
-          paragraphsOfRange(this.#loaded.resolved, range).map((p) => ({
-            ...p,
-            styleId: p.props.styleId,
-            charUnit: indentCharUnit(p),
-          })),
-        tabStop: this.#loaded.cascade.settings.defaultTabStop,
-        styles: this.#loaded.cascade.styles
-          .all()
-          .filter((s) => s.type === 'paragraph')
-          .map((s) => ({ id: s.id, name: s.name, next: s.next, isDefault: s.isDefault })),
-        subscribe: (listener) => {
-          this.#listeners.add(listener);
-          return () => {
-            this.#listeners.delete(listener);
-          };
-        },
-      },
+      binding,
       {
         subscribe: (update) => {
           this.#views.add(update);

@@ -6,6 +6,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { FALLBACK_METRICS, FontRegistry } from '@uw/fonts';
+import { buildLayoutIndex } from '@uw/layout';
 import type { DocRange } from '@uw/model';
 import { unzip, zip } from '@uw/ooxml';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
@@ -61,6 +62,45 @@ describe('UltimateWord.load', () => {
     expect(Array.isArray(doc.diagnostics)).toBe(true);
     for (const d of doc.diagnostics) expect(typeof d.code).toBe('string');
   });
+});
+
+it('编辑偶数页页脚只改共享部件，撤销还原原包，重做保留每页独立的页码域', async () => {
+  const bytes = readFileSync(
+    new URL('../../../apps/fidelity/fixtures/spike-header-03.docx', import.meta.url),
+  );
+  const original = unzip(bytes);
+  const doc = await UltimateWord.load(bytes);
+  const page = doc.layout.pages[1];
+  const footer = page?.footer;
+  if (!page || !footer) throw new Error('样本缺少偶数页页脚');
+  const at = buildLayoutIndex(doc.layout).positionAt({ page: 1, x: footer.x, y: footer.y }, 'footer');
+  if (!at) throw new Error('页脚无法定位');
+  doc.tx(
+    (tx) => {
+      tx.insertText(at, '修订');
+    },
+    { headerFooter: footer.relId },
+  );
+  const exported = async () => unzip(new Uint8Array(await (await doc.toDocx()).arrayBuffer()));
+  const changed: string[] = [];
+  for (const [path, bytes] of await exported()) {
+    if (!Buffer.from(bytes).equals(original.get(path) ?? new Uint8Array())) changed.push(path);
+  }
+  expect(changed).toEqual(['word/footer1.xml']);
+  doc.undo();
+  expect(await exported()).toEqual(original);
+  doc.redo();
+  const reopened = await UltimateWord.load(await doc.toDocx());
+  const lines = buildLayoutIndex(reopened.layout).lines.filter((line) => line.frame === 'footer');
+  const text = (page: number) =>
+    lines
+      .filter((l) => l.page === page)
+      .flatMap((l) => l.line.fragments.map((f) => f.text))
+      .join('');
+  expect(text(0)).not.toContain('修订');
+  expect(text(1)).toMatch(/修订偶数第\s*2/);
+  expect(text(2)).not.toContain('修订');
+  expect(text(3)).toMatch(/修订偶数第\s*4/);
 });
 
 describe('UwDocument 的查询', () => {

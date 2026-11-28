@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>页眉页脚编辑回归</title>
+<style>
+body { margin: 0; background: #59616c; font: 14px system-ui; }
+#result { margin: 0; padding: 8px; background: white; }
+#host { height: calc(100vh - 44px); overflow: auto; }
+</style>
+<pre id="result">正在验证…</pre><div id="host"></div>
+<script type="module">
+import { UltimateWord } from 'ultimate-word';
+import fixture from '../../fidelity/fixtures/spike-header-01.docx?url';
+
+const result = document.querySelector('#result');
+const host = document.querySelector('#host');
+const assert = (ok, label) => { if (!ok) throw new Error(label); };
+try {
+  const doc = await UltimateWord.load(fixture);
+  const view = doc.mount(host, { mode: 'edit', textLayer: true, virtualize: false });
+  const bodySelection = view.selection;
+  const input = host.querySelector('textarea');
+  const part = (kind, page = 1) => view.root.querySelector(`[data-page="${page}"] .uw-painting .uw-${kind}`);
+  function point(kind) {
+    const line = part(kind).querySelector('text');
+    line.scrollIntoView({block: 'center', behavior: 'instant'});
+    const rect = line.getBoundingClientRect();
+    return {clientX: rect.left + 1, clientY: rect.top + rect.height / 2, button: 0, bubbles: true, cancelable: true};
+  }
+  function click(at, twice = false) {
+    const target = document.elementFromPoint(at.clientX, at.clientY);
+    for (let n = 0; n < (twice ? 2 : 1); n++) {
+      target.dispatchEvent(new PointerEvent('pointerdown', at));
+      target.dispatchEvent(new PointerEvent('pointerup', at));
+      target.dispatchEvent(new MouseEvent('click', at));
+    }
+    if (twice) target.dispatchEvent(new MouseEvent('dblclick', at));
+  }
+  const insert = (text) => input.dispatchEvent(new InputEvent('beforeinput', {
+    inputType: 'insertText', data: text, bubbles: true, cancelable: true,
+  }));
+  const pressEscape = () => input.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
+  for (const kind of ['header', 'footer']) {
+    const name = kind === 'header' ? '页眉' : '页脚';
+    const at = point(kind);
+    click(at);
+    assert(JSON.stringify(view.selection) === JSON.stringify(bodySelection), '单击保留正文选区');
+    const action = host.querySelector('[data-uw-story]');
+    assert(action.textContent === `编辑${name}` && action === document.activeElement, '单击显示可用键盘操作的入口');
+    if (kind === 'header') click(at, true);
+    else action.click();
+    assert(input === document.activeElement && input.getAttribute('aria-label') === `${name}编辑输入`, '进入对应编辑区域');
+    const caretY = input.getBoundingClientRect().top;
+    assert(Math.abs(caretY - at.clientY) < 32, '共享部件光标留在所点的第二页');
+    assert(Math.abs(view.caretRect(view.selection.end).y - caretY) < 1, '宿主查询返回当前页光标');
+    insert('验');
+    assert(part(kind).textContent.includes('验') && part(kind, 0).textContent.includes('验'), '共享部件在各页同步更新');
+    assert(!part('content').textContent.includes('验'), '正文未被输入改动');
+    const after = view.selection;
+    click(point(kind), true);
+    assert(JSON.stringify(view.selection.start) !== JSON.stringify(view.selection.end), '激活区域内双击选词');
+    view.select(after);
+    doc.undo();
+    assert(!part(kind).textContent.includes('验'), '部件修改可撤销');
+    doc.redo();
+    assert(part(kind).textContent.includes('验'), '部件修改可重做');
+    if (kind === 'header') {
+      click(point('content'), true);
+      assert(input.getAttribute('aria-label') === '文档编辑输入', '双击正文返回');
+      view.select(bodySelection);
+    } else pressEscape();
+    assert(JSON.stringify(view.selection) === JSON.stringify(bodySelection), '恢复正文选区');
+    assert(!host.querySelector('[role=status]').textContent, '编辑过程中没有选区异常');
+  }
+  const again = await UltimateWord.load(await doc.toDocx());
+  view.dispose();
+  const reopened = again.mount(host, { virtualize: false });
+  for (const kind of ['header', 'footer'])
+    assert(reopened.root.querySelector(`.uw-painting .uw-${kind}`).textContent.includes('验'), '导出重开保留部件修改');
+  result.textContent = 'PASS 页眉页脚单击、双击、跨页共享、选词、历史、退出与回写';
+} catch (error) { result.textContent = `FAIL ${error.stack}`; }
+</script>
+</html>

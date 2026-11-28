@@ -241,6 +241,8 @@ export interface TextHistoryOptions {
 export interface TextTransactionOptions {
   /** 只有显式标为 input 的单次纯插入可合并；粘贴和程序命令默认独立撤销。 */
   origin?: 'input' | 'command';
+  /** 在已存在的页眉或页脚部件内执行，历史仍属于整份文档。 */
+  headerFooter?: string;
 }
 
 export interface TextEditor {
@@ -501,6 +503,29 @@ function changeSet(
   };
 }
 
+/** 同一份快照的部件视图保持身份稳定，编辑控制器用它当历史选区的键。 */
+const storyViews = new WeakMap<Body, Map<string, Body>>();
+export function editingBody(body: Body, relId?: string): Body {
+  if (relId === undefined) return body;
+  const part = body.headerFooters?.[relId];
+  if (!part) throw new RangeError(`没有页眉页脚部件：${relId}`);
+  let views = storyViews.get(body);
+  if (!views) {
+    views = new Map();
+    storyViews.set(body, views);
+  }
+  let view = views.get(relId);
+  if (!view) {
+    view = Object.freeze({
+      ...part,
+      ...(body.numbering && { numbering: body.numbering }),
+      ...(body.styles && { styles: body.styles }),
+    });
+    views.set(relId, view);
+  }
+  return view;
+}
+
 export function createTextEditor(source: Body, options: TextHistoryOptions = {}): TextEditor {
   const limit = options.historyLimit ?? 100;
   const delay = options.mergeDelay ?? 1000;
@@ -509,7 +534,9 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
   if (!Number.isFinite(delay) || delay < 0) throw new RangeError('mergeDelay 必须是非负有限数');
   let body = freeze(structuredClone(source));
   const ids = new Set<string>();
-  for (const section of body.sections) {
+  for (const section of [body, ...Object.values(body.headerFooters ?? {})].flatMap(
+    (story) => story.sections,
+  )) {
     ids.add(section.id);
     for (const b of walkBlocks(section.blocks)) {
       ids.add(b.id);
@@ -524,10 +551,10 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
   let serial = 0;
   /** 批注 id 只增不减（comment-edit.ts ①）：撤销回去再新建，也不会撞上撤销掉的那条 */
   let commentSerial = commentIdSeed(body);
-  function newId(): string {
+  function allocateId(prefix: string): string {
     let id: string;
     do {
-      id = `edit${serial++}`;
+      id = `${prefix}edit${serial++}`;
     } while (ids.has(id));
     ids.add(id);
     return id;
@@ -575,18 +602,21 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
     },
     tx(callback, txOptions = {}) {
       assertIdle();
+      const storyId = txOptions.headerFooter;
+      const sourceBody = editingBody(body, storyId);
       active = true;
+      const newId = () => allocateId(storyId === undefined ? '' : `${storyId}:`);
       let open = true;
       let failed = false;
-      let draft = body;
+      let draft = sourceBody;
       let entries = indexRuns(draft);
       const replacements = new Map<NodeId, Run>();
       const changes: TextChange[] = [];
       const filledControlText = new Map<NodeId, string>();
       // 仅填写内部的删写命令放行目标下拉框，不能把权限带到调用方后续命令。
       let fillingControl: NodeId | undefined;
-      const lockedShells = contentControlShells(body, true);
-      let shellsChecked = body;
+      const lockedShells = contentControlShells(sourceBody, true);
+      let shellsChecked = sourceBody;
 
       function flush(): void {
         draft = replaceRuns(draft, replacements);
@@ -2193,9 +2223,22 @@ export function createTextEditor(source: Body, options: TextHistoryOptions = {})
         }
         if (failed) throw new Error('事务包含失败命令，已全部回滚');
         if (changes.length === 0) return undefined;
-        const after = freeze(
-          reconcileContentControlText(body, replaceRuns(draft, replacements), filledControlText),
+        const edited = reconcileContentControlText(
+          sourceBody,
+          replaceRuns(draft, replacements),
+          filledControlText,
         );
+        let after = edited;
+        if (storyId !== undefined) {
+          const { numbering, styles, ...part } = edited;
+          after = {
+            ...body,
+            headerFooters: { ...body.headerFooters, [storyId]: part },
+            ...(numbering && { numbering }),
+            ...(styles && { styles }),
+          };
+        }
+        freeze(after);
         options.validate?.(after);
         const time = now();
         if (!Number.isFinite(time)) throw new RangeError('now 必须返回有限时间');

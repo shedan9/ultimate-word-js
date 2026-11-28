@@ -300,10 +300,13 @@ export function createView(
     },
     locate: (point) => inner.locate(point),
     rectsOf: (range) => inner.rectsOf(range),
-    caretRect: (position) => inner.caretRect(position),
+    caretRect: (position) => inner.caretRect(position, input?.pageFor(position)),
     decorate: (range, opts) => inner.decorate(range, opts),
     overlay: (position, element, opts) => inner.overlay(position, element, opts),
-    scrollTo: (target, opts) => inner.scrollTo(target, opts),
+    scrollTo(target, opts) {
+      const page = 'page' in target ? undefined : input?.pageFor('start' in target ? target.start : target);
+      return inner.scrollTo(target, page === undefined ? opts : { page, ...opts });
+    },
     print: () => inner.print(),
     toPNG: (page, opts) => {
       if (disposed) return Promise.reject(new Error('视图已销毁'));

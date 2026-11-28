@@ -1,9 +1,12 @@
-import type { LayoutIndex, PageLayout } from '@uw/layout';
+import type { EditingStory, LayoutIndex, PageLayout } from '@uw/layout';
 import type { DocPosition, DocRange } from '@uw/model';
 import type { OverlayPlacement } from './annotations.ts';
 import { anchorRect, pageRect, placeOverlay } from './annotations.ts';
 
 export interface DecorationOptions {
+  /** 只装饰指定物理页上的副本。 */
+  page?: number;
+  story?: EditingStory;
   className?: string;
   /** 纯视觉 CSS，例如 background / borderBottom；定位由视图管理。 */
   style?: Readonly<Record<string, string>>;
@@ -95,7 +98,7 @@ export function createAnnotations(context: () => Context, document: Document) {
     };
     const decorationJobs = [...decorations].map((item) => ({
       item,
-      rects: index.rectsOf(item.range).flatMap((rect) => {
+      rects: index.rectsOf(item.range, item.options.page, item.options.story).flatMap((rect) => {
         const at = local(rect);
         return at === undefined ? [] : [at];
       }),

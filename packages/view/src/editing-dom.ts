@@ -15,8 +15,10 @@ import { createEditingController } from './editing.ts';
 import type { ViewFormatting } from './formatting.ts';
 import { applyFormatting, selectionFormatting } from './formatting.ts';
 import { moveVertically } from './vertical-navigation.ts';
+import type { EditingHit } from './view.ts';
 
 export interface EditingBinding {
+  headerFooter?(relId: string): EditingBinding;
   editor: TextEditor;
   text(range: DocRange): string;
   /** 缺省时复制只写纯文本；给了就同时写一份 text/html（字体、字号、加粗…与对齐）。 */
@@ -34,6 +36,7 @@ export interface EditingBinding {
 export interface DomEditing {
   readonly formatting: ViewFormatting;
   readonly selection: DocRange | undefined;
+  pageFor(position: DocPosition): number | undefined;
   select(range: DocRange): void;
   focus(): void;
   refresh(): void;
@@ -74,16 +77,23 @@ const HEADING_CODES: Readonly<Record<string, BuiltinStyleName>> = {
 export function mountEditing(
   container: Element,
   view: DomView,
-  binding: EditingBinding,
+  bodyBinding: EditingBinding,
   fontFamily = defaultFontFamily,
   formatChanged?: () => void,
 ): DomEditing {
   const doc = container.ownerDocument;
   const win = doc.defaultView;
-  const state = createEditingController(binding.editor, binding.format, binding.paragraphFormat, {
-    ...(binding.tabStop === undefined ? {} : { tabStop: binding.tabStop }),
-    ...(binding.styles === undefined ? {} : { styles: binding.styles }),
-  });
+  const controllerFor = (binding: EditingBinding) =>
+    createEditingController(binding.editor, binding.format, binding.paragraphFormat, {
+      ...(binding.tabStop === undefined ? {} : { tabStop: binding.tabStop }),
+      ...(binding.styles === undefined ? {} : { styles: binding.styles }),
+    });
+  let binding = bodyBinding;
+  const bodyState = controllerFor(binding);
+  let state = bodyState;
+  type ActiveFrame = NonNullable<EditingHit['frame']> & { page: number };
+  let active: ActiveFrame | undefined;
+  let pendingHit: EditingHit | undefined;
   const input = doc.createElement('textarea');
   // 切回预览后，旧输入节点仍可能被宿主持有或收到迟到的组合 / 剪贴板事件；移除 DOM 不会移除监听者。
   const inputEvents = new (win?.AbortController ?? AbortController)();
@@ -113,7 +123,76 @@ export function mountEditing(
   const status = doc.createElement('span');
   status.setAttribute('role', 'status');
   status.style.cssText = 'position:fixed;bottom:8px;left:8px;background:Canvas;color:CanvasText;z-index:11';
+  const modeButton = doc.createElement('button');
+  modeButton.type = 'button';
+  const boundary = doc.createElement('div');
+  boundary.style.cssText =
+    'position:absolute;left:0;right:0;border-color:#708399;border-width:0;pointer-events:none;z-index:2;box-sizing:border-box';
+  boundary.append(modeButton);
+  modeButton.dataset.uwStory = '';
+  modeButton.style.cssText =
+    'position:absolute;left:4px;padding:3px 8px;font:12px/1.4 system-ui;pointer-events:auto;' +
+    'border:1px solid #8192ab;border-radius:4px;background:Canvas;color:CanvasText;cursor:pointer';
   container.append(input, status);
+  function showMode(): void {
+    const target = pendingHit?.frame ? { ...pendingHit.frame, page: pendingHit.page } : active;
+    const kind = target?.kind;
+    const edge = target && view.frameBoundary(target.page, target.kind);
+    if (!edge || edge.relId !== target?.relId) {
+      boundary.remove();
+    } else {
+      const header = kind === 'header';
+      boundary.style.top = header ? '0' : `${edge.percent}%`;
+      boundary.style.bottom = header ? `${100 - edge.percent}%` : '0';
+      boundary.style.borderTop = header ? '0' : '1px dashed #708399';
+      boundary.style.borderBottom = header ? '1px dashed #708399' : '0';
+      modeButton.style.top = header ? '4px' : 'auto';
+      modeButton.style.bottom = header ? 'auto' : '4px';
+      if (boundary.parentNode !== edge.shell) edge.shell.append(boundary);
+    }
+    const name = kind === 'header' ? '页眉' : '页脚';
+    modeButton.textContent = pendingHit
+      ? pendingHit.frame
+        ? `编辑${name}`
+        : '返回正文'
+      : `${name} · 返回正文`;
+    modeButton.title = pendingHit ? '双击文档区域或按此按钮切换' : '双击正文或按 Esc 返回';
+    input.setAttribute(
+      'aria-label',
+      active ? `${active.kind === 'header' ? '页眉' : '页脚'}编辑输入` : '文档编辑输入',
+    );
+  }
+  function setFrame(frame?: ActiveFrame): void {
+    pendingHit = undefined;
+    if (frame?.relId !== active?.relId) {
+      binding.editor.breakHistory();
+      binding = frame && bodyBinding.headerFooter ? bodyBinding.headerFooter(frame.relId) : bodyBinding;
+      state = binding === bodyBinding ? bodyState : controllerFor(binding);
+    }
+    active = frame;
+  }
+  function pageFor(position: DocPosition): number | undefined {
+    return active && position.nodeId.startsWith(`${active.relId}:`) ? active.page : undefined;
+  }
+  function activate(hit?: EditingHit): void {
+    setFrame(hit?.frame && { ...hit.frame, page: hit.page });
+    run(() => {
+      if (hit?.position) state.select({ start: hit.position, end: hit.position });
+    });
+    focus();
+    if (!hit && state.focus) view.scrollTo(state.focus, { align: 'nearest' });
+  }
+  modeButton.addEventListener('click', () => activate(pendingHit), inputEventOptions);
+  modeButton.addEventListener(
+    'keydown',
+    (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        activate();
+      }
+    },
+    inputEventOptions,
+  );
   let decoration: ReturnType<DomView['decorate']> | undefined;
   let dead = false;
   let drag = false;
@@ -125,6 +204,7 @@ export function mountEditing(
   let lastSelection: DocRange | undefined;
   function refresh(): void {
     if (dead) return;
+    showMode();
     const range = state.selection;
     // 所有改选区的路径最后都走到这里，在这一处比较就不必在每个命令后面各补一句通知
     if (!sameRange(range, lastSelection)) {
@@ -138,7 +218,7 @@ export function mountEditing(
       return;
     }
     const at = state.focus ?? range.end;
-    const rect = view.caretRect(at);
+    const rect = view.caretRect(at, active?.page);
     input.style.visibility = rect ? 'visible' : 'hidden';
     input.style.opacity = doc.activeElement === input ? '1' : '0';
     if (rect) {
@@ -147,7 +227,7 @@ export function mountEditing(
       input.style.height = `${rect.height}px`;
       input.style.lineHeight = input.style.height;
       if (state.composing && compositionSize) {
-        const line = view.index.caretRect(at);
+        const line = view.index.caretRect(at, active?.page);
         if (line?.height) input.style.fontSize = `${(compositionSize * rect.height) / line.height}px`;
       } else input.style.fontSize = `${Math.min(rect.height, 16)}px`;
       input.style.caretColor = state.composing ? 'currentColor' : 'black';
@@ -156,7 +236,11 @@ export function mountEditing(
       sizeInput();
     }
     if (doc.activeElement === input)
-      decoration = view.decorate(range, { style: { background: 'Highlight', opacity: '0.3' } });
+      decoration = view.decorate(range, {
+        story: active?.kind ?? 'body',
+        ...(active && { page: active.page }),
+        style: { background: 'Highlight', opacity: '0.3' },
+      });
   }
   function run(action: () => void, vertical = false): void {
     if (!vertical) preferredX = undefined;
@@ -181,12 +265,25 @@ export function mountEditing(
       state.composing ||
       win === null ||
       !(event.target instanceof win.Node) ||
+      boundary.contains(event.target) ||
       !view.root.contains(event.target)
     )
       return;
-    const at = view.locate(event);
-    if (!at) return;
+    const hit = view.editingHit(event);
+    if (!hit) return;
     event.preventDefault();
+    if (hit.frame?.relId !== active?.relId) {
+      drag = false;
+      if (hit.frame && !bodyBinding.headerFooter) return;
+      pendingHit = hit;
+      showMode();
+      modeButton.focus({ preventScroll: true });
+      return;
+    }
+    pendingHit = undefined;
+    if (active) active.page = hit.page;
+    const at = hit.position;
+    if (!at) return;
     const start = event.shiftKey ? (state.anchor ?? at) : at;
     run(() => state.select({ start, end: at }));
     drag = true;
@@ -195,7 +292,9 @@ export function mountEditing(
   }
   function pointerMove(event: PointerEvent): void {
     if (!drag) return;
-    const at = view.locate(event);
+    const hit = view.editingHit(event);
+    if (!hit || hit.frame?.relId !== active?.relId || (active && active.page !== hit.page)) return;
+    const at = hit.position;
     const range = state.selection;
     if (at && range) run(() => state.select({ start: dragAnchor ?? range.start, end: at }));
   }
@@ -204,12 +303,18 @@ export function mountEditing(
   }
   function doubleClick(event: MouseEvent): void {
     if (event.button !== 0 || state.composing || win === null || !(event.target instanceof win.Node)) return;
-    if (!view.root.contains(event.target)) return;
-    const at = view.locate(event);
-    if (!at) return;
+    if (boundary.contains(event.target) || !view.root.contains(event.target)) return;
+    const hit = view.editingHit(event);
+    if (!hit) return;
     event.preventDefault();
     drag = false;
-    const caret = view.caretRect(at);
+    if (hit.frame?.relId !== active?.relId) {
+      if (!hit.frame || bodyBinding.headerFooter) activate(hit);
+      return;
+    }
+    const at = hit.position;
+    if (!at) return;
+    const caret = view.caretRect(at, active?.page);
     run(() => state.selectWord(at, caret && event.clientX < caret.x ? 'before' : 'after'));
     focus();
   }
@@ -272,6 +377,11 @@ export function mountEditing(
   }
   function keydown(event: KeyboardEvent): void {
     if (event.isComposing || state.composing || event.keyCode === 229) return;
+    if (event.key === 'Escape' && active) {
+      event.preventDefault();
+      activate();
+      return;
+    }
     // 列表段首 / 列表选区的 Tab 升降级；其余位置 Tab 插制表位（Word 的行为），
     // Shift+Tab 不接管，留给浏览器把焦点移出编辑区 —— 否则键盘用户出不去。
     if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey) {
@@ -284,7 +394,7 @@ export function mountEditing(
       if (moved) {
         event.preventDefault();
         const at = state.focus;
-        if (at) view.scrollTo(at, { align: 'nearest' });
+        if (at) view.scrollTo(at, { align: 'nearest', ...(active && { page: active.page }) });
         return;
       }
       const list = state.listIndentable();
@@ -402,6 +512,7 @@ export function mountEditing(
             state.focus ?? range.end,
             event.key === 'ArrowUp' ? 'up' : 'down',
             preferredX,
+            active,
           );
           if (move) {
             preferredX = move.x;
@@ -419,7 +530,7 @@ export function mountEditing(
       event.preventDefault();
       run(action, !mod && !event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown'));
       const at = state.focus;
-      if (at) view.scrollTo(at, { align: 'nearest' });
+      if (at) view.scrollTo(at, { align: 'nearest', ...(active && { page: active.page }) });
     }
   }
   function compositionStart(): void {
@@ -481,7 +592,9 @@ export function mountEditing(
       else write();
     });
   }
-  const unsubscribe = binding.subscribe((change) => {
+  const unsubscribe = bodyBinding.subscribe((change) => {
+    if (state !== bodyState) bodyState.apply(change);
+    pendingHit = undefined;
     preferredX = undefined;
     state.apply(change);
     refresh();
@@ -530,8 +643,22 @@ export function mountEditing(
     get selection() {
       return state.selection;
     },
+    pageFor,
     select(range) {
       preferredX = undefined;
+      if (pageFor(range.start) === undefined) {
+        let frame: ActiveFrame | undefined;
+        // 宿主也可以传回 locate() 给的部件位置。没有点击页时选第一次出现的副本。
+        const page = range.start.nodeId.includes(':') ? view.index.caretRect(range.start)?.page : undefined;
+        if (page !== undefined && bodyBinding.headerFooter) {
+          for (const kind of ['header', 'footer'] as const) {
+            const edge = view.frameBoundary(page, kind);
+            if (edge && range.start.nodeId.startsWith(`${edge.relId}:`))
+              frame = { kind, relId: edge.relId, page };
+          }
+        }
+        setFrame(frame);
+      }
       state.select(range);
       refresh();
       formatChanged?.();
@@ -560,6 +687,7 @@ export function mountEditing(
       win?.removeEventListener('resize', refresh);
       input.remove();
       status.remove();
+      boundary.remove();
     },
   };
 }

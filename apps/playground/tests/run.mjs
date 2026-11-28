@@ -22,6 +22,7 @@ const ALL = [
   'print',
   'react',
   'editing',
+  'header-footer',
   'history',
   'clipboard',
   'clipboard-indent',

@@ -20,7 +20,7 @@ import type { PngOptions } from './snapshot-dom.ts';
 import { pageToPng } from './snapshot-dom.ts';
 import { buildTextLayer } from './text-layer.ts';
 import type { ClientPoint, ClientRect, PageViewport } from './transform.ts';
-import { createReadonlyView } from './view.ts';
+import { createReadonlyView, type EditingHit } from './view.ts';
 import { pagesToRender } from './virtual-pages.ts';
 
 export type { OverlayPlacement } from './annotations.ts';
@@ -54,9 +54,14 @@ export interface DomView {
   readonly root: HTMLElement;
   /** 编辑导航复用当前索引；滚动与缩放不改变这份布局几何。 */
   readonly index: LayoutIndex;
+  frameBoundary(
+    page: number,
+    kind: 'header' | 'footer',
+  ): { shell: HTMLElement; percent: number; relId: string } | undefined;
+  editingHit(point: ClientPoint): EditingHit | null;
   locate(point: ClientPoint): DocPosition | null;
   rectsOf(range: DocRange): ClientRect[];
-  caretRect(position: DocPosition): ClientRect | null;
+  caretRect(position: DocPosition, page?: number): ClientRect | null;
   decorate(range: DocRange, options?: DecorationOptions): DecorationHandle;
   overlay(position: DocPosition, element: HTMLElement, options?: OverlayOptions): OverlayHandle;
   /**
@@ -341,6 +346,18 @@ export function mountView(container: Element, layout: DocumentLayout, options: V
     get root() {
       return root;
     },
+    frameBoundary(page, kind) {
+      const slot = slots[page];
+      const frame = slot?.page[kind];
+      if (!slot || !frame) return undefined;
+      const { height, content } = slot.page.geometry;
+      const y = kind === 'header' ? content.y : content.y + content.height;
+      return { shell: slot.shell, percent: (100 * y) / height, relId: frame.relId };
+    },
+    editingHit(point) {
+      const target = doc.elementFromPoint(point.clientX, point.clientY);
+      return !destroyed && target && root.contains(target) ? view.editingHit(point) : null;
+    },
     locate(point) {
       if (destroyed || ![point.clientX, point.clientY].every(Number.isFinite)) return null;
       const target = doc.elementFromPoint(point.clientX, point.clientY);
@@ -348,7 +365,7 @@ export function mountView(container: Element, layout: DocumentLayout, options: V
       return view.locate(point);
     },
     rectsOf: (range) => view.rectsOf(range),
-    caretRect: (position) => view.caretRect(position),
+    caretRect: (position, page) => view.caretRect(position, page),
     decorate: annotations.decorate,
     overlay: annotations.overlay,
     scrollTo(target, options = {}) {
@@ -364,7 +381,7 @@ export function mountView(container: Element, layout: DocumentLayout, options: V
         slot.shell.scrollIntoView(scroll);
         return true;
       }
-      const rect = scrollTargetRect(view.index, target);
+      const rect = scrollTargetRect(view.index, target, options.page);
       const slot = rect === undefined ? undefined : slots[rect.page];
       if (rect === undefined || slot === undefined) return false;
       // 壳内坐标与装饰同一套换算（壳可能被宿主改过尺寸，不能按 zoom 反推）

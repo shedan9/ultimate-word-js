@@ -616,6 +616,8 @@ export type Section = SectionNode<DirectProps>;
  * 级联完的树不带它（编号文字已经算进段落属性，布局用不着定义）。
  */
 export type Body = DocumentBody<DirectProps> & {
+  /** 各页共享同一份部件；正文遍历仍只访问 sections。 */
+  headerFooters?: Readonly<Record<string, Body>>;
   numbering?: Numbering;
   /**
    * 编辑期**新增**的样式定义（套用文档里没有的「标题 1」时补的，见 styles-edit.ts）。

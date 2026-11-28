@@ -226,7 +226,8 @@ class BodyWriter {
 
   write(): XmlDocument {
     const { original, body } = this.#in;
-    const bodyEl = child(original.root, 'w:body');
+    const frame = original.root.name === 'w:hdr' || original.root.name === 'w:ftr';
+    const bodyEl = frame ? original.root : child(original.root, 'w:body');
     if (bodyEl === undefined) throw new Error('原文没有 <w:body>，无从回写');
     const cur = cursor(body.sections.flatMap((s) => s.blocks));
     const out = this.#blocks(bodyEl.children, cur);
@@ -235,6 +236,7 @@ class BodyWriter {
     const last = out.at(-1);
     const tail = last?.kind === 'element' && last.name === 'w:sectPr' ? out.length - 1 : out.length;
     const children = [...out.slice(0, tail), ...rest, ...out.slice(tail)];
+    if (frame) return { ...original, root: { ...bodyEl, children } };
     let root: XmlElement = {
       ...original.root,
       children: original.root.children.map((c) => (c === bodyEl ? { ...bodyEl, children } : c)),

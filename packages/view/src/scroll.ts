@@ -5,6 +5,8 @@ import type { DocPosition, DocRange } from '@uw/model';
 export type ScrollTarget = DocPosition | DocRange | { page: number };
 
 export interface ScrollOptions {
+  /** 共享页眉页脚的位置要落在用户点击的那一页。 */
+  page?: number;
   /** 目标行贴视口的哪一边，默认 `start`。 */
   align?: 'start' | 'center' | 'end' | 'nearest';
   behavior?: 'auto' | 'smooth';
@@ -16,7 +18,11 @@ export interface ScrollOptions {
  * 排不出来的位置（空 run、隐藏 run）没有矩形，返回 `undefined` 让调用方答 false，
  * 而不是退到页首 —— 「滚到了别处」比「没滚」更难察觉。
  */
-export function scrollTargetRect(index: LayoutIndex, target: DocPosition | DocRange): LayoutRect | undefined {
-  if ('start' in target) return index.rectsOf(target)[0] ?? index.caretRect(target.start);
-  return index.caretRect(target);
+export function scrollTargetRect(
+  index: LayoutIndex,
+  target: DocPosition | DocRange,
+  page?: number,
+): LayoutRect | undefined {
+  if ('start' in target) return index.rectsOf(target, page)[0] ?? index.caretRect(target.start, page);
+  return index.caretRect(target, page);
 }

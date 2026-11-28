@@ -27,7 +27,7 @@ import { allNoteContents, parseNoteParts } from './notes.ts';
 import type { Numbering } from './numbering.ts';
 import { parseNumbering } from './numbering.ts';
 import type { ParseExtras } from './parse-body.ts';
-import { parseBody, parseHeaderFooter } from './parse-body.ts';
+import { parseBody, parseHeaderFooterBody } from './parse-body.ts';
 import { resolveBlocks, resolveBody } from './resolve-body.ts';
 import type { RevisionDisplay, RevisionView } from './revisions.ts';
 import { revisionAuthors, revisionDisplay } from './revisions.ts';
@@ -344,7 +344,9 @@ function parseHeaderFooters(
         );
         continue;
       }
-      const blocks = parseHeaderFooter(pkg.xml(part), diagnostics, part, `${ref}:`, extrasFor(part));
+      const story = parseHeaderFooterBody(pkg.xml(part), diagnostics, part, `${ref}:`, extrasFor(part));
+      body.headerFooters = { ...body.headerFooters, [ref]: story };
+      const blocks = story.sections[0].blocks;
       // 域**不跨部件**：页眉里的 begin 不可能与正文里的 end 配对，所以一个部件扫一趟。
       // 扫出来的区间与正文的合成一份，求值那边只认 run id，不关心它来自哪个部件
       fields.push(

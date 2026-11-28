@@ -240,6 +240,8 @@ Word 打开无修复提示仍待人工验收。
 判据是接线不是真值（Vitest 21 项 + `/tests/facade.html` 29 项）。随库度量包在浏览器里的路
 是 `@uw/fonts/packs`（JSON import，无 fs）。**Phase 6 至此全部做完**（2026-09-13）：
 **打印**（`@uw/view` 的 `print.ts`）与 **`@uw/react`**（`packages/react`），见下。
+**页眉页脚编辑（2026-11-28）**：编辑态单击已有页眉或页脚显示入口，双击在当前页编辑。共享部件的修改同步显示，撤销与正文共用历史，导出按部件回写。
+
 **Phase 7 已开始**（2026-09-13）：`@uw/model` 的 `createTextEditor()` 提供段内文字事务、
 undo/redo、连续输入合并与 `TextChangeSet` 位置映射。空段落锚点、拆段 / 合段与跨段删除已补齐；
 门面 `tx` / undo / redo 自动全量重排，`mode: 'edit'` 接入光标和 IME 独立提交。

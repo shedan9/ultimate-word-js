@@ -297,10 +297,26 @@ export function parseHeaderFooter(
   idPrefix: string,
   extras: ParseExtras = {},
 ): Block[] {
+  return parseHeaderFooterBody(doc, diagnostics, part, idPrefix, extras).sections[0].blocks;
+}
+
+/** 用单节承载部件的块与控件表，让编辑命令和补丁回写共用正文的实现。 */
+export function parseHeaderFooterBody(
+  doc: XmlDocument,
+  diagnostics: DiagnosticSink,
+  part: string,
+  idPrefix: string,
+  extras: ParseExtras = {},
+  sources?: BodySources,
+): Body & { sections: [Section] } {
   const ctx = partCtx(diagnostics, part, idPrefix, extras);
-  const out = blockList(ctx, doc.root);
+  ctx.sources = sources;
+  const blocks = blockList(ctx, doc.root);
   flushBookmarks(ctx);
-  return out;
+  return {
+    sections: [{ id: `${idPrefix}sec`, props: parseSectionProps(undefined), blocks }],
+    ...(Object.keys(ctx.controls).length ? { contentControls: ctx.controls } : {}),
+  };
 }
 
 /** `footnotes.xml` / `endnotes.xml` 里的一条 */

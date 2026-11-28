@@ -14,13 +14,20 @@
  * - 新建 numbering.xml / styles.xml / comments.xml / commentsExtended.xml 时，外加 `[Content_Types].xml`
  *   与主文档的关系表各登记一条
  *
- * 页眉页脚、设置都不编辑，所以都不写。`docProps/app.xml` 里的字数 / 页数统计
+ * 页眉页脚编辑只补丁回写对应的 header / footer 部件。`docProps/app.xml` 里的字数 / 页数统计
  * 会过期，Word 打开时自己重算，不写是对的 —— 写了也只是我们算的数，不是 Word 的。
  */
 import type { DiagnosticSink } from '@uw/core';
 import { createDiagnosticSink } from '@uw/core';
 import type { Body, BodySources } from '@uw/model';
-import { parseBody, parseCommentParts, parseNumbering, parseStyles } from '@uw/model';
+import {
+  parseBody,
+  parseCommentParts,
+  parseHeaderFooterBody,
+  parseNumbering,
+  parseStyles,
+  parseTheme,
+} from '@uw/model';
 import type { OpcPackage, XmlDocument } from '@uw/ooxml';
 import { ContentType, parseXml, RelType, relsPartNameOf, serializeXml } from '@uw/ooxml';
 import { writeBody } from './body-writer.ts';
@@ -75,6 +82,30 @@ export function serializeDocx(pkg: OpcPackage, body: Body, options: SerializeOpt
       ...(options.diagnostics === undefined ? {} : { diagnostics: options.diagnostics }),
     });
     changes.set(main, bytesOf(doc));
+  }
+
+  const theme = pkg.partNameByRelType(RelType.THEME);
+  const colors = theme && parseTheme(pkg.xml(theme)).colors;
+  const extras = colors ? { themeColors: colors } : {};
+  for (const [relId, story] of Object.entries(body.headerFooters ?? {})) {
+    const part = pkg.resolveRel(main, relId);
+    if (!part) throw new Error(`找不到页眉页脚部件：${relId}`);
+    const original = pkg.xml(part);
+    const sources: BodySources = { nodes: new Map(), content: new Map() };
+    const originalBody = parseHeaderFooterBody(
+      original,
+      createDiagnosticSink(),
+      part,
+      `${relId}:`,
+      extras,
+      sources,
+    );
+    if (!same(originalBody, story)) {
+      changes.set(
+        part,
+        bytesOf(writeBody({ original, originalBody, sources, body: story, part, ...options })),
+      );
+    }
   }
 
   // 新建部件要登记内容类型与关系；两个部件都新建时两次登记改的是同一份清单，所以先攒着最后再写

@@ -16,7 +16,7 @@ import { layoutDocumentWithFields, ParagraphLayoutCache } from '@uw/layout';
 import {
   bookmarkTargets,
   createResolveCache,
-  DEFAULT_SECTION_PROPS,
+  editingBody,
   fieldHyperlinks,
   fontNameCandidates,
   loadDocument,
@@ -116,7 +116,7 @@ export async function load(
     now,
     diagnostics: sink,
   });
-  // 页眉页脚 / 注 / 文本框的级联结果不随编辑变，只随修订视图变（`setRevisionView`），换视图时整份换掉
+  // 复用上一趟的辅助部件。编辑共享页眉时只替换对应部件，修订视图切换时一起重算。
   let aux = loaded;
   return new UwDocument({
     loaded,
@@ -128,31 +128,38 @@ export async function load(
         // 切换和排版共用一份候选状态；先改 aux 再排版会在失败后污染下一次编辑 / 历史重排。
         const next = view === undefined || view === aux.revisions.view ? aux : withRevisionView(aux, view);
         const fields = scanFields(body, sink);
-        for (const hf of Object.values(next.headerFooters))
-          fields.push(
-            ...scanFields(
-              {
-                sections: [
-                  {
-                    id: hf.relId,
-                    props: loaded.body.sections[0]?.props ?? DEFAULT_SECTION_PROPS,
-                    blocks: hf.blocks,
-                  },
-                ],
-              },
-              sink,
-            ),
-          );
-        const resolved = resolveBody(loaded.cascade, body, {
+        const stories = Object.entries(body.headerFooters ?? {});
+        for (const [, story] of stories) fields.push(...scanFields(story, sink));
+        const resolveOptions = {
           hyperlinks: fieldHyperlinks(fields),
           cache: resolveCache,
           revisions: next.revisions,
-        });
+        };
+        const resolved = resolveBody(loaded.cascade, body, resolveOptions);
+        const headerFooters = { ...next.headerFooters };
+        for (const [id, story] of stories) {
+          const hf = headerFooters[id];
+          const blocks = story.sections[0]?.blocks;
+          if (!hf || !blocks) throw new Error(`缺少页眉页脚部件：${id}`);
+          if (
+            hf.blocks !== blocks ||
+            body.styles !== aux.body.styles ||
+            body.numbering !== aux.body.numbering ||
+            view !== undefined
+          ) {
+            headerFooters[id] = {
+              ...hf,
+              blocks,
+              resolved:
+                resolveBody(loaded.cascade, editingBody(body, id), resolveOptions).sections[0]?.blocks ?? [],
+            };
+          }
+        }
         const result = layoutDocumentWithFields(resolved, fields, {
           paragraphCache,
           measurer,
           settings,
-          headerFooters: next.headerFooters,
+          headerFooters,
           notes: next.notes,
           textBoxes: next.textBoxes,
           bookmarks: bookmarkTargets(body),
@@ -162,9 +169,9 @@ export async function load(
         });
         // 编号定义随树走（新建列表会加定义），`loaded.numbering` 跟着换成同一份
         const numbering = body.numbering ?? loaded.numbering;
-        aux = next;
+        aux = { ...next, body, resolved, fields, numbering, headerFooters };
         return {
-          loaded: { ...next, body, resolved, fields, numbering },
+          loaded: aux,
           layout: result.layout,
           values: result.values,
           passes: result.passes,
